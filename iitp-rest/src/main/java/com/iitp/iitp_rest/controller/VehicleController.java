@@ -1,0 +1,376 @@
+package com.iitp.iitp_rest.controller;
+
+import com.iitp.iitp_rest.model.Network;
+import com.iitp.iitp_rest.model.Road;
+import com.iitp.iitp_rest.model.Vehicle;
+import com.iitp.iitp_rest.model.geometry.Cartesian3;
+import com.iitp.iitp_rest.model.request.VehicleRequest;
+import com.iitp.iitp_rest.repository.NetworkRepository;
+import com.iitp.iitp_rest.util.GeoJsonUtils;
+import lombok.AllArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.util.*;
+import java.util.stream.Collectors;
+
+@RestController
+@RequestMapping("/vehicle")
+@AllArgsConstructor
+public class VehicleController {
+
+    private final NetworkRepository networkRepository;
+
+    @PostMapping("/generate-czml")
+    public ResponseEntity<Map<String, Object>> generateCzml(@RequestBody VehicleRequest request) {
+        List<Map<String, Object>> czml = new ArrayList<>();
+        List<Vehicle> vehicleDataList = new ArrayList<>();
+        List<List<Cartesian3>> vehiclePath = new ArrayList<>();
+
+
+//         CZML 문서 정의
+        czml.add(Map.of(
+                "id", "document",
+                "name", "Vehicle Movement",
+                "version", "1.0"
+        ));
+        Network network = networkRepository.findById(1L).orElse(null);
+
+        if (network == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Network data not found"));
+        }
+
+        // GeoJSON을 Road 리스트로 변환
+        List<Road> roadEntities = GeoJsonUtils.parseGeoJsonToRoads(network.getGeojson());
+
+        Map<Cartesian3, List<Road>> roadConnections = buildRoadConnections(roadEntities);
+
+
+        Random random = new Random();
+        for (int i = 0; i < request.getNumVehicle(); i++) {
+            Road startRoad = roadEntities.get(random.nextInt(roadEntities.size())); // 랜덤 도로 선택
+            List<Cartesian3> path = buildConnectedPath(startRoad, roadConnections, 2);
+
+            if (path != null && !path.isEmpty()) {
+                List<Double> positions = new ArrayList<>();
+                Instant startTime = Instant.now();
+                Instant stopTime = startTime.plusSeconds(100000);
+
+                for (int j = 0; j < path.size(); j++) {
+                    Instant time = startTime.plusSeconds(j * request.getSpeedFactor());
+                    positions.add((double) Duration.between(startTime, time).getSeconds());
+                    Cartesian3 cartesian3 = Cartesian3.fromDegrees(path.get(j).getX(), path.get(j).getY(), path.get(j).getZ());
+                    positions.add(cartesian3.getX());
+                    positions.add(cartesian3.getY());
+                    positions.add(cartesian3.getZ());
+                }
+
+                String vehicleId = "vehicle" + i;
+                czml.add(Map.of(
+                        "id", vehicleId,
+                        "availability", startTime.toString() + "/" + stopTime.toString(),
+                        "position", Map.of(
+                                "epoch", startTime.toString(),
+                                "interpolationAlgorithm", "LINEAR",
+                                "interpolationDegree", 2,
+                                "cartesian", positions
+                        ),
+                        "orientation", Map.of("velocityReference", "#position"),
+                        "point", Map.of(
+                                "outlineWidth", 1,
+                                "pixelSize", 10
+                        )
+                ));
+                List<Integer> pathColor = new ArrayList<>();
+                pathColor.add(255);
+                pathColor.add(0);
+                pathColor.add(0);
+                pathColor.add(100);
+//                czml.add(Map.of(
+//                        "id", "path" + i,
+//                        "availability", startTime.toString() + "/" + stopTime.toString(),
+//                        "path", Map.of(
+//                                "material", Map.of(
+//                                        "polylineOutline", Map.of(
+//                                                "color", Map.of("rgba", pathColor)
+//                                            )
+//                                    ),
+//                        "width", 5,
+//                        "leadTime", 1000,
+//                        "trailTime", 1000,
+//                        "resolution", 5
+//                        ),
+//                        "position", Map.of(
+//                                "epoch", startTime.toString(),
+//                                "interpolationAlgorithm", "LINEAR",
+//                                "interpolationDegree", 2,
+//                                "cartesian", positions
+//                        )
+//                ));
+
+                // 좌표 변환
+                double lon = path.get(0).getX();
+                double lat = path.get(0).getY();
+                double height = path.get(0).getZ();
+                vehiclePath.add(path);
+
+
+                vehicleDataList.add(new Vehicle(vehicleId, lon, lat, height, "point"));
+            }
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("czml", czml);
+        response.put("newVehicleData", vehicleDataList);
+        response.put("positions", vehiclePath);
+
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/generate-vehicle")
+    public ResponseEntity<Map<String, Object>> generateVehicle(@RequestBody VehicleRequest request) {
+        List<List<Double>> vehiclePath = new ArrayList<>();
+        List<Vehicle> vehicleDataList = new ArrayList<>();
+
+        Network network = networkRepository.findById(1L).orElse(null);
+
+        if (network == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Network data not found"));
+        }
+
+        // GeoJSON을 Road 리스트로 변환
+        List<Road> roadEntities = GeoJsonUtils.parseGeoJsonToRoads(network.getGeojson());
+
+
+        Random random = new Random();
+        for (int i = 0; i < request.getNumVehicle(); i++) {
+            Road road = roadEntities.get(random.nextInt(roadEntities.size()));
+            List<Cartesian3> path = road.getPolyline().getPositions();
+
+            if (path != null && !path.isEmpty()) {
+                List<Double> positions = new ArrayList<>();
+                Instant startTime = Instant.now();
+                Instant stopTime = startTime.plusSeconds(100000);
+
+                for (int j = 0; j < path.size(); j++) {
+                    Instant time = startTime.plusSeconds(j * request.getSpeedFactor());
+                    positions.add((double) Duration.between(startTime, time).getSeconds());
+                    Cartesian3 cartesian3 = Cartesian3.fromDegrees(path.get(j).getX(), path.get(j).getY(), path.get(j).getZ());
+                    positions.add(cartesian3.getX());
+                    positions.add(cartesian3.getY());
+                    positions.add(cartesian3.getZ());
+                }
+
+                String vehicleId = "vehicle" + i;
+
+                // 좌표 변환
+                double lon = path.get(0).getX();
+                double lat = path.get(0).getY();
+                double height = path.get(0).getZ();
+                vehiclePath.add(Arrays.asList(lon, lat, height));
+
+                vehicleDataList.add(new Vehicle(vehicleId, lon, lat, height, "model"));
+            }
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("positions", vehiclePath);
+        response.put("newVehicleData", vehicleDataList);
+
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/generate-positions")
+    public ResponseEntity<Map<String, Object>> generatePositions(@RequestBody VehicleRequest request) {
+        List<List<Cartesian3>> vehiclePath = new ArrayList<>();
+
+        Network network = networkRepository.findById(1L).orElse(null);
+
+        if (network == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Network data not found"));
+        }
+
+        // GeoJSON을 Road 리스트로 변환
+        List<Road> roadEntities = GeoJsonUtils.parseGeoJsonToRoads(network.getGeojson());
+
+        Map<Cartesian3, List<Road>> roadConnections = buildRoadConnections(roadEntities);
+
+
+        Random random = new Random();
+        for (int i = 0; i < request.getNumVehicle(); i++) {
+            Road startRoad = roadEntities.get(random.nextInt(roadEntities.size())); // 랜덤 도로 선택
+            List<Cartesian3> path = buildConnectedPath(startRoad, roadConnections, 2);
+
+            //System.out.println(roadConnections);
+            System.out.println(startRoad);
+
+            if (path != null && !path.isEmpty()) {
+                List<Cartesian3> positions = new ArrayList<>();
+
+                // 차량의 이동 속도에 따라 경로를 일정한 거리 간격으로 나누기
+                double totalDistance = 0.0;
+
+                // 전체 경로의 총 거리를 계산
+                for (int j = 0; j < path.size() - 1; j++) {
+                    totalDistance += calculateDistance(path.get(j), path.get(j + 1)); // 두 점 사이의 거리
+                }
+
+                // 목표 거리 간격 (차량의 속도에 맞춰 거리 계산)
+                double targetDistance = totalDistance / request.getSpeedFactor(); // SpeedFactor에 맞게 분배
+                double currentDistance = 0.0;
+
+                //positions.add(path.get(0)); // 경로의 첫 번째 위치를 시작점으로 추가
+
+                for (int j = 1; j < path.size(); j++) {
+                    Cartesian3 start = path.get(j - 1);
+                    Cartesian3 end = path.get(j);
+
+                    double segmentDistance = calculateDistance(start, end);
+                    currentDistance += segmentDistance;
+
+                    // 일정 거리마다 점을 추가
+                    while (currentDistance >= targetDistance) {
+                        // 두 점 사이의 방향 벡터를 정규화하여 위치 계산
+                        double ratio = (currentDistance - targetDistance) / segmentDistance;
+                        double lon = start.getX() + ratio * (end.getX() - start.getX());
+                        double lat = start.getY() + ratio * (end.getY() - start.getY());
+                        double alt = start.getZ() + ratio * (end.getZ() - start.getZ());
+
+                        // 새로운 점을 계산하여 추가
+                        positions.add(Cartesian3.fromDegrees(lon, lat, alt));
+
+                        currentDistance -= targetDistance; // 이동된 거리를 차감
+                    }
+                }
+                vehiclePath.add(positions);
+                System.out.println(i);
+                System.out.println(totalDistance);
+            }
+        }
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("positions", vehiclePath);
+
+        return ResponseEntity.ok(response);
+    }
+
+    // 두 점 사이의 거리를 계산하는 메서드
+//    private double calculateDistance(Cartesian3 point1, Cartesian3 point2) {
+//
+//        double deltaX = point2.getX() - point1.getX();
+//        double deltaY = point2.getY() - point1.getY();
+//        double deltaZ = point2.getZ() - point1.getZ();
+//        return Math.sqrt(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ); // 3D 거리 계산
+//    }
+
+    private double toRadians(double degree) {
+        return degree * Math.PI / 180;
+    }
+
+    private double calculateDistance(Cartesian3 point1, Cartesian3 point2) {
+        final double R = 6371; // 지구의 반지름 (단위: 킬로미터)
+
+        // 위도 및 경도를 라디안으로 변환
+        double deltaLat = toRadians(point2.getX() - point1.getX());
+        double deltaLon = toRadians(point2.getY() - point1.getY());
+
+        // Haversine 공식
+        double a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+                Math.cos(toRadians(point1.getY())) * Math.cos(toRadians(point2.getY())) *
+                        Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
+        double c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+        // 두 점 사이의 거리
+        return R * c; // 거리 단위: 킬로미터
+    }
+
+    // 도로 연결 관계를 맵으로 생성
+    private Map<Cartesian3, List<Road>> buildRoadConnections(List<Road> roads) {
+        Map<Cartesian3, List<Road>> roadConnections = new HashMap<>();
+
+        for (Road road : roads) {
+            List<Cartesian3> positions = road.getPolyline().getPositions();
+            Cartesian3 start = positions.get(0);
+            Cartesian3 end = positions.get(positions.size() - 1);
+
+            roadConnections.putIfAbsent(start, new ArrayList<>());
+            roadConnections.putIfAbsent(end, new ArrayList<>());
+
+            roadConnections.get(start).add(road);
+            roadConnections.get(end).add(road);
+        }
+        return roadConnections;
+    }
+
+    // minLength 이상이 되도록 연속 도로를 연결하여 경로 생성
+    private List<Cartesian3> buildConnectedPath(Road startRoad, Map<Cartesian3, List<Road>> roadConnections, double minLength) {
+        List<Cartesian3> fullPath = new ArrayList<>(startRoad.getPolyline().getPositions());
+        Set<Road> visited = new HashSet<>();
+        visited.add(startRoad);
+
+        double totalLength = calculateRoadLength(startRoad);
+        Cartesian3 currentEnd = fullPath.get(fullPath.size() - 1);
+
+        while (totalLength < minLength) {
+            List<Road> possibleRoads = roadConnections.getOrDefault(currentEnd, Collections.emptyList())
+                    .stream()
+                    .filter(road -> !visited.contains(road))
+                    .collect(Collectors.toList());
+
+            if (possibleRoads.isEmpty()) break; // 연결 가능한 도로가 없으면 종료
+
+            // 가장 긴 도로를 선택 (연결이 빨리 끝나도록)
+            Road nextRoad = possibleRoads.stream()
+                    .max(Comparator.comparingDouble(this::calculateRoadLength))
+                    .orElse(null);
+
+            if (nextRoad == null) break;
+
+            visited.add(nextRoad);
+            List<Cartesian3> nextPositions = nextRoad.getPolyline().getPositions();
+
+            // 방향 일치 여부 확인 후 추가
+            if (currentEnd.equals(nextPositions.get(0))) {
+                fullPath.addAll(nextPositions.subList(1, nextPositions.size()));
+            } else {
+                Collections.reverse(nextPositions);
+                fullPath.addAll(nextPositions.subList(1, nextPositions.size()));
+            }
+
+            totalLength += calculateRoadLength(nextRoad);
+            currentEnd = fullPath.get(fullPath.size() - 1);
+        }
+
+        return totalLength >= minLength ? fullPath : null;
+    }
+
+    // 도로의 길이 계산
+    private double calculateRoadLength(Road road) {
+        List<Cartesian3> positions = road.getPolyline().getPositions();
+        double length = 0.0;
+
+        for (int i = 1; i < positions.size(); i++) {
+            length += calculateDistance(positions.get(i - 1), positions.get(i));
+        }
+
+        return length;
+    }
+
+    // 두 점 사이의 거리 계산 (Cartesian3)
+//    private double calculateDistance(Cartesian3 p1, Cartesian3 p2) {
+//        return Math.sqrt(
+//                Math.pow(p2.getX() - p1.getX(), 2) +
+//                        Math.pow(p2.getY() - p1.getY(), 2) +
+//                        Math.pow(p2.getZ() - p1.getZ(), 2)
+//        );
+//    }
+
+
+
+}
+

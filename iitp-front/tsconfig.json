@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "allowJs": false,
+    "checkJs": false, // JS 파일에 대한 타입 검사도 비활성화
+    "noEmit": true,   // 빌드시 JS 파일이 생성되지 않도록 함
+    "module": "ESNext",
+    "target": "ESNext",
+    "strict": true,
+    "jsx": "react",
+    "allowSyntheticDefaultImports": true,
+    "baseUrl": "./",  // src 디렉토리를 기준으로 경로 설정
+    "paths": {
+      "@primitives/*": ["src/primitives/*"],
+      "@stores/*": ["src/stores/*"],
+    }
+  },
+  "exclude": ["node_modules", "**/*.js"] // JS 파일 제외
+}

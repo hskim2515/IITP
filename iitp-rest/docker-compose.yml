@@ -1,0 +1,16 @@
+version: '3'
+services:
+  postgres:
+    image: postgres:latest
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: iitp
+    ports:
+      - "5432:5432"
+#  app:
+#    image: your-spring-boot-app-image
+#    depends_on:
+#      - postgres
+#    ports:
+#      - "8080:8080"

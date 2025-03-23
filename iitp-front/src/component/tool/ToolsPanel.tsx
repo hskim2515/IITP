@@ -1,0 +1,65 @@
+import React from 'react';
+import { useToolStore } from '@stores/useToolStore';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faRuler, faLayerGroup, faCog } from '@fortawesome/free-solid-svg-icons';
+
+const ToolsPanel = () => {
+    const { showTools } = useToolStore();
+
+    return (
+        <div
+            style={{
+                position: 'fixed',
+                right: '0px',
+                top: '150px',
+                borderRadius: '8px',
+                padding: '15px',
+                zIndex: 1000,
+                transform: showTools ? 'translateY(0)' : 'translateY(0)', // Slide in/out
+                opacity: showTools ? 1 : 0, // Fade in/out
+                transition: 'transform 0.3s ease, opacity 0.3s ease', // Smooth slide and fade animation
+            }}
+        >
+            <button
+                style={{
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '20px',
+                    display: 'flex',
+                    alignItems: 'center',
+                }}
+            >
+                <FontAwesomeIcon icon={faLayerGroup} />
+            </button>
+
+            <button
+                style={{
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '20px',
+                    display: 'flex',
+                    alignItems: 'center',
+                }}
+            >
+                <FontAwesomeIcon icon={faRuler} />
+            </button>
+
+            <button
+                style={{
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '20px',
+                    display: 'flex',
+                    alignItems: 'center',
+                }}
+            >
+                <FontAwesomeIcon icon={faCog} />
+            </button>
+        </div>
+    );
+};
+
+export default ToolsPanel;
