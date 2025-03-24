@@ -28,6 +28,7 @@ const useSimulation = () => {
     const vehicleSourceRef = useRef(null);
 
     const animationRef = useRef(null);
+    const viewerClockMultiplier = useRef(null);
     const vehiclesRef = useRef([]);
 
     const viewer = useCesiumStore((state) => state.viewer);
@@ -39,7 +40,11 @@ const useSimulation = () => {
 
     useEffect(() => {
         if (viewer) {
-            viewer.clock.multiplier = viewer.clock.multiplier * speed;
+            if(viewerClockMultiplier.current == null)
+                viewerClockMultiplier.current = viewer.clock.multiplier
+            viewer.clock.multiplier = viewerClockMultiplier.current * speed;
+            console.log(viewer.clock.multiplier)
+            console.log(viewerClockMultiplier.current)
 
             if (isRunning) {
                 viewer.clock.shouldAnimate = true;
@@ -210,7 +215,7 @@ const useSimulation = () => {
     };
 
     const animate = () => {
-        if (!isRunning) return; // ⏸️ 일시정지 시 실행 중지
+        if (!isRunning) return;
 
         const vehicleFeatures = vehicleSourceRef.current.getFeatures();
         const now = performance.now();
@@ -322,7 +327,7 @@ const useSimulation = () => {
                 if(vehicleDataRef.current){
                     const currentTime = viewer.clock.currentTime;
                     const newVehicleData = vehicleDataRef.current
-                    worker.postMessage({ newVehicleData, cameraPositionWC });
+                    //worker.postMessage({ newVehicleData, cameraPositionWC });
                     // updateHeatmap(vehicleDataRef.current, currentTime, heatmapRectangleRef.current);
                 }
             });
