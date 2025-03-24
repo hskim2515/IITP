@@ -76,6 +76,7 @@ const useSimulation = () => {
             .then(response => response.json())
             .then(({ czml, newVehicleData, positions }) => {
                 setCzml(czml);
+                console.log(czml)
                 setVehicleData(newVehicleData);
                 setVehicleRoute(positions);
             });
@@ -327,7 +328,7 @@ const useSimulation = () => {
                 if(vehicleDataRef.current){
                     const currentTime = viewer.clock.currentTime;
                     const newVehicleData = vehicleDataRef.current
-                    //worker.postMessage({ newVehicleData, cameraPositionWC });
+                    worker.postMessage({ newVehicleData, cameraPositionWC });
                     // updateHeatmap(vehicleDataRef.current, currentTime, heatmapRectangleRef.current);
                 }
             });

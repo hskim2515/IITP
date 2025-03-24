@@ -50,7 +50,7 @@ const SimulationControls: React.FC = () => {
         <div style={styles.simulationControls}>
 
             <div style={{ padding: '10px', borderRadius: '8px', width: '250px' }}>
-                <label>시간: {speedFactor.toFixed(5)}</label>
+                <label>속도: {speedFactor.toFixed(0)}km/h</label>
                 <input type="range" min="10" max="200" step="10" value={speedFactor} onChange={(e) => setSpeedFactor(Number(e.target.value))} style={{ width: '100%' }} />
             </div>
             <div style={{ padding: '10px', borderRadius: '8px', width: '250px' }}>

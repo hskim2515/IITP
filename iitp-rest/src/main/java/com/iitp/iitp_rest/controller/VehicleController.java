@@ -58,17 +58,37 @@ public class VehicleController {
 
             if (path != null && !path.isEmpty()) {
                 List<Double> positions = new ArrayList<>();
+                double speedKmh = request.getSpeedFactor(); // 속도 (km/h)로 입력됨
+                double speedMs = speedKmh * 1000 / 3600; // m/s 변환
+
                 Instant startTime = Instant.now();
-                Instant stopTime = startTime.plusSeconds(100000);
+                Instant stopTime = startTime.plusSeconds(3600);
+
+                double elapsedTime = 0.0; // 초기 시간 (초)
+                Cartesian3 prevPosition = null; // 이전 좌표 저장
 
                 for (int j = 0; j < path.size(); j++) {
-                    Instant time = startTime.plusSeconds(j * request.getSpeedFactor());
-                    positions.add((double) Duration.between(startTime, time).getSeconds());
-                    Cartesian3 cartesian3 = Cartesian3.fromDegrees(path.get(j).getX(), path.get(j).getY(), path.get(j).getZ());
-                    positions.add(cartesian3.getX());
-                    positions.add(cartesian3.getY());
-                    positions.add(cartesian3.getZ());
+                    Cartesian3 currentPosition = Cartesian3.fromDegrees(
+                            path.get(j).getX(), path.get(j).getY(), path.get(j).getZ()
+                    );
+
+                    if (prevPosition != null) {
+                        // 이전 지점과 현재 지점 간 거리 계산 (m)
+                        double distance = Cartesian3.distance(prevPosition, currentPosition);
+
+                        // 속도에 따른 경과 시간 (초) 추가
+                        elapsedTime += distance / speedMs;
+                    }
+
+                    // CZML의 cartesian 시간-좌표 배열 구성
+                    positions.add(elapsedTime); // 경과 시간 추가
+                    positions.add(currentPosition.getX());
+                    positions.add(currentPosition.getY());
+                    positions.add(currentPosition.getZ());
+
+                    prevPosition = currentPosition; // 이전 좌표 업데이트
                 }
+
 
                 String vehicleId = "vehicle" + i;
                 czml.add(Map.of(

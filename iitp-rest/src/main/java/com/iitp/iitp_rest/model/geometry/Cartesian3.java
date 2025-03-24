@@ -30,4 +30,12 @@ public class Cartesian3 {
 
         return new Cartesian3(x, y, z);
     }
+
+    // 두 점 사이의 유클리드 거리 계산
+    public static double distance(Cartesian3 a, Cartesian3 b) {
+        double dx = a.getX() - b.getX();
+        double dy = a.getY() - b.getY();
+        double dz = a.getZ() - b.getZ();
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
 }
