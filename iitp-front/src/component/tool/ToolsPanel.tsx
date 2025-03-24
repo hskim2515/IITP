@@ -1,10 +1,19 @@
-import React from 'react';
+import React, {useState} from 'react';
 import { useToolStore } from '@stores/useToolStore';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRuler, faLayerGroup, faCog } from '@fortawesome/free-solid-svg-icons';
+import Tools from "./Tools";
+import LayerPopup from "../popup/LayerPopup";
+import MeasurePopup from "../popup/MeasurePopup";
 
 const ToolsPanel = () => {
     const { showTools } = useToolStore();
+
+    const [activePopup, setActivePopup] = useState<number | null>(null);
+
+    const togglePopup = (index: number) => {
+        setActivePopup(activePopup === index ? null : index);
+    };
 
     return (
         <div
@@ -20,6 +29,7 @@ const ToolsPanel = () => {
                 transition: 'transform 0.3s ease, opacity 0.3s ease', // Smooth slide and fade animation
             }}
         >
+            {/* 레이어 */}
             <button
                 style={{
                     background: 'transparent',
@@ -29,10 +39,10 @@ const ToolsPanel = () => {
                     display: 'flex',
                     alignItems: 'center',
                 }}
+                onClick={() => togglePopup(0)}
             >
                 <FontAwesomeIcon icon={faLayerGroup} />
             </button>
-
             <button
                 style={{
                     background: 'transparent',
@@ -42,10 +52,10 @@ const ToolsPanel = () => {
                     display: 'flex',
                     alignItems: 'center',
                 }}
+                onClick={() => togglePopup(1)}
             >
                 <FontAwesomeIcon icon={faRuler} />
             </button>
-
             <button
                 style={{
                     background: 'transparent',
@@ -58,6 +68,8 @@ const ToolsPanel = () => {
             >
                 <FontAwesomeIcon icon={faCog} />
             </button>
+            {activePopup === 0 && <LayerPopup isOpen={true} />}
+            {activePopup === 1 && <MeasurePopup isOpen={true} />}
         </div>
     );
 };
