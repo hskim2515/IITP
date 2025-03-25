@@ -1,8 +1,9 @@
 import * as Cesium from "cesium";
 
 export default class VehicleRootPrimitive {
-    constructor(positions, context) {
+    constructor(positions, context, speed, status) {
         this.positions = positions; // CZML에서 가져온 positions
+        this.speed = speed;
         this.currentIndex = 0;
         this.ready = false;
         this.context = context;
@@ -11,6 +12,7 @@ export default class VehicleRootPrimitive {
         this.tailLength = 10; // 꼬리 길이 (몇 프레임에 해당하는 위치가 남을지 결정)
         this.tailPositions = []; // 꼬리 위치를 저장할 배열
         this.progress = 0;
+        this.status = status;
 
         this.createResources();
     }
@@ -90,19 +92,24 @@ export default class VehicleRootPrimitive {
 
         if (this.destroyed) return; // 이미 제거된 경우 업데이트하지 않음
 
+        if(!this.status) {
+            frameState.commandList.push(this.drawCommand);
+            return;
+        }
+
         if (!this.positions || this.positions.length < 2) {
             console.error("🚨 경로 데이터가 부족하거나 초기화되지 않았습니다.");
             return;
         }
 
+        // speedKmh는 km/h로 주어지며 이를 m/s로 변환
+        const speedMps = this.speed / 3.6; // km/h -> m/s
+
         // 이동이 끝났으면 currentIndex 증가
         if (this.progress >= 1) {
-
             this.progress = 0; // 다음 이동을 위해 초기화
-            //if (this.currentIndex < this.positions.length - 2) {
-                this.currentIndex++; // 다음 위치로 이동
-            //}
-        }else{
+            this.currentIndex++; // 다음 위치로 이동
+        } else {
             // 현재 위치와 다음 위치 가져오기
             let startPosition = this.positions[this.currentIndex];
             const nextIndex = this.currentIndex + 1;
@@ -112,8 +119,17 @@ export default class VehicleRootPrimitive {
                 return;
             }
 
-            // progress 증가 (이동 속도를 조절하려면 증가 값을 조정)
-            this.progress += 0.05; // 0.02씩 증가 (속도를 변경하려면 조절)
+            // 이동 시간 계산 (속도와 거리로부터 시간 계산)
+            const distance = Cesium.Cartesian3.distance(startPosition, endPosition); // m 단위
+            const timeToTravel = distance / speedMps; // 이동 시간 (초 단위)
+
+            // 현재 시간과 이전 시간 간의 차이를 계산
+            const currentTimestamp = performance.now();
+            const deltaTime = (currentTimestamp - this.previousTime) / 1000; // 시간 차이 (초 단위)
+            this.previousTime = currentTimestamp;
+
+            this.progress += (deltaTime / timeToTravel); // 시간에 비례하여 progress 증가
+
             if (this.progress > 1) {
                 this.progress = 1; // 최대값 제한
             }
@@ -138,6 +154,14 @@ export default class VehicleRootPrimitive {
         }
         // commandList에 추가
         frameState.commandList.push(this.drawCommand);
+    }
+
+
+    setSpeed(speed: number) {
+        this.speed = speed;
+    }
+    setStatus(status: string) {
+        this.status = status;
     }
 
 

@@ -137,13 +137,16 @@ export default class VehicleDensityPrimitive {
                 return;
             }
 
-            this.progress += 0.05;
+            this.progress += 0.01;
             if (this.progress > 1) this.progress = 1;
 
             const interpolatedPosition = startPosition.map((position, i) => {
                 let result = new Cesium.Cartesian3();
                 if(i != startPosition.length-1){
-                    Cesium.Cartesian3.lerp(position, endPosition[i], this.progress, result);
+                    let end = position
+                    if(endPosition[i])
+                        end = endPosition[i]
+                    Cesium.Cartesian3.lerp(position, end, this.progress, result);
                     return result
                 }
             });

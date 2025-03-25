@@ -11,6 +11,12 @@ import * as Cesium from "cesium";
 import VehicleDensityPrimitive from "@primitives/VehicleDensityPrimitive";
 import {useCesiumStore} from "@stores/useCesiumStore";
 import {useSimulationStore} from "@stores/useSimulationStore";
+import HeatMapBend from "@primitives/HeatMapBend";
+import HeatMapLayer from "@primitives/HeatMapLayer";
+import VehicleFieldPrimitive from "@primitives/VehicleFieldPrimitive";
+import VehicleRootPrimitive from "@primitives/VehicleRootPrimitive";
+import VehicleDomePrimitive from "@primitives/VehicleDomePrimitive";
+import VehicleRectanglePrimitive from "@primitives/VehicleRectanglePrimitive";
 
 const useSimulation = () => {
     const { isRunning, isStop, speed } = useSimulationStore();
@@ -36,38 +42,40 @@ const useSimulation = () => {
     const vehicleData = useVehicleStore((state) => state.vehicleData);
     const czmlDataSourceRef = useRef(null);
     const vehicleDataRef = useRef(null);
-    const worker = new Worker(new URL('/src/workers/changeModelWorker.ts', import.meta.url), { type: 'module'  });
+    const primitivesCollectionRef = useRef(null);
+    //const worker = new Worker(new URL('/src/workers/changeModelWorker.ts', import.meta.url), { type: 'module'  });
 
     useEffect(() => {
         if (viewer) {
+
+            console.log(isRunning);
+
+            primitivesCollectionRef.current._primitives.forEach((primitive) => {
+                primitive.setSpeed(speed * speedFactor)
+                primitive.setStatus(isRunning)
+            })
             if(viewerClockMultiplier.current == null)
                 viewerClockMultiplier.current = viewer.clock.multiplier
             viewer.clock.multiplier = viewerClockMultiplier.current * speed;
-            console.log(viewer.clock.multiplier)
-            console.log(viewerClockMultiplier.current)
-
             if (isRunning) {
                 viewer.clock.shouldAnimate = true;
-                animationRef.current = requestAnimationFrame(animate);
+                //animationRef.current = requestAnimationFrame(animate);
             } else {
                 viewer.clock.shouldAnimate = false;
                 if (animationRef.current) {
-                    cancelAnimationFrame(animationRef.current);
+                    //cancelAnimationFrame(animationRef.current);
                 }
             }
-
             if (isStop) {
                 viewer.clock.currentTime = viewer.clock.startTime;
-                resetToInitialPosition();
+                //resetToInitialPosition();
             }
         }
-    }, [isRunning, isStop, speed]);
-
+    }, [isRunning, isStop, speed, speedFactor]);
 
     useEffect(() => {
 
         //if (!viewer) return;
-
         fetch("http://localhost:8080/vehicle/generate-czml", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -76,7 +84,6 @@ const useSimulation = () => {
             .then(response => response.json())
             .then(({ czml, newVehicleData, positions }) => {
                 setCzml(czml);
-                console.log(czml)
                 setVehicleData(newVehicleData);
                 setVehicleRoute(positions);
             });
@@ -84,15 +91,23 @@ const useSimulation = () => {
     }, [numVehicle, speedFactor, viewer]);
 
     useEffect(() => {
-
-        setOpenlayersSimulation();
-        setCesiumSimulation();
+        const updateFrameFunc = () => {
+            const cameraPositionWC = viewer.camera.positionWC;
+            if(vehicleDataRef.current){
+                const currentTime = viewer.clock.currentTime;
+                const newVehicleData = vehicleDataRef.current
+                //worker.postMessage({ newVehicleData, cameraPositionWC });
+                // updateHeatmap(vehicleDataRef.current, currentTime, heatmapRectangleRef.current);
+            }
+        }
+        //setOpenlayersSimulation();
+        setCesiumSimulation(updateFrameFunc);
 
         return () => {
             map?.removeLayer(vehicleLayerRef.current)
-            worker?.terminate()
+            //worker?.terminate()
+            viewer?.scene.preRender.removeEventListener(updateFrameFunc)
         };
-
     }, [vehicleRoute]);
 
     const transformToTimeBasedPositions = (vehiclePositions)=> {
@@ -116,13 +131,11 @@ const useSimulation = () => {
                 "name": "Vehicle Movement",
                 "version": "1.0"
             },
-
         ];
         coordinatesArray.forEach( (ca,idx) => {
             const currentTime = new Date().toISOString();
 
             // Start the CZML structure
-
             const czmlObj = {
                 "id": "vehicle"+idx,
                 "availability": `${currentTime}/${new Date(Date.now() + ca.length * 1000).toISOString()}`, // Set availability from current time to an end time based on coordinates
@@ -145,10 +158,8 @@ const useSimulation = () => {
 
             Cesium.Cartesian3.fromDegreesArrayHeights(flatArray).forEach((coordinates, index) => {
                 const time = index;
-
                 czmlObj.position.cartesian.push(time, coordinates.x, coordinates.y, coordinates.z);
             });
-
             czml.push(czmlObj)
         })
         return czml;
@@ -284,38 +295,41 @@ const useSimulation = () => {
         vehicle.setGeometry(new Point([interpX, interpY]));
     };
 
-    const setCesiumSimulation = () => {
+    const setCesiumSimulation = (updateFrameFunc) => {
         if (!viewer) return;
+
         viewer.clock.shouldAnimate = isRunning;
+        viewer.scene.primitives.remove(primitivesCollectionRef.current)
 
         if(czml && vehicleData){
 
-            //viewer.scene.primitives.removeAll()
-            const primitives = new Cesium.PrimitiveCollection();
+            primitivesCollectionRef.current = new Cesium.PrimitiveCollection();
+            const primitiveCollection = primitivesCollectionRef.current
             const timeBasedPositions = transformToTimeBasedPositions(vehicleRoute);
 
             const vehicleDensityPrimitive = new VehicleDensityPrimitive(timeBasedPositions, viewer.scene.context);
+            //const heatMapLayer = new HeatMapBend(viewer, timeBasedPositions);
             //primitives.add(vehicleDensityPrimitive);
+            //primitives.add(heatMapLayer);
 
             vehicleRoute.forEach((position,i) => {
                 //if(i == 0){
-                // const flatArray = position.flatMap(({ x, y, z }) => [x, y, z]);
+                const flatArray = position.flatMap(({ x, y, z }) => [x, y, z]);
 
-                // position = new Cesium.Cartesian3.fromDegreesArrayHeights(flatArray)
-                // const vehicleFieldPrimitive = new VehicleFieldPrimitive(position, viewer.scene.context);
-                // const vehicleRootPrimitive = new VehicleRootPrimitive(position, viewer.scene.context);
-                // const vehicleRectanglePrimitive = new VehicleRectanglePrimitive(position, viewer.scene.context);
-                // const vehicleDomePrimitive = new VehicleDomePrimitive(position, viewer.scene.context);
-                // primitives.add(vehicleFieldPrimitive);
-                // primitives.add(vehicleRootPrimitive);
-                // primitives.add(vehicleRectanglePrimitive);
-                // primitives.add(vehicleDomePrimitive);
+                position = new Cesium.Cartesian3.fromDegreesArrayHeights(flatArray)
+                const vehicleFieldPrimitive = new VehicleFieldPrimitive(position, viewer.scene.context, speedFactor, isRunning);
+                const vehicleRootPrimitive = new VehicleRootPrimitive(position, viewer.scene.context, speedFactor, isRunning);
+                const vehicleRectanglePrimitive = new VehicleRectanglePrimitive(position, viewer.scene.context,speedFactor, isRunning);
+                const vehicleDomePrimitive = new VehicleDomePrimitive(position, viewer.scene.context, speedFactor, isRunning);
+                primitiveCollection.add(vehicleFieldPrimitive);
+                primitiveCollection.add(vehicleRootPrimitive);
+                primitiveCollection.add(vehicleRectanglePrimitive);
+                primitiveCollection.add(vehicleDomePrimitive);
                 //}
-
             });
 
             // 모든 VehicleFieldPrimitive 객체를 viewer의 scene에 추가
-            viewer.scene.primitives.add(primitives);
+            viewer.scene.primitives.add(primitiveCollection);
 
             //const czml = generateCzmlFromCoordinates(positions);
             vehicleDataRef.current = vehicleData
@@ -323,72 +337,59 @@ const useSimulation = () => {
                 viewer.dataSources.remove(czmlDataSourceRef.current, true); // true 옵션을 주면 완전히 제거됨
             }
 
-            viewer.scene.preRender.addEventListener((scene, time) => {
-                const cameraPositionWC = viewer.camera.positionWC;
-                if(vehicleDataRef.current){
-                    const currentTime = viewer.clock.currentTime;
-                    const newVehicleData = vehicleDataRef.current
-                    worker.postMessage({ newVehicleData, cameraPositionWC });
-                    // updateHeatmap(vehicleDataRef.current, currentTime, heatmapRectangleRef.current);
-                }
-            });
-            worker.onmessage = (e) => {
-                vehicleDataRef.current = e.data;
-                e.data.forEach(data => {
-                    // if(data.displayType === "model"){
-                    //     console.log(data)
-                    // }
-                    if(data.changed){
-                        //console.log(data)
-                        const vehicleEntity = newCzmlDataSource.entities.getById(data.id);
-                        //console.log(vehicleEntity)
-                        if (data.displayType === "model") {
-                            vehicleEntity.path = undefined;
-                            vehicleEntity.point = undefined;
-                            vehicleEntity.model = new Cesium.ModelGraphics({
-                                uri: "CesiumMilkTruck.glb",
-                                scale: 1.0,
-                                minimumPixelSize: 30,
-                                maximumScale: 2.0,
-                                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                            });
-                        }
-                        else if(data.displayType === "point") {
-                            vehicleEntity.model = undefined;
-                            vehicleEntity.path = undefined;
-                            vehicleEntity.point = new Cesium.PointGraphics({
-                                color: Cesium.Color.RED,
-                                outlineColor: Cesium.Color.BLACK,
-                                outlineWidth: 1,
-                                pixelSize: 10,
-                                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                            });
-                        }
-                        else if(data.displayType === "line") {
-                            //console.log(data)
-                            vehicleEntity.model = undefined;
-                            vehicleEntity.point = undefined;
-                            vehicleEntity.path = new Cesium.PolylineGraphics({
-                                material: new Cesium.PolylineOutlineMaterialProperty({
-                                    color: Cesium.Color.RED.withAlpha(0.1), // 주 색상 (보라색)
-                                }),
-                                width: 10, // 선 두께
-                                leadTime: 10, // 앞쪽으로 보이는 길이
-                                trailTime: 10, // 뒤쪽으로 보이는 길이
-                                resolution: 5, // 경로 해상도
-                                clampToGround: true, // 지면에 붙이기
-                            });
-                        }
-                    }
-                });
-            };
+            viewer.scene.preRender.addEventListener(updateFrameFunc);
+            // worker.onmessage = (e) => {
+            //     vehicleDataRef.current = e.data;
+            //     e.data.forEach(data => {
+            //         if(data.changed){
+            //             const vehicleEntity = newCzmlDataSource.entities.getById(data.id);
+            //             if (data.displayType === "model") {
+            //                 vehicleEntity.path = undefined;
+            //                 vehicleEntity.point = undefined;
+            //                 vehicleEntity.model = new Cesium.ModelGraphics({
+            //                     uri: "CesiumMilkTruck.glb",
+            //                     scale: 1.0,
+            //                     minimumPixelSize: 30,
+            //                     maximumScale: 2.0,
+            //                     heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            //                 });
+            //             }
+            //             else if(data.displayType === "point") {
+            //                 vehicleEntity.model = undefined;
+            //                 vehicleEntity.path = undefined;
+            //                 vehicleEntity.point = new Cesium.PointGraphics({
+            //                     color: Cesium.Color.RED,
+            //                     outlineColor: Cesium.Color.BLACK,
+            //                     outlineWidth: 1,
+            //                     pixelSize: 10,
+            //                     heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            //                 });
+            //             }
+            //             else if(data.displayType === "line") {
+            //                 vehicleEntity.model = undefined;
+            //                 vehicleEntity.point = undefined;
+            //                 vehicleEntity.path = new Cesium.PolylineGraphics({
+            //                     material: new Cesium.PolylineOutlineMaterialProperty({
+            //                         color: Cesium.Color.RED.withAlpha(0.1), // 주 색상 (보라색)
+            //                     }),
+            //                     width: 10, // 선 두께
+            //                     leadTime: 10, // 앞쪽으로 보이는 길이
+            //                     trailTime: 10, // 뒤쪽으로 보이는 길이
+            //                     resolution: 5, // 경로 해상도
+            //                     clampToGround: true, // 지면에 붙이기
+            //                 });
+            //             }
+            //         }
+            //     });
+            // };
 
             const newCzmlDataSource = new Cesium.CzmlDataSource();
 
-            newCzmlDataSource.load(czml).then(() => {
-                viewer.dataSources.add(newCzmlDataSource);
-                czmlDataSourceRef.current = newCzmlDataSource; // 레퍼런스 업데이트
-            });
+            // newCzmlDataSource.load(czml).then(() => {
+            //     viewer.dataSources.add(newCzmlDataSource);
+            //     czmlDataSourceRef.current = newCzmlDataSource; // 레퍼런스 업데이트
+            // });
+
 // const updateHeatmap = (vehicleData, currentTime, bounds) => {
             //     heatmapWorker.postMessage({
             //         vehicleData,

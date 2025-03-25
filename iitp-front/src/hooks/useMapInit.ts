@@ -23,7 +23,7 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
 
     const [lodModels, setLodModels] = useState(null);
 
-    const lodWorker = new Worker(new URL('/src/workers/lodWorker.ts', import.meta.url), { type: 'module' });
+    //const lodWorker = new Worker(new URL('/src/workers/lodWorker.ts', import.meta.url), { type: 'module' });
 
     let olMap: OLMap, olView: View;
 
@@ -95,16 +95,16 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
             fetch("CesiumMilkTruck.glb")
                 .then(res => res.arrayBuffer())
                 .then(glbBuffer => {
-                    lodWorker.postMessage({ glbBuffer, lodLevels });
-
-                    lodWorker.onmessage = (event) => {
-                        if (event.data.success) {
-                            console.log('LOD 생성 완료:', event.data.lodBuffers);
-                            setLodModels(event.data.lodBuffers)
-                        } else {
-                            console.error('LOD 생성 실패:', event.data.error);
-                        }
-                    };
+                    // lodWorker.postMessage({ glbBuffer, lodLevels });
+                    //
+                    // lodWorker.onmessage = (event) => {
+                    //     if (event.data.success) {
+                    //         console.log('LOD 생성 완료:', event.data.lodBuffers);
+                    //         setLodModels(event.data.lodBuffers)
+                    //     } else {
+                    //         console.error('LOD 생성 실패:', event.data.error);
+                    //     }
+                    // };
                 });
 
             // Load GeoJSON for roads

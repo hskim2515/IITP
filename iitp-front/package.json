@@ -6,15 +6,21 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:dev": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@deck.gl/aggregation-layers": "^9.1.8",
+    "@deck.gl/core": "^9.1.8",
     "@fortawesome/free-solid-svg-icons": "^6.7.2",
     "@fortawesome/react-fontawesome": "^0.2.2",
     "@gltf-transform/core": "^4.1.1",
     "@gltf-transform/functions": "^4.1.1",
+    "@loaders.gl/3d-tiles": "^4.3.3",
+    "@loaders.gl/core": "^4.3.3",
     "@types/node": "^22.10.2",
-    "cesium": "^1.124.0",
+    "cesium": "^1.127.0",
+    "heatmap.js": "^2.0.5",
     "lodash": "^4.17.21",
     "lodash.debounce": "^4.0.8",
     "lodash.throttle": "^4.1.1",
