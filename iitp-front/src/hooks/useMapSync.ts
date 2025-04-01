@@ -6,14 +6,16 @@ import {useCesiumStore} from "@stores/useCesiumStore";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import * as olProj from "ol/proj";
 import {Coordinate} from "ol/coordinate";
+import {useMapStore} from "@stores/useMapStore";
 
 const useMapSync = () => {
-
 
     let cesiumCamera: Camera;
 
     const isCesiumSyncing = useRef(false)
     const isOLSyncing = useRef(false)
+
+    const { setCesiumSyncing, setOLSyncing } = useMapStore();
 
     const cesiumViewer = useCesiumStore((state) => state.viewer);
     const olMap = useOpenLayersStore((state) => state.map);
@@ -24,6 +26,20 @@ const useMapSync = () => {
 
             cesiumCamera = cesiumViewer.scene.camera;
 
+            const syncCesium = () => {
+                if (isCesiumSyncing.current) return;
+                setCesiumSyncing(true);
+                isCesiumSyncing.current = true;
+                isOLSyncing.current = false;
+            };
+
+            const syncOL = () => {
+                if (isOLSyncing.current) return;
+                setOLSyncing(true);
+                isCesiumSyncing.current = false;
+                isOLSyncing.current = true;
+            };
+
             const destination = Cartesian3.fromDegrees(127.1216, 37.3826, 10000);
             cesiumCamera.setView({
                 destination
@@ -33,15 +49,8 @@ const useMapSync = () => {
             olView.on('change:rotation', olRotationHandler);
             olView.on('change:resolution', olResolutionHandler);
 
-            cesiumViewer.scene.canvas.addEventListener('mousemove', () => {
-                isCesiumSyncing.current = true;
-                isOLSyncing.current = false;
-            });
-
-            olMap.on("pointermove", () => {
-                isCesiumSyncing.current = false;
-                isOLSyncing.current = true;
-            });
+            cesiumViewer.scene.canvas.addEventListener("mousemove", syncCesium);
+            olMap.on("pointermove", syncOL);
 
             cesiumViewer.scene.preRender.addEventListener(syncCesiumToOL);
             return () => {
@@ -57,7 +66,6 @@ const useMapSync = () => {
 
     const syncCesiumToOL = () => {
         if (isCesiumSyncing.current) {
-
             const scene = cesiumViewer.scene;
             const canvas = scene.canvas;
 
@@ -97,7 +105,6 @@ const useMapSync = () => {
     const olResolutionHandler = () => {
 
         if (isOLSyncing.current) {
-
             const zoom = olView.getZoom();
             const center = olView.getCenter();
             const [lon, lat] = olProj.toLonLat(center as Coordinate);
