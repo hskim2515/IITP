@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useLayerStore } from "@stores/useLayerStore";
 import { useShallow } from "zustand/react/shallow";
-import BaseMapPopup from "./baseMapPopup";
+import BaseMapPopup from "./BaseMapPopup";
 
 interface LayerPopupProps {
     isOpen: boolean;

@@ -5,9 +5,8 @@ import { XYZ } from 'ol/source';
 import { useCesiumStore } from '@stores/useCesiumStore';
 import * as Cesium from "cesium";
 
-const LayerPopup = () => {
-
-    const layerOptions = [
+const BaseMapPopup = () => {
+    const BaseMapOptions = [
         { value: 'osm', label: 'OSM 지도' },
         { value: 'base', label: 'VWorld 일반지도' },
         { value: 'satellite', label: 'VWorld 위성지도' },
@@ -99,7 +98,7 @@ const LayerPopup = () => {
     return (
         <>
             <div>
-                {layerOptions.map(({value, label}) => (
+                {BaseMapOptions.map(({value, label}) => (
                     <label key={value}>
                         <input
                             type="radio"
@@ -115,4 +114,4 @@ const LayerPopup = () => {
     );
 };
 
-export default LayerPopup;
+export default BaseMapPopup;
