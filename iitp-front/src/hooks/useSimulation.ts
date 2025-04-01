@@ -27,6 +27,7 @@ const useSimulation = () => {
     const setCzml = useVehicleStore((state) => state.setCzml);
     const setVehicleData = useVehicleStore((state) => state.setVehicleData);
     const setVehicleRoute = useVehicleStore((state) => state.setVehicleRoute);
+
     const setFeatures = useVehicleStore((state) => state.setFeatures);
     const features = useVehicleStore((state) => state.features);
     const vehicleRoute = useVehicleStore((state) => state.vehicleRoute);
@@ -90,6 +91,45 @@ const useSimulation = () => {
         }
     }, [isRunning, isStop, speed, speedFactor]);
 
+    const updateTrip = (vehicleFeature) => {
+        if (!isRunning) return;
+
+        if (!tripLayerSourceRef.current) {
+            tripLayerSourceRef.current = tripLayer?.getSource();
+        }
+
+        const currentCoord = vehicleFeature.getGeometry().getCoordinates();
+        const tripFeatureId = vehicleFeature.getId() + "_trip";
+        let tripFeature = tripLayerSourceRef.current.getFeatureById(tripFeatureId);
+
+        if (!tripFeature) {
+            tripFeature = new Feature({
+                geometry: new LineString([currentCoord]),
+            });
+            tripFeature.setId(tripFeatureId);
+            tripLayerSourceRef.current.addFeature(tripFeature);
+        } else {
+            const currentTrail = tripFeature.getGeometry().getCoordinates();
+            currentTrail.push(currentCoord);
+            tripFeature.getGeometry().setCoordinates(currentTrail);
+        }
+    }
+
+// trip 배열 초기화를 위한 메서드
+    const resetToInitialPosition = () => {
+        const layer = tripLayer; // useLayerStore에서 가져온 tripLayer
+        if (!layer) {
+            console.warn("Trip layer is undefined.");
+            return;
+        }
+        const source = layer.getSource();
+        if (!source) {
+            console.warn("Trip layer source is undefined.");
+            return;
+        }
+        source.clear();
+    };
+
     useEffect(() => {
         fetch("http://localhost:8080/vehicle/generate-vehicle-route", { // generate-czml
             method: "POST",
@@ -102,9 +142,9 @@ const useSimulation = () => {
                 setVehicleData(newVehicleData);
                 setVehicleRoute(positions);
                 setFeatures(features);
+                resetToInitialPosition()
             });
     }, [numVehicle, speedFactor, viewer, map]);
-
 
     // OpenLayers: 각 차량 Feature의 현재 위치를 보간(interpolation)하여 업데이트하는 함수
     const updateCurrentVehiclePosition = (feature) => {
@@ -145,12 +185,14 @@ const useSimulation = () => {
         if (!olVehicleLayerSourceRef.current) return;
         olVehicleLayerSourceRef.current.getFeatures().forEach((feature) => {
             updateCurrentVehiclePosition(feature);
+            updateTrip(feature);
         });
         animationOlRef.current = requestAnimationFrame(updateOlSimulation);
     };
 
     // OpenLayers 애니메이션 제어: 재생(isRunning), 일시정지, 초기화(isStop) 조건 적용
     useEffect(() => {
+        if (!olVehicleLayerSourceRef.current) return;
         if (isRunning) {
             if (!animationOlRef.current) {
                 animationOlRef.current = requestAnimationFrame(updateOlSimulation);
@@ -162,6 +204,7 @@ const useSimulation = () => {
             }
         }
         if (isStop) {
+            resetToInitialPosition();
             if (olVehicleLayerSourceRef.current) {
                 const currentFeatures = olVehicleLayerSourceRef.current.getFeatures();
                 currentFeatures.forEach((feature) => {
@@ -251,67 +294,6 @@ const useSimulation = () => {
         return czml;
     }
 
-    // 회전 계산 함수
-    const applyRotation = (obj) => {
-        const segIndex = Math.floor(obj.animationIndex);
-        if (segIndex < obj.interpolatedPath.length - 1) {
-            const p0 = olProj.fromLonLat(obj.interpolatedPath[segIndex]);
-            const p1 = olProj.fromLonLat(obj.interpolatedPath[segIndex + 1]);
-            const dx = p1[0] - p0[0];
-            const dy = p1[1] - p0[1];
-            const computedAngle = Math.atan2(dx, dy);
-            if (obj.feature.get("rotation") !== computedAngle) {
-                obj.feature.set("rotation", computedAngle);
-            }
-        }
-    };
-
-    const updateTrail = (vehicleFeature, currentCoord) => {
-        let trail = vehicleFeature.get("trail") || [];
-        trail.push(currentCoord);
-
-        if(trail.length > 100) {
-            trail.shift();
-        }
-        vehicleFeature.set("trail", trail);
-    }
-
-    const updateVehicleAndTrail = (vehicle) => {
-        const currentCoord = vehicle.getGeometry().getCoordinates();
-        // trail 배열 업데이트
-        updateTrail(vehicle, currentCoord);
-
-        // trailFeature 업데이트: 차량의 'trail' 속성에 저장된 좌표를 사용해 LineString 피처로 표현
-        const trail = vehicle.get("trail");
-
-        let trailFeature = vehicle.get("trailFeature");
-        if (!trailFeature) {
-            // 새로운 trailFeature 생성
-            trailFeature = new Feature({
-                geometry: new LineString(trail),
-            });
-            //trailLayer.getSource().addFeature(trailFeature);
-            vehicle.set("trailFeature", trailFeature);
-        } else {
-            // 기존 trailFeature의 geometry 좌표 업데이트
-            trailFeature.getGeometry().setCoordinates(trail);
-        }
-    };
-
-    // 화면 내 차량에 대해 상세한 애니메이션(회전 계산 등)을 적용하는 함수
-    const applyDetailedAnimation = (vehicle) => {
-        const routeFeature = vehicle.get("routeFeature");
-        //const coords = routeFeature.getGeometry().getCoordinates();
-        const currentIndex = vehicle.get("currentIndex");
-        const progress = vehicle.get("progress");
-        const animationIndex = currentIndex + progress;
-        applyRotation({
-            interpolatedPath: routeFeature,
-            animationIndex: animationIndex,
-            feature: vehicle,
-        });
-    };
-
     const animate = () => {
         if (!isRunning) return;
 
@@ -327,58 +309,13 @@ const useSimulation = () => {
             }
 
             if (now - lastUpdate >= updateInterval) {
-                updateVehiclePosition(vehicle);
                 vehicle.set("lastUpdateTime", now);
-                updateVehicleAndTrail(vehicle);
+                updateTrip(vehicle)
             }
 
-            applyDetailedAnimation(vehicle);
         });
 
         animationRef.current = requestAnimationFrame(animate);
-    };
-
-    const resetToInitialPosition = () => {
-        const vehicleFeatures = vehicleSourceRef.current.getFeatures();
-        vehicleFeatures.forEach((vehicle) => {
-            const initialPosition = vehicle.get("initialPosition");
-            if (initialPosition) {
-                vehicle.getGeometry().setCoordinates(initialPosition);
-            }
-        });
-    };
-
-    const updateVehiclePosition = (vehicle) => {
-        let coords = vehicle.get("routeFeature");
-        let currentIndex = vehicle.get("currentIndex");
-        let progress = vehicle.get("progress");
-
-        if (currentIndex >= coords.length - 1) {
-            return;
-        }
-
-        const stepSize = 18 / speedFactor;
-        progress += stepSize;
-
-        if (progress >= 1) {
-            progress = 0;
-            currentIndex = Math.min(currentIndex + 1, coords.length - 1);
-        }
-
-        vehicle.set("currentIndex", currentIndex);
-        vehicle.set("progress", progress);
-
-        const start = olProj.fromLonLat(coords[currentIndex]);
-        let end = start;
-
-        if (coords[currentIndex + 1]) {
-            end = olProj.fromLonLat(coords[currentIndex + 1]) || start;
-        }
-
-        const interpX = start[0] + (end[0] - start[0]) * Math.sin(progress * Math.PI * 0.5);
-        const interpY = start[1] + (end[1] - start[1]) * Math.sin(progress * Math.PI * 0.5);
-
-        vehicle.setGeometry(new Point([interpX, interpY]));
     };
 
     const setCesiumSimulation = (updateFrameFunc) => {
@@ -493,6 +430,7 @@ const useSimulation = () => {
         olVehicleLayerSourceRef.current = olVehicleLayer.getSource();
         // 기존 feature 제거 (차량 수 변경에 따른 초기화)
         olVehicleLayerSourceRef.current.clear();
+        resetToInitialPosition();
 
         const vehicleFeatures = features.map((feature, idx) => {
             const { geometry } = feature;
