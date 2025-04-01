@@ -7,6 +7,11 @@ import OSM from "ol/source/OSM";
 import {useCesiumStore} from "@stores/useCesiumStore";
 import {Cartesian3, UrlTemplateImageryProvider, Viewer} from "cesium";
 import * as Cesium from "cesium";
+import { Group, Heatmap } from "ol/layer";
+import VectorSource from "ol/source/Vector";
+import WebGLVectorLayer from "ol/layer/WebGLVector";
+import { useLayerStore } from "@stores/useLayerStore";
+import VectorLayer from "ol/layer/Vector";
 
 
 const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
@@ -16,6 +21,11 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
 
     const setViewer = useCesiumStore((state) => state.setViewer);
     const lodLevels = [1.0, 0.5, 0.2];
+
+    const setOlVehicleLayer = useLayerStore((state) => state.setOlVehicleLayer);
+    const setHeatmapLayer = useLayerStore((state) => state.setHeatmapLayer);
+    const setTripLayer = useLayerStore((state) => state.setTripLayer);
+    const vehicleVectorSource = new VectorSource();
 
     const heatmapRectangleRef = useRef(null);
     const heatmapCanvasRef = useRef(null);
@@ -31,6 +41,67 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
         openlayersMapInit();
         cesiumMapInit();
     }, []);
+
+    const olVehicleLayerInit = () => {
+        const layer =
+            new WebGLVectorLayer({
+                source: vehicleVectorSource,
+                style: {
+                    'circle-radius': 5,
+                    'circle-fill-color': 'rgb(84,182,255)',
+                    'circle-stroke-color': '#ffffff',
+                    'circle-stroke-width': 2,
+                },
+                zIndex: 110,
+            });
+        layer.set("customName", "vehicle")
+        setOlVehicleLayer(layer)
+        return layer
+    }
+
+    const heatmapLayerInit = () => {
+        const layer =
+            new Heatmap({
+                source: vehicleVectorSource,
+                blur: 15,
+                radius: 8,
+                weight: () => 1,
+                visible: false,
+                zIndex: 220
+            })
+        layer.set("customName", "heatmap")
+        setHeatmapLayer(layer)
+        return layer;
+    }
+
+    const tripLayerInit = () => {
+        const layer =
+            new WebGLVectorLayer({
+                source: new VectorSource(),
+                style: {
+                    'stroke-color': 'rgba(0,0,0,0.15)',
+                    'stroke-width': 2,
+                },
+                visible: false,
+                zIndex: 10
+            })
+        layer.set("customName", "trip")
+        setTripLayer(layer)
+        return layer;
+    }
+
+    const layerGroupInit = () => {
+        // heatmap과 trip 레이어 생성
+        const heatmapLayer = heatmapLayerInit();
+        const tripLayer = tripLayerInit();
+
+        // 두 레이어를 포함하는 그룹 생성
+        const group = new Group({
+            layers: [heatmapLayer, tripLayer],
+        });
+        group.set("customGroupName", "layer");
+        return group;
+    };
 
     const openlayersMapInit = () => {
         if (openlayersMapRef.current) {
@@ -51,6 +122,9 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
 
             setMap(olMap);
             setView(olView);
+
+            olMap.addLayer(olVehicleLayerInit())
+            olMap.addLayer(layerGroupInit())
         }
     }
 
