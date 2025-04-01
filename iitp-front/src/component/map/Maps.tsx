@@ -6,9 +6,9 @@ import { usePanelStore } from "@stores/usePanelStore";
 import useMapInit from "../../hooks/useMapInit";
 import useSimulation from "../../hooks/useSimulation";
 import useMapSync from "../../hooks/useMapSync";
+import useLayer from "../../hooks/useLayer";
 
 const Maps = () => {
-
 
     const openlayersMapRef = useRef(null);
     const cesiumMapRef = useRef(null);
@@ -21,6 +21,7 @@ const Maps = () => {
     useSimulation();
     useMapSync();
     useMapInit(openlayersMapRef, cesiumMapRef);
+    useLayer();
 
     return (
 

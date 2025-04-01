@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { useLayerStore } from "@stores/useLayerStore";
+import { useShallow } from "zustand/react/shallow";
 
 interface LayerPopupProps {
     isOpen: boolean;
@@ -9,10 +11,31 @@ const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
 
     const [activeTab, setActiveTab] = useState(0); // 기본적으로 첫 번째 탭 활성화
 
+    const setActiveLayerName = useLayerStore(useShallow((state) => state.setActiveLayerName));
+    const setActiveLayerGroupName = useLayerStore(useShallow((state) => state.setActiveLayerGroupName));
+
     // 각 탭을 클릭할 때 활성화하는 함수
     const handleTabClick = (index: number) => {
         setActiveTab(index);
     };
+
+    const handleLayer = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const value = event.target.value;
+        switch (value) {
+            case "heatmap":
+                setActiveLayerName("heatmap");
+                setActiveLayerGroupName("layer");
+                break;
+            case "trip":
+                setActiveLayerName("trip");
+                setActiveLayerGroupName("layer");
+                break;
+            default:
+                setActiveLayerName(null);
+                setActiveLayerGroupName("layer");
+                break;
+        }
+    }
 
     return (
         <>
@@ -97,7 +120,7 @@ const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
             </style>
 
             <div className="layer-popup">
-                <h3>레이어 관리</h3>
+                {/*<h3>레이어 관리</h3>*/}
 
                 <div className="tabs">
                     <button
@@ -110,7 +133,7 @@ const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
                         className={`tab ${activeTab === 1 ? 'active' : ''}`}
                         onClick={() => handleTabClick(1)}
                     >
-                        주제도
+                        레이어
                     </button>
                     <button
                         className={`tab ${activeTab === 2 ? 'active' : ''}`}
@@ -140,21 +163,21 @@ const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
                 {activeTab === 1 && (
                     <div>
                         <label>
-                            <input type="radio" name="themeLayer" value="themeLayer1" />
-                            주제도 1
+                            <input type="radio" name="layer" value="" onChange={ handleLayer }/>
+                            선택안함
                         </label>
                         <label>
-                            <input type="radio" name="themeLayer" value="themeLayer2" />
-                            주제도 2
+                            <input type="radio" name="layer" value="heatmap" onChange={ handleLayer }/>
+                            히트맵 레이어
                         </label>
                         <label>
-                            <input type="radio" name="themeLayer" value="themeLayer3" />
-                            주제도 3
+                            <input type="radio" name="layer" value="trip" onChange={ handleLayer }/>
+                            트립 레이어
                         </label>
                     </div>
-                )}
+                ) }
 
-                {activeTab === 2 && (
+                { activeTab === 2 && (
                     <div>
                         <label>
                             <input type="radio" name="facilityLayer" value="facility1" />
