@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useLayerStore } from "@stores/useLayerStore";
 import { useShallow } from "zustand/react/shallow";
+import BaseMapPopup from "./baseMapPopup";
 
 interface LayerPopupProps {
     isOpen: boolean;
@@ -9,12 +10,11 @@ interface LayerPopupProps {
 const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
     if (!isOpen) return null;
 
-    const [activeTab, setActiveTab] = useState(0); // 기본적으로 첫 번째 탭 활성화
+    const [activeTab, setActiveTab] = useState(0);
 
     const setActiveLayerName = useLayerStore(useShallow((state) => state.setActiveLayerName));
     const setActiveLayerGroupName = useLayerStore(useShallow((state) => state.setActiveLayerGroupName));
 
-    // 각 탭을 클릭할 때 활성화하는 함수
     const handleTabClick = (index: number) => {
         setActiveTab(index);
     };
@@ -144,20 +144,7 @@ const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
                 </div>
 
                 {activeTab === 0 && (
-                    <div>
-                        <label>
-                            <input type="radio" name="wmtsLayer" value="vworldBase" />
-                            브이월드 일반
-                        </label>
-                        <label>
-                            <input type="radio" name="wmtsLayer" value="vworldSatellite" />
-                            브이월드 위성
-                        </label>
-                        <label>
-                            <input type="radio" name="wmtsLayer" value="vworldHybrid" />
-                            브이월드 하이브리드
-                        </label>
-                    </div>
+                    <BaseMapPopup/>
                 )}
 
                 {activeTab === 1 && (
