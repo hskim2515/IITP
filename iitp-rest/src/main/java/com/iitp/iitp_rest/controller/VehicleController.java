@@ -151,6 +151,218 @@ public class VehicleController {
 
         return ResponseEntity.ok(response);
     }
+    /**
+     *  - "czml" 대신 GeoJSON FeatureCollection을 반환.
+     *  - 각 Feature의 properties에 "timePositions" 배열을 담아, 시간 흐름에 따른 (x, y, z) 좌표를 기록.
+     *  - geometry는 LineString으로, [lon, lat, height]를 전부 담아서 경로 표시도 가능하게 함.
+     *  - "newVehicleData", "positions" 등은 [generateCzml]과 동일하게 함께 반환.
+     */
+    @PostMapping("/generate-features")
+    public ResponseEntity<Map<String, Object>> generateFeature(@RequestBody VehicleRequest request) {
+        List<Vehicle> vehicleDataList = new ArrayList<>();
+        List<List<Cartesian3>> vehiclePathList = new ArrayList<>();
+
+        // 기본 FeatureCollection 구조
+        Map<String, Object> featureCollection = new HashMap<>();
+        featureCollection.put("type", "FeatureCollection");
+        List<Map<String, Object>> featureList = new ArrayList<>();
+
+        Network network = networkRepository.findById(1L).orElse(null);
+        if (network == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Network data not found"));
+        }
+
+        List<Road> roadEntities = GeoJsonUtils.parseGeoJsonToRoads(network.getGeojson());
+        Map<Cartesian3, List<Road>> roadConnections = buildRoadConnections(roadEntities);
+
+        Random random = new Random();
+
+        for (int i = 0; i < request.getNumVehicle(); i++) {
+            Road startRoad = roadEntities.get(random.nextInt(roadEntities.size()));
+            List<Cartesian3> path = buildConnectedPath(startRoad, roadConnections, 2);
+            if (path == null || path.isEmpty()) {
+                continue;
+            }
+
+            // (A) geometry.coordinates: [ [lon, lat, height], ... ]
+            List<List<Double>> lineCoordinates = new ArrayList<>();
+            // (B) times: 인덱스별 시간(초)
+            List<Double> times = new ArrayList<>();
+
+            Instant startTime = Instant.now();
+            for (int j = 0; j < path.size(); j++) {
+                // coords
+                Cartesian3 pos = path.get(j);
+                lineCoordinates.add(Arrays.asList(pos.getX(), pos.getY(), pos.getZ()));
+
+                // times
+                Instant thisTime = startTime.plusSeconds(j * request.getSpeedFactor());
+                double t = Duration.between(startTime, thisTime).getSeconds();
+                times.add(t);
+            }
+
+            // LineString geometry
+            Map<String, Object> geometry = new HashMap<>();
+            geometry.put("type", "LineString");
+            geometry.put("coordinates", lineCoordinates);
+
+            // properties
+            String vehicleId = "vehicle" + i;
+            Map<String, Object> props = new HashMap<>();
+            props.put("id", vehicleId);
+            props.put("times", times); // 여기에는 시간만 기록
+
+            Map<String, Object> feature = new HashMap<>();
+            feature.put("type", "Feature");
+            feature.put("geometry", geometry);
+            feature.put("properties", props);
+            featureList.add(feature);
+
+            // 기존 vehicleDataList / positions
+            double lon = path.get(0).getX();
+            double lat = path.get(0).getY();
+            double height = path.get(0).getZ();
+            vehiclePathList.add(path);
+
+            vehicleDataList.add(new Vehicle(vehicleId, lon, lat, height, "point"));
+        }
+
+        featureCollection.put("features", featureList);
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("features", featureCollection);
+        response.put("newVehicleData", vehicleDataList);
+        response.put("positions", vehiclePathList);
+
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     *  Cesium용 "czml" OpenLayers용 "features" 통합
+     *  공통 "positions", "newVehicleData"를 한 번에 생성해 반환.
+     */
+    @PostMapping("/generate-vehicle-route")
+    public ResponseEntity<Map<String, Object>> generateVehicleRoute(@RequestBody VehicleRequest request) {
+        // 1) Network 가져오기
+        Network network = networkRepository.findById(1L).orElse(null);
+        if (network == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Network data not found"));
+        }
+
+        // 2) Road 및 연결 정보 파싱
+        List<Road> roadEntities = GeoJsonUtils.parseGeoJsonToRoads(network.getGeojson());
+        Map<Cartesian3, List<Road>> roadConnections = buildRoadConnections(roadEntities);
+
+        // 3) 차량 경로 계산
+        //    (하나의 공통 로직으로 모든 경로(path)를 구한 뒤, 그 결과를
+        //     CZML 과 FeatureCollection 으로 각각 가공)
+        List<Map<String, Object>> czml = new ArrayList<>();
+        List<Map<String, Object>> featureList = new ArrayList<>();
+        List<Vehicle> vehicleDataList = new ArrayList<>();
+        List<List<Cartesian3>> vehiclePathList = new ArrayList<>();
+
+        // 3-1) CZML 문서 정의 (맨 앞에 document)
+        czml.add(Map.of(
+                "id", "document",
+                "name", "Vehicle Movement",
+                "version", "1.0"
+        ));
+
+        Random random = new Random();
+        Instant globalStart = Instant.now();  // 전체 시뮬레이션 시작 시각(옵션)
+
+        for (int i = 0; i < request.getNumVehicle(); i++) {
+            // 무작위 도로 선택
+            Road startRoad = roadEntities.get(random.nextInt(roadEntities.size()));
+            // 차량 경로(positions) 생성
+            List<Cartesian3> path = buildConnectedPath(startRoad, roadConnections, 2);
+
+            if (path == null || path.isEmpty()) {
+                continue;
+            }
+
+            // 공통 positions, vehicleDataList 구성
+            vehiclePathList.add(path);
+
+            String vehicleId = "vehicle" + i;
+            double lonStart = path.get(0).getX();
+            double latStart = path.get(0).getY();
+            double heightStart = path.get(0).getZ();
+            vehicleDataList.add(new Vehicle(vehicleId, lonStart, latStart, heightStart, "point"));
+
+            // (A) CZML 관련 데이터 구성
+            List<Double> cartesianArray = new ArrayList<>();
+            Instant startTime = Instant.now();
+            Instant stopTime = startTime.plusSeconds(100000);
+
+            for (int j = 0; j < path.size(); j++) {
+                Instant time = startTime.plusSeconds(j * request.getSpeedFactor());
+                double seconds = Duration.between(startTime, time).getSeconds();
+
+                // ECEF 변환
+                Cartesian3 ecef = Cartesian3.fromDegrees(
+                        path.get(j).getX(),
+                        path.get(j).getY(),
+                        path.get(j).getZ()
+                );
+
+                cartesianArray.add(seconds);         // time
+                cartesianArray.add(ecef.getX());     // x
+                cartesianArray.add(ecef.getY());     // y
+                cartesianArray.add(ecef.getZ());     // z
+            }
+
+            Map<String, Object> czmlObj = new HashMap<>();
+            czmlObj.put("id", vehicleId);
+            czmlObj.put("availability", startTime.toString() + "/" + stopTime.toString());
+            Map<String, Object> position = new HashMap<>();
+            position.put("epoch", startTime.toString());
+            position.put("interpolationAlgorithm", "LINEAR");
+            position.put("interpolationDegree", 2);
+            position.put("cartesian", cartesianArray);
+            czmlObj.put("position", position);
+            czmlObj.put("orientation", Map.of("velocityReference", "#position"));
+            czmlObj.put("point", Map.of("outlineWidth", 1, "pixelSize", 10));
+
+            czml.add(czmlObj);
+
+            // (B) OpenLayers용 Feature (LineString + properties)
+            List<List<Double>> lineCoordinates = new ArrayList<>();
+            for (Cartesian3 p : path) {
+                lineCoordinates.add(Arrays.asList(p.getX(), p.getY(), p.getZ()));
+            }
+
+            Map<String, Object> geometry = new HashMap<>();
+            geometry.put("type", "LineString");
+            geometry.put("coordinates", lineCoordinates);
+
+            List<List<Double>> positionsInterval = new ArrayList<>();
+            for (int j = 0; j < path.size(); j++) {
+                Instant time = startTime.plusSeconds(j * request.getSpeedFactor());
+                double seconds = Duration.between(startTime, time).getSeconds();
+                positionsInterval.add(Arrays.asList(seconds));
+            }
+
+            Map<String, Object> properties = new HashMap<>();
+            properties.put("id", vehicleId);
+            properties.put("availability", startTime.toString() + "/" + stopTime.toString());
+            properties.put("positionsInterval", positionsInterval);
+
+            Map<String, Object> feature = new HashMap<>();
+            feature.put("geometry", geometry);
+            feature.put("properties", properties);
+            featureList.add(feature);
+        }
+
+        // response 구성
+        Map<String, Object> response = new HashMap<>();
+        response.put("czml", czml);  // Cesium용
+        response.put("features", featureList);  // OpenLayers용
+        response.put("positions", vehiclePathList);   // 공통
+        response.put("newVehicleData", vehicleDataList); // 공통
+
+        return ResponseEntity.ok(response);
+    }
 
     @PostMapping("/generate-vehicle")
     public ResponseEntity<Map<String, Object>> generateVehicle(@RequestBody VehicleRequest request) {
@@ -393,4 +605,3 @@ public class VehicleController {
 
 
 }
-
