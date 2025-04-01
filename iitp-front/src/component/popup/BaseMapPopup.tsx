@@ -4,6 +4,7 @@ import { Tile as TileLayer } from 'ol/layer';
 import { XYZ } from 'ol/source';
 import { useCesiumStore } from '@stores/useCesiumStore';
 import * as Cesium from "cesium";
+import {useMapStore} from "@stores/useMapStore";
 
 const BaseMapPopup = () => {
     const BaseMapOptions = [
@@ -28,11 +29,11 @@ const BaseMapPopup = () => {
 
     /* ol */
     const olMap = useOpenLayersStore((state) => state.map);
-    const currentLayer = useOpenLayersStore((state) => state.currentLayer);
-    const setCurrentLayer = useOpenLayersStore((state) => state.setCurrentLayer);
+    const currentBaseMap = useMapStore((state) => state.currentBaseMap);
+    const setCurrentBaseMap = useMapStore((state) => state.setCurrentBaseMap);
     /* cesium */
     const viewer = useCesiumStore((state) => state.viewer);
-    const [selectedLayer, setSelectedLayer] = useState(currentLayer);
+    const [selectedLayer, setSelectedLayer] = useState<string | null>(currentBaseMap);
 
     const updateOlLayer = (layerType) => {
         if (!olMap) return;
@@ -46,7 +47,7 @@ const BaseMapPopup = () => {
             const newLayer = createOlLayer(layerType);
             olMap.addLayer(newLayer);
         }
-        setCurrentLayer(layerType);
+        setCurrentBaseMap(layerType);
     };
 
     const createOlLayer = (layerType:string) => {
@@ -63,7 +64,7 @@ const BaseMapPopup = () => {
         removeAllCustomLayers();
 
          if (layerType === 'hybrid') {
-            const satelliteProvider = new Cesium.UrlTemplateImageryProvider({ url: sourceMap['satellite'] });
+            const satelliteProvider = new Cesium.UrlTemplateImageryProvider({ url: sourceMap['satellite']});
             const hybridProvider = new Cesium.UrlTemplateImageryProvider({ url: sourceMap['hybrid'] });
 
             const satelliteLayer = imageryLayerCollection.addImageryProvider(satelliteProvider);
@@ -92,8 +93,10 @@ const BaseMapPopup = () => {
     };
 
     useEffect(() => {
-        setSelectedLayer(currentLayer);
-    }, [currentLayer]);
+        if (currentBaseMap) {
+            setSelectedLayer(currentBaseMap);
+        }
+    }, [currentBaseMap]);
 
     return (
         <>
