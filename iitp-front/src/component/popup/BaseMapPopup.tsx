@@ -5,6 +5,7 @@ import { XYZ } from 'ol/source';
 import { useCesiumStore } from '@stores/useCesiumStore';
 import * as Cesium from "cesium";
 import {useMapStore} from "@stores/useMapStore";
+import {createCesiumLayer, createOlLayer} from "../../hooks/basemap/useBaseMap";
 
 const BaseMapPopup = () => {
     const BaseMapOptions = [
@@ -13,20 +14,6 @@ const BaseMapPopup = () => {
         { value: 'satellite', label: 'VWorld 위성지도' },
         { value: 'hybrid', label: 'VWorld Hybrid지도' }
     ];
-
-    const apiKey = 'A6260B9D-ADEA-36CE-8000-4C4C57D4FCF5';
-
-    type SourceMap = {
-        [key: string]: string;
-    };
-
-    const sourceMap:SourceMap = {
-        'osm' : `https://a.tile.thunderforest.com/transport-dark/{z}/{x}/{y}.png`,
-        'base': `http://api.vworld.kr/req/wmts/1.0.0/${apiKey}/Base/{z}/{y}/{x}.png`,
-        'satellite': `http://api.vworld.kr/req/wmts/1.0.0/${apiKey}/Satellite/{z}/{y}/{x}.jpeg`,
-        'hybrid': `http://api.vworld.kr/req/wmts/1.0.0/${apiKey}/Hybrid/{z}/{y}/{x}.png`,
-    };
-
     /* ol */
     const olMap = useOpenLayersStore((state) => state.map);
     const currentBaseMap = useMapStore((state) => state.currentBaseMap);
@@ -50,30 +37,20 @@ const BaseMapPopup = () => {
         setCurrentBaseMap(layerType);
     };
 
-    const createOlLayer = (layerType:string) => {
-        const url = sourceMap[layerType] || '';
-        return new TileLayer({ visible: true, source: new XYZ({ url }),});
-    };
-
     let addedCesiumLayers: Cesium.ImageryLayer[] = [];
-    const updateCesiumLayer = (layerType:string) => {
+    const updateCesiumLayer = (layerType) => {
         if (!viewer) return;
 
         const imageryLayerCollection = viewer.imageryLayers;
-
         removeAllCustomLayers();
 
-         if (layerType === 'hybrid') {
-            const satelliteProvider = new Cesium.UrlTemplateImageryProvider({ url: sourceMap['satellite']});
-            const hybridProvider = new Cesium.UrlTemplateImageryProvider({ url: sourceMap['hybrid'] });
-
-            const satelliteLayer = imageryLayerCollection.addImageryProvider(satelliteProvider);
-            const hybridLayer = imageryLayerCollection.addImageryProvider(hybridProvider);
+        if (layerType === 'hybrid') {
+            const satelliteLayer = imageryLayerCollection.addImageryProvider(createCesiumLayer('satellite'));
+            const hybridLayer = imageryLayerCollection.addImageryProvider(createCesiumLayer('hybrid'));
 
             addedCesiumLayers.push(satelliteLayer, hybridLayer);
         } else {
-            const provider = new Cesium.UrlTemplateImageryProvider({ url: sourceMap[layerType] });
-            const newLayer = imageryLayerCollection.addImageryProvider(provider);
+            const newLayer = imageryLayerCollection.addImageryProvider(createCesiumLayer(layerType));
             addedCesiumLayers.push(newLayer);
         }
     };
