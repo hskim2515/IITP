@@ -1,11 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useOpenLayersStore } from '@stores/useOpenLayersStore';
-import { Tile as TileLayer } from 'ol/layer';
-import { XYZ } from 'ol/source';
 import { useCesiumStore } from '@stores/useCesiumStore';
-import * as Cesium from "cesium";
 import {useMapStore} from "@stores/useMapStore";
-import {createCesiumLayer, createOlLayer} from "../../hooks/basemap/useBaseMap";
+import {createCesiumLayer, createOlLayer, removeAllCesiumLayers} from "../../hooks/basemap/useBaseMap";
 
 const BaseMapPopup = () => {
     const BaseMapOptions = [
@@ -22,7 +19,7 @@ const BaseMapPopup = () => {
     const viewer = useCesiumStore((state) => state.viewer);
     const [selectedLayer, setSelectedLayer] = useState<string | null>(currentBaseMap);
 
-    const updateOlLayer = (layerType) => {
+    const updateOlLayer = (layerType:string) => {
         if (!olMap) return;
         olMap.getLayers().clear();
         if (layerType === 'hybrid') {
@@ -37,29 +34,19 @@ const BaseMapPopup = () => {
         setCurrentBaseMap(layerType);
     };
 
-    let addedCesiumLayers: Cesium.ImageryLayer[] = [];
-    const updateCesiumLayer = (layerType) => {
+    const updateCesiumLayer = (layerType:string) => {
         if (!viewer) return;
 
         const imageryLayerCollection = viewer.imageryLayers;
-        removeAllCustomLayers();
+        removeAllCesiumLayers(viewer);
 
         if (layerType === 'hybrid') {
-            const satelliteLayer = imageryLayerCollection.addImageryProvider(createCesiumLayer('satellite'));
-            const hybridLayer = imageryLayerCollection.addImageryProvider(createCesiumLayer('hybrid'));
+            imageryLayerCollection.addImageryProvider(createCesiumLayer('satellite'));
+            imageryLayerCollection.addImageryProvider(createCesiumLayer('hybrid'));
 
-            addedCesiumLayers.push(satelliteLayer, hybridLayer);
         } else {
-            const newLayer = imageryLayerCollection.addImageryProvider(createCesiumLayer(layerType));
-            addedCesiumLayers.push(newLayer);
+            imageryLayerCollection.addImageryProvider(createCesiumLayer(layerType));
         }
-    };
-
-    const removeAllCustomLayers = () => {
-        addedCesiumLayers.forEach(layer => {
-            viewer.imageryLayers.remove(layer);
-        });
-        addedCesiumLayers = [];
     };
 
     const handleLayerChange = (e) => {

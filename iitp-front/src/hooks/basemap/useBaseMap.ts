@@ -23,3 +23,10 @@ export const createOlLayer = (layerType:string) => {
 export const createCesiumLayer = (layerType:string) => {
     return new Cesium.UrlTemplateImageryProvider({ url: sourceMap[layerType] });
 };
+export const removeAllCesiumLayers = (viewer:Cesium.Viewer) => {
+    const imageryLayers = viewer.imageryLayers;
+
+    while (imageryLayers.length > 1) {
+        imageryLayers.remove(imageryLayers.get(1));
+    }
+};
