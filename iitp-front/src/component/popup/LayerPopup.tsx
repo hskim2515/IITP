@@ -12,26 +12,42 @@ const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
 
     const [activeTab, setActiveTab] = useState(0);
 
-    const setActiveLayerName = useLayerStore(useShallow((state) => state.setActiveLayerName));
+    //const setActiveLayerName = useLayerStore(useShallow((state) => state.setActiveLayerName));
     const setActiveLayerGroupName = useLayerStore(useShallow((state) => state.setActiveLayerGroupName));
 
     const handleTabClick = (index: number) => {
         setActiveTab(index);
     };
 
+    const {
+        addActiveLayerName,
+        removeActiveLayerName,
+        toggleActiveLayerGroupName,
+        activeLayerName,
+    } = useLayerStore();
+
     const handleLayer = (event: React.ChangeEvent<HTMLInputElement>) => {
         const value = event.target.value;
+        const checked = event.target.checked;
         switch (value) {
             case "heatmap":
-                setActiveLayerName("heatmap");
+                if(checked){
+                    addActiveLayerName("heatmap");
+                }else{
+                    removeActiveLayerName("heatmap");
+                }
                 setActiveLayerGroupName("layer");
                 break;
             case "trip":
-                setActiveLayerName("trip");
+                if(checked){
+                    addActiveLayerName("trip");
+                }else{
+                    removeActiveLayerName("trip");
+                }
                 setActiveLayerGroupName("layer");
                 break;
             default:
-                setActiveLayerName(null);
+                addActiveLayerName(null);
                 setActiveLayerGroupName("layer");
                 break;
         }
@@ -149,16 +165,16 @@ const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
 
                 {activeTab === 1 && (
                     <div>
+                        {/*<label>*/}
+                        {/*    <input type="checkbox" name="layer" checked={activeLayerName?.includes("") ?? false} value="" onChange={ handleLayer }/>*/}
+                        {/*    선택안함*/}
+                        {/*</label>*/}
                         <label>
-                            <input type="radio" name="layer" value="" onChange={ handleLayer }/>
-                            선택안함
-                        </label>
-                        <label>
-                            <input type="radio" name="layer" value="heatmap" onChange={ handleLayer }/>
+                            <input type="checkbox" name="layer" checked={activeLayerName?.includes("heatmap") ?? false} value="heatmap" onChange={ handleLayer }/>
                             히트맵 레이어
                         </label>
                         <label>
-                            <input type="radio" name="layer" value="trip" onChange={ handleLayer }/>
+                            <input type="checkbox" name="layer" checked={activeLayerName?.includes("trip") ?? false} value="trip" onChange={ handleLayer }/>
                             트립 레이어
                         </label>
                     </div>

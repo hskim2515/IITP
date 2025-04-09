@@ -1,19 +1,25 @@
 import * as Cesium from "cesium";
 
 export default class VehicleDensityPrimitive {
-    constructor(positions, context) {
+    constructor(positions, context, speed, status) {
         this.positions = positions; // CZML에서 가져온 positions
-        this.currentIndex = 0;
+        this.speed = speed;
         this.ready = false;
         this.context = context;
         this.destroyed = false; // 객체가 제거되었는지 여부를 추적
-        this.progress = 0;
+        this.progress = [];
+        this.status = status;
+        this.previousTime = [] // 마지막 업데이트 시간
+        this.currentIndex = [];
 
         this.createResources();
     }
     createResources() {
         // 초기 위치 설정
         const initialPositions = this.positions[0]
+        this.progress = new Array(this.positions[0].length).fill(0);
+        this.currentIndex = new Array(this.positions[0].length).fill(0);
+        this.previousTime = new Array(this.positions[0].length).fill(performance.now());
         let positionsArray = new Float32Array(initialPositions.length * 3);
 
         for (let i = 0; i < initialPositions.length; i++) {
@@ -120,65 +126,78 @@ export default class VehicleDensityPrimitive {
     update(frameState) {
         if (this.destroyed) return;
 
-        if (!this.positions || this.positions.length < 2) {
-            console.error("🚨 경로 데이터가 부족합니다.");
+
+
+        if(!this.status || this.startPosition ==undefined) {
+            frameState.commandList.push(this.drawCommand);
             return;
         }
 
-        if (this.progress >= 1) {
-            this.progress = 0;
-            this.currentIndex++;
-        } else {
-            let startPosition = this.positions[this.currentIndex];
-            const nextIndex = this.currentIndex + 1;
-            let endPosition = this.positions[nextIndex];
+        const targetPositionArr = []
 
-            if (!startPosition || !endPosition) {
-                return;
-            }
+        for(let i = 0; i < this.startPosition.length; ++i) {
 
-            this.progress += 0.01;
-            if (this.progress > 1) this.progress = 1;
+            let startPosition = this.positions[this.currentIndex[i]];
+            let endPosition = this.positions[this.currentIndex[i]+1];
 
-            const interpolatedPosition = startPosition.map((position, i) => {
-                let result = new Cesium.Cartesian3();
-                if(i != startPosition.length-1){
-                    let end = position
-                    if(endPosition[i])
-                        end = endPosition[i]
-                    Cesium.Cartesian3.lerp(position, end, this.progress, result);
-                    return result
-                }
-            });
+            if (this.progress[i] >= 1) {
+                this.progress[i] = 0;
+                this.currentIndex[i] = this.currentIndex[i] + 1;
+            } else {
+                if(startPosition[i] == null || !endPosition || endPosition[i] == null){
+                    targetPositionArr.push(null)
+                }else{
+                    const speedMps = this.speed / 3.6; // km/h -> m/s
 
-            let positionsArray = new Float32Array(interpolatedPosition.length * 3);
+                    // 이동 시간 계산 (속도와 거리로부터 시간 계산)
+                    const distance = Cesium.Cartesian3.distance(startPosition[i], endPosition[i]); // m 단위
+                    const timeToTravel = distance / speedMps; // 이동 시간 (초 단위)
 
-            for (let i = 0; i < interpolatedPosition.length-1; i++) {
-                positionsArray[i * 3] = interpolatedPosition[i].x;
-                positionsArray[i * 3 + 1] = interpolatedPosition[i].y;
-                positionsArray[i * 3 + 2] = interpolatedPosition[i].z;
-            }
+                    const currentTimestamp = performance.now();
+                    const deltaTime = (currentTimestamp - this.previousTime[i]) / 1000; // 시간 차이 (초 단위)
+                    this.previousTime[i] = currentTimestamp;
 
-            this.vertexBuffer.copyFromArrayView(positionsArray);
+                    this.progress[i] += (deltaTime / timeToTravel); // 시간에 비례하여 progress 증가
 
-            this.drawCommand.uniformMap = {
-                u_modelViewProjectionMatrix: () => this.context.uniformState.modelViewProjection,
-                u_positions: () => {
-                    let vec3Array = [];
-                    for (let i = 0; i < interpolatedPosition.length-1; i++) {
-                        vec3Array.push(new Cesium.Cartesian3(
-                            interpolatedPosition[i].x,
-                            interpolatedPosition[i].y,
-                            interpolatedPosition[i].z
-                        ));
+                    if (this.progress[i] > 1) {
+                        this.progress[i] = 1; // 최대값 제한
                     }
-                    return vec3Array; // ✅ GLSL에서 vec3 배열로 받을 수 있음
-                },
-                u_numPoints: () => interpolatedPosition.length,
-            };
+
+                    let interpolatedPosition = new Cesium.Cartesian3();
+                    Cesium.Cartesian3.lerp(startPosition[i], endPosition[i], this.progress[i], interpolatedPosition);
+                    targetPositionArr.push(interpolatedPosition)
+                    this.vertexBuffer.copyFromArrayView(interpolatedPosition);
+
+                    this.drawCommand.uniformMap = {
+                        u_modelViewProjectionMatrix: () => this.context.uniformState.modelViewProjection,
+                        u_positions: () => {
+                            let vec3Array = [];
+                            for (let i = 0; i < interpolatedPosition.length-1; i++) {
+                                vec3Array.push(new Cesium.Cartesian3(
+                                    interpolatedPosition[i].x,
+                                    interpolatedPosition[i].y,
+                                    interpolatedPosition[i].z
+                                ));
+                            }
+                            return vec3Array; // ✅ GLSL에서 vec3 배열로 받을 수 있음
+                        },
+                        u_numPoints: () => interpolatedPosition.length,
+                    };
+
+                    frameState.commandList.push(this.drawCommand);
+                }
+            }
         }
 
-        frameState.commandList.push(this.drawCommand);
+
+    }
+
+    setSpeed(speed: number) {
+        this.speed = speed;
+    }
+
+    setStatus(status: string) {
+        this.status = status;
     }
 
     destroy() {

@@ -13,6 +13,7 @@ export default class VehicleFieldPrimitive {
         this.tailPositions = []; // 꼬리 위치를 저장할 배열
         this.progress = 0;
         this.status = status;
+        this.show = false;
 
         this.createResources();
     }
@@ -93,7 +94,10 @@ export default class VehicleFieldPrimitive {
     update(frameState) {
 
         if(!this.status) {
-            frameState.commandList.push(this.drawCommand);
+            this.previousTime = performance.now();
+            if(this.show){
+                frameState.commandList.push(this.drawCommand);
+            }
             return;
         }
 
@@ -144,7 +148,9 @@ export default class VehicleFieldPrimitive {
             this.vertexBuffer.copyFromArrayView(newPositions);
         }
 
-        frameState.commandList.push(this.drawCommand);
+        if(this.show){
+            frameState.commandList.push(this.drawCommand);
+        }
     }
 
     setSpeed(speed: number) {

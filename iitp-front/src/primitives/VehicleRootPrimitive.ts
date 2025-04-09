@@ -13,6 +13,7 @@ export default class VehicleRootPrimitive {
         this.tailPositions = []; // 꼬리 위치를 저장할 배열
         this.progress = 0;
         this.status = status;
+        this.show = false;
 
         this.createResources();
     }
@@ -93,7 +94,10 @@ export default class VehicleRootPrimitive {
         if (this.destroyed) return; // 이미 제거된 경우 업데이트하지 않음
 
         if(!this.status) {
-            frameState.commandList.push(this.drawCommand);
+            this.previousTime = performance.now();
+            if(this.show){
+                frameState.commandList.push(this.drawCommand);
+            }
             return;
         }
 
@@ -153,7 +157,10 @@ export default class VehicleRootPrimitive {
 
         }
         // commandList에 추가
-        frameState.commandList.push(this.drawCommand);
+        if(this.show){
+            frameState.commandList.push(this.drawCommand);
+        }
+
     }
 
 

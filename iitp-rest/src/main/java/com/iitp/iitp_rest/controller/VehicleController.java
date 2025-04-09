@@ -292,25 +292,49 @@ public class VehicleController {
 
             // (A) CZML 관련 데이터 구성
             List<Double> cartesianArray = new ArrayList<>();
+            double speedKmh = request.getSpeedFactor(); // km/h
+            double speedMs = speedKmh * 1000.0 / 3600.0; // m/s
+
             Instant startTime = Instant.now();
-            Instant stopTime = startTime.plusSeconds(100000);
+            double elapsedSeconds = 0.0;
+
+            Cartesian3 prev = null;
 
             for (int j = 0; j < path.size(); j++) {
-                Instant time = startTime.plusSeconds(j * request.getSpeedFactor());
-                double seconds = Duration.between(startTime, time).getSeconds();
-
-                // ECEF 변환
-                Cartesian3 ecef = Cartesian3.fromDegrees(
+                Cartesian3 current = Cartesian3.fromDegrees(
                         path.get(j).getX(),
                         path.get(j).getY(),
                         path.get(j).getZ()
                 );
 
-                cartesianArray.add(seconds);         // time
-                cartesianArray.add(ecef.getX());     // x
-                cartesianArray.add(ecef.getY());     // y
-                cartesianArray.add(ecef.getZ());     // z
+                if (prev != null) {
+                    double distance = Cartesian3.distance(prev, current); // meters
+                    double timeToTravel = distance / speedMs;             // seconds
+                    elapsedSeconds += timeToTravel;
+                }
+
+                cartesianArray.add(elapsedSeconds);     // 시간 (초 단위)
+                cartesianArray.add(current.getX());     // X (ECEF)
+                cartesianArray.add(current.getY());     // Y
+                cartesianArray.add(current.getZ());     // Z
+
+                prev = current;
             }
+
+            Instant stopTime = startTime.plus(Duration.ofSeconds((long) elapsedSeconds));
+
+            // 2. clock 설정 추가
+            Map<String, Object> clock = new HashMap<>();
+            clock.put("id", "document");
+            clock.put("version", "1.0");
+            clock.put("clock", Map.of(
+                    "interval", startTime.toString() + "/" + stopTime.toString(),
+                    "currentTime", startTime.toString(),
+                    "multiplier", 1
+            ));
+
+            // 3. clock 맨 앞에 추가
+            czml.add(clock);
 
             Map<String, Object> czmlObj = new HashMap<>();
             czmlObj.put("id", vehicleId);

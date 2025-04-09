@@ -12,6 +12,8 @@ import VectorSource from "ol/source/Vector";
 import WebGLVectorLayer from "ol/layer/WebGLVector";
 import { useLayerStore } from "@stores/useLayerStore";
 import VectorLayer from "ol/layer/Vector";
+import NamedPrimitiveCollection from "@primitives/NamedPrimitiveCollection";
+import PrimitiveLayerManager from "@primitives/PrimitiveLayerManager";
 
 
 const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
@@ -20,6 +22,7 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
     const setView = useOpenLayersStore((state) => state.setView);
 
     const setViewer = useCesiumStore((state) => state.setViewer);
+    const setCesiumPrimitiveLayerManager = useLayerStore((state) => state.setCesiumPrimitiveLayerManager);
     const lodLevels = [1.0, 0.5, 0.2];
 
     const setOlVehicleLayer = useLayerStore((state) => state.setOlVehicleLayer);
@@ -38,7 +41,7 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
     let olMap: OLMap, olView: View;
 
     useEffect(() => {
-        openlayersMapInit();
+        olMapInit();
         cesiumMapInit();
     }, []);
 
@@ -59,7 +62,7 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
         return layer
     }
 
-    const heatmapLayerInit = () => {
+    const olHeatmapLayerInit = () => {
         const layer =
             new Heatmap({
                 source: vehicleVectorSource,
@@ -74,7 +77,7 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
         return layer;
     }
 
-    const tripLayerInit = () => {
+    const olTripLayerInit = () => {
         const layer =
             new WebGLVectorLayer({
                 source: new VectorSource(),
@@ -90,10 +93,10 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
         return layer;
     }
 
-    const layerGroupInit = () => {
+    const olLayerGroupInit = () => {
         // heatmap과 trip 레이어 생성
-        const heatmapLayer = heatmapLayerInit();
-        const tripLayer = tripLayerInit();
+        const heatmapLayer = olHeatmapLayerInit();
+        const tripLayer = olTripLayerInit();
 
         // 두 레이어를 포함하는 그룹 생성
         const group = new Group({
@@ -103,7 +106,7 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
         return group;
     };
 
-    const openlayersMapInit = () => {
+    const olMapInit = () => {
         if (openlayersMapRef.current) {
             olView = new View({
                 center: olProj.fromLonLat([127.1216, 37.3826]),
@@ -124,7 +127,7 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
             setView(olView);
 
             olMap.addLayer(olVehicleLayerInit())
-            olMap.addLayer(layerGroupInit())
+            olMap.addLayer(olLayerGroupInit())
         }
     }
 
@@ -164,7 +167,10 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
             });
             newViewer.scene.globe.depthTestAgainstTerrain = true;
 
+            const manager = new PrimitiveLayerManager(newViewer);
+
             setViewer(newViewer);
+            setCesiumPrimitiveLayerManager(manager);
 
             fetch("CesiumMilkTruck.glb")
                 .then(res => res.arrayBuffer())

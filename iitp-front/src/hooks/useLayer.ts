@@ -6,9 +6,14 @@ import { Heatmap } from "ol/layer";
 import { useLayerStore } from "@stores/useLayerStore";
 import { useShallow } from "zustand/react/shallow";
 import { useVehicleStore } from "@stores/useVehicleStore";
+import {useCesiumStore} from "@stores/useCesiumStore";
+import * as Cesium from "cesium";
 
 const useLayer = () => {
     const map = useOpenLayersStore((state) => state.map);
+    const viewer = useCesiumStore((state) => state.viewer);
+
+    const primitiveLayerManager = useLayerStore((state) => state.cesiumPrimitiveLayerManager);
 
     const activeLayerName = useLayerStore(useShallow((state) => state.activeLayerName));
     const activeLayerGroupName = useLayerStore(useShallow((state) => state.activeLayerGroupName));
@@ -18,8 +23,6 @@ const useLayer = () => {
     const olVehicleLayer = useLayerStore((state) => state.olVehicleLayer);
     const heatmapLayer = useLayerStore((state) => state.heatmapLayer);
     const tripLayer = useLayerStore((state) => state.tripLayer);
-
-    const currentLayerRef = useRef<Heatmap | VectorLayer | WebGLVectorLayer>();
 
     useEffect(() => {
         if (!map || !activeLayerGroupName) return;
@@ -33,30 +36,46 @@ const useLayer = () => {
         );
 
         // activeLayerName이 falsy (null, undefined, "")이면 그룹을 숨김
-        if (!activeLayerName) {
-            groupLayer && groupLayer.setVisible(false);
-            currentLayerRef.current = undefined;
-            return;
-        }
+        // if (!activeLayerName) {
+        //     groupLayer && groupLayer.setVisible(false);
+        //     currentLayerRef.current = undefined;
+        //     return;
+        // }
 
         if (groupLayer) {
             // 그룹 내의 모든 하위 레이어를 순회하면서 activeLayerName과 일치하는 경우만 visible true, 나머지는 false로 설정
             groupLayer.getLayersArray().forEach((layer: Heatmap | VectorLayer | WebGLVectorLayer) => {
-                if (layer.get("customName") === activeLayerName) { // customName = MapInit에서 설정한 키
-                    layer.setVisible(true);
-                    currentLayerRef.current = layer;
-                } else {
-                    layer.setVisible(false);
-                }
+                console.log(layer)
+                layer.setVisible(false)
+                activeLayerName?.forEach(layerName => {
+                    if (layer.get("customName") === layerName) { // customName = MapInit에서 설정한 키
+                        console.log(layerName)
+                        layer.setVisible(true);
+                    }
+                })
+
             });
             // 그룹은 activeLayerName이 존재할 때만 visible
             groupLayer.setVisible(true);
         }
 
         return () => {
-            currentLayerRef.current = undefined;
         };
     }, [activeLayerName, activeLayerGroupName, map, features]);
+
+    useEffect(() => {
+        if (!viewer || !activeLayerGroupName) return;
+
+        if (activeLayerGroupName !== "layer") return;
+        primitiveLayerManager.hideAll("layer")
+
+        activeLayerName?.forEach(layerName => {
+            primitiveLayerManager.show(activeLayerGroupName, layerName);
+        })
+
+        return () => {
+        };
+    }, [activeLayerName, activeLayerGroupName, viewer, primitiveLayerManager?.getAllGroups()]);
 };
 
 export default useLayer;
