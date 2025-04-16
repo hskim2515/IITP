@@ -2,6 +2,9 @@ import React, { useState } from 'react';
 import { useLayerStore } from "@stores/useLayerStore";
 import { useShallow } from "zustand/react/shallow";
 import BaseMapPopup from "./BaseMapPopup";
+import LayerSettingPopup from "./LayerSettingPopup";
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faCog } from '@fortawesome/free-solid-svg-icons';
 
 interface LayerPopupProps {
     isOpen: boolean;
@@ -14,9 +17,15 @@ const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
 
     //const setActiveLayerName = useLayerStore(useShallow((state) => state.setActiveLayerName));
     const setActiveLayerGroupName = useLayerStore(useShallow((state) => state.setActiveLayerGroupName));
+    const [selectedLayerType, setSelectedLayerType] = useState(null); // <-- 추가
+
 
     const handleTabClick = (index: number) => {
         setActiveTab(index);
+    };
+
+    const handleSettingClick = (type) => {
+        setSelectedLayerType(type);
     };
 
     const {
@@ -55,6 +64,8 @@ const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
 
     return (
         <>
+
+            <LayerSettingPopup layerType={selectedLayerType}></LayerSettingPopup>
             <style>
                 {`
                 .layer-popup {
@@ -172,10 +183,38 @@ const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
                         <label>
                             <input type="checkbox" name="layer" checked={activeLayerName?.includes("heatmap") ?? false} value="heatmap" onChange={ handleLayer }/>
                             히트맵 레이어
+                            <button
+                                onClick={() => handleSettingClick("heatmap")}
+                                style={{
+                                    background: "none",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    padding: 0,
+                                    alignItems: "center",
+                                    paddingLeft: "10px"
+                                }}
+                                title="설정"
+                            >
+                                <FontAwesomeIcon icon={faCog} size="lg" />
+                            </button>
                         </label>
                         <label>
                             <input type="checkbox" name="layer" checked={activeLayerName?.includes("trip") ?? false} value="trip" onChange={ handleLayer }/>
                             트립 레이어
+                            <button
+                                onClick={() => handleSettingClick("trip")}
+                                style={{
+                                    background: "none",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    padding: 0,
+                                    alignItems: "center",
+                                    paddingLeft: "10px"
+                                }}
+                                title="설정"
+                            >
+                                <FontAwesomeIcon icon={faCog} size="lg" />
+                            </button>
                         </label>
                     </div>
                 ) }

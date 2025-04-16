@@ -140,7 +140,7 @@ public class VehicleController {
                 vehiclePath.add(path);
 
 
-                vehicleDataList.add(new Vehicle(vehicleId, lon, lat, height, "point"));
+                vehicleDataList.add(new Vehicle(vehicleId, Cartesian3.fromDegrees(lon, lat, height), false));
             }
         }
 
@@ -224,7 +224,7 @@ public class VehicleController {
             double height = path.get(0).getZ();
             vehiclePathList.add(path);
 
-            vehicleDataList.add(new Vehicle(vehicleId, lon, lat, height, "point"));
+            vehicleDataList.add(new Vehicle(vehicleId, Cartesian3.fromDegrees(lon, lat, height), false));
         }
 
         featureCollection.put("features", featureList);
@@ -288,7 +288,7 @@ public class VehicleController {
             double lonStart = path.get(0).getX();
             double latStart = path.get(0).getY();
             double heightStart = path.get(0).getZ();
-            vehicleDataList.add(new Vehicle(vehicleId, lonStart, latStart, heightStart, "point"));
+            vehicleDataList.add(new Vehicle(vehicleId, Cartesian3.fromDegrees(lonStart, latStart, heightStart), false));
 
             // (A) CZML 관련 데이터 구성
             List<Double> cartesianArray = new ArrayList<>();
@@ -330,7 +330,8 @@ public class VehicleController {
             clock.put("clock", Map.of(
                     "interval", startTime.toString() + "/" + stopTime.toString(),
                     "currentTime", startTime.toString(),
-                    "multiplier", 1
+                    "multiplier", 1,
+                    "range", "CLAMPED"
             ));
 
             // 3. clock 맨 앞에 추가
@@ -338,7 +339,6 @@ public class VehicleController {
 
             Map<String, Object> czmlObj = new HashMap<>();
             czmlObj.put("id", vehicleId);
-            czmlObj.put("availability", startTime.toString() + "/" + stopTime.toString());
             Map<String, Object> position = new HashMap<>();
             position.put("epoch", startTime.toString());
             position.put("interpolationAlgorithm", "LINEAR");
@@ -346,7 +346,7 @@ public class VehicleController {
             position.put("cartesian", cartesianArray);
             czmlObj.put("position", position);
             czmlObj.put("orientation", Map.of("velocityReference", "#position"));
-            czmlObj.put("point", Map.of("outlineWidth", 1, "pixelSize", 10));
+//            czmlObj.put("point", Map.of("outlineWidth", 1, "pixelSize", 10));
 
             czml.add(czmlObj);
 
@@ -430,7 +430,7 @@ public class VehicleController {
                 double height = path.get(0).getZ();
                 vehiclePath.add(Arrays.asList(lon, lat, height));
 
-                vehicleDataList.add(new Vehicle(vehicleId, lon, lat, height, "model"));
+                vehicleDataList.add(new Vehicle(vehicleId, Cartesian3.fromDegrees(lon, lat, height), false));
             }
         }
 

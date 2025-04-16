@@ -1,8 +1,9 @@
-import React, {useEffect} from "react";
+import React, {useEffect, useRef, useState} from "react";
 import { useSimulationStore } from "@stores/useSimulationStore";
 import { FaPlay, FaPause, FaStop, FaFastForward, FaFastBackward } from "react-icons/fa";
 import {useCesiumStore} from "@stores/useCesiumStore";
 import { useVehicleStore } from "@stores/useVehicleStore";
+import {useDebouncedEffect} from "../../hooks/useDebouncedEffect";
 
 const SimulationControls: React.FC = () => {
     const { speed, setSpeed, start, pause, stop } = useSimulationStore();
@@ -13,6 +14,12 @@ const SimulationControls: React.FC = () => {
 
     const setSpeedFactor = useVehicleStore((state) => state.setSpeedFactor);
     const setNumVehicle = useVehicleStore((state) => state.setNumVehicle);
+
+    const [speedState, setSpeedState] = useState(1);
+
+    useDebouncedEffect(() => {
+        setSpeed(speedState); // 예: 50km/h → 1x 배속
+    }, [speedState], 500); // 300ms 뒤에 반영
 
     const setStart = () => {
         if (viewer) {
@@ -34,15 +41,13 @@ const SimulationControls: React.FC = () => {
 
     const increaseSpeed = () => {
         if (viewer) {
-            const multiplierSpeed = speed * 2;
-            setSpeed(multiplierSpeed);
+            setSpeedState(speedState * 2)
         }
     };
 
     const decreaseSpeed = () => {
         if (viewer) {
-            const multiplierSpeed = speed / 2;
-            setSpeed(multiplierSpeed);
+            setSpeedState(speedState / 2);
         }
     };
 
@@ -59,8 +64,8 @@ const SimulationControls: React.FC = () => {
             </div>
 
             {/* 감속 버튼 */}
-            <button onClick={decreaseSpeed} style={styles.button} title={`감속 (${speed}x)`}>
-                <FaFastBackward color="white" /> {speed}x
+            <button onClick={decreaseSpeed} style={styles.button} title={`감속 (${speedState}x)`}>
+                <FaFastBackward color="white" /> {speedState}x
             </button>
 
             {/* 실행 버튼 */}
@@ -79,8 +84,8 @@ const SimulationControls: React.FC = () => {
             </button>
 
             {/* 배속 버튼 */}
-            <button onClick={increaseSpeed} style={styles.button} title={`배속 (${speed}x)`}>
-                <FaFastForward color="white" /> {speed}x
+            <button onClick={increaseSpeed} style={styles.button} title={`배속 (${speedState}x)`}>
+                <FaFastForward color="white" /> {speedState}x
             </button>
         </div>
     );

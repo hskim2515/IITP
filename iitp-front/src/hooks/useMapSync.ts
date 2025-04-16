@@ -90,7 +90,7 @@ const useMapSync = () => {
 
                 if (rayIntersection) {
                     const cameraToCenterDistance = Cesium.Cartesian3.distance(cameraPosition, rayIntersection);
-                    const zoom = Math.max(0, 18 - Math.log2(cameraToCenterDistance) + 8.3);
+                    const zoom = Math.max(0, 18 - Math.log2(cameraToCenterDistance) + 8.5);
                     if (zoom !== undefined) {
                         olView.setZoom(zoom);
                     }

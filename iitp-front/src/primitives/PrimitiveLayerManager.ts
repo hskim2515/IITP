@@ -1,11 +1,12 @@
 import * as Cesium from "cesium";
 
 class PrimitiveLayerManager {
-    constructor(viewer) {
+    constructor(viewer, layerStore) {
         this.viewer = viewer;
         this.layerGroups = {}; // { groupName: PrimitiveCollection }
         this.onAdd = null;
         this.onRemove = null;
+        this.layerStore = layerStore;
     }
 
     // 내부 그룹 관리
@@ -24,6 +25,12 @@ class PrimitiveLayerManager {
         primitive.layer = layerName;
         const group = this._getOrCreateGroup(groupName);
         group.add(primitive);
+        this.layerStore.getState().activeLayerName?.forEach((activeLayerName) => {
+            if(activeLayerName === layerName){
+                this.show('layer', activeLayerName);
+            }
+        });
+
 
         if (typeof this.onAdd === 'function') {
             this.onAdd(primitive, groupName, layerName);

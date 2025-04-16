@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Cartesian3, GeoJsonDataSource, Viewer, UrlTemplateImageryProvider, JulianDate } from "cesium";
 import * as Cesium from "cesium";
-import VehicleFieldPrimitive from "@primitives/VehicleFieldPrimitive.ts";
-import VehicleRootPrimitive from "@primitives/VehicleRootPrimitive.ts";
-import VehicleRectanglePrimitive from "@primitives/VehicleRectanglePrimitive.ts";
-import VehicleDomePrimitive from "@primitives/VehicleDomePrimitive.ts";
-import VehicleDensityPrimitive from "@primitives/VehicleDensityPrimitive.ts";
+import FieldPrimitive from "@primitives/FieldPrimitive.ts";
+import LinePrimitive from "@primitives/LinePrimitive.ts";
+import RectanglePrimitive from "@primitives/RectanglePrimitive.ts";
+import DomePrimitive from "@primitives/DomePrimitive.ts";
+import DensityPrimitive from "@primitives/DensityPrimitive.ts";
 import { useCesiumStore } from "@stores/useCesiumStore.ts";
 
 
@@ -208,15 +208,15 @@ const MapCesium2: React.FC<{ style?: React.CSSProperties }> = ({ style }) => {  
 
                 const timeBasedPositions = transformToTimeBasedPositions(positions);
 
-                const vehicleDensityPrimitive = new VehicleDensityPrimitive(timeBasedPositions, viewer.scene.context);
+                const vehicleDensityPrimitive = new DensityPrimitive(timeBasedPositions, viewer.scene.context);
                 primitives.add(vehicleDensityPrimitive);
 
                 positions.forEach((position,i) => {
                     //if(i == 0){
-                        const vehicleFieldPrimitive = new VehicleFieldPrimitive(position, viewer.scene.context);
-                        const vehicleRootPrimitive = new VehicleRootPrimitive(position, viewer.scene.context);
-                        const vehicleRectanglePrimitive = new VehicleRectanglePrimitive(position, viewer.scene.context);
-                        const vehicleDomePrimitive = new VehicleDomePrimitive(position, viewer.scene.context);
+                        const vehicleFieldPrimitive = new FieldPrimitive(position, viewer.scene.context);
+                        const vehicleRootPrimitive = new LinePrimitive(position, viewer.scene.context);
+                        const vehicleRectanglePrimitive = new RectanglePrimitive(position, viewer.scene.context);
+                        const vehicleDomePrimitive = new DomePrimitive(position, viewer.scene.context);
                         primitives.add(vehicleFieldPrimitive);
                         primitives.add(vehicleRootPrimitive);
                         primitives.add(vehicleRectanglePrimitive);
@@ -225,7 +225,7 @@ const MapCesium2: React.FC<{ style?: React.CSSProperties }> = ({ style }) => {  
 
                 });
 
-                // 모든 VehicleFieldPrimitive 객체를 viewer의 scene에 추가
+                // 모든 FieldPrimitive 객체를 viewer의 scene에 추가
                 viewer.scene.primitives.add(primitives);
                 //viewer.scene.primitives.add(heatmapPrimitives);
 
