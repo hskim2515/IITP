@@ -24,7 +24,17 @@ const useLayer = () => {
     const heatmapLayer = useLayerStore((state) => state.heatmapLayer);
     const tripLayer = useLayerStore((state) => state.tripLayer);
 
+
+    function usePrevious<T>(value: T): T | undefined {
+        const ref = useRef<T>();
+        useEffect(() => {
+            ref.current = value;
+        }, [value]);
+        return ref.current;
+    }
+
     useEffect(() => {
+
         if (!map || !activeLayerGroupName) return;
 
         // activeLayerGroupName이 "layer"가 아닌 경우 로직 중단
@@ -45,11 +55,9 @@ const useLayer = () => {
         if (groupLayer) {
             // 그룹 내의 모든 하위 레이어를 순회하면서 activeLayerName과 일치하는 경우만 visible true, 나머지는 false로 설정
             groupLayer.getLayersArray().forEach((layer: Heatmap | VectorLayer | WebGLVectorLayer) => {
-                console.log(layer)
                 layer.setVisible(false)
                 activeLayerName?.forEach(layerName => {
                     if (layer.get("customName") === layerName) { // customName = MapInit에서 설정한 키
-                        console.log(layerName)
                         layer.setVisible(true);
                     }
                 })
@@ -63,19 +71,24 @@ const useLayer = () => {
         };
     }, [activeLayerName, activeLayerGroupName, map, features]);
 
+    const prevLayerNames = usePrevious(activeLayerName) || [];
+
     useEffect(() => {
-        if (!viewer || !activeLayerGroupName) return;
+        if (!viewer || !activeLayerGroupName || activeLayerGroupName !== "layer") return;
 
-        if (activeLayerGroupName !== "layer") return;
-        primitiveLayerManager.hideAll("layer")
+        const added = activeLayerName?.filter(name => !prevLayerNames.includes(name)) || [];
+        const removed = prevLayerNames?.filter(name => !activeLayerName?.includes(name)) || [];
 
-        activeLayerName?.forEach(layerName => {
-            primitiveLayerManager.show(activeLayerGroupName, layerName);
-        })
+        removed.forEach(name => {
+            primitiveLayerManager.hide(activeLayerGroupName, name);
+        });
 
-        return () => {
-        };
-    }, [activeLayerName, activeLayerGroupName, viewer, primitiveLayerManager?.getAllGroups()]);
+        added.forEach(name => {
+            primitiveLayerManager.show(activeLayerGroupName, name);
+        });
+
+    }, [activeLayerName, activeLayerGroupName, viewer]);
+
 };
 
 export default useLayer;

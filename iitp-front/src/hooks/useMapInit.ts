@@ -12,8 +12,9 @@ import VectorSource from "ol/source/Vector";
 import WebGLVectorLayer from "ol/layer/WebGLVector";
 import { useLayerStore } from "@stores/useLayerStore";
 import VectorLayer from "ol/layer/Vector";
-import NamedPrimitiveCollection from "@primitives/NamedPrimitiveCollection";
 import PrimitiveLayerManager from "@primitives/PrimitiveLayerManager";
+import { useLayerStore } from "@stores/useLayerStore";
+
 
 
 const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
@@ -167,7 +168,7 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
             });
             newViewer.scene.globe.depthTestAgainstTerrain = true;
 
-            const manager = new PrimitiveLayerManager(newViewer);
+            const manager = new PrimitiveLayerManager(newViewer, useLayerStore);
 
             setViewer(newViewer);
             setCesiumPrimitiveLayerManager(manager);
