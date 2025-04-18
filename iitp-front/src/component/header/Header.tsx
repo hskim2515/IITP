@@ -1,26 +1,56 @@
-import React, { useState } from 'react';
-import { usePanelStore } from "@stores/usePanelStore";
+import React, { useEffect, useState } from 'react';
+import { useMenuStore, MenuTree } from "@stores/useMenuStore";
+import { useShallow } from "zustand/react/shallow";
 import SimulationControls from "./SimulationControls";
 
 const Header: React.FC = () => {
+    const { menu, setMenu, activeDropdownMenu, setActiveDropdownMenu } = useMenuStore(useShallow((state) => ({
+        menu: state.menu,
+        setMenu: state.setMenu,
+        activeDropdownMenu: state.activeDropdownMenu,
+        setActiveDropdownMenu: state.setActiveDropdownMenu,
+    })));
+    const baseUrl ="http://localhost:8080";
+    const menuTreeUrl = `${baseUrl}/menu/tree`;
+
+    // 컴포넌트 마운트 시 백엔드에서 메뉴 트리 데이터를 fetch하여 zustand 스토어에 저장
+    useEffect(() => {
+        fetch(menuTreeUrl, { method: "GET" })
+            .then(response => response.json())
+            .then(data => setMenu(data))
+            .catch(error => console.error("메뉴 데이터 가져오기 실패:", error));
+    }, [setMenu]);
+
+    // 0뎁스 메뉴만 필터링
+    const topMenus = menu ? menu.filter(item => item.depth === 0) : [];
+
     return (
         <header style={styles.header}>
-            {/*<h1 style={styles.title}>IITP</h1>*/}
-
             <nav style={styles.nav}>
-                <DropdownMenu title="파일" items={["네트워크", "시나리오"]} />
-                <DropdownMenu title="편집" items={["시설물", "수요", "시나리오", "교통수단", "대중교통 노선"]} />
-                <DropdownMenu title="시뮬레이션" items={["시뮬레이션 설정"]} />
+                {topMenus.map(menuItem => (
+                    <DropdownMenu
+                        key={menuItem.menuId}
+                        title={menuItem.nameKor}
+                        // 자식 메뉴의 MenuTree 객체 배열을 props로 전달
+                        items={menuItem.children || []}
+                        setActiveDropdownMenu={setActiveDropdownMenu}
+                    />
+                ))}
             </nav>
             <SimulationControls />
         </header>
     );
 };
 
-// 드롭다운 메뉴 컴포넌트
-const DropdownMenu: React.FC<{ title: string; items: string[] }> = ({ title, items }) => {
+// DropdownMenu 컴포넌트의 props 타입을 MenuTree 항목을 포함하도록 수정
+interface DropdownMenuProps {
+    title: string;
+    items: MenuTree[];
+    setActiveDropdownMenu: (menu: MenuTree) => void;
+}
+
+const DropdownMenu: React.FC<DropdownMenuProps> = ({ title, items, setActiveDropdownMenu }) => {
     const [isOpen, setIsOpen] = useState(false);
-    const { setActivePanel } = usePanelStore();
 
     return (
         <div
@@ -33,11 +63,14 @@ const DropdownMenu: React.FC<{ title: string; items: string[] }> = ({ title, ite
                 <div style={styles.dropdown}>
                     {items.map((item, index) => (
                         <div
-                            key={index}
+                            key={item.menuId} // key로 menuId를 사용하는 것이 고유 식별에 좋습니다.
                             style={styles.menuItem}
-                            onClick={() => setActivePanel(item)} // 클릭하면 패널 열기
+                            onClick={() => {
+                                setActiveDropdownMenu(item);
+                                console.log("activeDropdownMenu set:", item);
+                            }}
                         >
-                            {item}
+                            {item.nameKor}
                         </div>
                     ))}
                 </div>
@@ -46,7 +79,6 @@ const DropdownMenu: React.FC<{ title: string; items: string[] }> = ({ title, ite
     );
 };
 
-// 스타일 정의
 const styles = {
     header: {
         position: 'fixed' as const,
@@ -61,9 +93,6 @@ const styles = {
         justifyContent: 'space-between',
         padding: '0 20px',
         zIndex: 1000,
-    },
-    title: {
-        fontSize: '18px',
     },
     nav: {
         display: 'flex',

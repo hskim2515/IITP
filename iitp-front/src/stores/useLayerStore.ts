@@ -27,7 +27,7 @@ interface LayerState {
 }
 
 export const useLayerStore = create<LayerState>((set, get) => ({
-    activeLayerName: null,
+    activeLayerName: [],
     activeLayerGroupName: null,
 
     olVehicleLayer: null,

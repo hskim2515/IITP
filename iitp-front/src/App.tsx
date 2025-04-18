@@ -2,7 +2,7 @@ import React, {useRef} from 'react';
 import './App.css'
 import Maps from "./component/map/Maps";
 import Header from "./component/header/Header";
-import LeftPanel from "./component/pannel/LeftPanel";
+import LeftPanel from "./component/panel/LeftPanel";
 import Tools from "./component/tool/Tools";
 import ToolsPanel from "./component/tool/ToolsPanel";
 
