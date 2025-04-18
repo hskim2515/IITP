@@ -15,6 +15,10 @@ public class WebConfig {
                 registry.addMapping("/vehicle/**")
                         .allowedOrigins("*")
                         .allowedMethods("GET", "POST", "PUT", "DELETE");
+
+                registry.addMapping("/menu/**")
+                        .allowedOrigins("*")
+                        .allowedMethods("GET", "POST", "PUT", "DELETE");
             }
         };
     }

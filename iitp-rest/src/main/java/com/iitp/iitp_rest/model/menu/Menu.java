@@ -24,6 +24,10 @@ public class Menu {
     @SequenceGenerator(name = "menu_seq", sequenceName = "menu_id_sequence", allocationSize = 50)
     private Long menuId;
 
+    /** 메뉴 코드 */
+    @Column(nullable = false)
+    private String menuCode;
+
     /** 메뉴 언어 */
     private String language;
 
@@ -45,6 +49,14 @@ public class Menu {
     @OneToMany(mappedBy = "parents", fetch = FetchType.LAZY)
     @JsonIgnore
     private List<Menu> children;
+
+    /**
+     * 루트 메뉴와의 자기참조 연관관계
+     */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "root_id")
+    @OnDelete(action = OnDeleteAction.SET_NULL)
+    private Menu root;
 
     /** 메뉴 깊이 */
     private Integer depth;

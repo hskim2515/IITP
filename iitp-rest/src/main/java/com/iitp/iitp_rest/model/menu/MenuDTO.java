@@ -6,6 +6,8 @@ import lombok.Data;
 public class MenuDTO {
     /** 메뉴 언어 */
     private Long menuId;
+    /** 메뉴 코드 */
+    private String menuCode;
     /** 메뉴 언어 */
     private String language;
     /** 한글 메뉴 명 */
@@ -14,6 +16,7 @@ public class MenuDTO {
     private String nameEn;
     /** 부모 ID */
     private Long parentsId;
+    private Long rootId;
     /** 메뉴 깊이 */
     private Integer depth;
     /** 메뉴 정렬 순서 */

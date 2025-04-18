@@ -21,7 +21,7 @@ public class MenuController {
     private final MenuService menuService;
     private final MenuMapper menuMapper;
 
-    // 단일 메뉴 생성 (Create a single Menu)
+    // 단일 메뉴 생성
     @PostMapping
     public ResponseEntity<MenuDTO> createMenu(@RequestBody MenuDTO dto) {
         Menu entity = menuMapper.toEntity(dto);
@@ -31,8 +31,8 @@ public class MenuController {
         return new ResponseEntity<>(createdDto, HttpStatus.CREATED);
     }
 
-    // 다중 메뉴 생성 (Bulk creation of Menus)
-    @PostMapping("/bulk")
+    // 다중 메뉴 생성
+    @PostMapping("/list")
     public ResponseEntity<List<MenuDTO>> createMenuList(@RequestBody List<MenuDTO> dtoList) {
         List<Menu> entityList = dtoList.stream()
                 .map(menuMapper::toEntity)
@@ -45,15 +45,22 @@ public class MenuController {
         return new ResponseEntity<>(createdDtoList, HttpStatus.CREATED);
     }
 
-    // 단일 메뉴 조회 (Get a single Menu by ID)
+    // Id로 단일 메뉴 조회
     @GetMapping("/id/{menuId}")
     public ResponseEntity<MenuDTO> getMenuById(@PathVariable Long menuId) {
         return menuService.getMenuById(menuId)
                 .map(menu -> ResponseEntity.ok(menuMapper.toDTO(menu)))
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
+    // Code로 단일 메뉴 조회
+    @GetMapping("/menu-code/{menuCode}")
+    public ResponseEntity<MenuDTO> getMenuByMenuCode(@PathVariable String menuCode) {
+        return menuService.getMenuByMenuCode(menuCode)
+                .map(menu -> ResponseEntity.ok(menuMapper.toDTO(menu)))
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
 
-    // depth에 따른 메뉴 조회 (Get Menus by depth)
+    // depth로 메뉴 목록 조회
     @GetMapping("/depth/{depth}")
     public ResponseEntity<List<MenuDTO>> getMenuByDepth(@PathVariable Integer depth) {
         List<Menu> menuList = menuService.getMenuListByDepth(depth);
@@ -63,7 +70,7 @@ public class MenuController {
         return ResponseEntity.ok(dtoList);
     }
 
-    // 전체 메뉴 조회 (Get all Menus)
+    // 메뉴 목록 조회
     @GetMapping
     public ResponseEntity<List<MenuDTO>> getAllMenuList() {
         List<Menu> menuList = menuService.getAllMenuList();
@@ -73,15 +80,15 @@ public class MenuController {
         return ResponseEntity.ok(dtoList);
     }
 
-    // 전체 메뉴 조회 (Get all Menus)
+    // 메뉴 목록 트리형으로 조회
     @GetMapping("/tree")
     public ResponseEntity<List<MenuTreeDTO>> getAllMenuTree() {
         List<Menu> menuList = menuService.getAllMenuList();
-        List<MenuTreeDTO> dtoTree = menuService.toTreeDTO(menuList);
+        List<MenuTreeDTO> dtoTree = menuMapper.toTreeDTO(menuList);
         return ResponseEntity.ok(dtoTree);
     }
-    // 다중 메뉴 업데이트 (Bulk update Menus)
-    @PutMapping("/bulk")
+    // 다중 메뉴 업데이트
+    @PutMapping("/list")
     public ResponseEntity<List<MenuDTO>> updateMenuList(@RequestBody List<MenuDTO> dtoList) {
         List<Menu> entityList = dtoList.stream()
                 .map(menuMapper::toEntity)
@@ -93,7 +100,7 @@ public class MenuController {
         return ResponseEntity.ok(updatedDtoList);
     }
 
-    // 단일 메뉴 업데이트 (Update a single Menu)
+    // 단일 메뉴 업데이트
     @PutMapping("/{menuId}")
     public ResponseEntity<MenuDTO> updateMenu(@PathVariable Long menuId, @RequestBody MenuDTO dto) {
         Menu entity = menuMapper.toEntity(dto);
@@ -102,7 +109,7 @@ public class MenuController {
         return ResponseEntity.ok(updatedDto);
     }
 
-    // 메뉴 삭제 (soft delete) (Delete a Menu softly)
+    // 메뉴 삭제
     @DeleteMapping("/{menuId}")
     public ResponseEntity<Void> deleteMenu(@PathVariable Long menuId) {
         menuService.deleteMenu(menuId);

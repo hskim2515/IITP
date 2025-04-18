@@ -18,11 +18,17 @@ public interface MenuRepository extends JpaRepository<Menu, Long> {
     Optional<Menu> findByMenuIdOrderBySortOrder(Long menuId);
 
     @EntityGraph(attributePaths = {"parents"})
+    Optional<Menu> findByMenuCode(String menuCode);
+
+    @EntityGraph(attributePaths = {"parents"})
+    @Query("SELECT m FROM Menu m WHERE m.menuCode = :menuCode AND m.available = 'Y'")
+    Optional<Menu> findByMenuCodeAndAvailable(String menuCode);
+
+    @EntityGraph(attributePaths = {"parents"})
     @Query("SELECT m FROM Menu m WHERE m.depth = :depth AND m.available = 'Y' ORDER BY m.sortOrder")
     List<Menu> findAllByDepthAndAvailableOrderBySortOrder(@Param("depth") Integer depth);
 
     @EntityGraph(attributePaths = {"parents"})
     @Query("SELECT m FROM Menu m WHERE m.available = 'Y' ORDER BY m.sortOrder")
     List<Menu> findAllByAvailableOrderBySortOrder();
-
 }
