@@ -4,11 +4,11 @@ import { LayerField } from './layerSchema';
 import { faCog } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 
-export interface LayerProps {
+export interface AnalysisProps {
     fields: LayerField[];
 }
 
-const Layer: React.FC<LayerProps> = ({ fields }) => {
+const Analysis: React.FC<AnalysisProps> = ({ fields }) => {
     const [selectedLayerType, setSelectedLayerType] = useState(null); // <-- 추가
     const {
         activeLayerName,
@@ -56,4 +56,4 @@ const Layer: React.FC<LayerProps> = ({ fields }) => {
     );
 };
 
-export default Layer;
+export default Analysis;

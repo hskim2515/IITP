@@ -3,7 +3,7 @@ import { layerSchema, LayerField } from '../layer/layerSchema';
 import '/static/css/styles.css';
 
 import BaseMap  from '../layer/BaseMap';
-import Layer    from '../layer/Layer';
+import Analysis    from '../layer/Analysis';
 import Facility from '../layer/Facility';
 import { useLayerStore } from "@stores/useLayerStore";
 import { useShallow }     from "zustand/react/shallow";
@@ -18,7 +18,7 @@ const tabKeys = Object.keys(layerSchema) as LayerGroupKey[];
 // key → 컴포넌트 매핑
 const tabComponentMap: Record<LayerGroupKey, React.FC<{ fields: LayerField[] }>> = {
     baseMap:  BaseMap,
-    layer:    Layer,
+    layer:    Analysis,
     facility: Facility,
 };
 
