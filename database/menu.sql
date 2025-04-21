@@ -5,7 +5,10 @@ CREATE TABLE public.menu
         primary key,
     menu_code           VARCHAR(255)                                        NOT NULL,
     available           CHAR,
-    access_role        varchar(255),
+    access_role        varchar(20)
+        constraint menu_access_role_check
+            check ((access_role)::text = ANY
+                   ((ARRAY ['ROLE_ADMIN'::character varying, 'ROLE_USER'::character varying])::text[])),
     depth               INTEGER,
     language            VARCHAR(255),
     name_en             VARCHAR(255),

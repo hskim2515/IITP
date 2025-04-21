@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.model.menu;
 
+import com.iitp.iitp_rest.model.role.Role;
 import lombok.Data;
 
 @Data
@@ -24,5 +25,5 @@ public class MenuDTO {
     /** 메뉴 활성화 여부 */
     private Character available;
     /** 메뉴 접근 권한 */
-    private String accessRole;
+    private Role accessRole;
 }
