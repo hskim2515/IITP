@@ -51,7 +51,6 @@ export default class ParabolicArrowPrimitive {
 
     private createResources() {
         //const avgDensity = (this.positions.length > 0) ? (this.positions.length / 64) : 1.0;
-        console.log(this.density)
         const widthInMeters = Math.max(10.0, this.density * 200); // 밀도 기반 너비 (최소값 보장)
 
         const expanded: number[] = [];

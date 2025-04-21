@@ -3,6 +3,7 @@ import { useLayerStore } from '@stores/useLayerStore';
 import { LayerField } from './layerSchema';
 import { faCog } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import LayerSettingPopup from "../popup/LayerSettingPopup";
 
 export interface AnalysisProps {
     fields: LayerField[];
@@ -26,7 +27,7 @@ const Analysis: React.FC<AnalysisProps> = ({ fields }) => {
 
     return (
         <div>
-            {/*<LayerSettingPopup layerType={selectedLayerType}></LayerSettingPopup>*/}
+            <LayerSettingPopup layerType={selectedLayerType}></LayerSettingPopup>
             {fields.map(field => (
                 <label key={ field.value } style={ { color: 'white', display: 'block', margin: '4px 0' } }>
                     <input
