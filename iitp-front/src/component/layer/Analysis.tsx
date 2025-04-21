@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { useLayerStore } from '@stores/useLayerStore';
-import { LayerField } from './layerSchema';
 import { faCog } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import LayerSettingPopup from "../popup/LayerSettingPopup";
+import {LayerField} from "@stores/useLayerSchemaStore";
 
 export interface AnalysisProps {
     fields: LayerField[];
@@ -25,20 +25,22 @@ const Analysis: React.FC<AnalysisProps> = ({ fields }) => {
         checked ? addActiveLayerName(value) : removeActiveLayerName(value);
     };
 
+    console.log(fields)
+
     return (
         <div>
             <LayerSettingPopup layerType={selectedLayerType}></LayerSettingPopup>
             {fields.map(field => (
-                <label key={ field.value } style={ { color: 'white', display: 'block', margin: '4px 0' } }>
+                <label key={ field.key } style={ { color: 'white', display: 'block', margin: '4px 0' } }>
                     <input
                         type={ field.type }
-                        value={ field.value }
-                        checked={ activeLayerName.includes(field.value) }
-                        onChange={ e => handleToggle(field.value, e.target.checked) }
+                        value={ field.key }
+                        checked={ activeLayerName.includes(field.key) }
+                        onChange={ e => handleToggle(field.key, e.target.checked) }
                     />
                     { field.label }
                     <button
-                        onClick={ () => handleSettingClick(field.value) }
+                        onClick={ () => handleSettingClick(field.key) }
                         style={ {
                             background: "none",
                             border: "none",

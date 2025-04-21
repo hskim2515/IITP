@@ -7,7 +7,7 @@ import {
     createOlLayer,
     removeAllCesiumLayers
 } from '../../hooks/basemap/useBaseMap';
-import { LayerField } from './layerSchema';
+import {LayerField} from "@stores/useLayerSchemaStore";
 
 export interface BaseMapProps {
     fields: LayerField[];
@@ -29,7 +29,7 @@ const BaseMap: React.FC<BaseMapProps> = ({ fields }) => {
         // OpenLayers 레이어 갱신
         if (olMap) {
             olMap.getLayers().clear();
-            const field = fields.find(field => field.value === value)!;
+            const field = fields.find(field => field.key === value)!;
             const providers = (field as any).providers as string[]|undefined;
             (providers || [value]).forEach(provider => {
                 const layers = createOlLayer(provider);
@@ -41,7 +41,7 @@ const BaseMap: React.FC<BaseMapProps> = ({ fields }) => {
         if (viewer) {
             const layers = viewer.imageryLayers;
             removeAllCesiumLayers(viewer);
-            const field = fields.find(field => field.value === value)!;
+            const field = fields.find(field => field.key === value)!;
             const providers = (field as any).providers as string[]|undefined;
             (providers || [value]).forEach(provider => {
                 const provs = createCesiumLayer(provider);
@@ -56,13 +56,13 @@ const BaseMap: React.FC<BaseMapProps> = ({ fields }) => {
     return (
         <div>
             {fields.map(field => (
-                <label key={field.value} style={{ color: 'white', display: 'block', margin: '4px 0' }}>
+                <label key={field.key} style={{ color: 'white', display: 'block', margin: '4px 0' }}>
                     <input
                         type={field.type}
                         name="baseMap"
-                        value={field.value}
-                        checked={selected === field.value}
-                        onChange={() => handleSelect(field.value)}
+                        value={field.key}
+                        checked={selected === field.key}
+                        onChange={() => handleSelect(field.key)}
                     />
                     {field.label}
                 </label>

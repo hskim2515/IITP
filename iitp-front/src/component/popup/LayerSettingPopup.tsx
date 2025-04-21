@@ -45,8 +45,8 @@ const LayerSettingPopup: React.FC<LayerSettingPopupProps> = ({ layerType }) => {
                 {`
                 .layer-setting-popup {
                     position : absolute;
-                    top: 175px;
-                    right: 80px;
+                    top: 130px;
+                    right: 0px;
                     background: linear-gradient(45deg, black, transparent);
                     padding: 10px;
                     box-shadow: 0px 4px 6px rgba(0,0,0,0.1);
@@ -102,6 +102,7 @@ const LayerSettingPopup: React.FC<LayerSettingPopupProps> = ({ layerType }) => {
                             {/*    title="Max Color"*/}
                             {/*/>*/}
                         </div>
+                        <br/>
                         <label>
                             Exaggeration
                         </label>

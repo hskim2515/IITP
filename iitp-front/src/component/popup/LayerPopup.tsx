@@ -1,58 +1,61 @@
-import React, { useState } from 'react';
-import { layerSchema, LayerField } from '../layer/layerSchema';
+// components/LayerPopup.tsx
+import React, { useEffect, useState } from 'react';
 import '/static/css/styles.css';
 
-import BaseMap  from '../layer/BaseMap';
-import Analysis    from '../layer/Analysis';
+import BaseMap from '../layer/BaseMap';
+import Analysis from '../layer/Analysis';
 import Facility from '../layer/Facility';
-import { useLayerStore } from "@stores/useLayerStore";
-import { useShallow }     from "zustand/react/shallow";
+
+import { useLayerStore } from '@stores/useLayerStore';
+import { useShallow } from 'zustand/react/shallow';
+import { useLayerSchemaStore, LayerGroup } from '@stores/useLayerSchemaStore';
 
 interface LayerPopupProps {
     isOpen: boolean;
 }
 
-type LayerGroupKey = keyof typeof layerSchema;
-const tabKeys = Object.keys(layerSchema) as LayerGroupKey[];
-
-// key → 컴포넌트 매핑
-const tabComponentMap: Record<LayerGroupKey, React.FC<{ fields: LayerField[] }>> = {
-    baseMap:  BaseMap,
-    layer:    Analysis,
+const tabComponentMap: Record<string, React.FC<{ fields: any[] }>> = {
+    baseMap: BaseMap,
+    layer: Analysis,
     facility: Facility,
 };
 
 const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
-    if (!isOpen) return null;
-
     const [activeTab, setActiveTab] = useState(0);
     const { setActiveLayerGroupName } = useLayerStore(useShallow(state => ({
         setActiveLayerGroupName: state.setActiveLayerGroupName,
     })));
 
+    const { groups, fetchLayerSchema, loading } = useLayerSchemaStore();
+
+    useEffect(() => {
+        if (isOpen) fetchLayerSchema();
+    }, [isOpen]);
+
     const handleTabClick = (idx: number) => {
         setActiveTab(idx);
-        setActiveLayerGroupName(tabKeys[idx]); // 그룹명 설정 추가
+        setActiveLayerGroupName(groups[idx].key); // 그룹명 설정
     };
 
-    const currentKey     = tabKeys[activeTab];
-    const ActiveComponent = tabComponentMap[currentKey];
-    const fields          = layerSchema[currentKey].fields;
+    if (!isOpen || loading || groups.length === 0) return null;
+
+    const current = groups[activeTab];
+    const ActiveComponent = tabComponentMap[current.key];
 
     return (
         <div className="layer-popup">
             <div className="tabs">
-                {tabKeys.map((key, idx) => (
+                {groups.map((group, idx) => (
                     <button
-                        key={key}
+                        key={group.key}
                         className={`tab ${activeTab === idx ? 'active' : ''}`}
                         onClick={() => handleTabClick(idx)}
                     >
-                        {layerSchema[key].label}
+                        {group.label}
                     </button>
                 ))}
             </div>
-            <ActiveComponent fields={fields} />
+            {ActiveComponent && <ActiveComponent fields={current.fields} />}
         </div>
     );
 };

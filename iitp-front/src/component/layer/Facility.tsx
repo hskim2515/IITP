@@ -1,6 +1,6 @@
 import React from 'react';
 import { useLayerStore } from '@stores/useLayerStore';
-import { LayerField } from './layerSchema';
+import {LayerField} from "@stores/useLayerSchemaStore";
 
 export interface FacilityProps {
     fields: LayerField[];
@@ -26,14 +26,14 @@ const Facility: React.FC<FacilityProps> = ({ fields }) => {
         <div>
             {fields.map(field => (
                 <label
-                    key={field.value}
+                    key={field.key}
                     style={{ color: 'white', display: 'block', margin: '4px 0' }}
                 >
                     <input
                         type={field.type}
-                        value={field.value}
-                        checked={activeLayerName.includes(field.value)}
-                        onChange={e => handleToggle(field.value, e.target.checked)}
+                        value={field.key}
+                        checked={activeLayerName.includes(field.key)}
+                        onChange={e => handleToggle(field.key, e.target.checked)}
                     />
                     {field.label}
                 </label>

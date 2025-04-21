@@ -13,6 +13,7 @@
       "@primitives/*": ["src/primitives/*"],
       "@stores/*": ["src/stores/*"],
       "@css/*": ["static/css/*"],
+      "@schema/*": ["src/schema/*"],
     }
   },
   "exclude": ["node_modules", "**/*.js"] // JS 파일 제외

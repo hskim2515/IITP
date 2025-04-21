@@ -18,6 +18,7 @@ export default defineConfig({
         alias: {
             '@primitives': path.resolve(__dirname, 'src/primitives'),
             '@stores': path.resolve(__dirname, 'src/stores'),
+            '@schema': path.resolve(__dirname, 'src/schema'),
         }
     }
 })
