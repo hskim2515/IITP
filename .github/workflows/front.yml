@@ -50,4 +50,13 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
         run: |
-          sshpass -p "$SSH_PASSWORD" ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" '/home/gaia3d/iitp/setup/restart.sh'
+          sshpass -p "$SSH_PASSWORD" ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" '/home/gaia3d/iitp/restart.sh'
+
+#      - name: Set up Kubeconfig
+#        uses: azure/setup-kubectl@v3
+#        with:
+#          version: 'v1.32.0'
+#
+#      - name: Deploy to Kubernetes
+#        run: |
+#          kubectl apply -f k8s/

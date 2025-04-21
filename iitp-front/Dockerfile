@@ -10,7 +10,7 @@ RUN npm install --frozen-lockfile --online || npm install --frozen-lockfile
 
 COPY . .
 
-RUN npm build:dev
+RUN npm run build:dev
 
 FROM nginx:alpine
 
