@@ -92,7 +92,6 @@ const useSimulation = () => {
         }
 
         return () => {
-            // 꼭 워커 종료
             workerRef.current?.terminate();
             workerRef.current = null;
         };
@@ -101,6 +100,7 @@ const useSimulation = () => {
     useEffect(() => {
         speedRef.current = speed;
     }, [speed]);
+
     useEffect(() => {
         speedFactorRef.current = speedFactor;
     }, [speedFactor]);
@@ -367,8 +367,6 @@ const useSimulation = () => {
                     //worker.postMessage({ newVehicleData, cameraPositionWC });
                     //console.log(newVehicleData)
                     workerRef.current.postMessage({ newVehicleData: newVehicleData.filter(v => v.position), cameraPositionWC });
-
-
                 }
             }
         };
@@ -378,7 +376,6 @@ const useSimulation = () => {
             setCesiumSimulation(updateFrameFunc);
         }
 
-
         return () => {
             map?.removeLayer(vehicleLayerRef.current);
             viewer?.scene.preRender.removeEventListener(updateFrameFunc);
@@ -386,7 +383,6 @@ const useSimulation = () => {
     }, [vehicleRoute]);
 
     const setCesiumSimulation = (updateFrameFunc) => {
-
 
         if(czml && vehicleData && vehicleRoute.length != 0){
             if (!viewer) return;
@@ -420,9 +416,6 @@ const useSimulation = () => {
 
             //const primitive = new ParabolicArrowPrimitive(viewer.scene.context, vehicleRoute[0]);
 
-
-
-
             vehicleRoute.forEach((position) => {
                 const flatArray = position.flatMap(({ x, y, z }) => [x, y, z]);
                 position = new Cesium.Cartesian3.fromDegreesArrayHeights(flatArray);
@@ -430,8 +423,6 @@ const useSimulation = () => {
                 const vehicleFieldPrimitive = new FieldPrimitive(position, viewer.scene.context, speedFactor, isRunning);
                 const tailPrimitive = new TailPrimitive(position, viewer.scene.context,speedFactor, isRunning);
                 const vehicleDomePrimitive = new DomePrimitive(position, viewer.scene.context, speedFactor, isRunning);
-
-
 
                 //arrowLayer.flyToLastArrow(viewer)
                 //arrowLayer.update()
