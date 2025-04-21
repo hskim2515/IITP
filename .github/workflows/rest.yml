@@ -19,8 +19,8 @@ jobs:
           java-version: '22'
           distribution: 'temurin'
 
-#      - name: Grant execute permission to gradlew
-#        run: chmod +x ./gradlew
+      - name: Grant execute permission to gradlew
+        run: chmod +x ./gradlew
 
       - name: Build with gradle
         run: ./iitp-rest/gradlew clean build -x test
