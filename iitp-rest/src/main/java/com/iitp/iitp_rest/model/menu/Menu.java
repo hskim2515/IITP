@@ -3,6 +3,7 @@ package com.iitp.iitp_rest.model.menu;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.iitp.iitp_rest.model.BaseEntity;
+import com.iitp.iitp_rest.model.role.Role;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.OnDelete;
@@ -65,5 +66,8 @@ public class Menu extends BaseEntity {
     private Character available;
 
     /** 메뉴 접근 권한 */
-    private String accessRole;
+    /** 메뉴 접근 권한 (ENUM으로 매핑하되, DB에는 문자열로 저장) */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "access_role", length = 20)
+    private Role accessRole;
 }

@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.model.menu;
 
+import com.iitp.iitp_rest.model.role.Role;
 import lombok.Data;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,7 +15,7 @@ public class MenuTreeDTO {
     private Integer depth;
     private Integer sortOrder;
     private Character available;
-    private String accessRole;
+    private Role accessRole;
     // 자식 노드를 담는 리스트 (초기에는 빈 리스트)
     private List<MenuTreeDTO> children = new ArrayList<>();
     private Long rootId;
