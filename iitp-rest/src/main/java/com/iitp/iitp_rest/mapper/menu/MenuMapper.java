@@ -34,10 +34,11 @@ public class MenuMapper {
                 .nameKor(dto.getNameKor())
                 .nameEn(dto.getNameEn())
                 .parents(parent)
-                .root(root)                  // ← 추가
+                .root(root)
                 .depth(dto.getDepth())
                 .sortOrder(dto.getSortOrder())
                 .available(dto.getAvailable())
+                .accessRole(dto.getAccessRole())
                 .build();
     }
 
@@ -51,7 +52,7 @@ public class MenuMapper {
         dto.setDepth(menu.getDepth());
         dto.setSortOrder(menu.getSortOrder());
         dto.setAvailable(menu.getAvailable());
-
+        dto.setAccessRole(menu.getAccessRole());
         if (menu.getParents() != null) {
             dto.setParentsId(menu.getParents().getMenuId());
         }
@@ -79,6 +80,7 @@ public class MenuMapper {
             dto.setDepth(menu.getDepth());
             dto.setSortOrder(menu.getSortOrder());
             dto.setAvailable(menu.getAvailable());
+            dto.setAccessRole(menu.getAccessRole());
             if (menu.getRoot() != null) {
                 dto.setRootId(menu.getRoot().getMenuId());
             }
