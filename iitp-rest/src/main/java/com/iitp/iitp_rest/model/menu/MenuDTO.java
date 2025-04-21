@@ -23,4 +23,6 @@ public class MenuDTO {
     private Integer sortOrder;
     /** 메뉴 활성화 여부 */
     private Character available;
+    /** 메뉴 접근 권한 */
+    private String accessRole;
 }

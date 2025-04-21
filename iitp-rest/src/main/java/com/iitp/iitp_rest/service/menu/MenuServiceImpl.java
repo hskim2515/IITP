@@ -104,6 +104,7 @@ public class MenuServiceImpl implements MenuService{
                 .depth(updatedData.getDepth())
                 .sortOrder(updatedData.getSortOrder())
                 .available(updatedData.getAvailable())
+                .accessRole(updatedData.getAccessRole())
                 .build();
         return menuRepository.save(updatedMenu);
     }
@@ -137,6 +138,7 @@ public class MenuServiceImpl implements MenuService{
                     .depth(incoming.getDepth())
                     .sortOrder(incoming.getSortOrder())
                     .available(incoming.getAvailable())
+                    .accessRole(incoming.getAccessRole())
                     .build();
             updatedList.add(updatedMenu);
         }
