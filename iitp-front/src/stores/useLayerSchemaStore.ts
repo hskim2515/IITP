@@ -28,7 +28,7 @@ export const useLayerSchemaStore = create<LayerSchemaState>((set) => ({
     fetchLayerSchema: async () => {
         set({ loading: true });
         try {
-            const res = await fetch(import.meta.env.VITE_API_URL + '/layers/group'); // fetch 사용
+            const res = await fetch(process.env.VITE_API_URL + '/layers/group'); // fetch 사용
             console.log(res)
             if (!res.ok) {
                 throw new Error('Network response was not ok');

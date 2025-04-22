@@ -22,6 +22,7 @@ import HeatBarLayer from "@primitives/HeatBarLayer";
 import {useHeatmapSettingStore} from "@stores/useHeatmapSettingStore";
 import {useShallow} from "zustand/react/shallow";
 import ParabolicArrowPrimitive from "@primitives/ParabolicArrowPrimitive";
+import GridAnalyzePrimitive from "@primitives/GridAnalyzePrimitive";
 
 type GridCellKey = string; // 예: "3_5"
 
@@ -175,7 +176,7 @@ const useSimulation = () => {
     };
 
     useEffect(() => {
-        fetch("http://localhost:8080/vehicle/generate-vehicle-route", { // generate-czml
+        fetch(process.env.VITE_API_URL + "/vehicle/generate-vehicle-route", { // generate-czml
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ numVehicle, speedFactor, czml }),
@@ -400,18 +401,15 @@ const useSimulation = () => {
             primitiveLayerManager?.removeGroup("layer");
 
             const timeBasedPositions = transformToTimeBasedPositions(vehicleRoute);
-            const heatBarLayer = new HeatBarLayer(viewer, timeBasedPositions, speedFactor, isRunning, colors, exaggeration);
+            //const heatBarLayer = new HeatBarLayer(viewer, timeBasedPositions, speedFactor, isRunning, colors, exaggeration);
+            const heatBarLayer = new GridAnalyzePrimitive(viewer, timeBasedPositions, speedFactor, isRunning, colors, exaggeration);
             primitiveLayerManager.add(heatBarLayer, "layer", "heatmap");
-
-            console.log(computeODMatrix(vehicleRoute))
 
             const sampleOD = computeODMatrix(vehicleRoute);
 
-            console.log(sampleOD)
-
             sampleOD.forEach(cell => {
-                const primitive = new ParabolicArrowPrimitive(viewer.scene.context, cell.fromCenter, cell.toCenter, cell.density);
-                primitiveLayerManager.add(primitive, "layer", "default");
+                const odPrimitive = new ParabolicArrowPrimitive(viewer.scene.context, cell.fromCenter, cell.toCenter, cell.density);
+                primitiveLayerManager.add(odPrimitive, "layer", "od");
             })
 
             //const primitive = new ParabolicArrowPrimitive(viewer.scene.context, vehicleRoute[0]);

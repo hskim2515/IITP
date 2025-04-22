@@ -4,7 +4,6 @@ import cesium from 'vite-plugin-cesium'
 import path from 'path'
 
 export default defineConfig(({ mode }) => {
-    // 해당 모드의 .env 파일 로드 (예: .env.development, .env.production 등)
     const env = loadEnv(mode, process.cwd(), '');
 
     return {
@@ -16,7 +15,7 @@ export default defineConfig(({ mode }) => {
         },
         define: {
             global: 'globalThis',
-            'process.env': env, // 이걸 추가하면 JS 코드에서 process.env.XXX 도 사용 가능
+            'process.env': env,
         },
         plugins: [react(), cesium()],
         resolve: {
