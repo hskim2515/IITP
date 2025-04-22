@@ -1,4 +1,4 @@
-FROM openjdk:22-jdk
+FROM openjdk:23-jdk
 
 EXPOSE 9090
 
