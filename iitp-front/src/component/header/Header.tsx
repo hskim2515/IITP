@@ -10,7 +10,7 @@ const Header: React.FC = () => {
         activeDropdownMenu: state.activeDropdownMenu,
         setActiveDropdownMenu: state.setActiveDropdownMenu,
     })));
-    const baseUrl ="http://localhost:8080";
+    const baseUrl =import.meta.env.VITE_API_URL;
     const menuTreeUrl = `${baseUrl}/menu/tree`;
 
     // 컴포넌트 마운트 시 백엔드에서 메뉴 트리 데이터를 fetch하여 zustand 스토어에 저장
