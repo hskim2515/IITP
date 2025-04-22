@@ -38,6 +38,7 @@ jobs:
 
       - name: Build Docker image
         run: docker build --build-arg SPRING_PROFILES_ACTIVE=stage -t ${{ secrets.DOCKER_USERNAME }}/iitp-rest:latest .
+        working-directory: ./iitp-rest
 
       - name: Push Docker image
         run: docker push ${{ secrets.DOCKER_USERNAME }}/iitp-rest:latest
