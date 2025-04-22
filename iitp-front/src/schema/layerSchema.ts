@@ -11,6 +11,7 @@ export const localLayerSchema: Record<string, LocalLayerFieldSchema> = {
     hybrid:     { type: 'radio', providers: ['satellite', 'hybrid'] },
     heatmap:    { type: 'checkbox' },
     trip:       { type: 'checkbox' },
+    od:       { type: 'checkbox' },
     facility1:  { type: 'checkbox' },
     facility2:  { type: 'checkbox' },
     facility3:  { type: 'checkbox' },

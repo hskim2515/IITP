@@ -8,7 +8,7 @@ export default class ParabolicArrowPrimitive {
     private vertexBuffer: Cesium.Buffer;
     private positions: Cesium.Cartesian3[];
     private ready: boolean = false;
-    private show: boolean = true;
+    private show: boolean = false;
 
     constructor(
         context: Cesium.Context,

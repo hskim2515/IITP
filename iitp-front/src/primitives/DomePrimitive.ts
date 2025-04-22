@@ -160,6 +160,11 @@ export default class DomePrimitive {
         }
     }
 
+    async adjustPositionsToTerrain(positions: Cesium.Cartographic[]): Promise<Cartesian3[]> {
+        const updated = await Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, positions);
+        return updated.map(cart => Cesium.Cartesian3.fromRadians(cart.longitude, cart.latitude, cart.height));
+    }
+
 
     setSpeed(speed: number) {
         this.speed = speed;
