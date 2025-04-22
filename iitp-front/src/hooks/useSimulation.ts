@@ -401,8 +401,8 @@ const useSimulation = () => {
             primitiveLayerManager?.removeGroup("layer");
 
             const timeBasedPositions = transformToTimeBasedPositions(vehicleRoute);
-            //const heatBarLayer = new HeatBarLayer(viewer, timeBasedPositions, speedFactor, isRunning, colors, exaggeration);
-            const heatBarLayer = new GridAnalyzePrimitive(viewer, timeBasedPositions, speedFactor, isRunning, colors, exaggeration);
+            const heatBarLayer = new HeatBarLayer(viewer, timeBasedPositions, speedFactor, isRunning, colors, exaggeration);
+            //const heatBarLayer = new GridAnalyzePrimitive(viewer, timeBasedPositions, speedFactor, isRunning, colors, exaggeration);
             primitiveLayerManager.add(heatBarLayer, "layer", "heatmap");
 
             const sampleOD = computeODMatrix(vehicleRoute);
