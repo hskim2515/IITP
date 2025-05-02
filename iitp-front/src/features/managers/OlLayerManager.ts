@@ -144,37 +144,35 @@ export default class OlLayerManager {
         })
     }
 
-    public createBaseLayer() {
-        this.addToGroup("baseMap", "osm", new TileLayer({
-            visible: true,
-            zIndex: 1,
-            source: new XYZ({
-                url: 'https://a.tile.thunderforest.com/transport-dark/{z}/{x}/{y}.png'
+    addToBaseGroup(
+        layerName: string,
+        url: string,
+        visible: boolean,
+        ) {
+        const groupName = "baseMap"
+        const groupLayer = this.getGroup(groupName)
+        if (groupLayer) {
+            const layer = new TileLayer({
+                visible: visible,
+                zIndex: 1,
+                source: new XYZ({
+                    url: url
+                })
             })
-        }))
-        this.addToGroup("baseMap", "base", new TileLayer({
-            visible: true,
-            zIndex: 1,
-            source: new XYZ({
-                url: `http://api.vworld.kr/req/wmts/1.0.0/${ API_KEY }/Base/{z}/{y}/{x}.png`
-            })
-        }))
+            layer.set(KEY_CUSTOM_NAME, layerName)
+            groupLayer.getLayers().push(layer);
+        }
+    }
 
-        this.addToGroup("baseMap", "satellite", new TileLayer({
-            visible: true,
-            zIndex: 1,
-            source: new XYZ({
-                url: `http://api.vworld.kr/req/wmts/1.0.0/${ API_KEY }/Satellite/{z}/{y}/{x}.jpeg`
-            })
-        }))
+    public createBaseLayer(schema: any) {
+        const baseMapGroup = schema.find(group => group.key === "baseMap");
+        if (!baseMapGroup || !Array.isArray(baseMapGroup.fields)) return;
 
-        this.addToGroup("baseMap", "hybrid", new TileLayer({
-            visible: true,
-            zIndex: 1,
-            source: new XYZ({
-                url: `http://api.vworld.kr/req/wmts/1.0.0/${ API_KEY }/Hybrid/{z}/{y}/{x}.png`
-            })
-        }))
+        baseMapGroup.fields.forEach(field => {
+            const { key, url, basic } = field;
+            console.log(key, url, basic)
+            this.addToBaseGroup(key, url, basic)
+        })
     }
 
     public createAnalysisLayer() {
