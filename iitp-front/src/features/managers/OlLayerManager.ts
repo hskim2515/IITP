@@ -170,7 +170,6 @@ export default class OlLayerManager {
 
         baseMapGroup.fields.forEach(field => {
             const { key, url, basic } = field;
-            console.log(key, url, basic)
             this.addToBaseGroup(key, url, basic)
         })
     }
