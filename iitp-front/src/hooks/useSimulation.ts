@@ -1,27 +1,19 @@
 import { useEffect, useRef } from "react";
-import { LineString, Point } from "ol/geom";
-import * as olProj from "ol/proj";
-import { Feature } from "ol";
-import VectorLayer from "ol/layer/Vector";
-import VectorSource from "ol/source/Vector";
 import { useVehicleStore } from "@stores/useVehicleStore";
-import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import { useCesiumStore } from "@stores/useCesiumStore";
 import { useSimulationStore } from "@stores/useSimulationStore";
-import DensityPrimitive from "@primitives/DensityPrimitive";
-import HeatMapBend from "@primitives/HeatMapBend";
-import HeatMapLayer from "@primitives/HeatMapLayer";
 import FieldPrimitive from "@primitives/FieldPrimitive";
-import LinePrimitive from "@primitives/LinePrimitive";
 import DomePrimitive from "@primitives/DomePrimitive";
-import RectanglePrimitive from "@primitives/RectanglePrimitive";
 import { useLayerStore } from "@stores/useLayerStore";
 import * as Cesium from "cesium";
 import TailPrimitive from "@primitives/TailPrimitive";
 import HeatBarLayer from "@primitives/HeatBarLayer";
 import {useHeatmapSettingStore} from "@stores/useHeatmapSettingStore";
-import {useShallow} from "zustand/react/shallow";
 import ParabolicArrowPrimitive from "@primitives/ParabolicArrowPrimitive";
+import { Heatmap } from "ol/layer";
+import VectorSource from "ol/source/Vector";
+import VehicleFactory from "../features/VehicleFactory";
+import TrailFactory from "../features/TrailFactory";
 
 type GridCellKey = string; // 예: "3_5"
 
@@ -42,6 +34,7 @@ const useSimulation = () => {
 
     const heatmapColors = useHeatmapSettingStore((state) => state.colors)
     const heatmapExaggeration = useHeatmapSettingStore((state) => state.exaggeration)
+    const heatmapBlur = useHeatmapSettingStore.state.blur();
 
     const setCzml = useVehicleStore((state) => state.setCzml);
     const setVehicleData = useVehicleStore((state) => state.setVehicleData);
@@ -51,22 +44,15 @@ const useSimulation = () => {
     const features = useVehicleStore((state) => state.features);
     const vehicleRoute = useVehicleStore((state) => state.vehicleRoute);
 
-    // OpenLayers 관련 상태 및 레이어
-    const map = useOpenLayersStore((state) => state.map);
-    const olVehicleLayer = useLayerStore((state) => state.olVehicleLayer);
-    const tripLayer = useLayerStore((state) => state.tripLayer);
-    const heatmapLayer = useLayerStore((state) => state.heatmapLayer);
+    const olLayerManager = useLayerStore.state.olLayerManager();
+
+    const olVehicleFactoryRef = useRef<VehicleFactory>(null);
+    const olTripFactoryRef = useRef<TrailFactory>(null);
 
     // Ref 선언 (OpenLayers, Cesium, 애니메이션)
-    const olVehicleLayerSourceRef = useRef<VectorSource | null>(null);
-    const tripLayerSourceRef = useRef<VectorSource | null>(null);
-    const heatmapLayerSourceRef = useRef<VectorSource | null>(null);
-    const vehicleLayerRef = useRef(null);
-    const vehicleSourceRef = useRef(null);
     const animationRef = useRef<number | null>(null); // Cesium용
     const animationOlRef = useRef<number | null>(null); // OpenLayers용
     const viewerClockMultiplier = useRef(null);
-    const vehiclesRef = useRef([]);
 
     const viewer = useCesiumStore((state) => state.viewer);
     const primitiveLayerManager = useLayerStore((state) => state.cesiumPrimitiveLayerManager);
@@ -125,6 +111,18 @@ const useSimulation = () => {
         }
     }, [isRunning, isStop, speed, speedFactor]);
 
+    useEffect(() => {
+        const olVehicleFactory = olVehicleFactoryRef.current;
+        const olVehicleSource = olLayerManager?.getLayerWithGroupName("vehicle", "vehicle").getSource() as VectorSource;
+        if (!olVehicleFactory || !olVehicleSource) return;
+
+        olVehicleFactory.setSpeed(speed * speedFactor);
+        olVehicleFactory.setStatus(isRunning);
+
+        if (isStop) {
+            olVehicleFactory.stop();
+        }
+    }, [isRunning, isStop, speed, speedFactor]);
 
     useEffect(() => {
         if (viewer) {
@@ -135,44 +133,14 @@ const useSimulation = () => {
         }
     }, [heatmapColors, heatmapExaggeration]);
 
-    const updateTrip = (vehicleFeature) => {
-        if (!isRunning) return;
-
-        if (!tripLayerSourceRef.current) {
-            tripLayerSourceRef.current = tripLayer?.getSource();
+    useEffect(() => {
+        if (viewer) {
+            const heatmapLayer = olLayerManager?.getLayerWithGroupName("layer","heatmap") as Heatmap
+            heatmapLayer.setRadius(heatmapBlur)
+            heatmapLayer.setBlur(heatmapBlur)
+            heatmapLayer.setGradient(heatmapColors)
         }
-
-        const currentCoord = vehicleFeature.getGeometry().getCoordinates();
-        const tripFeatureId = vehicleFeature.getId() + "_trip";
-        let tripFeature = tripLayerSourceRef.current.getFeatureById(tripFeatureId);
-
-        if (!tripFeature) {
-            tripFeature = new Feature({
-                geometry: new LineString([currentCoord]),
-            });
-            tripFeature.setId(tripFeatureId);
-            tripLayerSourceRef.current.addFeature(tripFeature);
-        } else {
-            const currentTrail = tripFeature.getGeometry().getCoordinates();
-            currentTrail.push(currentCoord);
-            tripFeature.getGeometry().setCoordinates(currentTrail);
-        }
-    }
-
-// trip 배열 초기화를 위한 메서드
-    const resetToInitialPosition = () => {
-        const layer = tripLayer; // useLayerStore에서 가져온 tripLayer
-        if (!layer) {
-            console.warn("Trip layer is undefined.");
-            return;
-        }
-        const source = layer.getSource();
-        if (!source) {
-            console.warn("Trip layer source is undefined.");
-            return;
-        }
-        source.clear();
-    };
+    }, [heatmapColors, heatmapBlur, heatmapExaggeration]);
 
     useEffect(() => {
         fetch("http://localhost:8080/vehicle/generate-vehicle-route", { // generate-czml
@@ -186,83 +154,8 @@ const useSimulation = () => {
                 setCzml(czml);
                 setVehicleData(newVehicleData);
                 setFeatures(features);
-                resetToInitialPosition();
             });
     }, [numVehicle, speedFactor]);
-
-    // OpenLayers: 각 차량 Feature의 현재 위치를 보간(interpolation)하여 업데이트하는 함수
-    const updateCurrentVehiclePosition = (feature) => {
-        const routeFeature = feature.get("routeFeature"); // 전체 경로 배열
-        let currentIndex = feature.get("currentIndex");
-        let progress = feature.get("progress");
-
-        if (currentIndex >= routeFeature.length - 1) return;
-
-        // 최신 speed와 speedFactor를 적용하여 보간 진행률(stepSize) 계산
-        // 상수 0.000128로 조정하여 기본 속도를 낮추고, 속도 변경도 즉시 반영
-        const stepSize = speedRef.current * speedFactorRef.current * 0.000128;
-        progress += stepSize;
-
-        if (progress >= 1) {
-            progress = 0;
-            currentIndex = Math.min(currentIndex + 1, routeFeature.length - 1);
-        }
-
-        feature.set("currentIndex", currentIndex);
-        feature.set("progress", progress);
-
-        const start = olProj.fromLonLat(routeFeature[currentIndex]);
-        let end = start;
-        if (routeFeature[currentIndex + 1]) {
-            end = olProj.fromLonLat(routeFeature[currentIndex + 1]) || start;
-        }
-
-        // sine 함수를 사용한 보간으로 자연스러운 움직임 구현
-        const interpX = start[0] + (end[0] - start[0]) * Math.sin(progress * Math.PI * 0.5);
-        const interpY = start[1] + (end[1] - start[1]) * Math.sin(progress * Math.PI * 0.5);
-
-        feature.setGeometry(new Point([interpX, interpY]));
-    };
-
-    // OpenLayers: 60FPS 애니메이션 루프를 통해 각 차량 Feature의 위치를 업데이트
-    const updateOlSimulation = () => {
-        if (!olVehicleLayerSourceRef.current) return;
-        olVehicleLayerSourceRef.current.getFeatures().forEach((feature) => {
-            updateCurrentVehiclePosition(feature);
-            updateTrip(feature);
-        });
-        animationOlRef.current = requestAnimationFrame(updateOlSimulation);
-    };
-
-    // OpenLayers 애니메이션 제어: 재생(isRunning), 일시정지, 초기화(isStop) 조건 적용
-    useEffect(() => {
-        if (!olVehicleLayerSourceRef.current) return;
-        if (isRunning) {
-            if (!animationOlRef.current) {
-                animationOlRef.current = requestAnimationFrame(updateOlSimulation);
-            }
-        } else {
-            if (animationOlRef.current) {
-                cancelAnimationFrame(animationOlRef.current);
-                animationOlRef.current = null;
-            }
-        }
-        if (isStop) {
-            resetToInitialPosition();
-            if (olVehicleLayerSourceRef.current) {
-                const currentFeatures = olVehicleLayerSourceRef.current.getFeatures();
-                currentFeatures.forEach((feature) => {
-                    const route = feature.get("routeFeature");
-                    if (route && route.length > 0) {
-                        feature.set("currentIndex", 0);
-                        feature.set("progress", 0);
-                        const initialCoord = olProj.fromLonLat(route[0]);
-                        feature.setGeometry(new Point(initialCoord));
-                    }
-                });
-            }
-        }
-    }, [isRunning, isStop, features]);
 
     const transformToTimeBasedPositions = (vehiclePositions)=> {
         if (vehiclePositions.length === 0) return [];
@@ -326,31 +219,6 @@ const useSimulation = () => {
         return czml;
     }
 
-    const animate = () => {
-        if (!isRunning) return;
-
-        const vehicleFeatures = vehicleSourceRef.current.getFeatures();
-        const now = performance.now();
-
-        vehicleFeatures.forEach((vehicle) => {
-            const lastUpdate = vehicle.get("lastUpdateTime") || 0;
-            const updateInterval = vehicle.get("updateInterval") || 100;
-
-            if (!vehicle.get("initialPosition")) {
-                vehicle.set("initialPosition", vehicle.getGeometry().getCoordinates());
-            }
-
-            if (now - lastUpdate >= updateInterval) {
-                vehicle.set("lastUpdateTime", now);
-                updateTrip(vehicle)
-            }
-
-        });
-
-        animationRef.current = requestAnimationFrame(animate);
-    };
-
-
     // Cesium과 OpenLayers 시뮬레이션 통합: 후처리 및 Cesium 관련 설정
     useEffect(() => {
         let lastUpdateTime = 0;
@@ -377,10 +245,10 @@ const useSimulation = () => {
         }
 
         return () => {
-            map?.removeLayer(vehicleLayerRef.current);
             viewer?.scene.preRender.removeEventListener(updateFrameFunc);
+            olVehicleFactoryRef.current?.destroy();
         };
-    }, [vehicleRoute]);
+    }, [vehicleRoute, isRunning]);
 
     const setCesiumSimulation = (updateFrameFunc) => {
 
@@ -501,30 +369,21 @@ const useSimulation = () => {
     }
 
     const setOpenlayersSimulation = () => {
-        if (!map || !features || features.length === 0) return;
-        olVehicleLayerSourceRef.current = olVehicleLayer.getSource();
-        // 기존 feature 제거 (차량 수 변경에 따른 초기화)
-        olVehicleLayerSourceRef.current.clear();
-        resetToInitialPosition();
+        if (!olLayerManager || !features || vehicleRoute.length === 0) return;
 
-        const vehicleFeatures = features.map((feature, idx) => {
-            const { geometry } = feature;
-            const initialCoordinate = geometry.coordinates[0];
-            const transformedCoord = olProj.fromLonLat(initialCoordinate);
-            const vehiclePoint = new Point(transformedCoord);
-            const vehicleFeature = new Feature({
-                geometry: vehiclePoint,
-            });
-            // routeFeature에 원본 경로 좌표(경도, 위도, 고도)를 저장
-            vehicleFeature.set("routeFeature", geometry.coordinates);
-            vehicleFeature.set("currentIndex", 0);
-            vehicleFeature.set("progress", 0);
-            vehicleFeature.set("updateInterval", 18);
-            vehicleFeature.set("lastUpdateTime", performance.now());
-            vehicleFeature.setId(`vehicle${idx}`);
-            return vehicleFeature;
-        });
-        olVehicleLayerSourceRef.current.addFeatures(vehicleFeatures);
+        const olVehicleSource = olLayerManager.getLayerWithGroupName("vehicle", "vehicle").getSource() as VectorSource;
+        olVehicleSource.clear();
+
+        const olTripSource = olLayerManager.getLayerWithGroupName("layer", "trip").getSource() as VectorSource;
+        olTripSource.clear();
+
+        olVehicleFactoryRef.current?.destroy();
+        olVehicleFactoryRef.current = new VehicleFactory(features, olVehicleSource, speedFactor, isRunning);
+        olVehicleFactoryRef.current.setStatus(isRunning);
+
+        olTripFactoryRef.current?.destroy();
+        olTripFactoryRef.current = new TrailFactory(features, olTripSource, speedFactor, isRunning);
+        olTripFactoryRef.current.setStatus(isRunning);
     };
 
     const computeODMatrix = (

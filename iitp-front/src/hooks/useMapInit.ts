@@ -1,137 +1,68 @@
-import * as olProj from "ol/proj";
-import {Map as OLMap, View} from "ol";
 import {useEffect, useRef, useState} from 'react';
-import {useOpenLayersStore} from "@stores/useOpenLayersStore";
-import WebGLTileLayer from "ol/layer/Tile";
-import OSM from "ol/source/OSM";
 import {useCesiumStore} from "@stores/useCesiumStore";
 import {Cartesian3, UrlTemplateImageryProvider, Viewer} from "cesium";
 import * as Cesium from "cesium";
-import { Group, Heatmap } from "ol/layer";
-import VectorSource from "ol/source/Vector";
-import WebGLVectorLayer from "ol/layer/WebGLVector";
-import { useLayerStore } from "@stores/useLayerStore";
-import VectorLayer from "ol/layer/Vector";
 import PrimitiveLayerManager from "@primitives/PrimitiveLayerManager";
 import { useLayerStore } from "@stores/useLayerStore";
+import { useOpenLayersStore } from "@stores/useOpenLayersStore";
+import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
+import { Map as OLMap, View } from "ol";
+import * as olProj from "ol/proj";
+import OlLayerManager from "../features/managers/OlLayerManager";
 
+const useMapInit = (openlayersMapRef, cesiumMapRef) => {
 
-
-const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
-
-    const setMap = useOpenLayersStore((state) => state.setMap);
-    const setView = useOpenLayersStore((state) => state.setView);
+    const setMap = useOpenLayersStore.actions.setMap();
+    const setView = useOpenLayersStore.actions.setView();
 
     const setViewer = useCesiumStore((state) => state.setViewer);
     const setCesiumPrimitiveLayerManager = useLayerStore((state) => state.setCesiumPrimitiveLayerManager);
     const lodLevels = [1.0, 0.5, 0.2];
 
-    const setOlVehicleLayer = useLayerStore((state) => state.setOlVehicleLayer);
-    const setHeatmapLayer = useLayerStore((state) => state.setHeatmapLayer);
-    const setTripLayer = useLayerStore((state) => state.setTripLayer);
-    const vehicleVectorSource = new VectorSource();
+    const layerGroups = useLayerSchemaStore.state.groups();
+    const setOlLayerManager = useLayerStore.actions.setOlLayerManager();
 
-    const heatmapRectangleRef = useRef(null);
-    const heatmapCanvasRef = useRef(null);
-    const heatmapLayerRef = useRef(null);
+    const setActiveLayerGroupName = useLayerStore.actions.setActiveLayerGroupName()
+    const setActiveLayerName = useLayerStore.actions.setActiveLayerName()
 
     const [lodModels, setLodModels] = useState(null);
 
     //const lodWorker = new Worker(new URL('/src/workers/lodWorker.ts', import.meta.url), { type: 'module' });
 
-    let olMap: OLMap, olView: View;
-
     useEffect(() => {
-        olMapInit();
         cesiumMapInit();
     }, []);
+    useEffect(() => {
+        openLayersMapInit()
+    }, [layerGroups]); // fetch로 받아온 데이터가 있어야 초기화할 수 있도록 의존성 조건 설정
 
-    const olVehicleLayerInit = () => {
-        const layer =
-            new WebGLVectorLayer({
-                source: vehicleVectorSource,
-                style: {
-                    'circle-radius': 5,
-                    'circle-fill-color': 'rgb(84,182,255)',
-                    'circle-stroke-color': '#ffffff',
-                    'circle-stroke-width': 2,
-                },
-                zIndex: 110,
-            });
-        layer.set("customName", "vehicle")
-        setOlVehicleLayer(layer)
-        return layer
-    }
 
-    const olHeatmapLayerInit = () => {
-        const layer =
-            new Heatmap({
-                source: vehicleVectorSource,
-                blur: 15,
-                radius: 8,
-                weight: () => 1,
-                visible: false,
-                zIndex: 220
-            })
-        layer.set("customName", "heatmap")
-        setHeatmapLayer(layer)
-        return layer;
-    }
+    useEffect(() => {
+        setActiveLayerGroupName(['baseMap'])
+        setActiveLayerName(['osm'])
+    }, [setActiveLayerGroupName, setActiveLayerName])
 
-    const olTripLayerInit = () => {
-        const layer =
-            new WebGLVectorLayer({
-                source: new VectorSource(),
-                style: {
-                    'stroke-color': 'rgba(0,0,0,0.15)',
-                    'stroke-width': 2,
-                },
-                visible: false,
-                zIndex: 10
-            })
-        layer.set("customName", "trip")
-        setTripLayer(layer)
-        return layer;
-    }
-
-    const olLayerGroupInit = () => {
-        // heatmap과 trip 레이어 생성
-        const heatmapLayer = olHeatmapLayerInit();
-        const tripLayer = olTripLayerInit();
-
-        // 두 레이어를 포함하는 그룹 생성
-        const group = new Group({
-            layers: [heatmapLayer, tripLayer],
+    const openLayersMapInit = () => {
+        if (!openlayersMapRef.current) return;
+        if (layerGroups.length === 0) return;
+        // 1) Map & View 초기화
+        const view = new View({
+            center: olProj.fromLonLat([ 127.1216, 37.3826 ]),
+            zoom: 16,
         });
-        group.set("customGroupName", "layer");
-        return group;
-    };
-
-    const olMapInit = () => {
-        if (openlayersMapRef.current) {
-            olView = new View({
-                center: olProj.fromLonLat([127.1216, 37.3826]),
-                zoom: 16,
-            });
-
-            olMap = new OLMap({
-                target: openlayersMapRef.current,
-                view: olView,
-                layers: [
-                    new WebGLTileLayer({
-                        source: new OSM(),
-                    }),
-                ],
-            });
-
-            setMap(olMap);
-            setView(olView);
-
-            olMap.addLayer(olVehicleLayerInit())
-            olMap.addLayer(olLayerGroupInit())
-        }
+        const map = new OLMap({
+            target: openlayersMapRef.current,
+            view,
+        });
+        setMap(map);
+        setView(view);
+        const manager = new OlLayerManager(map, view)
+        setOlLayerManager(manager)
+        manager.createRootGroup(layerGroups);
+        manager.createBaseLayer();
+        manager.createAnalysisLayer();
+        manager.createODMatrixLayer();
     }
-
     const cesiumMapInit = () => {
         async function loadCesium() {
             if (!cesiumMapRef.current) return;
@@ -207,4 +138,4 @@ const useOpenLayersMapInit = (openlayersMapRef, cesiumMapRef) => {
 };
 
 
-export default useOpenLayersMapInit;
+export default useMapInit;
