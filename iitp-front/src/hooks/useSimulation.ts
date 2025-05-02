@@ -14,6 +14,8 @@ import { Heatmap } from "ol/layer";
 import VectorSource from "ol/source/Vector";
 import VehicleFactory from "../features/VehicleFactory";
 import TrailFactory from "../features/TrailFactory";
+import ODMatrixFactory from "../features/ODMatrixFactory";
+import { Coordinate } from "ol/coordinate";
 
 type GridCellKey = string; // 예: "3_5"
 
@@ -22,6 +24,8 @@ interface ODCellInfo {
     toKey: GridCellKey;
     fromCenter: Cesium.Cartesian3;
     toCenter: Cesium.Cartesian3;
+    fromCoord: [number, number];
+    toCoord: [number, number];
     density: number;
 }
 
@@ -48,6 +52,7 @@ const useSimulation = () => {
 
     const olVehicleFactoryRef = useRef<VehicleFactory>(null);
     const olTripFactoryRef = useRef<TrailFactory>(null);
+    const olODMatrixFactoryRef = useRef<ODMatrixFactory>(null);
 
     // Ref 선언 (OpenLayers, Cesium, 애니메이션)
     const animationRef = useRef<number | null>(null); // Cesium용
@@ -377,6 +382,9 @@ const useSimulation = () => {
         const olTripSource = olLayerManager.getLayerWithGroupName("layer", "trip").getSource() as VectorSource;
         olTripSource.clear();
 
+        const olODSource = olLayerManager.getLayerWithGroupName("layer", "od").getSource() as VectorSource;
+        olODSource.clear();
+
         olVehicleFactoryRef.current?.destroy();
         olVehicleFactoryRef.current = new VehicleFactory(features, olVehicleSource, speedFactor, isRunning);
         olVehicleFactoryRef.current.setStatus(isRunning);
@@ -384,16 +392,30 @@ const useSimulation = () => {
         olTripFactoryRef.current?.destroy();
         olTripFactoryRef.current = new TrailFactory(features, olTripSource, speedFactor, isRunning);
         olTripFactoryRef.current.setStatus(isRunning);
+
+        const odData: ODCellInfo[] = computeODMatrix(vehicleRoute);
+
+        olODMatrixFactoryRef.current?.destroy();
+        olODMatrixFactoryRef.current = new ODMatrixFactory(odData, olODSource, isRunning);
+        olODMatrixFactoryRef.current.setStatus(isRunning);
+
     };
 
     const computeODMatrix = (
         geoPointGroups: { x: number; y: number; z: number }[][],
         gridSize: number = 0.01
     ): ODCellInfo[] => {
-        const odMap = new Map<string, { fromKey: string; toKey: string; fromCenter: Cesium.Cartesian3; toCenter: Cesium.Cartesian3; count: number }>();
+        const odMap = new Map<string, {
+            fromKey: string;
+            toKey: string;
+            fromCenter: Cesium.Cartesian3;
+            toCenter: Cesium.Cartesian3;
+            fromCoord: [number, number];
+            toCoord: [number, number];
+            count: number;
+        }>();
 
-        // 격자 중심 구하기
-        const getGridKeyAndCenter = (x: number, y: number): [string, Cesium.Cartesian3] => {
+        const getGridKeyAndCenter = (x: number, y: number): [string, Cesium.Cartesian3, [number, number]] => {
             const gridX = Math.floor(x / gridSize);
             const gridY = Math.floor(y / gridSize);
             const key = `${gridX}_${gridY}`;
@@ -401,7 +423,7 @@ const useSimulation = () => {
             const centerLat = (gridY + 0.5) * gridSize;
 
             const centerCartesian = Cesium.Cartesian3.fromDegrees(centerLon, centerLat, 0);
-            return [key, centerCartesian];
+            return [key, centerCartesian, [centerLon, centerLat]];
         };
 
         for (const route of geoPointGroups) {
@@ -410,8 +432,8 @@ const useSimulation = () => {
             const start = route[0];
             const end = route[route.length - 1];
 
-            const [fromKey, fromCenter] = getGridKeyAndCenter(start.x, start.y);
-            const [toKey, toCenter] = getGridKeyAndCenter(end.x, end.y);
+            const [fromKey, fromCenter, fromCoord] = getGridKeyAndCenter(start.x, start.y);
+            const [toKey, toCenter, toCoord] = getGridKeyAndCenter(end.x, end.y);
             const pairKey = `${fromKey}→${toKey}`;
 
             if (!odMap.has(pairKey)) {
@@ -420,6 +442,8 @@ const useSimulation = () => {
                     toKey,
                     fromCenter,
                     toCenter,
+                    fromCoord,
+                    toCoord,
                     count: 0,
                 });
             }
@@ -428,20 +452,14 @@ const useSimulation = () => {
         }
 
         const odArray = Array.from(odMap.values());
-
-        // 최대 count로 정규화하여 density로 설정
         const maxCount = Math.max(...odArray.map((item) => item.count), 1); // 0 방지
 
-        const result: ODCellInfo[] = odArray.map(item => ({
-            fromKey: item.fromKey,
-            toKey: item.toKey,
-            fromCenter: item.fromCenter,
-            toCenter: item.toCenter,
-            density: item.count / maxCount
+        return odArray.map(item => ({
+            ...item,
+            density: item.count / maxCount,
         }));
-
-        return result;
     };
+
 
 
 };

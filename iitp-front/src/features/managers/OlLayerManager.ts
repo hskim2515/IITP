@@ -223,6 +223,15 @@ export default class OlLayerManager {
     }
 
     public createODMatrixLayer() {
-
+        const odSource = new VectorSource();
+        const odMatrixLayer = new WebGLVectorLayer({
+            source: odSource,
+            style: {
+                'fill-color': ['get', 'color'],
+            },
+            visible: true,
+            zIndex: 200,
+        })
+        this.addToGroup("layer", "od", odMatrixLayer);
     }
 }
