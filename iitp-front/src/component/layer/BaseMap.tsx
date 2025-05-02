@@ -22,6 +22,7 @@ const BaseMap: React.FC<BaseMapProps> = ({ fields }) => {
     const olLayerManager = useLayerStore.state.olLayerManager()
     const cesiumPrimitiveLayerManager = useLayerStore.state.cesiumPrimitiveLayerManager()
 
+    const defaultSelected = fields.find(field => field.basic)?.key || null;
     const [selected, setSelected] = useState<string | null>(currentBaseMap);
 
     useEffect(() => {
@@ -29,8 +30,22 @@ const BaseMap: React.FC<BaseMapProps> = ({ fields }) => {
     }, [olLayerManager]);
 
     useEffect(() => {
+        if(!cesiumPrimitiveLayerManager) return;
+    }, [cesiumPrimitiveLayerManager]);
+
+    useEffect(() => {
+        if (defaultSelected) {
+            setCurrentBaseMap(defaultSelected);
+        }
+    }, [defaultSelected, setCurrentBaseMap]);
+
+    useEffect(() => {
         if (currentBaseMap) setSelected(currentBaseMap);
     }, [currentBaseMap]);
+
+    useEffect(() => {
+        console.log("fields:::", fields)
+    }, [fields]);
 
     const handleSelect = (value: string) => {
         const layerName = value
