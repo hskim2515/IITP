@@ -36,19 +36,9 @@ const BaseMap: React.FC<BaseMapProps> = ({ fields }) => {
         const layerName = value
         if(olMap && olLayerManager) {
             olLayerManager.showBaseLayer("baseMap",layerName) // base, osm, hybrid
-            cesiumPrimitiveLayerManager?.show("baseMap",layerName)
         }
-
-        // Cesium 레이어 갱신
-        if (viewer) {
-            const layers = viewer.imageryLayers;
-            removeAllCesiumLayers(viewer);
-            const field = fields.find(field => field.key === value)!;
-            const providers = (field as any).providers as string[]|undefined;
-            (providers || [value]).forEach(provider => {
-                const provs = createCesiumLayer(provider);
-                ;([] as any[]).concat(provs).forEach(pr => layers.addImageryProvider(pr));
-            });
+        if(viewer && cesiumPrimitiveLayerManager) {
+            cesiumPrimitiveLayerManager.showBaseLayer("baseMap",layerName) // base, osm, hybrid
         }
 
         setCurrentBaseMap(value);
