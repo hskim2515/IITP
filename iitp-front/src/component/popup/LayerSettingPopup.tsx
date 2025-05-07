@@ -8,7 +8,6 @@ import { useHeatmapSettingStore } from '@stores/useHeatmapSettingStore';
 import ColorBar from "../util/ColorBar";
 
 const LayerSettingPopup: React.FC<LayerSettingPopupProps> = ({ layerType }) => {
-    if (!layerType) return null;
 
     const {
         colors,
@@ -18,6 +17,8 @@ const LayerSettingPopup: React.FC<LayerSettingPopupProps> = ({ layerType }) => {
     } = useHeatmapSettingStore();
 
     const [tempExaggeration, setTempExaggeration] = useState(exaggeration);
+
+    if (!layerType) return null;
 
     const handleExaggerationChange = (value: number) => {
         setTempExaggeration(value);
