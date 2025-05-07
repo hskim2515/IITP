@@ -9,10 +9,9 @@ import com.iitp.iitp_rest.model.request.VehicleRequest;
 import com.iitp.iitp_rest.repository.NetworkRepository;
 import com.iitp.iitp_rest.util.CoordinateConverter;
 import com.iitp.iitp_rest.util.GeoJsonUtils;
-import com.iitp.iitp_rest.util.VehicleParserUtil;
+import com.iitp.iitp_rest.util.VehicleDataReader;
 import lombok.AllArgsConstructor;
 import org.locationtech.proj4j.ProjCoordinate;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -20,7 +19,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
@@ -32,6 +30,7 @@ import java.util.stream.Collectors;
 public class VehicleController {
 
     private final NetworkRepository networkRepository;
+    private final VehicleDataReader vehicleDataReader;
 
     @PostMapping("/generate-czml")
     public ResponseEntity<Map<String, Object>> generateCzml(@RequestBody VehicleRequest request) {
@@ -261,9 +260,7 @@ public class VehicleController {
 
         Map<Cartesian3, List<Road>> roadConnections = buildRoadConnections(roadEntities);
 
-        ClassPathResource visualizerResource = new ClassPathResource("xmls/VehicleEventVisualizer.xml");
-        InputStream visualizerStream = visualizerResource.getInputStream();
-        List<VehicleState> allVehicles = VehicleParserUtil.parseVisualizer(visualizerStream);
+        List<VehicleState> allVehicles = vehicleDataReader.readAll();
         Map<String, List<VehicleState>> grouped = allVehicles.stream()
                 .collect(Collectors.groupingBy(VehicleState::getId));
 
