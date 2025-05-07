@@ -23,6 +23,7 @@
     "@types/node": "^22.10.2",
     "cesium": "^1.127.0",
     "heatmap.js": "^2.0.5",
+    "immer": "^10.1.1",
     "lodash": "^4.17.21",
     "lodash.debounce": "^4.0.8",
     "lodash.throttle": "^4.1.1",
