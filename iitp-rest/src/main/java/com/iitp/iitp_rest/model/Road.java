@@ -7,5 +7,11 @@ import lombok.Data;
 @Data
 @AllArgsConstructor
 public class Road {
+    private String linkId;
+    private String laneId;
     private Polyline polyline;
+
+    private Double baseLon;
+    private Double baseLat;
+
 }
