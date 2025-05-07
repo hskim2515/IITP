@@ -7,7 +7,6 @@ import useMapInit from "../../hooks/useMapInit";
 import useSimulation from "../../hooks/useSimulation";
 import useMapSync from "../../hooks/useMapSync";
 import useLayer from "../../hooks/useLayer";
-import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
 
 const Maps = () => {
 
@@ -19,15 +18,9 @@ const Maps = () => {
     const panelWidth = activePanel ? 250 : 0; // 패널이 열리면 250px 너비 적용
     const mapWidth = `calc((100vw - ${panelWidth}px) / 2)`; // 패널이 열리면 남은 공간을 2등분
 
-    const fetchLayerSchema = useLayerSchemaStore.actions.fetchLayerSchema()
-
-    useEffect(() => {
-        fetchLayerSchema()
-    }, [fetchLayerSchema]);
-
-    useMapInit(openlayersMapRef, cesiumMapRef);
     useSimulation();
     useMapSync();
+    useMapInit(openlayersMapRef, cesiumMapRef);
     useLayer();
 
     return (

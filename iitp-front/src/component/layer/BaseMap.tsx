@@ -4,56 +4,49 @@ import { useCesiumStore }      from '@stores/useCesiumStore';
 import { useMapStore }         from '@stores/useMapStore';
 import {
     createCesiumLayer,
+    createOlLayer,
     removeAllCesiumLayers
 } from '../../hooks/basemap/useBaseMap';
-import { LayerField } from "@stores/useLayerSchemaStore";
-import { useLayerStore } from "@stores/useLayerStore";
+import {LayerField} from "@stores/useLayerSchemaStore";
 
 export interface BaseMapProps {
     fields: LayerField[];
 }
 
 const BaseMap: React.FC<BaseMapProps> = ({ fields }) => {
-    const olMap = useOpenLayersStore.state.map();
-    const viewer = useCesiumStore.state.viewer();
-    const currentBaseMap = useMapStore.state.currentBaseMap();
-    const setCurrentBaseMap = useMapStore.actions.setCurrentBaseMap();
+    const olMap  = useOpenLayersStore(state => state.map);
+    const viewer = useCesiumStore(state => state.viewer);
+    const currentBaseMap = useMapStore(state => state.currentBaseMap);
+    const setCurrentBaseMap = useMapStore(state => state.setCurrentBaseMap);
 
-    const olLayerManager = useLayerStore.state.olLayerManager()
-    const cesiumPrimitiveLayerManager = useLayerStore.state.cesiumPrimitiveLayerManager()
-
-    const defaultSelected = fields.find(field => field.basic)?.key || null;
     const [selected, setSelected] = useState<string | null>(currentBaseMap);
-
-    useEffect(() => {
-        if(!olLayerManager) return;
-    }, [olLayerManager]);
-
-    useEffect(() => {
-        if(!cesiumPrimitiveLayerManager) return;
-    }, [cesiumPrimitiveLayerManager]);
-
-    useEffect(() => {
-        if (defaultSelected) {
-            setCurrentBaseMap(defaultSelected);
-        }
-    }, [defaultSelected, setCurrentBaseMap]);
 
     useEffect(() => {
         if (currentBaseMap) setSelected(currentBaseMap);
     }, [currentBaseMap]);
 
-    useEffect(() => {
-        console.log("fields:::", fields)
-    }, [fields]);
-
     const handleSelect = (value: string) => {
-        const layerName = value
-        if(olMap && olLayerManager) {
-            olLayerManager.showBaseLayer("baseMap",layerName) // base, osm, hybrid
+        // OpenLayers 레이어 갱신
+        if (olMap) {
+            olMap.getLayers().clear();
+            const field = fields.find(field => field.key === value)!;
+            const providers = (field as any).providers as string[]|undefined;
+            (providers || [value]).forEach(provider => {
+                const layers = createOlLayer(provider);
+                ([] as any[]).concat(layers).forEach(layer => olMap.addLayer(layer));
+            });
         }
-        if(viewer && cesiumPrimitiveLayerManager) {
-            cesiumPrimitiveLayerManager.showBaseLayer("baseMap",layerName) // base, osm, hybrid
+
+        // Cesium 레이어 갱신
+        if (viewer) {
+            const layers = viewer.imageryLayers;
+            removeAllCesiumLayers(viewer);
+            const field = fields.find(field => field.key === value)!;
+            const providers = (field as any).providers as string[]|undefined;
+            (providers || [value]).forEach(provider => {
+                const provs = createCesiumLayer(provider);
+                ;([] as any[]).concat(provs).forEach(pr => layers.addImageryProvider(pr));
+            });
         }
 
         setCurrentBaseMap(value);

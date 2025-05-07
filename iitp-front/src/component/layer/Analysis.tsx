@@ -16,14 +16,13 @@ const Analysis: React.FC<AnalysisProps> = ({ fields }) => {
         addActiveLayerName,
         removeActiveLayerName,
     } = useLayerStore();
-    const olLayerManager = useLayerStore.state.olLayerManager()
+
     const handleSettingClick = (type) => {
         setSelectedLayerType(type);
     };
 
     const handleToggle = (value: string, checked: boolean) => {
         checked ? addActiveLayerName(value) : removeActiveLayerName(value);
-        olLayerManager?.showLayer("layer", activeLayerName, removeActiveLayerName)
     };
 
     console.log(fields)
