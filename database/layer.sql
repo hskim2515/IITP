@@ -35,7 +35,8 @@ INSERT INTO layer (id, group_id, key, label, basic, auth) VALUES
 -- layer 그룹
 INSERT INTO layer (id, group_id, key, label, basic, auth) VALUES
                                                               (5, 2, 'heatmap', '히트맵 분석',        false, 0),
-                                                              (6, 2, 'trip',    '트립플로우 분석',    false, 0);
+                                                              (6, 2, 'trip',    '트립플로우 분석',    false, 0),
+                                                              (10, 2, 'od',    'OD 분석',    false, 0);
 
 -- facility 그룹
 INSERT INTO layer (id, group_id, key, label, basic, auth) VALUES

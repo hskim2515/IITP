@@ -1,0 +1,2 @@
+*.xml filter=lfs diff=lfs merge=lfs -text
+src/main/resources/xmls/VehicleEventVisualizer.xml filter=lfs diff=lfs merge=lfs -text
