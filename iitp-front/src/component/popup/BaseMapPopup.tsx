@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useOpenLayersStore } from '@stores/useOpenLayersStore';
 import { useCesiumStore } from '@stores/useCesiumStore';
 import {useMapStore} from "@stores/useMapStore";
-import {createCesiumLayer, createOlLayer, removeAllCesiumLayers} from "../../hooks/basemap/useBaseMap";
+import {createCesiumLayer, removeAllCesiumLayers} from "../../hooks/basemap/useBaseMap";
 
 const BaseMapPopup = () => {
     const BaseMapOptions = [
@@ -12,7 +12,6 @@ const BaseMapPopup = () => {
         { value: 'hybrid', label: 'VWorld Hybrid지도' }
     ];
     /* ol */
-    const olMap = useOpenLayersStore((state) => state.map);
     const currentBaseMap = useMapStore((state) => state.currentBaseMap);
     const setCurrentBaseMap = useMapStore((state) => state.setCurrentBaseMap);
     /* cesium */
@@ -20,17 +19,6 @@ const BaseMapPopup = () => {
     const [selectedLayer, setSelectedLayer] = useState<string | null>(currentBaseMap);
 
     const updateOlLayer = (layerType:string) => {
-        if (!olMap) return;
-        olMap.getLayers().clear();
-        if (layerType === 'hybrid') {
-            const satelliteLayer = createOlLayer('satellite');
-            const hybridLayer = createOlLayer('hybrid');
-            olMap.addLayer(satelliteLayer);
-            olMap.addLayer(hybridLayer);
-        } else {
-            const newLayer = createOlLayer(layerType);
-            olMap.addLayer(newLayer);
-        }
         setCurrentBaseMap(layerType);
     };
 
