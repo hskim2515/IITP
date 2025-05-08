@@ -20,10 +20,6 @@ const useLayer = () => {
 
     // features는 하위 레이어나 해당 그룹에 영향을 줄 수 있으므로 의존성에 포함
     const features = useVehicleStore(useShallow((state) => state.features));
-    const olVehicleLayer = useLayerStore((state) => state.olVehicleLayer);
-    const heatmapLayer = useLayerStore((state) => state.heatmapLayer);
-    const tripLayer = useLayerStore((state) => state.tripLayer);
-
 
     function usePrevious<T>(value: T): T | undefined {
         const ref = useRef<T>();
@@ -44,13 +40,6 @@ const useLayer = () => {
         const groupLayer = map.getLayers().getArray().find(
             (layer) => layer.get("customGroupName") === activeLayerGroupName
         );
-
-        // activeLayerName이 falsy (null, undefined, "")이면 그룹을 숨김
-        // if (!activeLayerName) {
-        //     groupLayer && groupLayer.setVisible(false);
-        //     currentLayerRef.current = undefined;
-        //     return;
-        // }
 
         if (groupLayer) {
             // 그룹 내의 모든 하위 레이어를 순회하면서 activeLayerName과 일치하는 경우만 visible true, 나머지는 false로 설정
