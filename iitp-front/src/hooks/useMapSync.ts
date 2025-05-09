@@ -40,7 +40,7 @@ const useMapSync = () => {
                 isOLSyncing.current = true;
             };
 
-            const destination = Cartesian3.fromDegrees(127.1216, 37.3826, 10000);
+            const destination = Cartesian3.fromDegrees(127.3845, 36.3504, 10000);
             cesiumCamera.setView({
                 destination
             });

@@ -20,7 +20,7 @@ export default class GridAnalyzePrimitive{
         this.status = status;
         this.previousTime = [] // 마지막 업데이트 시간
         this.currentIndex = [];
-        this.show = false;
+        this.show = true;
         this.exaggeration= exaggeration;
         this.colors = hexToVec3(colors);
         this.init();

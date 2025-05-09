@@ -2,13 +2,15 @@ import {useEffect, useRef, useState} from 'react';
 import {useCesiumStore} from "@stores/useCesiumStore";
 import {Cartesian3, UrlTemplateImageryProvider, Viewer} from "cesium";
 import * as Cesium from "cesium";
-import PrimitiveLayerManager from "@primitives/PrimitiveLayerManager";
+import PrimitiveLayerManager from "../managers/PrimitiveLayerManager";
 import { useLayerStore } from "@stores/useLayerStore";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
 import { Map as OLMap, View } from "ol";
 import * as olProj from "ol/proj";
-import OlLayerManager from "../features/managers/OlLayerManager";
+import OlLayerManager from "@features/managers/OlLayerManager";
+import {LayerManager} from "../managers/LayerManager";
+import BaseMapLayerManager from "../managers/BaseMapLayerManager";
 
 const useMapInit = (openlayersMapRef, cesiumMapRef) => {
 
@@ -16,7 +18,7 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
     const setView = useOpenLayersStore.actions.setView();
 
     const setViewer = useCesiumStore((state) => state.setViewer);
-    const setCesiumPrimitiveLayerManager = useLayerStore((state) => state.setCesiumPrimitiveLayerManager);
+    const setLayerManager = useLayerStore((state) => state.setLayerManager);
     const lodLevels = [1.0, 0.5, 0.2];
 
     const layerGroups = useLayerSchemaStore.state.groups();
@@ -40,7 +42,6 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
         openLayersMapInit()
     }, [layerGroups, openlayersMapRef.current]); // fetch로 받아온 데이터가 있어야 초기화할 수 있도록 의존성 조건 설정
 
-
     useEffect(() => {
         setActiveLayerGroupName(['baseMap'])
         setActiveLayerName(['osm'])
@@ -49,7 +50,7 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
     const openLayersMapInit = () => {
         // 1) Map & View 초기화
         const view = new View({
-            center: olProj.fromLonLat([ 127.1216, 37.3826 ]),
+            center: olProj.fromLonLat([ 127.3845, 36.3504 ]),
             zoom: 16,
         });
         const map = new OLMap({
@@ -88,17 +89,18 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
                 // },
             });
 
-            const manager = new PrimitiveLayerManager(newViewer, useLayerStore);
-            manager.createBaseLayer(layerGroups);
+            const primitiveLayerManager = new PrimitiveLayerManager(newViewer, useLayerStore);
+            const basemapLayerManager = new BaseMapLayerManager(newViewer)
 
             newViewer.camera.setView({
-                destination: Cartesian3.fromDegrees(127.1216, 37.3826, 10000) // Adjust the height as needed
+                destination: Cartesian3.fromDegrees(127.3845, 36.3504, 10000) // Adjust the height as needed
             });
             newViewer.scene.globe.depthTestAgainstTerrain = true;
-
-
             setViewer(newViewer);
-            setCesiumPrimitiveLayerManager(manager);
+
+            const layerManager = new LayerManager(primitiveLayerManager, basemapLayerManager, newViewer);
+            layerManager.addBaseMapLayer(layerGroups)
+            setLayerManager(layerManager);
 
             fetch("CesiumMilkTruck.glb")
                 .then(res => res.arrayBuffer())
