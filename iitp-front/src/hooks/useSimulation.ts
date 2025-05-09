@@ -387,7 +387,7 @@ const useSimulation = () => {
         olVehicleFactoryRef.current.setStatus(isRunning);
 
         olTripFactoryRef.current?.destroy();
-        olTripFactoryRef.current = new TrailFactory(features, olTripSource, speedFactor, isRunning);
+        olTripFactoryRef.current = new TrailFactory(features, olVehicleSource, olTripSource, isRunning);
         olTripFactoryRef.current.setStatus(isRunning);
 
         const odData: ODCellInfo[] = computeODMatrix(vehicleRoute);

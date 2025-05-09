@@ -202,6 +202,7 @@ export default class OlLayerManager {
         });
         this.addToGroup("layer", "heatmap", heatmapLayer);
 
+        const tripSource = new VectorSource();
         const tripStyle =
             {
                 'circle-radius': 5,
@@ -210,10 +211,10 @@ export default class OlLayerManager {
                 'circle-stroke-width': 2,
                 'stroke-color': 'rgb(149,122,112,0.5)',
                 'stroke-width': 2,
-            }
+            };
 
         const tripLayer = new WebGLVectorLayer({
-            source: vehicleSource,
+            source: tripSource,
             style: tripStyle,
             visible: false,
             zIndex: 130,
