@@ -13,7 +13,7 @@ const useLayer = () => {
     const map = useOpenLayersStore((state) => state.map);
     const viewer = useCesiumStore((state) => state.viewer);
 
-    const primitiveLayerManager = useLayerStore((state) => state.cesiumPrimitiveLayerManager);
+    const layerManager = useLayerStore((state) => state.layerManager);
 
     const activeLayerName = useLayerStore(useShallow((state) => state.activeLayerName));
     const activeLayerGroupName = useLayerStore(useShallow((state) => state.activeLayerGroupName));
@@ -69,11 +69,11 @@ const useLayer = () => {
         const removed = prevLayerNames?.filter(name => !activeLayerName?.includes(name)) || [];
 
         removed.forEach(name => {
-            primitiveLayerManager.hide(activeLayerGroupName, name);
+            layerManager?.hideLayer(activeLayerGroupName, name);
         });
 
         added.forEach(name => {
-            primitiveLayerManager.show(activeLayerGroupName, name);
+            layerManager?.showLayer(activeLayerGroupName, name);
         });
 
     }, [activeLayerName, activeLayerGroupName, viewer]);

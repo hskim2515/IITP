@@ -1,15 +1,15 @@
 import { create } from "zustand";
 import { combine, devtools, subscribeWithSelector } from "zustand/middleware";
-import LayerPrimitiveManager from "@primitives/PrimitiveLayerManager";
 import { createSelectors } from "@stores/createSelectors";
 import { immer } from "zustand/middleware/immer";
-import OlLayerManager from "../features/managers/OlLayerManager";
+import OlLayerManager from "@features/managers/OlLayerManager";
+import {LayerManager} from "../managers/LayerManager";
 
 interface State {
     activeLayerName: Array<string> | null; // heatmap, trip
     activeLayerGroupName: Array<string> | null; // 배경지도, 분석, 시설물
 
-    cesiumPrimitiveLayerManager: LayerPrimitiveManager | null;
+    layerManager: LayerManager | null;
     olLayerManager: OlLayerManager | null;
 }
 
@@ -17,7 +17,7 @@ interface Actions {
     setActiveLayerName: (state: Array<string> | null) => void;
     setActiveLayerGroupName: (state: Array<string> | null) => void;
 
-    setCesiumPrimitiveLayerManager: (state: LayerPrimitiveManager | null) => void;
+    setLayerManager: (state: LayerManager | null) => void;
     setOlLayerManager: (state: OlLayerManager | null) => void;
 
 }
@@ -26,7 +26,7 @@ const initialState: State = {
     activeLayerName: [],
     activeLayerGroupName: null,
 
-    cesiumPrimitiveLayerManager: null,
+    layerManager: null,
     olLayerManager: null,
 }
 
@@ -75,7 +75,7 @@ export const useLayerStore = createSelectors(create<State & Actions>(
                             }
                         },
 
-                        setCesiumPrimitiveLayerManager: (state) => set({ cesiumPrimitiveLayerManager: state }),
+                        setLayerManager: (state) => set({ layerManager: state }),
                         setOlLayerManager: (state) => set({ olLayerManager: state }),
                     }))
                 )

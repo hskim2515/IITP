@@ -4,7 +4,6 @@ import { ConstructorOptions } from "cesium";
 class PrimitiveLayerManager {
 
     private viewer;
-    private baseLayerGroups;
     private layerGroups;
     private onAdd;
     private onRemove;
@@ -12,83 +11,11 @@ class PrimitiveLayerManager {
 
     constructor(viewer, layerStore) {
         this.viewer = viewer;
-        this.baseLayerGroups = {}; // { groupName: ImageryLayerCollection }
         this.layerGroups = {}; // { groupName: PrimitiveCollection }
         this.onAdd = null;
         this.onRemove = null;
         this.layerStore = layerStore;
     }
-
-
-    _getOrCreateBaseGroup(groupName) {
-        if (!this.baseLayerGroups[groupName]) {
-            const group = new Cesium.ImageryLayerCollection();
-            this.viewer.imageryLayers.add(group);
-            this.baseLayerGroups[groupName] = group;
-        }
-        return this.baseLayerGroups[groupName];
-    }
-    createBaseLayer(schema: any[]) {
-        const baseMapGroup = schema.find(group => group.key === "baseMap");
-        if (!baseMapGroup || !Array.isArray(baseMapGroup.fields)) return;
-
-        baseMapGroup.fields.forEach(field => {
-            const { key, url, basic } = field;
-            if (!url || !key) return;
-            const provider = this.createCesiumLayer(url, basic);
-            const imageryLayer = new Cesium.ImageryLayer(provider, { show: basic });
-
-            // viewer에 추가
-            this.viewer.imageryLayers.add(imageryLayer);
-
-            // PrimitiveLayerManager 내부 그룹에도 등록
-            this._addImageryLayer(imageryLayer, "baseMap", key);
-
-        });
-        const group = this._getOrCreateBaseGroup("baseMap");
-        console.log("group:::", group)
-    }
-    // imageryLayer를 기존 primitive처럼 등록
-    _addImageryLayer(
-        layer: Cesium.ImageryLayer,
-        groupName: string,
-        layerName: string
-    ) {
-        layer.layerGroup = groupName;
-        layer.layer = layerName;
-
-        if (!this.baseLayerGroups[groupName]) {
-            this.baseLayerGroups[groupName] = [];
-        }
-        this.baseLayerGroups[groupName].push(layer);
-    }
-
-    createCesiumLayer (url, show) {
-        return new Cesium.UrlTemplateImageryProvider({ url: url});
-    };
-
-    removeAllCesiumLayers(){
-        const imageryLayers = this.viewer.imageryLayers;
-
-        while (imageryLayers.length > 1) {
-            imageryLayers.remove(imageryLayers.get(1));
-        }
-    };
-
-    public showBaseLayer(groupName: string, layerName: string): void {
-        const group = this.baseLayerGroups[groupName];
-        if (!group) return;
-
-        const visibleLayerNames = layerName === "hybrid"
-            ? ["hybrid", "satellite"]
-            : [layerName];
-
-        group.forEach((layer: Cesium.ImageryLayer) => {
-            const customName = (layer as any).layer;
-            layer.show = visibleLayerNames.includes(customName);
-        });
-    }
-
 
     // 내부 그룹 관리
     _getOrCreateGroup(groupName) {
@@ -112,10 +39,11 @@ class PrimitiveLayerManager {
             }
         });
 
-
         if (typeof this.onAdd === 'function') {
             this.onAdd(primitive, groupName, layerName);
         }
+
+        return group;
     }
 
     // Primitive 조회
@@ -127,7 +55,7 @@ class PrimitiveLayerManager {
             const p = group.get(i);
             if (p.layer === layerName) result.push(p);
         }
-        return result;
+        return result ?? null;
     }
 
     // 레이어 보기/숨기기

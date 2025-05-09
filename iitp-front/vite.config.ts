@@ -23,6 +23,8 @@ export default defineConfig(({ mode }) => {
                 '@primitives': path.resolve(__dirname, 'src/primitives'),
                 '@stores': path.resolve(__dirname, 'src/stores'),
                 '@schema': path.resolve(__dirname, 'src/schema'),
+                '@utils': path.resolve(__dirname, 'src/utils'),
+                '@features': path.resolve(__dirname, 'src/features'),
             }
         }
     };

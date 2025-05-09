@@ -12,10 +12,11 @@ import {useHeatmapSettingStore} from "@stores/useHeatmapSettingStore";
 import ParabolicArrowPrimitive from "@primitives/ParabolicArrowPrimitive";
 import { Heatmap } from "ol/layer";
 import VectorSource from "ol/source/Vector";
-import VehicleFactory from "../features/VehicleFactory";
-import TrailFactory from "../features/TrailFactory";
-import ODMatrixFactory from "../features/ODMatrixFactory";
-import { Coordinate } from "ol/coordinate";
+import VehicleFactory from "@features/VehicleFactory";
+import TrailFactory from "@features/TrailFactory";
+import ODMatrixFactory from "@features/ODMatrixFactory";
+import {computeODMatrix} from "@utils/transform"
+
 
 type GridCellKey = string; // 예: "3_5"
 
@@ -60,7 +61,7 @@ const useSimulation = () => {
     const viewerClockMultiplier = useRef(null);
 
     const viewer = useCesiumStore((state) => state.viewer);
-    const primitiveLayerManager = useLayerStore((state) => state.cesiumPrimitiveLayerManager);
+    const layerManager = useLayerStore((state) => state.layerManager);
     const czml = useVehicleStore((state) => state.czml);
     const vehicleData = useVehicleStore((state) => state.vehicleData);
     const czmlDataSourceRef = useRef(null);
@@ -99,10 +100,10 @@ const useSimulation = () => {
     // Cesium 시뮬레이션 업데이트 (재생/일시정지/초기화 적용)
     useEffect(() => {
         if (viewer) {
-            primitiveLayerManager.getAllByGroup("layer").forEach((primitive) => {
-                primitive.setSpeed(speed * speedFactor);
-                primitive.setStatus(isRunning);
-            });
+            // primitiveLayerManager.getAllByGroup("layer").forEach((primitive) => {
+            //     primitive.setSpeed(speed * speedFactor);
+            //     primitive.setStatus(isRunning);
+            // });
             if (viewerClockMultiplier.current == null){
                 viewerClockMultiplier.current = viewer.clock.multiplier;
             }
@@ -131,7 +132,8 @@ const useSimulation = () => {
 
     useEffect(() => {
         if (viewer) {
-            primitiveLayerManager?.get("layer","heatmap").forEach((primitive) => {
+
+            layerManager?.getLayer("layer","heatmap")?.forEach((primitive) => {
                 primitive.setColors(heatmapColors);
                 primitive.setExaggeration(heatmapExaggeration);
             });
@@ -162,68 +164,6 @@ const useSimulation = () => {
             });
     }, [numVehicle, speedFactor]);
 
-    const transformToTimeBasedPositions = (vehiclePositions)=> {
-        if (vehiclePositions.length === 0) return [];
-
-        const timeSteps = Math.max(...vehiclePositions.map(arr => arr.length));
-        const timeBasedPositions = Array.from({ length: timeSteps }, () => []);
-
-        vehiclePositions.forEach((vehicleData) => {
-            if (!vehicleData) return; // vehicleData가 없으면 해당 반복을 건너뜀
-
-            for(let i = 0; i < timeSteps; i++){
-                const entry = vehicleData[i];
-                if (entry) {
-                    timeBasedPositions[i].push(new Cesium.Cartesian3.fromDegrees(entry.x, entry.y, entry.z));
-                } else {
-                    timeBasedPositions[i].push(null);
-                }
-            }
-        });
-        return timeBasedPositions;
-    }
-
-    const generateCzmlFromCoordinates = (coordinatesArray) => {
-        const czml = [
-            {
-                "id": "document",
-                "name": "Vehicle Movement",
-                "version": "1.0"
-            },
-        ];
-        coordinatesArray.forEach( (ca,idx) => {
-            const currentTime = new Date().toISOString();
-
-            // Start the CZML structure
-            const czmlObj = {
-                "id": "vehicle"+idx,
-                "availability": `${currentTime}/${new Date(Date.now() + ca.length * 1000).toISOString()}`, // Set availability from current time to an end time based on coordinates
-                "position": {
-                    "interpolationDegree": 2,
-                    "epoch": currentTime,
-                    "cartesian": [],
-                    "interpolationAlgorithm":"LINEAR"
-                },
-                "orientation": {
-                    "velocityReference": "#position"
-                },
-                "point": {
-                    "outlineWidth": 1,
-                    "pixelSize": 10
-                }
-            };
-
-            const flatArray = ca.flatMap(({ x, y, z }) => [x, y, z]);
-
-            Cesium.Cartesian3.fromDegreesArrayHeights(flatArray).forEach((coordinates, index) => {
-                const time = index;
-                czmlObj.position.cartesian.push(time, coordinates.x, coordinates.y, coordinates.z);
-            });
-            czml.push(czmlObj)
-        })
-        return czml;
-    }
-
     // Cesium과 OpenLayers 시뮬레이션 통합: 후처리 및 Cesium 관련 설정
     useEffect(() => {
         let lastUpdateTime = 0;
@@ -238,7 +178,7 @@ const useSimulation = () => {
                 if (vehicleDataRef.current) {
                     const newVehicleData = vehicleDataRef.current;
                     //worker.postMessage({ newVehicleData, cameraPositionWC });
-                    //console.log(newVehicleData)
+                    console.log(newVehicleData)
                     workerRef.current.postMessage({ newVehicleData: newVehicleData.filter(v => v.position), cameraPositionWC });
                 }
             }
@@ -256,209 +196,101 @@ const useSimulation = () => {
     }, [vehicleRoute, isRunning]);
 
     const setCesiumSimulation = (updateFrameFunc) => {
+        if (!viewer || !czml || !vehicleData || vehicleRoute.length === 0) return;
 
-        if(czml && vehicleData && vehicleRoute.length != 0){
-            if (!viewer) return;
+        // 기본 모델 정의
+        const sampleModel = new Cesium.ModelGraphics({
+            uri: "CesiumMilkTruck.glb",
+            scale: 1.0,
+            minimumPixelSize: 30,
+            maximumScale: 2.0,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        });
 
-            const sampleModel = new Cesium.ModelGraphics({
-                uri: "CesiumMilkTruck.glb",
-                scale: 1.0,
-                minimumPixelSize: 30,
-                maximumScale: 2.0,
-                heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-            });
+        // Clock 설정
+        viewer.clock.shouldAnimate = isRunning;
 
-            viewer.clock.shouldAnimate = isRunning;
-            // layer init
-            primitiveLayerManager?.removeGroup("layer");
+        // 초기화
+        layerManager?.removeSimulationLayers();
 
-            const timeBasedPositions = transformToTimeBasedPositions(vehicleRoute);
-            const heatBarLayer = new HeatBarLayer(viewer, timeBasedPositions, speedFactor, isRunning, colors, exaggeration);
-            //const heatBarLayer = new GridAnalyzePrimitive(viewer, timeBasedPositions, speedFactor, isRunning, colors, exaggeration);
-            primitiveLayerManager.add(heatBarLayer, "layer", "heatmap");
+        layerManager?.addHeatmapLayer(vehicleRoute, speedFactor, isRunning, colors, exaggeration)
+        layerManager?.addODArrows(vehicleRoute)
+        layerManager?.addTripPrimitives(vehicleRoute, speedFactor, isRunning)
 
-            const sampleOD = computeODMatrix(vehicleRoute);
+        vehicleDataRef.current = vehicleData
 
-            sampleOD.forEach(cell => {
-                const odPrimitive = new ParabolicArrowPrimitive(viewer.scene.context, cell.fromCenter, cell.toCenter, cell.density);
-                primitiveLayerManager.add(odPrimitive, "layer", "od");
-            })
+        // CZML
+        loadCzmlDataSource(czml, sampleModel);
 
-            //const primitive = new ParabolicArrowPrimitive(viewer.scene.context, vehicleRoute[0]);
+        // Update loop
+        viewer.scene.preRender.addEventListener(updateFrameFunc);
 
-            vehicleRoute.forEach((position) => {
-                const flatArray = position.flatMap(({ x, y, z }) => [x, y, z]);
-                position = new Cesium.Cartesian3.fromDegreesArrayHeights(flatArray);
+        // Worker 메시지 처리
+        workerRef.current.onmessage = (e) => {
+            e.data.forEach(data => {
+                const vehicleEntity = czmlDataSourceRef.current.entities.getById(data.id);
+                const now = Cesium.JulianDate.now();
+                vehicleEntity.position.getValue(now, data.position);
 
-                const vehicleFieldPrimitive = new FieldPrimitive(position, viewer.scene.context, speedFactor, isRunning);
-                const tailPrimitive = new TailPrimitive(position, viewer.scene.context,speedFactor, isRunning);
-                const vehicleDomePrimitive = new DomePrimitive(position, viewer.scene.context, speedFactor, isRunning);
-
-                //arrowLayer.flyToLastArrow(viewer)
-                //arrowLayer.update()
-
-                //arrowLayer.update(); // 렌더링 수행
-
-                primitiveLayerManager.add(vehicleFieldPrimitive, "layer", "trip");
-                primitiveLayerManager.add(tailPrimitive, "layer", "trip");
-                primitiveLayerManager.add(vehicleDomePrimitive, "layer", "default");
-            });
-
-            //const czml = generateCzmlFromCoordinates(positions);
-            vehicleDataRef.current = vehicleData
-            if (czmlDataSourceRef.current) {
-                viewer.dataSources.remove(czmlDataSourceRef.current, true); // true 옵션을 주면 완전히 제거됨
-            }
-
-            const newCzmlDataSource = new Cesium.CzmlDataSource();
-
-            newCzmlDataSource.load(czml).then(() => {
-                viewer.dataSources.add(newCzmlDataSource);
-                czmlDataSourceRef.current = newCzmlDataSource; // 레퍼런스 업데이트
-            });
-
-            viewer.scene.preRender.addEventListener(updateFrameFunc);
-            workerRef.current.onmessage = (e) => {
-
-                e.data.forEach(data => {
-
-                    const vehicleEntity = newCzmlDataSource.entities.getById(data.id);
-                    const now = Cesium.JulianDate.now(); // 현재 시각
-                    const position = vehicleEntity.position.getValue(now); // 현재 위치 (Cartesian3)
-                    data.position = position
-
-                    if(data.changed){
-
-                        if (data.display) {
-                            vehicleEntity.model = sampleModel;
-                            primitiveLayerManager?.hide("layer", "default");
-                        }else{
-                            vehicleEntity.model = undefined;
-                            primitiveLayerManager?.show("layer", "default");
-                        }
-                        // else if(data.displayType === "point") {
-                        //     vehicleEntity.model = undefined;
-                        //     vehicleEntity.path = undefined;
-                        //     vehicleEntity.point = new Cesium.PointGraphics({
-                        //         color: Cesium.Color.RED,
-                        //         outlineColor: Cesium.Color.BLACK,
-                        //         outlineWidth: 1,
-                        //         pixelSize: 10,
-                        //         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                        //     });
-                        // }
-                        // else if(data.displayType === "line") {
-                        //     vehicleEntity.model = undefined;
-                        //     vehicleEntity.point = undefined;
-                        //     vehicleEntity.path = new Cesium.PolylineGraphics({
-                        //         material: new Cesium.PolylineOutlineMaterialProperty({
-                        //             color: Cesium.Color.RED.withAlpha(0.1), // 주 색상 (보라색)
-                        //         }),
-                        //         width: 10, // 선 두께
-                        //         leadTime: 10, // 앞쪽으로 보이는 길이
-                        //         trailTime: 10, // 뒤쪽으로 보이는 길이
-                        //         resolution: 5, // 경로 해상도
-                        //         clampToGround: true, // 지면에 붙이기
-                        //     });
-                        // }
+                if (data.changed) {
+                    if (data.display) {
+                        vehicleEntity.model = sampleModel;
+                        layerManager?.hideLayer("layer", "default");
+                    } else {
+                        vehicleEntity.model = undefined;
+                        layerManager?.showLayer("layer", "default");
                     }
-                });
+                }
+            });
+            vehicleDataRef.current = e.data;
+        };
+        layerManager?.showLayer("layer", "default");
+    };
 
-                vehicleDataRef.current = e.data;
-            };
+    const loadCzmlDataSource = (czml) => {
+
+        const czmlSource = new Cesium.CzmlDataSource();
+
+        if (czmlDataSourceRef.current) {
+            viewer.dataSources.remove(czmlDataSourceRef.current, true);
         }
-        primitiveLayerManager?.show("layer", "default")
-    }
+
+        czmlSource.load(czml).then(() => {
+            viewer.dataSources.add(czmlSource);
+            czmlDataSourceRef.current = czmlSource;
+        });
+    };
 
     const setOpenlayersSimulation = () => {
         if (!olLayerManager || !features || vehicleRoute.length === 0) return;
 
-        const olVehicleSource = olLayerManager.getLayerWithGroupName("vehicle", "vehicle").getSource() as VectorSource;
-        olVehicleSource.clear();
+        // Source 초기화
+        const olVehicleSource = clearOLSource("vehicle", "vehicle");
+        const olTripSource = clearOLSource("layer", "trip");
+        const olODSource = clearOLSource("layer", "od");
 
-        const olTripSource = olLayerManager.getLayerWithGroupName("layer", "trip").getSource() as VectorSource;
-        olTripSource.clear();
-
-        const olODSource = olLayerManager.getLayerWithGroupName("layer", "od").getSource() as VectorSource;
-        olODSource.clear();
-
+        // Vehicle
         olVehicleFactoryRef.current?.destroy();
         olVehicleFactoryRef.current = new VehicleFactory(features, olVehicleSource, speedFactor, isRunning);
         olVehicleFactoryRef.current.setStatus(isRunning);
 
+        // Trip
         olTripFactoryRef.current?.destroy();
         olTripFactoryRef.current = new TrailFactory(features, olVehicleSource, olTripSource, isRunning);
         olTripFactoryRef.current.setStatus(isRunning);
 
+        // OD
         const odData: ODCellInfo[] = computeODMatrix(vehicleRoute);
-
         olODMatrixFactoryRef.current?.destroy();
         olODMatrixFactoryRef.current = new ODMatrixFactory(odData, olODSource, isRunning);
         olODMatrixFactoryRef.current.setStatus(isRunning);
-
     };
 
-    const computeODMatrix = (
-        geoPointGroups: { x: number; y: number; z: number }[][],
-        gridSize: number = 0.01
-    ): ODCellInfo[] => {
-        const odMap = new Map<string, {
-            fromKey: string;
-            toKey: string;
-            fromCenter: Cesium.Cartesian3;
-            toCenter: Cesium.Cartesian3;
-            fromCoord: [number, number];
-            toCoord: [number, number];
-            count: number;
-        }>();
-
-        const getGridKeyAndCenter = (x: number, y: number): [string, Cesium.Cartesian3, [number, number]] => {
-            const gridX = Math.floor(x / gridSize);
-            const gridY = Math.floor(y / gridSize);
-            const key = `${gridX}_${gridY}`;
-            const centerLon = (gridX + 0.5) * gridSize;
-            const centerLat = (gridY + 0.5) * gridSize;
-
-            const centerCartesian = Cesium.Cartesian3.fromDegrees(centerLon, centerLat, 0);
-            return [key, centerCartesian, [centerLon, centerLat]];
-        };
-
-        for (const route of geoPointGroups) {
-            if (route.length < 2) continue;
-
-            const start = route[0];
-            const end = route[route.length - 1];
-
-            const [fromKey, fromCenter, fromCoord] = getGridKeyAndCenter(start.x, start.y);
-            const [toKey, toCenter, toCoord] = getGridKeyAndCenter(end.x, end.y);
-            const pairKey = `${fromKey}→${toKey}`;
-
-            if (!odMap.has(pairKey)) {
-                odMap.set(pairKey, {
-                    fromKey,
-                    toKey,
-                    fromCenter,
-                    toCenter,
-                    fromCoord,
-                    toCoord,
-                    count: 0,
-                });
-            }
-
-            odMap.get(pairKey)!.count += 1;
-        }
-
-        const odArray = Array.from(odMap.values());
-        const maxCount = Math.max(...odArray.map((item) => item.count), 1); // 0 방지
-
-        return odArray.map(item => ({
-            ...item,
-            density: item.count / maxCount,
-        }));
+    const clearOLSource = (group: string, name: string): VectorSource => {
+        const source = olLayerManager.getLayerWithGroupName(group, name).getSource() as VectorSource;
+        source.clear();
+        return source;
     };
-
-
-
 };
 
 
