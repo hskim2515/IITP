@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import java.io.*;
 import java.sql.*;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 @Component
@@ -20,7 +21,7 @@ public class VehicleDataReader {
     @Value("${database.vehicle_sim.dbPath}")
     private String dbPath;
 
-    public List<VehicleState> readAll() {
+    public List<VehicleState> readLimited(int numVehicles) {
         List<VehicleState> vehicleList = new ArrayList<>();
 
         ClassPathResource resource = new ClassPathResource(dbPath);
@@ -28,41 +29,52 @@ public class VehicleDataReader {
         try (InputStream inputStream = resource.getInputStream()) {
             String url = "jdbc:sqlite::memory:";
 
-            // 메모리 내에서 DB를 사용하기 위한 Connection 생성
             try (Connection conn = DriverManager.getConnection(url)) {
-                // 파일 내용을 메모리로 복사
                 try (Statement stmt = conn.createStatement()) {
-                    // DB 파일을 메모리 DB로 임포트
-                    String createTableSQL = "ATTACH DATABASE '" + resource.getFile().getAbsolutePath() + "' AS vehicle_sim_db";
-                    stmt.execute(createTableSQL);
+                    String attachSQL = "ATTACH DATABASE '" + resource.getFile().getAbsolutePath() + "' AS vehicle_sim_db";
+                    stmt.execute(attachSQL);
 
-                    String sql = "SELECT id, timestep, link_id, lane_id, pos_x, pos_y FROM vehicle_sim_db.vehicle_sim";
-                    try (PreparedStatement pstmt = conn.prepareStatement(sql);
-                         ResultSet rs = pstmt.executeQuery()) {
+                    List<String> limitedIds = new ArrayList<>();
+                    String idQuery = "SELECT DISTINCT id FROM vehicle_sim_db.vehicle_sim LIMIT ?";
+                    try (PreparedStatement pstmt = conn.prepareStatement(idQuery)) {
+                        pstmt.setInt(1, numVehicles);
+                        try (ResultSet rs = pstmt.executeQuery()) {
+                            while (rs.next()) {
+                                limitedIds.add(rs.getString("id"));
+                            }
+                        }
+                    }
 
-                        while (rs.next()) {
-                            VehicleState v = new VehicleState();
-                            v.setId(rs.getString("id"));
-                            v.setTimestep(rs.getFloat("timestep"));
-                            v.setLinkId(rs.getString("link_id"));
-                            v.setLaneId(rs.getString("lane_id"));
-                            v.setPosX(rs.getFloat("pos_x"));
-                            v.setPosY(rs.getFloat("pos_y"));
-                            vehicleList.add(v);
+                    if (limitedIds.isEmpty()) return vehicleList;
+
+                    String inClause = String.join(",", Collections.nCopies(limitedIds.size(), "?"));
+                    String dataQuery = "SELECT id, timestep, link_id, lane_id, pos_x, pos_y FROM vehicle_sim_db.vehicle_sim WHERE id IN (" + inClause + ")";
+                    try (PreparedStatement pstmt = conn.prepareStatement(dataQuery)) {
+                        for (int i = 0; i < limitedIds.size(); i++) {
+                            pstmt.setString(i + 1, limitedIds.get(i));
                         }
 
-                    } catch (SQLException e) {
-                        logger.error("Error while executing query", e);
+                        try (ResultSet rs = pstmt.executeQuery()) {
+                            while (rs.next()) {
+                                VehicleState v = new VehicleState();
+                                v.setId(rs.getString("id"));
+                                v.setTimestep(rs.getFloat("timestep"));
+                                v.setLinkId(rs.getString("link_id"));
+                                v.setLaneId(rs.getString("lane_id"));
+                                v.setPosX(rs.getFloat("pos_x"));
+                                v.setPosY(rs.getFloat("pos_y"));
+                                vehicleList.add(v);
+                            }
+                        }
                     }
-                }
-            } catch (SQLException e) {
-                logger.error("Error while connecting to in-memory database", e);
-            }
 
-        } catch (IOException e) {
-            logger.error("Error while reading the database file", e);
+                }
+            }
+        } catch (SQLException | IOException e) {
+            logger.error("Error while reading limited vehicle data", e);
         }
 
         return vehicleList;
     }
+
 }
