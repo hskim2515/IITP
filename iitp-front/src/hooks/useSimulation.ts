@@ -276,7 +276,7 @@ const useSimulation = () => {
 
         // Trip
         olTripFactoryRef.current?.destroy();
-        olTripFactoryRef.current = new TrailFactory(features, olTripSource, speedFactor, isRunning);
+        olTripFactoryRef.current = new TrailFactory(features, olVehicleSource, olTripSource, isRunning);
         olTripFactoryRef.current.setStatus(isRunning);
 
         // OD

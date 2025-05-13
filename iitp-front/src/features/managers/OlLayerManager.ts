@@ -202,18 +202,23 @@ export default class OlLayerManager {
         });
         this.addToGroup("layer", "heatmap", heatmapLayer);
 
-        const tripStyle =
-            {
-                'circle-radius': 5,
-                'circle-fill-color': 'rgb(255,130,84)',
-                'circle-stroke-color': '#ffd7a1',
-                'circle-stroke-width': 2,
-                'stroke-color': 'rgb(149,122,112,0.5)',
-                'stroke-width': 2,
-            }
+        const tripSource = new VectorSource();
+        const tripStyle = {
+            'stroke-color': [
+                'interpolate', ['linear'], ['get', 'index'],
+                0.0, 'rgb(149,122,112, 0.0)', // 꼬리
+                0.5, 'rgb(214,90,42, 0.5)', // 몸통
+                1.0, 'rgb(255,149,108)' // 머리
+            ],
+            'stroke-width': [
+                'interpolate', ['linear'], ['get', 'index'],
+                0.0, 1.0, // 꼬리
+                1.0, 4.0 // 머리
+            ]
+        };
 
         const tripLayer = new WebGLVectorLayer({
-            source: vehicleSource,
+            source: tripSource,
             style: tripStyle,
             visible: false,
             zIndex: 130,
@@ -229,7 +234,7 @@ export default class OlLayerManager {
             style: {
                 'fill-color': ['get', 'color'],
             },
-            visible: true,
+            visible: false,
             zIndex: 200,
         })
         this.addToGroup("layer", "od", odMatrixLayer);
