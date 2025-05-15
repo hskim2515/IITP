@@ -1,4 +1,5 @@
 import * as Cesium from "cesium";
+import {BufferUsage} from "ol/webgl/Buffer";
 
 export default class DomePrimitive {
     constructor(positions, context, speed, status) {
@@ -7,10 +8,8 @@ export default class DomePrimitive {
         this.currentIndex = 0;
         this.ready = false;
         this.context = context;
-        this.previousTime = performance.now(); // 마지막 업데이트 시간
+        this.previousTime = Date.now(); // 마지막 업데이트 시간
         this.destroyed = false; // 객체가 제거되었는지 여부를 추적
-        this.tailLength = 10; // 꼬리 길이 (몇 프레임에 해당하는 위치가 남을지 결정)
-        this.tailPositions = []; // 꼬리 위치를 저장할 배열
         this.progress = 0;
         this.status = status;
         this.show = false;
@@ -18,10 +17,14 @@ export default class DomePrimitive {
         this.createResources();
     }
 
-    createResources() {
+    createResources(){
         // 초기 위치 설정
-        const initialPosition = this.positions[0];
-        const positionsArray = new Float32Array([initialPosition.x, initialPosition.y, initialPosition.z]);
+        const positionsArray = new Float32Array(this.positions[0].length * 3);
+        for (let i = 0; i < this.positions[0].length; i++) {
+            positionsArray[i * 3] = this.positions[0][i].x;
+            positionsArray[i * 3 + 1] = this.positions[0][i].y;
+            positionsArray[i * 3 + 2] = this.positions[0][i].z;
+        }
 
         this.vertexBuffer = Cesium.Buffer.createVertexBuffer({
             context: this.context,
@@ -95,70 +98,116 @@ export default class DomePrimitive {
     }
 
     update(frameState) {
+        if (this.destroyed || !this.show) return;
 
-        if (this.destroyed) return; // 이미 제거된 경우 업데이트하지 않음
+        // 워커에서 받은 위치를 vertexBuffer에 반영
+        if (this.latestPositions) {
 
-        if(!this.status) {
-            this.previousTime = performance.now();
-            if(this.show){
-                frameState.commandList.push(this.drawCommand);
-            }
-            return;
-        }
+            this.latestPositions = this.latestPositions.filter(item => item !== undefined)
 
-        if (!this.positions || this.positions.length < 2) {
-            console.error("🚨 경로 데이터가 부족하거나 초기화되지 않았습니다.");
-            return;
-        }
-
-        // speedKmh는 km/h로 주어지며 이를 m/s로 변환
-        const speedMps = this.speed / 3.6; // km/h -> m/s
-
-        // 이동이 끝났으면 currentIndex 증가
-        if (this.progress >= 1) {
-            this.progress = 0; // 다음 이동을 위해 초기화
-            this.currentIndex++; // 다음 위치로 이동
-        } else {
-            // 현재 위치와 다음 위치 가져오기
-            let startPosition = this.positions[this.currentIndex];
-            const nextIndex = this.currentIndex + 1;
-            let endPosition = this.positions[nextIndex];
-
-            if (!startPosition || !endPosition) {
-                return;
+            const flatResult = new Float32Array(this.latestPositions.length * 3);
+            for (let i = 0; i < this.latestPositions.length; i++) {
+                flatResult[i * 3] = this.latestPositions[i][0];
+                flatResult[i * 3 + 1] = this.latestPositions[i][1];
+                flatResult[i * 3 + 2] = this.latestPositions[i][2];
             }
 
-            // 이동 시간 계산 (속도와 거리로부터 시간 계산)
-            const distance = Cesium.Cartesian3.distance(startPosition, endPosition); // m 단위
-            const timeToTravel = distance / speedMps; // 이동 시간 (초 단위)
+            if (!this.vertexBuffer || this.vertexBuffer.sizeInBytes !== flatResult.byteLength) {
+                if (this.vertexBuffer) {
+                    this.vertexBuffer.destroy(); // 기존 버퍼 파괴
+                }
+                this.vertexBuffer = Cesium.Buffer.createVertexBuffer({
+                    context: frameState.context,
+                    typedArray: flatResult,
+                    usage: BufferUsage.DYNAMIC_DRAW
+                });
 
-            const currentTimestamp = performance.now();
-            const deltaTime = (currentTimestamp - this.previousTime) / 1000; // 시간 차이 (초 단위)
-            this.previousTime = currentTimestamp;
-
-            this.progress += (deltaTime / timeToTravel); // 시간에 비례하여 progress 증가
-
-            if (this.progress > 1) {
-                this.progress = 1; // 최대값 제한
+                this.drawCommand.vertexArray = new Cesium.VertexArray({
+                    context: frameState.context,
+                    attributes: [
+                        {
+                            index: 0,
+                            vertexBuffer: this.vertexBuffer,
+                            componentsPerAttribute: 3,
+                            componentDatatype: Cesium.ComponentDatatype.FLOAT,
+                        }
+                    ]
+                });
+            } else {
+                this.vertexBuffer.copyFromArrayView(flatResult.buffer);
             }
 
+            this.drawCommand.vertexCount = this.latestPositions.length;
 
-            if(this.show){
-                // 두 점 사이 위치 보간 (Lerp)
-                let interpolatedPosition = new Cesium.Cartesian3();
-                Cesium.Cartesian3.lerp(startPosition, endPosition, this.progress, interpolatedPosition);
-
-                // 위치 업데이트
-                const newPositions = new Float32Array([interpolatedPosition.x, interpolatedPosition.y, interpolatedPosition.z]);
-                this.vertexBuffer.copyFromArrayView(newPositions);
-            }
-
-        }
-
-        if(this.show){
             frameState.commandList.push(this.drawCommand);
         }
     }
+
+    // update(frameState) {
+    //
+    //     if (this.destroyed) return; // 이미 제거된 경우 업데이트하지 않음
+    //
+    //     if(!this.status) {
+    //         this.previousTime = performance.now();
+    //         if(this.show){
+    //             frameState.commandList.push(this.drawCommand);
+    //         }
+    //         return;
+    //     }
+    //
+    //     if (!this.positions || this.positions.length < 2) {
+    //         console.error("🚨 경로 데이터가 부족하거나 초기화되지 않았습니다.");
+    //         return;
+    //     }
+    //
+    //     // speedKmh는 km/h로 주어지며 이를 m/s로 변환
+    //     const speedMps = this.speed / 3.6; // km/h -> m/s
+    //
+    //     // 이동이 끝났으면 currentIndex 증가
+    //     if (this.progress >= 1) {
+    //         this.progress = 0; // 다음 이동을 위해 초기화
+    //         this.currentIndex++; // 다음 위치로 이동
+    //     } else {
+    //         // 현재 위치와 다음 위치 가져오기
+    //         let startPosition = this.positions[this.currentIndex];
+    //         const nextIndex = this.currentIndex + 1;
+    //         let endPosition = this.positions[nextIndex];
+    //
+    //         if (!startPosition || !endPosition) {
+    //             return;
+    //         }
+    //
+    //         // 이동 시간 계산 (속도와 거리로부터 시간 계산)
+    //         const distance = Cesium.Cartesian3.distance(startPosition, endPosition); // m 단위
+    //         const timeToTravel = distance / speedMps; // 이동 시간 (초 단위)
+    //
+    //         const currentTimestamp = performance.now();
+    //         const deltaTime = (currentTimestamp - this.previousTime) / 1000; // 시간 차이 (초 단위)
+    //         this.previousTime = currentTimestamp;
+    //
+    //         this.progress += (deltaTime / timeToTravel); // 시간에 비례하여 progress 증가
+    //
+    //         if (this.progress > 1) {
+    //             this.progress = 1; // 최대값 제한
+    //         }
+    //
+    //
+    //         if(this.show){
+    //             // 두 점 사이 위치 보간 (Lerp)
+    //             let interpolatedPosition = new Cesium.Cartesian3();
+    //             Cesium.Cartesian3.lerp(startPosition, endPosition, this.progress, interpolatedPosition);
+    //
+    //             // 위치 업데이트
+    //             const newPositions = new Float32Array([interpolatedPosition.x, interpolatedPosition.y, interpolatedPosition.z]);
+    //             this.vertexBuffer.copyFromArrayView(newPositions);
+    //         }
+    //
+    //     }
+    //
+    //     if(this.show){
+    //         frameState.commandList.push(this.drawCommand);
+    //     }
+    // }
 
     async adjustPositionsToTerrain(positions: Cesium.Cartographic[]): Promise<Cartesian3[]> {
         const updated = await Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, positions);
@@ -172,6 +221,10 @@ export default class DomePrimitive {
 
     setStatus(status: string) {
         this.status = status;
+    }
+
+    setLatestPositions(latestPositions: Float32Array) {
+        this.latestPositions = latestPositions;
     }
 
 

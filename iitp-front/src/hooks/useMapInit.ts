@@ -11,6 +11,7 @@ import * as olProj from "ol/proj";
 import OlLayerManager from "@features/managers/OlLayerManager";
 import {LayerManager} from "../managers/LayerManager";
 import BaseMapLayerManager from "../managers/BaseMapLayerManager";
+import {multiply} from "ol/transform";
 
 const useMapInit = (openlayersMapRef, cesiumMapRef) => {
 
@@ -18,6 +19,7 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
     const setView = useOpenLayersStore.actions.setView();
 
     const setViewer = useCesiumStore((state) => state.setViewer);
+    const viewer = useCesiumStore((state) => state.viewer);
     const setLayerManager = useLayerStore((state) => state.setLayerManager);
     const lodLevels = [1.0, 0.5, 0.2];
 
@@ -96,7 +98,7 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
                 destination: Cartesian3.fromDegrees(127.3845, 36.3504, 10000) // Adjust the height as needed
             });
             newViewer.scene.globe.depthTestAgainstTerrain = true;
-            setViewer(newViewer);
+
 
             const layerManager = new LayerManager(primitiveLayerManager, basemapLayerManager, newViewer);
             layerManager.addBaseMapLayer(layerGroups)
@@ -127,10 +129,10 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
             } catch (error) {
                 console.log(`Error loading tileset: ${error}`);
             }
+            return newViewer;
         }
-        loadCesium().then(() => {
-            // 히트맵
-
+        loadCesium().then((newViewer) => {
+            setViewer(newViewer);
         });
     }
 };

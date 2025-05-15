@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.cors.CorsConfigurationSource;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -34,6 +35,7 @@ public class VehicleController {
 
     private final NetworkRepository networkRepository;
     private final VehicleDataReader vehicleDataReader;
+    private final CorsConfigurationSource corsConfigurationSource;
 
     @PostMapping("/generate-czml")
     public ResponseEntity<Map<String, Object>> generateCzml(@RequestBody VehicleRequest request) {
@@ -276,13 +278,7 @@ public class VehicleController {
         List<Map<String, Object>> czml = new ArrayList<>();
         List<Map<String, Object>> featureList = new ArrayList<>();
         List<Vehicle> vehicleDataList = new ArrayList<>();
-        List<List<Cartesian3>> vehiclePathList = new ArrayList<>();
-
-        czml.add(Map.of(
-                "id", "document",
-                "name", "Vehicle Movement",
-                "version", "1.0"
-        ));
+        List<List<Double>> vehiclePathList = new ArrayList<>();
 
         Instant startTime = Instant.now();
         ConcurrentHashMap<String, CoordinateConverter> converterCache = new ConcurrentHashMap<>();
@@ -338,7 +334,7 @@ public class VehicleController {
             if (path2d.isEmpty()) return;
 
             synchronized (this) {
-                vehiclePathList.add(path2d);
+                //vehiclePathList.add(path2d);
 
                 Cartesian3 startPos = path2d.get(0);
                 vehicleDataList.add(new Vehicle(vehicleId, Cartesian3.fromDegrees(startPos.getX(), startPos.getY(), 0), false));
@@ -363,12 +359,14 @@ public class VehicleController {
                         "availability", vehicleStart.toString() + "/" + vehicleStop.toString(),
                         "position", Map.of(
                                 "epoch", startTime.toString(),
-                                "interpolationAlgorithm", "LINEAR",
+                                "interpolationAlgorithm", "HERMITE",
                                 "interpolationDegree", 2,
                                 "cartesian", cartesianArray
                         ),
                         "orientation", Map.of("velocityReference", "#position")
                 ));
+
+                vehiclePathList.add(cartesianArray);
 
                 List<List<Double>> lineCoordinates = path2d.stream()
                         .map(p -> Arrays.asList(p.getX(), p.getY(), p.getZ()))
@@ -391,6 +389,24 @@ public class VehicleController {
                 ));
             }
         });
+
+        Instant globalStart = earliestStartRef.get();
+        Instant globalStop = latestStopRef.get();
+
+        Map<String, Object> documentPacket = Map.of(
+                "id", "document",
+                "name", "Vehicle Movement",
+                "version", "1.0",
+                "clock", Map.of(
+                        "interval", globalStart.toString() + "/" + globalStop.toString(),
+                        "currentTime", globalStart.toString(),
+                        "multiplier", 1,
+                        "range", "CLAMPED",
+                        "step", "SYSTEM_CLOCK_MULTIPLIER"
+                )
+        );
+
+        czml.add(0, documentPacket);
 
         Map<String, Object> response = new HashMap<>();
         response.put("czml", czml);
@@ -475,9 +491,6 @@ public class VehicleController {
             Road startRoad = roadEntities.get(random.nextInt(roadEntities.size())); // 랜덤 도로 선택
             List<Cartesian3> path = buildConnectedPath(startRoad, roadConnections, 2);
 
-            //System.out.println(roadConnections);
-            System.out.println(startRoad);
-
             if (path != null && !path.isEmpty()) {
                 List<Cartesian3> positions = new ArrayList<>();
 
@@ -517,8 +530,6 @@ public class VehicleController {
                     }
                 }
                 vehiclePath.add(positions);
-                System.out.println(i);
-                System.out.println(totalDistance);
             }
         }
 

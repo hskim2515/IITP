@@ -82,6 +82,17 @@ class BaseMapLayerManager {
         return group.find(layer => layer["layer"] === layerName) ?? null;
     }
 
+    public getAllByGroup(groupName) {
+        const group = this.baseLayerGroups[groupName];
+        if (!group) return [];
+
+        const result = [];
+        for (let i = 0; i < group.length; i++) {
+            result.push(group[i]);
+        }
+        return result;
+    }
+
     public setOpacity(groupName: string, layerName: string, alpha: number): void {
         const group = this.baseLayerGroups[groupName];
         if (!group) return;

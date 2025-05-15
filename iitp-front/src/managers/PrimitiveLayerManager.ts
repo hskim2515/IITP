@@ -135,12 +135,12 @@ class PrimitiveLayerManager {
     getAllByGroup(groupName) {
         const group = this.layerGroups[groupName];
         if (!group) return [];
-
         const result = [];
         for (let i = 0; i < group.length; i++) {
-            result.push(group.get(i));
+            const p = group.get(i);
+            result.push(p);
         }
-        return result;
+        return result ?? null;
     }
 
     // 그룹 내 primitive들을 레이어별로 묶어서 반환

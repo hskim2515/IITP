@@ -56,8 +56,8 @@ export class LayerManager {
     // === 레이어 추가 및 제거 ===
 
     addHeatmapLayer(vehicleRoute: any[], speedFactor: number, isRunning: boolean, colors: any[], exaggeration: number) {
-        const timeBasedPositions = transformToTimeBasedPositions(vehicleRoute);
-        const heatBarLayer = new HeatBarLayer(this.viewer, timeBasedPositions, speedFactor, isRunning, colors, exaggeration);
+        //const timeBasedPositions = transformToTimeBasedPositions(vehicleRoute);
+        const heatBarLayer = new HeatBarLayer(this.viewer, vehicleRoute, speedFactor, isRunning, colors, exaggeration);
         const group = this.primitiveLayerManager.add(heatBarLayer, "layer", "heatmap");
         this.layerGroups.set("layer", group);
     }
@@ -67,13 +67,16 @@ export class LayerManager {
     }
 
     addODArrows(vehicleRoute: any[]) {
-        const odData = computeODMatrix(vehicleRoute);
-        odData.forEach(cell => {
-            const arrow = new ParabolicArrowPrimitive(this.viewer.scene.context, cell.fromCenter, cell.toCenter, cell.density);
-            const group = this.primitiveLayerManager.add(arrow, "layer", "od");
-            this.layerGroups.set("layer", group);
+        // const odData = computeODMatrix(vehicleRoute);
+        // odData.forEach(cell => {
+        //     const arrow = new ParabolicArrowPrimitive(this.viewer.scene.context, cell.fromCenter, cell.toCenter, cell.density);
+        //     const group = this.primitiveLayerManager.add(arrow, "layer", "od");
+        //     this.layerGroups.set("layer", group);
+        // });
 
-        });
+        const arrow = new ParabolicArrowPrimitive(this.viewer.scene.context, vehicleRoute);
+        const group = this.primitiveLayerManager.add(arrow, "layer", "od");
+        this.layerGroups.set("layer", group);
     }
 
     removeODArrows() {
@@ -81,16 +84,19 @@ export class LayerManager {
     }
 
     addTripPrimitives(vehicleRoute: any[], speedFactor: number, isRunning: boolean) {
-        vehicleRoute.forEach(position => {
-            const flatArray = position.flatMap(({ x, y, z }) => [x, y, z]);
-            const coords = Cesium.Cartesian3.fromDegreesArrayHeights(flatArray);
 
-            this.primitiveLayerManager.add(new FieldPrimitive(coords, this.viewer.scene.context, speedFactor, isRunning), "layer", "trip");
-            this.primitiveLayerManager.add(new TailPrimitive(coords, this.viewer.scene.context, speedFactor, isRunning), "layer", "trip");
-            const group = this.primitiveLayerManager.add(new DomePrimitive(coords, this.viewer.scene.context, speedFactor, isRunning), "layer", "default");
-            this.layerGroups.set("layer", group);
-
-        });
+        this.primitiveLayerManager.add(new FieldPrimitive(vehicleRoute, this.viewer.scene.context, speedFactor, isRunning), "layer", "trip");
+        this.primitiveLayerManager.add(new TailPrimitive(vehicleRoute, this.viewer.scene.context, speedFactor, isRunning), "layer", "trip");
+        const group = this.primitiveLayerManager.add(new DomePrimitive(vehicleRoute, this.viewer.scene.context, speedFactor, isRunning), "layer", "default");
+        this.layerGroups.set("layer", group);
+        // vehicleRoute.forEach(position => {
+        //     const flatArray = position.flatMap(({ x, y, z }) => [x, y, z]);
+        //     const coords = Cesium.Cartesian3.fromDegreesArrayHeights(flatArray);
+        //     this.primitiveLayerManager.add(new FieldPrimitive(coords, this.viewer.scene.context, speedFactor, isRunning), "layer", "trip");
+        //     this.primitiveLayerManager.add(new TailPrimitive(coords, this.viewer.scene.context, speedFactor, isRunning), "layer", "trip");
+        //     const group = this.primitiveLayerManager.add(new DomePrimitive(coords, this.viewer.scene.context, speedFactor, isRunning), "layer", "default");
+        //     this.layerGroups.set("layer", group);
+        // });
     }
 
     removeTripPrimitives() {
@@ -101,7 +107,6 @@ export class LayerManager {
     addBaseMapLayer(schema: any[]) {
         if (!schema || !Array.isArray(schema)) return;
         const group = this.baseMapLayerManager.createBaseLayer(schema);
-        console.log(group)
         this.layerGroups.set("baseMap", group);
     }
 
@@ -161,21 +166,21 @@ export class LayerManager {
 
     // 개별 레이어 보이기
     showLayer(groupName: string, layerName: string) {
-        this.getManagersByGroup(groupName, layerName).forEach((manager) => {
+        this.getManagersByGroupAndLayerName(groupName, layerName).forEach((manager) => {
             manager.show(groupName, layerName);
         })
     }
 
     // 개별 레이어 숨기기
     hideLayer(groupName: string, layerName: string) {
-        this.getManagersByGroup(groupName, layerName).forEach((manager) => {
+        this.getManagersByGroupAndLayerName(groupName, layerName).forEach((manager) => {
             manager.hide(groupName, layerName);
         })
     }
 
     // groupName과 layerName으로 레이어 가져오기
     getLayer(groupName: string, layerName: string) {
-        const results = this.getManagersByGroup(groupName, layerName)
+        const results = this.getManagersByGroupAndLayerName(groupName, layerName)
             .map(manager => manager.get(groupName, layerName))
             .filter(layer => layer != null); // null/undefined 제거
 
@@ -183,7 +188,7 @@ export class LayerManager {
         return results.length === 1 ? results[0] : results;
     }
 
-    getManagersByGroup(groupName: string, layerName: string) {
+    getManagersByGroupAndLayerName(groupName: string, layerName: string) {
         const group = this.layerGroups.get(groupName);
         const groups = [];
         if (group) {
@@ -199,8 +204,12 @@ export class LayerManager {
         return groups; // 레이어가 없으면 null 반환
     }
 
+    getAllLayersByGroup(groupName: string) {
+        return [...this.primitiveLayerManager.getAllByGroup(groupName),...this.baseMapLayerManager.getAllByGroup(groupName)];
+    }
+
     getLayerGroup(groupName: string) {
-        return this.layerGroups.get(groupName);
+        return this.getAllLayersByGroup(groupName);
     }
 
     removeSimulationLayers(){

@@ -1,4 +1,5 @@
 import * as Cesium from "cesium";
+import {Cartesian3} from "cesium";
 
 
 export default class HeatBarLayer{
@@ -21,15 +22,14 @@ export default class HeatBarLayer{
         this.show = false;
         this.exaggeration= exaggeration;
         this.colors = hexToVec3(colors);
-        this.init();
+        //this.init();
     }
 
     init() {
-        console.log(this.exaggeration)
         const context = this.viewer.scene.context;
-        this.progress = new Array(this.positions[0].length).fill(0);
-        this.currentIndex = new Array(this.positions[0].length).fill(0);
-        this.previousTime = new Array(this.positions[0].length).fill(performance.now());
+        // this.progress = new Array(this.positions[0].length).fill(0);
+        // this.currentIndex = new Array(this.positions[0].length).fill(0);
+        // this.previousTime = new Array(this.positions[0].length).fill(performance.now());
 
         this.createNoiseTexture(context);
         this.createGeometry(context);
@@ -242,11 +242,12 @@ export default class HeatBarLayer{
 
             // 다수의 위치 좌표 평균으로 중심 계산
             let sum = new Cesium.Cartesian3(0, 0, 0);
-            for (const pos of this.positions[0]) {
-                Cesium.Cartesian3.add(sum, pos, sum);
+            for (const pos of this.latestPositions) {
+                if(pos)
+                    Cesium.Cartesian3.add(sum, new Cartesian3(pos[0],pos[1],pos[2]), sum);
             }
-            const center = Cesium.Cartesian3.divideByScalar(sum, this.positions[0].length, new Cesium.Cartesian3());
-
+            //console.log(sum)
+            const center = Cesium.Cartesian3.divideByScalar(sum, this.latestPositions.filter(item => item !== undefined).length, new Cesium.Cartesian3());
             const modelMatrixCenter = Cesium.Transforms.eastNorthUpToFixedFrame(center);
 
             for (let y = 0; y < this.gridHeight; y++) {
@@ -341,6 +342,7 @@ export default class HeatBarLayer{
         targetPositionArr.forEach(position => {
             if (!position) return;
 
+            position = new Cartesian3(position[0], position[1], position[2]);
             // 월드 위치에서 중심점 빼기 (ENU 원점 기준 오프셋)
             const offsetFromCenter = Cesium.Cartesian3.subtract(position, center, new Cesium.Cartesian3());
 
@@ -387,61 +389,65 @@ export default class HeatBarLayer{
 
     update(frameState) {
 
-        const targetPositionArr = []
+        // const targetPositionArr = []
+        //
+        // for(let i = 0; i < this.startPosition.length; ++i) {
+        //
+        //     let startPosition = this.positions[this.currentIndex[i]];
+        //     let endPosition = this.positions[this.currentIndex[i]+1];
+        //
+        //     if (this.progress[i] >= 1) {
+        //         this.progress[i] = 0;
+        //         this.currentIndex[i] = this.currentIndex[i] + 1;
+        //     } else {
+        //         if(startPosition[i] == null || !endPosition || endPosition[i] == null){
+        //             targetPositionArr.push(null)
+        //             return;
+        //         }else{
+        //             if(!this.status || this.startPosition ==undefined) {
+        //                 const currentTimestamp = performance.now();
+        //                 this.previousTime[i] = currentTimestamp;
+        //             }else{
+        //                 const speedMps = this.speed / 3.6; // km/h -> m/s
+        //
+        //                 // 이동 시간 계산 (속도와 거리로부터 시간 계산)
+        //                 const distance = Cesium.Cartesian3.distance(startPosition[i], endPosition[i]); // m 단위
+        //                 const timeToTravel = distance / speedMps; // 이동 시간 (초 단위)
+        //
+        //                 const currentTimestamp = performance.now();
+        //                 const deltaTime = (currentTimestamp - this.previousTime[i]) / 1000; // 시간 차이 (초 단위)
+        //                 this.previousTime[i] = currentTimestamp;
+        //
+        //
+        //                 this.progress[i] += (deltaTime / timeToTravel); // 시간에 비례하여 progress 증가
+        //
+        //                 if (this.progress[i] > 1) {
+        //                     this.progress[i] = 1; // 최대값 제한
+        //                 }
+        //             }
+        //             let interpolatedPosition = new Cesium.Cartesian3();
+        //             Cesium.Cartesian3.lerp(startPosition[i], endPosition[i], this.progress[i], interpolatedPosition);
+        //             targetPositionArr.push(interpolatedPosition)
+        //         }
+        //     }
+        // }
 
-        for(let i = 0; i < this.startPosition.length; ++i) {
 
-            let startPosition = this.positions[this.currentIndex[i]];
-            let endPosition = this.positions[this.currentIndex[i]+1];
-
-            if (this.progress[i] >= 1) {
-                this.progress[i] = 0;
-                this.currentIndex[i] = this.currentIndex[i] + 1;
-            } else {
-                if(startPosition[i] == null || !endPosition || endPosition[i] == null){
-                    targetPositionArr.push(null)
-                    return;
-                }else{
-                    if(!this.status || this.startPosition ==undefined) {
-                        const currentTimestamp = performance.now();
-                        this.previousTime[i] = currentTimestamp;
-                    }else{
-                        const speedMps = this.speed / 3.6; // km/h -> m/s
-
-                        // 이동 시간 계산 (속도와 거리로부터 시간 계산)
-                        const distance = Cesium.Cartesian3.distance(startPosition[i], endPosition[i]); // m 단위
-                        const timeToTravel = distance / speedMps; // 이동 시간 (초 단위)
-
-                        const currentTimestamp = performance.now();
-                        const deltaTime = (currentTimestamp - this.previousTime[i]) / 1000; // 시간 차이 (초 단위)
-                        this.previousTime[i] = currentTimestamp;
-
-
-                        this.progress[i] += (deltaTime / timeToTravel); // 시간에 비례하여 progress 증가
-
-                        if (this.progress[i] > 1) {
-                            this.progress[i] = 1; // 최대값 제한
-                        }
-                    }
-                    let interpolatedPosition = new Cesium.Cartesian3();
-                    Cesium.Cartesian3.lerp(startPosition[i], endPosition[i], this.progress[i], interpolatedPosition);
-                    targetPositionArr.push(interpolatedPosition)
-                }
+        if (this.show && this.latestPositions && this.latestPositions.filter(item => item !== undefined).length > 0) {
+            if(!this.noiseTexture){
+                this.init()
             }
-        }
-
-
-        if (this.show) {
 
             let sum = new Cesium.Cartesian3(0, 0, 0);
-            for (const pos of targetPositionArr) {
-                Cesium.Cartesian3.add(sum, pos, sum);
+            for (const pos of this.latestPositions) {
+                if(pos)
+                    Cesium.Cartesian3.add(sum, new Cartesian3(pos[0],pos[1],pos[2]), sum);
             }
-            const center = Cesium.Cartesian3.divideByScalar(sum, targetPositionArr.length, new Cesium.Cartesian3());
+            const center = Cesium.Cartesian3.divideByScalar(sum, this.latestPositions.filter(item => item !== undefined).length, new Cesium.Cartesian3());
 
             const modelMatrixCenter = Cesium.Transforms.eastNorthUpToFixedFrame(center);
 
-            this.updateNoiseValues(targetPositionArr, center);
+            this.updateNoiseValues(this.latestPositions, center);
 
             for (let i = 0; i < this.drawCommands.length; i++) {
                 const { drawCommand, x, y } = this.drawCommands[i];
@@ -496,13 +502,16 @@ export default class HeatBarLayer{
     }
 
     setExaggeration(exaggeration: number) {
-        console.log(exaggeration);
         this.exaggeration = exaggeration
     }
 
+    setLatestPositions(latestPositions) {
+        this.latestPositions = latestPositions;
+    }
+
     destroy() {
-        this.noiseTexture.destroy();
-        this.vertexArray.destroy();
+        this.noiseTexture?.destroy();
+        this.vertexArray?.destroy();
         //this.drawCommand.shaderProgram.destroy();
     }
 }
