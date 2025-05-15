@@ -10,6 +10,7 @@ import VectorSource from "ol/source/Vector";
 import VehicleFactory from "@features/VehicleFactory";
 import TrailFactory from "@features/TrailFactory";
 import ODMatrixFactory from "@features/ODMatrixFactory";
+import {parseRawODInputFromFlatArray} from "@utils/transform";
 
 
 type GridCellKey = string; // 예: "3_5"
@@ -60,6 +61,7 @@ const useSimulation = () => {
     const vehicleData = useVehicleStore((state) => state.vehicleData);
     const czmlDataSourceRef = useRef(null);
     const vehicleDataRef = useRef(null);
+    const vehicleRouteStartEndRef = useRef(null);
 
     // 최신 speed와 speedFactor를 참조하기 위한 ref
     const speedRef = useRef(speed);
@@ -68,6 +70,7 @@ const useSimulation = () => {
 
     const lastUpdateTime = useRef(0);
     const entityMapRef = useRef<Map<string, Cesium.Entity>>(new Map());
+    const lastPositionsRef = useRef([])
 
     const {
         colors,
@@ -178,7 +181,16 @@ const useSimulation = () => {
 
     // Cesium과 OpenLayers 시뮬레이션 통합: 후처리 및 Cesium 관련 설정
     useEffect(() => {
-
+        const parsedVehicleRoute = parseRawODInputFromFlatArray(vehicleRoute);
+        const simplified = parsedVehicleRoute
+            .map(route => {
+                if (route.length >= 2) {
+                    return [route[0], route[route.length - 1]];
+                } else {
+                    return route; // 길이가 1 이하인 경우 그대로 유지
+                }
+            });
+        vehicleRouteStartEndRef.current = simplified
         if(vehicleRoute.length > 0) {
             //setOpenlayersSimulation();
             setCesiumSimulation();
@@ -205,6 +217,9 @@ const useSimulation = () => {
                 const type = 'tick';
                 changeModelWorkerRef.current.postMessage({ type, newVehicleData, cameraPositionWC,  cameraDirectionWC});
             }
+            const newVehicleRoute = vehicleRouteStartEndRef.current;
+            const lastPositions = lastPositionsRef.current;
+            makeOdDataWorkerRef.current?.postMessage({lastPositions, newVehicleRoute})
         }
 
         if(!isRunningRef.current){
@@ -225,7 +240,7 @@ const useSimulation = () => {
             uri: "CesiumMilkTruck.glb",
             scale: 0.8,
             maximumScale: 0.8,
-            //heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
         });
         // CZML
         loadCzmlDataSource(czml);
@@ -266,19 +281,19 @@ const useSimulation = () => {
             if (positions) {
                 layerManager.getLayerGroup("layer").forEach((layer) => {
                     layer.setLatestPositions(positions)
+                    lastPositionsRef.current = positions
                 });
             }
-            const newVehicleRoute = vehicleRoute;
-            //makeOdDataWorkerRef.current?.postMessage({positions, newVehicleRoute})
+
         }
 
-        // makeOdDataWorkerRef.current.onmessage=(e)=>{
-        //     const { odData } = e.data;
-        //     if (odData) {
-        //         const odLayer = layerManager?.getLayer("layer", "od");
-        //         odLayer[0].setOdData(odData);
-        //     }
-        // }
+        makeOdDataWorkerRef.current.onmessage=(e)=>{
+            const { odData } = e.data;
+            if (odData) {
+                const odLayer = layerManager?.getLayer("layer", "od");
+                odLayer[0].setOdData(odData);
+            }
+        }
         layerManager?.showLayer("layer", "default");
     };
 
