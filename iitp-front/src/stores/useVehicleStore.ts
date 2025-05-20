@@ -16,7 +16,7 @@ interface VehicleState {
     setFeatures: (features: object) => void;
 }
 
-export const useVehicleStore = create<VehicleState>(devtools((set) => ({
+export const useVehicleStore = create<VehicleState>(((set) => ({
     numVehicle: 10,
     speedFactor: 30,
     czml: '',

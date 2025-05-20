@@ -12,10 +12,9 @@ const MeasurePopup: React.FC<MeasurePopupProps> = ({ isOpen }) => {
     const [selectedTool, setSelectedTool] = useState<string | null>(null);
     const cesiumViewer = useCesiumStore((state) => state.viewer);
     const olMap = useOpenLayersStore((state) => state.map);
-    const olView = useOpenLayersStore((state) => state.view);
 
     useCesiumMeasure(selectedTool,cesiumViewer);
-    useOlMeasure(selectedTool, olMap, olView);
+    useOlMeasure(selectedTool, olMap);
 
     const handleToggle = (tool: string) => {
         setSelectedTool(selectedTool === tool ? null : tool);

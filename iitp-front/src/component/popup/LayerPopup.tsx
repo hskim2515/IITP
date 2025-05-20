@@ -8,7 +8,7 @@ import Facility from '../layer/Facility';
 
 import { useLayerStore } from '@stores/useLayerStore';
 import { useShallow } from 'zustand/react/shallow';
-import { useLayerSchemaStore, LayerGroup } from '@stores/useLayerSchemaStore';
+import { useLayerSchemaStore } from '@stores/useLayerSchemaStore';
 
 interface LayerPopupProps {
     isOpen: boolean;

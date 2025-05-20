@@ -1,8 +1,7 @@
 import * as Cesium from "cesium";
-import { ConstructorOptions } from "cesium";
 
 class PrimitiveLayerManager {
-
+    private id;
     private viewer;
     private layerGroups;
     private onAdd;
@@ -10,13 +9,16 @@ class PrimitiveLayerManager {
     private layerStore;
 
     constructor(viewer, layerStore) {
+        this.id = "primitiveLayerManager";
         this.viewer = viewer;
         this.layerGroups = {}; // { groupName: PrimitiveCollection }
         this.onAdd = null;
         this.onRemove = null;
         this.layerStore = layerStore;
     }
-
+    getId() {
+        return this.id;
+    }
     // 내부 그룹 관리
     _getOrCreateGroup(groupName) {
         if (!this.layerGroups[groupName]) {

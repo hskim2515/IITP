@@ -4,27 +4,12 @@ import { useCesiumStore } from "@stores/useCesiumStore";
 import { useSimulationStore } from "@stores/useSimulationStore";
 import { useLayerStore } from "@stores/useLayerStore";
 import * as Cesium from "cesium";
-import {useHeatmapSettingStore} from "@stores/useHeatmapSettingStore";
+import { useHeatmapSettingStore } from "@stores/useHeatmapSettingStore";
 import { Heatmap } from "ol/layer";
 import VectorSource from "ol/source/Vector";
-import VehicleFactory from "@features/VehicleFactory";
-import TrailFactory from "@features/TrailFactory";
-import ODMatrixFactory from "@features/ODMatrixFactory";
-import {parseRawODInputFromFlatArray} from "@utils/transform";
-
-
-type GridCellKey = string; // 예: "3_5"
-
-interface ODCellInfo {
-    fromKey: GridCellKey;
-    toKey: GridCellKey;
-    fromCenter: Cesium.Cartesian3;
-    toCenter: Cesium.Cartesian3;
-    fromCoord: [number, number];
-    toCoord: [number, number];
-    density: number;
-}
-
+import { parseRawODInputFromFlatArray } from "@utils/transform";
+import LayerManager from "../managers/LayerManager";
+import HeatBarLayer from "@primitives/HeatBarLayer";
 
 const useSimulation = () => {
     const { isRunning, isStop, speed } = useSimulationStore();
@@ -32,9 +17,11 @@ const useSimulation = () => {
     const numVehicle = useVehicleStore((state) => state.numVehicle);
     const speedFactor = useVehicleStore((state) => state.speedFactor);
 
-    const heatmapColors = useHeatmapSettingStore((state) => state.colors)
-    const heatmapExaggeration = useHeatmapSettingStore((state) => state.exaggeration)
-    const heatmapBlur = useHeatmapSettingStore.state.blur();
+    const heatmapSetting = {
+        exaggeration: useHeatmapSettingStore.state.exaggeration(),
+        colors: useHeatmapSettingStore.state.colors(),
+        blur: useHeatmapSettingStore.state.blur(),
+    };
 
     const setCzml = useVehicleStore((state) => state.setCzml);
     const setVehicleData = useVehicleStore((state) => state.setVehicleData);
@@ -44,19 +31,11 @@ const useSimulation = () => {
     const features = useVehicleStore((state) => state.features);
     const vehicleRoute = useVehicleStore((state) => state.vehicleRoute);
 
-    const olLayerManager = useLayerStore.state.olLayerManager();
-
-    const olVehicleFactoryRef = useRef<VehicleFactory>(null);
-    const olTripFactoryRef = useRef<TrailFactory>(null);
-    const olODMatrixFactoryRef = useRef<ODMatrixFactory>(null);
-
     // Ref 선언 (OpenLayers, Cesium, 애니메이션)
-    const animationRef = useRef<number | null>(null); // Cesium용
-    const animationOlRef = useRef<number | null>(null); // OpenLayers용
     const viewerClockMultiplier = useRef(null);
 
     const viewer = useCesiumStore((state) => state.viewer);
-    const layerManager = useLayerStore((state) => state.layerManager);
+    const layerManager: LayerManager = useLayerStore((state) => state.layerManager);
     const czml = useVehicleStore((state) => state.czml);
     const vehicleData = useVehicleStore((state) => state.vehicleData);
     const czmlDataSourceRef = useRef(null);
@@ -71,11 +50,6 @@ const useSimulation = () => {
     const lastUpdateTime = useRef(0);
     const entityMapRef = useRef<Map<string, Cesium.Entity>>(new Map());
     const lastPositionsRef = useRef([])
-
-    const {
-        colors,
-        exaggeration,
-    } = useHeatmapSettingStore();
 
     const changeModelWorkerRef = useRef<Worker | null>(null);
     const czmlPositionWorkerRef = useRef<Worker | null>(null);
@@ -104,15 +78,15 @@ const useSimulation = () => {
 
     useEffect(() => {
         speedRef.current = speed;
-    }, [speed]);
+    }, [ speed ]);
 
     useEffect(() => {
         speedFactorRef.current = speedFactor;
-    }, [speedFactor]);
+    }, [ speedFactor ]);
 
     useEffect(() => {
         isRunningRef.current = isRunning;
-    }, [isRunning]);
+    }, [ isRunning ]);
 
     // Cesium 시뮬레이션 업데이트 (재생/일시정지/초기화 적용)
     useEffect(() => {
@@ -131,38 +105,32 @@ const useSimulation = () => {
                 viewer.clock.currentTime = viewer.clock.startTime;
             }
         }
-    }, [isRunning, isStop, speed, speedFactor]);
+    }, [ isRunning, isStop, speed, speedFactor ]);
 
+    // cesium heatmap
     useEffect(() => {
-        const olVehicleFactory = olVehicleFactoryRef.current;
-        const olVehicleSource = olLayerManager?.getLayerWithGroupName("vehicle", "vehicle").getSource() as VectorSource;
-        if (!olVehicleFactory || !olVehicleSource) return;
+        if (!viewer) return;
+        const layers = layerManager?.getLayer("layer", "heatmap");
+        (Array.isArray(layers) ? layers : [ layers ]).forEach((heatMap) => {
+            if (heatMap instanceof HeatBarLayer) {
+                heatMap.setColors(heatmapSetting.colors);
+                heatMap.setExaggeration(heatmapSetting.exaggeration);
+            }
+        });
+    }, [ heatmapSetting.colors, heatmapSetting.exaggeration ]);
 
-        olVehicleFactory.setSpeed(speed * speedFactor);
-        olVehicleFactory.setStatus(isRunning);
-
-        if (isStop) {
-            olVehicleFactory.stop();
-        }
-    }, [isRunning, isStop, speed, speedFactor]);
-
+    // ol heatmap
     useEffect(() => {
-        if (viewer) {
-            layerManager?.getLayer("layer","heatmap")?.forEach((primitive) => {
-                primitive.setColors(heatmapColors);
-                primitive.setExaggeration(heatmapExaggeration);
-            });
-        }
-    }, [heatmapColors, heatmapExaggeration]);
-
-    useEffect(() => {
-        if (viewer) {
-            const heatmapLayer = olLayerManager?.getLayerWithGroupName("layer","heatmap") as Heatmap
-            heatmapLayer.setRadius(heatmapBlur)
-            heatmapLayer.setBlur(heatmapBlur)
-            heatmapLayer.setGradient(heatmapColors)
-        }
-    }, [heatmapColors, heatmapBlur, heatmapExaggeration]);
+        if (!viewer) return;
+        const layers = layerManager?.getLayer("layer", "heatmap");
+        (Array.isArray(layers) ? layers : [ layers ]).forEach((heatMap) => {
+            if (heatMap instanceof Heatmap) {
+                heatMap.setRadius(heatmapSetting.blur);
+                heatMap.setBlur(heatmapSetting.blur);
+                heatMap.setGradient(heatmapSetting.colors);
+            }
+        });
+    }, [ heatmapSetting.colors, heatmapSetting.blur, heatmapSetting.exaggeration ]);
 
     useEffect(() => {
         fetch(process.env.VITE_API_URL + "/vehicle/generate-vehicle-route", { // generate-czml
@@ -177,7 +145,7 @@ const useSimulation = () => {
                 setVehicleData(newVehicleData);
                 setFeatures(features);
             });
-    }, [numVehicle, speedFactor]);
+    }, [ numVehicle, speedFactor ]);
 
     // Cesium과 OpenLayers 시뮬레이션 통합: 후처리 및 Cesium 관련 설정
     useEffect(() => {
@@ -185,22 +153,18 @@ const useSimulation = () => {
         const simplified = parsedVehicleRoute
             .map(route => {
                 if (route.length >= 2) {
-                    return [route[0], route[route.length - 1]];
+                    return [ route[0], route[route.length - 1] ];
                 } else {
                     return route; // 길이가 1 이하인 경우 그대로 유지
                 }
             });
         vehicleRouteStartEndRef.current = simplified
-        if(vehicleRoute.length > 0) {
-            //setOpenlayersSimulation();
-            setCesiumSimulation();
+        if (vehicleRoute.length > 0) {
+            setSimulation();
         }
 
-        return () => {
-            olVehicleFactoryRef.current?.destroy();
-        };
         // isRunning은 isRunningRef.current로 별도 처리
-    }, [vehicleRoute]);
+    }, [ vehicleRoute ]);
 
     const updateFrameFunc = () => {
 
@@ -215,27 +179,27 @@ const useSimulation = () => {
             if (vehicleDataRef.current) {
                 const newVehicleData = vehicleDataRef.current;
                 const type = 'tick';
-                changeModelWorkerRef.current.postMessage({ type, newVehicleData, cameraPositionWC,  cameraDirectionWC});
+                changeModelWorkerRef.current.postMessage({ type, newVehicleData, cameraPositionWC, cameraDirectionWC });
             }
             const newVehicleRoute = vehicleRouteStartEndRef.current;
             const lastPositions = lastPositionsRef.current;
-            makeOdDataWorkerRef.current?.postMessage({lastPositions, newVehicleRoute})
+            makeOdDataWorkerRef.current?.postMessage({ lastPositions, newVehicleRoute })
         }
 
-        if(!isRunningRef.current){
+        if (!isRunningRef.current) {
             czmlPositionWorkerRef.current.postMessage({ type: 'pause', currentTime: simTime });
-        }else{
+        } else {
             czmlPositionWorkerRef.current.postMessage({ type: 'tick', currentTime: simTime });
         }
     };
 
-    const setCesiumSimulation = () => {
+    const setSimulation = () => {
         if (!viewer || !czml || !vehicleData || vehicleRoute.length === 0) return;
 
         const newVehicleData = vehicleDataRef.current = vehicleData
 
         const type = 'init';
-        changeModelWorkerRef.current.postMessage({type, newVehicleData})
+        changeModelWorkerRef.current.postMessage({ type, newVehicleData })
         const sampleModel = new Cesium.ModelGraphics({
             uri: "CesiumMilkTruck.glb",
             scale: 0.8,
@@ -246,14 +210,15 @@ const useSimulation = () => {
         loadCzmlDataSource(czml);
 
         // Clock 설정
-        viewer.clock.shouldAnimate = isRunning;
+        viewer.clock.shouldAnimate = isRunningRef.current;
 
         // 초기화
-        layerManager?.removeSimulationLayers();
-
-        layerManager?.addHeatmapLayer(vehicleRoute, speedFactor, isRunning, colors, exaggeration)
-        layerManager?.addODArrows(vehicleRoute)
-        layerManager?.addTripPrimitives(vehicleRoute, speedFactor, isRunning)
+        layerManager.removeSimulationLayers();
+        const vectorSource = new VectorSource();
+        layerManager.addVehicleLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current);
+        layerManager.addHeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, heatmapSetting)
+        layerManager.addODArrows(vehicleRoute, speedFactor, isRunningRef.current)
+        layerManager.addTripLayer(vehicleRoute, speedFactor, isRunningRef.current)
 
         // Worker 메시지 처리
         changeModelWorkerRef.current.onmessage = (e) => {
@@ -276,22 +241,41 @@ const useSimulation = () => {
             vehicleDataRef.current = e.data;
         };
 
-        czmlPositionWorkerRef.current.onmessage=(e)=>{
+        czmlPositionWorkerRef.current.onmessage = (e) => {
             const { positions } = e.data;
             if (positions) {
                 layerManager.getLayerGroup("layer").forEach((layer) => {
-                    layer.setLatestPositions(positions)
-                    lastPositionsRef.current = positions
+                    if (layer && typeof layer.setLatestPositions === "function") {
+                        try {
+                            layer.setLatestPositions(positions)
+                            lastPositionsRef.current = positions
+                        } catch (err) {
+                            console.warn("[LayerManager] setLatestPositions 실행 오류:", err);
+                        }
+                    } else {
+                        console.log("[LayerManager] 해당 layer는 setLatestPositions를 지원하지 않음:", layer);
+
+                    }
                 });
             }
 
         }
 
-        makeOdDataWorkerRef.current.onmessage=(e)=>{
+        makeOdDataWorkerRef.current.onmessage = (e) => {
             const { odData } = e.data;
             if (odData) {
-                const odLayer = layerManager?.getLayer("layer", "od");
-                odLayer[0].setOdData(odData);
+                layerManager.getLayer("layer", "od").forEach((layer)=> {
+                    if (layer && typeof layer.setOdData === "function") {
+                        try {
+                            layer.setOdData(odData)
+                        } catch (err) {
+                            console.warn("[LayerManager] setOdData 실행 오류:", err);
+                        }
+                    } else {
+                        console.log("[LayerManager] 해당 layer는 setOdData 지원하지 않음:", layer);
+
+                    }
+                });
             }
         }
         layerManager?.showLayer("layer", "default");
@@ -304,7 +288,7 @@ const useSimulation = () => {
         }
 
         czmlSource.load(czml).then(() => {
-            viewer.dataSources.add(czmlSource).then(()=>{
+            viewer.dataSources.add(czmlSource).then(() => {
                 viewer?.scene.preRender.removeEventListener(updateFrameFunc);
                 czmlDataSourceRef.current = czmlSource;
 
@@ -314,44 +298,18 @@ const useSimulation = () => {
                 });
                 entityMapRef.current = map;
 
-                if(viewerClockMultiplier.current)
+                if (viewerClockMultiplier.current)
                     viewer.clock.multiplier = viewerClockMultiplier.current;
-                czmlPositionWorkerRef.current.postMessage({ type: 'init', czmlPackets: vehicleRoute, currentTime: Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime() });
+                czmlPositionWorkerRef.current.postMessage({
+                    type: 'init',
+                    czmlPackets: vehicleRoute,
+                    currentTime: Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime()
+                });
                 viewer.scene.preRender.addEventListener(updateFrameFunc);
             });
         });
     };
 
-    const setOpenlayersSimulation = () => {
-        if (!olLayerManager || !features || vehicleRoute.length === 0) return;
-
-        // Source 초기화
-        const olVehicleSource = clearOLSource("vehicle", "vehicle");
-        const olTripSource = clearOLSource("layer", "trip");
-        const olODSource = clearOLSource("layer", "od");
-
-        // Vehicle
-        olVehicleFactoryRef.current?.destroy();
-        olVehicleFactoryRef.current = new VehicleFactory(features, olVehicleSource, speedFactor, isRunning);
-        olVehicleFactoryRef.current.setStatus(isRunning);
-
-        // Trip
-        olTripFactoryRef.current?.destroy();
-        olTripFactoryRef.current = new TrailFactory(features, olVehicleSource, olTripSource, isRunning);
-        olTripFactoryRef.current.setStatus(isRunning);
-
-        // OD
-        //const odData: ODCellInfo[] = computeODMatrix(vehicleRoute);
-        olODMatrixFactoryRef.current?.destroy();
-        //olODMatrixFactoryRef.current = new ODMatrixFactory(odData, olODSource, isRunning);
-        //olODMatrixFactoryRef.current.setStatus(isRunning);
-    };
-
-    const clearOLSource = (group: string, name: string): VectorSource => {
-        const source = olLayerManager.getLayerWithGroupName(group, name).getSource() as VectorSource;
-        source.clear();
-        return source;
-    };
 };
 
 
