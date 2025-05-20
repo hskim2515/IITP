@@ -2,7 +2,6 @@ import { create } from "zustand";
 import { combine, devtools, subscribeWithSelector } from "zustand/middleware";
 import { createSelectors } from "@stores/createSelectors";
 import { immer } from "zustand/middleware/immer";
-import OlLayerManager from "@features/managers/OlLayerManager";
 import {LayerManager} from "../managers/LayerManager";
 
 interface State {
@@ -10,7 +9,6 @@ interface State {
     activeLayerGroupName: Array<string> | null; // 배경지도, 분석, 시설물
 
     layerManager: LayerManager | null;
-    olLayerManager: OlLayerManager | null;
 }
 
 interface Actions {
@@ -18,7 +16,6 @@ interface Actions {
     setActiveLayerGroupName: (state: Array<string> | null) => void;
 
     setLayerManager: (state: LayerManager | null) => void;
-    setOlLayerManager: (state: OlLayerManager | null) => void;
 
 }
 
@@ -27,7 +24,6 @@ const initialState: State = {
     activeLayerGroupName: null,
 
     layerManager: null,
-    olLayerManager: null,
 }
 
 export const useLayerStore = createSelectors(create<State & Actions>(
@@ -76,7 +72,6 @@ export const useLayerStore = createSelectors(create<State & Actions>(
                         },
 
                         setLayerManager: (state) => set({ layerManager: state }),
-                        setOlLayerManager: (state) => set({ olLayerManager: state }),
                     }))
                 )
             )

@@ -1,20 +1,21 @@
-import * as Cesium from "cesium";
+import { Map as OLMap } from "ol";
 
-class BaseMapLayerManager {
+import BaseLayer from "ol/layer/Base";
+import { Tile as TileLayer } from "ol/layer";
+import { XYZ } from "ol/source";
+class TileLayerManager {
     private id;
-    private viewer;
-    private baseLayerGroups: { [groupName: string]: Cesium.ImageryLayer[] } = {};
+    private olMap;
+    private baseLayerGroups: { [groupName: string]: BaseLayer[] } = {};
 
-    constructor(viewer: Cesium.Viewer) {
-        this.id = "baseMapLayerManager";
-        this.viewer = viewer;
+    constructor(map: OLMap) {
+        this.id = "tileLayerManager";
+        this.olMap = map;
     }
-
     getId() {
         return this.id;
     }
-
-    private _getOrCreateGroup(groupName: string): Cesium.ImageryLayer[] {
+    private _getOrCreateGroup(groupName: string): BaseLayer[] {
         if (!this.baseLayerGroups[groupName]) {
             this.baseLayerGroups[groupName] = [];
         }
@@ -30,15 +31,19 @@ class BaseMapLayerManager {
             const { key, url, basic } = field;
             if (!url || !key) return;
 
-            const provider = new Cesium.UrlTemplateImageryProvider({ url });
-            const imageryLayer = new Cesium.ImageryLayer(provider, { show: basic });
+            const layer = new TileLayer({
+                visible: basic,
+                zIndex: 1,
+                source: new XYZ({
+                    url: url
+                })
+            })
+            this.olMap.addLayer(layer);
 
-            this.viewer.imageryLayers.add(imageryLayer);
+            layer["layerGroup"] = "baseMap";
+            layer["layer"] = key;
 
-            imageryLayer["layerGroup"] = "baseMap";
-            imageryLayer["layer"] = key;
-
-            group.push(imageryLayer);
+            group.push(layer);
         });
         return group;
     }
@@ -51,7 +56,7 @@ class BaseMapLayerManager {
 
         group.forEach(layer => {
             const name = layer["layer"];
-            layer.show = visibleLayers.includes(name);
+            layer.setVisible(visibleLayers.includes(name));
         });
     }
 
@@ -62,7 +67,7 @@ class BaseMapLayerManager {
         group.forEach(layer => {
             const name = layer["layer"];
             if (name === layerName) {
-                layer.show = false;
+                layer.setVisible(false);
             }
         });
     }
@@ -71,12 +76,12 @@ class BaseMapLayerManager {
         const group = this.baseLayerGroups[groupName];
         if (!group) return;
 
-        const target = group.find(layer => layer["layer"] === layerName);
+        const target = group.find(layer => layer["baseMap"] === layerName);
         if (target) {
-            const newState = !target.show;
+            const newState = !target.getVisible();
             group.forEach(layer => {
-                if (layer["layer"] === layerName) {
-                    layer.show = newState;
+                if (layer["baseMap"] === layerName) {
+                    layer.setVisible(newState);
                 }
             });
         }
@@ -90,6 +95,7 @@ class BaseMapLayerManager {
 
     public getAllByGroup(groupName) {
         const group = this.baseLayerGroups[groupName];
+        console.log("baseLayerGroups tile groupName:::", group)
         if (!group) return [];
 
         const result = [];
@@ -104,20 +110,21 @@ class BaseMapLayerManager {
         if (!group) return;
 
         group.forEach(layer => {
-            if (layer["layer"] === layerName && layer.alpha !== undefined) {
-                layer.alpha = alpha;
+            if (layer["layer"] === layerName && layer.getOpacity() !== undefined) {
+                layer.setVisible(alpha);
             }
         });
     }
 
     public remove(groupName: string, layerName: string): void {
         const group = this.baseLayerGroups[groupName];
+        console.log("this.layerGroups.vectorLayer.remove baseLayerGroups, only source:::", groupName, layerName, group)
         if (!group) return;
 
         for (let i = group.length - 1; i >= 0; i--) {
             const layer = group[i];
             if (layer["layer"] === layerName) {
-                this.viewer.imageryLayers.remove(layer, true);
+                this.olMap.removeLayer(layer);
                 group.splice(i, 1);
             }
         }
@@ -128,11 +135,11 @@ class BaseMapLayerManager {
         if (!group) return;
 
         group.forEach(layer => {
-            this.viewer.imageryLayers.remove(layer, true);
+            this.olMap.removeLayer(layer);
         });
 
         delete this.baseLayerGroups[groupName];
     }
 }
 
-export default BaseMapLayerManager;
+export default TileLayerManager;

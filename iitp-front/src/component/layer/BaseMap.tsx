@@ -2,10 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { useOpenLayersStore } from '@stores/useOpenLayersStore';
 import { useCesiumStore }      from '@stores/useCesiumStore';
 import { useMapStore }         from '@stores/useMapStore';
-import {
-    createCesiumLayer,
-    removeAllCesiumLayers
-} from '../../hooks/basemap/useBaseMap';
 import { LayerField } from "@stores/useLayerSchemaStore";
 import { useLayerStore } from "@stores/useLayerStore";
 
@@ -19,15 +15,11 @@ const BaseMap: React.FC<BaseMapProps> = ({ fields }) => {
     const currentBaseMap = useMapStore.state.currentBaseMap();
     const setCurrentBaseMap = useMapStore.actions.setCurrentBaseMap();
 
-    const olLayerManager = useLayerStore.state.olLayerManager()
     const layerManager = useLayerStore.state.layerManager()
 
     const defaultSelected = fields.find(field => field.basic)?.key || null;
     const [selected, setSelected] = useState<string | null>(currentBaseMap);
 
-    useEffect(() => {
-        if(!olLayerManager) return;
-    }, [olLayerManager]);
 
     useEffect(() => {
         if(!layerManager) return;
@@ -49,9 +41,6 @@ const BaseMap: React.FC<BaseMapProps> = ({ fields }) => {
 
     const handleSelect = (value: string) => {
         const layerName = value
-        if(olMap && olLayerManager) {
-            olLayerManager.showBaseLayer("baseMap",layerName) // base, osm, hybrid
-        }
         if(viewer && layerManager) {
             layerManager.showLayer("baseMap",layerName) // base, osm, hybrid
         }

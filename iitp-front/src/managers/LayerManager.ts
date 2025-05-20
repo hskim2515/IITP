@@ -3,11 +3,17 @@ import ParabolicArrowPrimitive from "@primitives/ParabolicArrowPrimitive";
 import FieldPrimitive from "@primitives/FieldPrimitive";
 import TailPrimitive from "@primitives/TailPrimitive";
 import DomePrimitive from "@primitives/DomePrimitive";
-import { computeODMatrix, transformToTimeBasedPositions } from "@utils/transform";
 import PrimitiveLayerManager from "./PrimitiveLayerManager";
 import BaseMapLayerManager from "./BaseMapLayerManager";
 import * as Cesium from "cesium";
-import primitiveLayerManager from "./PrimitiveLayerManager";
+import { Map as OLMap } from "ol";
+import TileLayerManager from "./TileLayerManager";
+import VectorLayerManager from "./VectorLayerManager";
+import HeatmapLayer from "@features/HeatmapLayer";
+import BaseLayer from "ol/layer/Base";
+import ODMatrixLayer from "@features/ODMatrixLayer";
+import VehicleLayer from "@features/VehicleLayer";
+import TrailLayer from "@features/TrailLayer";
 
 type LayerItem = {
     id: number;
@@ -16,6 +22,8 @@ type LayerItem = {
     basic: boolean;
     auth: number;
 };
+
+type Manager = PrimitiveLayerManager | BaseMapLayerManager | VectorLayerManager | TileLayerManager;
 
 type LayerGroupSchema = {
     id: number;
@@ -29,12 +37,18 @@ type LayerGroupSchema = {
 export class LayerManager {
 
     private layerGroups: Map<string, any> = new Map();
+    private managers: Manager[] = [];
 
     constructor(
         private primitiveLayerManager: PrimitiveLayerManager,
         private baseMapLayerManager: BaseMapLayerManager,
-        private viewer: Cesium.Viewer,
+        private cesiumViewer: Cesium.Viewer,
+        private vectorLayerManager: VectorLayerManager,
+        private tileLayerManager: TileLayerManager,
+        private olMap: OLMap,
+        private simulationStore: any
     ) {
+        this.managers = [ primitiveLayerManager, baseMapLayerManager, vectorLayerManager, tileLayerManager ]
     }
 
     // 레이어 그룹에서 레이어 제거
@@ -55,18 +69,43 @@ export class LayerManager {
 
     // === 레이어 추가 및 제거 ===
 
-    addHeatmapLayer(vehicleRoute: any[], speedFactor: number, isRunning: boolean, colors: any[], exaggeration: number) {
+    addHeatmapLayer(vehicleRoute: any[], vectorSource, speedFactor: number, isRunning: boolean, heatmapSetting) {
+        const { colors, exaggeration, blur } = heatmapSetting;
+        const groupName = "layer"
+        const layerName = "heatmap"
+
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
         //const timeBasedPositions = transformToTimeBasedPositions(vehicleRoute);
-        const heatBarLayer = new HeatBarLayer(this.viewer, vehicleRoute, speedFactor, isRunning, colors, exaggeration);
-        const group = this.primitiveLayerManager.add(heatBarLayer, "layer", "heatmap");
-        this.layerGroups.set("layer", group);
+        const heatBarLayer = new HeatBarLayer(this.cesiumViewer, vehicleRoute, speedFactor, isRunning, colors, exaggeration);
+        const primitiveCollections: Cesium.PrimitiveCollection = this.primitiveLayerManager.add(heatBarLayer, groupName, layerName);
+        const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
+        if (!managedCollection.includes(primitiveCollections)) {
+            managedCollection.push(primitiveCollections);
+        }
+        //ol
+        const olHeatmap = new HeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunning, colors, blur);
+        const layers = this.vectorLayerManager.add(olHeatmap, groupName, layerName);
+
+        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+
+        layers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) {
+                vectorLayers.push(layer);
+            }
+        })
     }
 
     removeHeatmapLayer() {
-        this.primitiveLayerManager.remove("layer", "heatmap");
+        this._removeLayers("layer", "heatmap");
     }
 
-    addODArrows(vehicleRoute: any[]) {
+    addODArrows(vehicleRoute: any[], speedFactor: number, isRunning: boolean) {
+        const groupName = "layer";
+        const layerName = "od";
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
         // const odData = computeODMatrix(vehicleRoute);
         // odData.forEach(cell => {
         //     const arrow = new ParabolicArrowPrimitive(this.viewer.scene.context, cell.fromCenter, cell.toCenter, cell.density);
@@ -74,21 +113,42 @@ export class LayerManager {
         //     this.layerGroups.set("layer", group);
         // });
 
-        const arrow = new ParabolicArrowPrimitive(this.viewer.scene.context, vehicleRoute);
-        const group = this.primitiveLayerManager.add(arrow, "layer", "od");
-        this.layerGroups.set("layer", group);
+        const arrow = new ParabolicArrowPrimitive(this.cesiumViewer.scene.context, vehicleRoute);
+        const primitiveCollections = this.primitiveLayerManager.add(arrow, groupName, layerName);
+
+        const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
+        if (!managedCollection.includes(primitiveCollections)) {
+            managedCollection.push(primitiveCollections);
+        }
+
+        const odLayer = new ODMatrixLayer(vehicleRoute, speedFactor, isRunning);
+        const layers = this.vectorLayerManager.add(odLayer, groupName, layerName);
+        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+
+        layers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) {
+                vectorLayers.push(layer);
+            }
+        })
     }
 
-    removeODArrows() {
-        this.primitiveLayerManager.remove("layer", "od");
+    removeODArrows(): void {
+        this._removeLayers("layer", "od");
     }
 
-    addTripPrimitives(vehicleRoute: any[], speedFactor: number, isRunning: boolean) {
+    addTripLayer(vehicleRoute: any[], speedFactor: number, isRunning: boolean) {
+        const groupName = "layer"
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
 
-        this.primitiveLayerManager.add(new FieldPrimitive(vehicleRoute, this.viewer.scene.context, speedFactor, isRunning), "layer", "trip");
-        this.primitiveLayerManager.add(new TailPrimitive(vehicleRoute, this.viewer.scene.context, speedFactor, isRunning), "layer", "trip");
-        const group = this.primitiveLayerManager.add(new DomePrimitive(vehicleRoute, this.viewer.scene.context, speedFactor, isRunning), "layer", "default");
-        this.layerGroups.set("layer", group);
+        this.primitiveLayerManager.add(new FieldPrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning), groupName, "trip");
+        this.primitiveLayerManager.add(new TailPrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning), groupName, "trip");
+        const primitiveCollections = this.primitiveLayerManager.add(new DomePrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning), groupName, "default");
+        const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
+        if (!managedCollection.includes(primitiveCollections)) {
+            managedCollection.push(primitiveCollections);
+        }
+
         // vehicleRoute.forEach(position => {
         //     const flatArray = position.flatMap(({ x, y, z }) => [x, y, z]);
         //     const coords = Cesium.Cartesian3.fromDegreesArrayHeights(flatArray);
@@ -97,17 +157,67 @@ export class LayerManager {
         //     const group = this.primitiveLayerManager.add(new DomePrimitive(coords, this.viewer.scene.context, speedFactor, isRunning), "layer", "default");
         //     this.layerGroups.set("layer", group);
         // });
+
+        const tripLayer = new TrailLayer(vehicleRoute, speedFactor, isRunning)
+        const layers = this.vectorLayerManager.add(tripLayer, groupName, "trip");
+
+        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+
+        layers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) {
+                vectorLayers.push(layer);
+            }
+        })
+
     }
 
-    removeTripPrimitives() {
-        this.primitiveLayerManager.remove("layer", "trip");
-        this.primitiveLayerManager.remove("layer", "default"); // Dome은 default 그룹에 포함
+    removeTripLayer(): void {
+        this._removeLayers("layer", "trip","default"); // trip + default
     }
 
+    addVehicleLayer(vehicleRoute, vectorSource, speedFactor, isRunning) {
+        const groupName = "layer"
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+        const vehicleLayer = new VehicleLayer(vehicleRoute, vectorSource, speedFactor, isRunning);
+        const layers = this.vectorLayerManager.add(vehicleLayer, groupName, "vehicle");
+
+        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+
+        layers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) {
+                vectorLayers.push(layer);
+            }
+        })
+
+        console.log("this.layerGroups.addVehicleLayer:::", this.layerGroups)
+    }
+    removeVehicleLayer(): void {
+        this._removeLayers("layer", "vehicle");
+    }
     addBaseMapLayer(schema: any[]) {
-        if (!schema || !Array.isArray(schema)) return;
-        const group = this.baseMapLayerManager.createBaseLayer(schema);
-        this.layerGroups.set("baseMap", group);
+        if (!Array.isArray(schema) || schema.length === 0) return;
+        const groupName = "baseMap";
+        const baseMapLayerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+
+        if (!this.layerGroups.has(groupName)) {
+            this.layerGroups.set(groupName, baseMapLayerGroup);
+        }
+
+        //manager 리스트 기반, 배경지도 manager의 createBaseLayer 호출
+        (this.managers as Manager[]).forEach((manager) => {
+            if (!(manager instanceof BaseMapLayerManager || manager instanceof TileLayerManager)) return;
+            if (typeof manager.createBaseLayer !== "function") return;
+            const layers = manager.createBaseLayer(schema) as any[];
+            const key = manager.getId();
+            const baseMapValue = (baseMapLayerGroup[key] ||= []);
+            layers.forEach((layer) => {
+                if (!baseMapValue.includes(layer)) {
+                    baseMapValue.push(layer);
+                }
+            })
+        });
+        console.log("this.layerGroups.addBaseMapLayer:::", this.layerGroups);
     }
 
     // === 레이어 그룹 관련 기능 ===
@@ -180,42 +290,53 @@ export class LayerManager {
 
     // groupName과 layerName으로 레이어 가져오기
     getLayer(groupName: string, layerName: string) {
-        const results = this.getManagersByGroupAndLayerName(groupName, layerName)
-            .map(manager => manager.get(groupName, layerName))
-            .filter(layer => layer != null); // null/undefined 제거
-
-        // 필요에 따라 첫 번째만 반환하거나 배열 전체 반환
-        return results.length === 1 ? results[0] : results;
+        const manager = this.getManagersByGroupAndLayerName(groupName, layerName)
+            .flatMap((manager) => { // 이중 배열 평탄화 [[HeatBarLayer],[Heatmap]] => [HeatBarLayer,Heatmap]
+                const res = manager.get(groupName, layerName);
+                return Array.isArray(res) ? res : res ? [res] : [];
+            });
+        // 하나면 단일 객체, 여러 개면 배열
+        return manager.length === 1 ? manager[0] : manager;
     }
 
-    getManagersByGroupAndLayerName(groupName: string, layerName: string) {
-        const group = this.layerGroups.get(groupName);
-        const groups = [];
-        if (group) {
-            if(this.primitiveLayerManager.get(groupName, layerName)){
-                groups.push(this.primitiveLayerManager)
-            }
-            if(this.baseMapLayerManager.get(groupName, layerName)){
-                groups.push(this.baseMapLayerManager)
-            }
-        } else {
-            console.log(`Group "${groupName}" does not exist.`);
+    getManagersByGroupAndLayerName(groupName: string, layerName: string): Manager[] {
+            return this.managers.filter((manager: any) => {
+                if (typeof manager.get !== "function") return false;
+                const res = manager.get(groupName, layerName);
+                return Array.isArray(res) ? res.length > 0 : !!res;
+            });
         }
-        return groups; // 레이어가 없으면 null 반환
-    }
+
 
     getAllLayersByGroup(groupName: string) {
-        return [...this.primitiveLayerManager.getAllByGroup(groupName),...this.baseMapLayerManager.getAllByGroup(groupName)];
+        const result = [
+            ...this.primitiveLayerManager.getAllByGroup(groupName),
+            ...this.baseMapLayerManager.getAllByGroup(groupName),
+            ...this.vectorLayerManager.getAllByGroup(groupName),
+            // ...this.tileLayerManager.getAllByGroup(groupName),
+        ]
+        return result;
     }
 
     getLayerGroup(groupName: string) {
         return this.getAllLayersByGroup(groupName);
     }
 
-    removeSimulationLayers(){
+    private _removeLayers(groupName: string, ...layers: string[]): void {
+        layers.forEach((layerName) => {
+            this.getManagersByGroupAndLayerName(groupName, layerName).forEach((manager) => {
+                if (typeof manager.remove === "function") {
+                    manager.remove(groupName, layerName);
+                }
+            });
+        });
+    }
+
+    removeSimulationLayers() {
         this.removeHeatmapLayer();
-        this.removeTripPrimitives();
+        this.removeTripLayer();
         this.removeODArrows();
+        this.removeVehicleLayer()
     }
 }
 
