@@ -11,6 +11,16 @@
     z-index: 1000;
 }
 
+.popup-overlay-table {
+    position: absolute;
+    bottom: 0;      /* 하단 정렬 */
+    left: 100%;     /* 바로 옆에 붙이기 */
+    right: 100%;
+    width: 600px;
+    height: 300px;
+    z-index: 1000;
+}
+
 .popup-container {
     background-color: rgba(0, 0, 0, 0.75);
     border-radius: 8px;
@@ -20,11 +30,86 @@
     box-shadow: 0px 2px 10px rgba(0, 0, 0, 0.3);
 }
 
+.popup-container-table {
+    background-color: rgba(0, 0, 0, 0.75);
+    border-radius: 8px;
+    padding: 16px;
+    width: 500%;
+    height: 100%;
+    max-width: 1865px;
+    box-shadow: 0px 2px 10px rgba(0, 0, 0, 0.3);
+}
+
 .popup-header {
-    font-size: 20px;
+    display: flex;
+    align-items: center;
+    padding: 8px 16px;
+    color: #fff;
+    font-size: 18px;
     font-weight: bold;
-    margin-bottom: 12px;
-    color: #ffffff;
+}
+
+/* 제목 텍스트 */
+.popup-title {
+    margin-right: 12px;
+    white-space: nowrap;
+}
+
+.popup-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.close-btn {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    font-size: 20px;
+    color: #fff;
+    cursor: pointer;
+    padding: 4px 8px;
+}
+
+/* 액션 버튼 공통 스타일 */
+.popup-header-actions button {
+    padding: 6px 12px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    background-color: #4CAF50;
+    color: white;
+}
+
+.popup-header-actions button:hover {
+    background-color: #45a049;
+}
+
+.popup-header-actions .edit-btn {
+    background-color: #007bff;
+}
+
+.popup-header-actions .edit-btn:hover {
+    background-color: #0056b3;
+}
+
+.popup-header-actions .add-btn {
+    background-color: #28a745;
+}
+
+.popup-header-actions .add-btn:hover {
+    background-color: #218838;
+}
+
+.popup-header-actions .delete-btn {
+    background-color: #dc3545;
+}
+
+.popup-header-actions .delete-btn:hover {
+    background-color: #c82333;
+}
+.popup-actions button:hover {
+    background-color: #666;
 }
 
 .popup-body {
@@ -54,6 +139,28 @@
     color: #fff;
 }
 
+.meta-inputs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.meta-inputs label {
+    display: flex;
+    flex-direction: column;
+    font-size: 14px;
+    gap: 4px;
+    min-width: 150px;
+}
+
+.meta-inputs input {
+    padding: 6px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
 /* 공통 속성 입력 폼 스타일 */
 .property-form {
     display: flex;
@@ -79,6 +186,82 @@
     border: 1px solid #ccc;
     border-radius: 4px;
 }
+
+/* 폼 전체 스타일 */
+.property-form-table {
+    width: 100%;
+    max-width: 100%;
+    padding: 0;
+    margin: 0;
+}
+.form-table {
+    width: 100%;
+    border-collapse: collapse;
+    background-color: white;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 14px;
+    color: #333;
+    border: 1px solid #ccc;
+}
+
+.form-table th,
+.form-table td {
+    padding: 8px 12px;
+    text-align: left;
+    border: 1px solid #ddd;
+}
+
+.form-table th {
+    background-color: #f1f1f1;
+    font-weight: normal;
+    color: #222;
+}
+
+.form-table tr:nth-child(even) {
+    background-color: #fafafa;
+}
+
+.form-table tr:hover {
+    background-color: #f0f8ff;
+}
+
+
+/* 테이블 셀 입력 스타일 */
+.form-table input {
+    background-color: white;
+    color: black;
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+
+/* 입력값에 포커스가 갔을 때 효과 */
+.form-table input:focus {
+    border-color: steelblue;
+    outline: none;
+    box-shadow: 0 0 4px rgba(0, 123, 255, 0.5);
+}
+
+/* 폼 제출 버튼 */
+.property-form-table button {
+    padding: 10px 20px;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 16px;
+    margin-top: 16px;
+    width: 100%;
+}
+
+.property-form-table button:hover {
+    background-color: #45a049;
+}
+
 .layer-popup {
     position: absolute;
     top: 40px;
@@ -154,3 +337,101 @@
     outline: none;
     box-shadow: 0px 0px 5px rgba(0, 0, 255, 0.5);
 }
+
+.popup-overlay-input-table {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background-color: rgba(0, 0, 0, 0.7);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.popup-container-input-table {
+    background-color: #1e1e1e;
+    border-radius: 8px;
+    width: 80%;
+    max-width: 1000px;
+    max-height: 90vh;
+    overflow: auto;
+    box-shadow: 0 0 15px rgba(0, 0, 0, 0.8);
+    padding: 20px;
+    color: #e0e0e0;
+}
+
+/* 헤더 */
+.popup-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 1.25rem;
+    font-weight: bold;
+    border-bottom: 1px solid #444;
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+    color: #ffffff;
+}
+
+/* 닫기 버튼 */
+.close-btn {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    color: #ccc;
+    cursor: pointer;
+}
+
+.close-btn:hover {
+    color: #fff;
+}
+
+.input-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.input-table th,
+.input-table td {
+    border: 1px solid #444;
+    padding: 10px;
+    text-align: center;
+    color: #e0e0e0;
+}
+
+.input-table th {
+    background-color: #2e2e2e;
+}
+
+.input-table input {
+    width: 100%;
+    padding: 6px;
+    background-color: #333;
+    color: #fff;
+    border: 1px solid #555;
+    border-radius: 4px;
+}
+
+/* 푸터 버튼 */
+.popup-footer {
+    margin-top: 20px;
+    text-align: right;
+}
+
+.submit-btn {
+    background-color: #4CAF50;
+    color: white;
+    padding: 8px 16px;
+    font-size: 1rem;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.submit-btn:hover {
+    background-color: #45a049;
+}
+

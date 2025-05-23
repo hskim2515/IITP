@@ -1,5 +1,10 @@
-import React, { ChangeEvent, FC, FormEvent, useState } from 'react';
+import React, {FC, useEffect, useRef, useState} from 'react';
 import "/static/css/styles.css";
+import ListTable, {ListTableRef} from "./ListTable"
+import FormPopup from "./FormPopup";
+import {apiConfig, ApiMenuKey} from "../../config/apiConfig";
+import axiosInstance from "../../api/axiosInstance";
+
 export interface fieldType {
     [key: string]: string;
 }
@@ -7,73 +12,150 @@ export interface fieldType {
 export interface PropertyFormProps {
     open: boolean;
     title: string;
+    menuCode: string;
     fields: fieldType[];
+    inputFields: fieldType[];
+    rowFields: fieldType[];
     onClose: () => void;
-    onSubmit: (data: fieldType) => void;
+    type: string;
 }
-// popup과 병합
-const PropertyForm: FC<PropertyFormProps> = ({ open, title, fields, onClose, onSubmit }) => {
-    // Active form 상태: 초기값 및 변경 감지
-    const [formData, setFormData] = useState<fieldType>(() =>
-        fields.reduce((acc, field) => ({ ...acc, [field.name]: '' }), {})
-    );
 
-    const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
-        const { name, value } = e.target;
-        setFormData(prev => ({ ...prev, [name]: value }));
+const tabComponent: Record<string, React.FC<PropertyFormProps>> = {
+    table: ListTable,
+    //file: FilePopup
+};
+
+const PropertyForm: FC<PropertyFormProps> = ({ open, title, menuCode, fields, inputFields, rowFields, onClose, type }) => {
+    const [mode, setMode] = useState<string>('view');
+    const [targetId, setTargetId] = useState<string | number | null>(null);
+
+    const [data, setData] = useState<any[]>([]);
+    const [isInsertPopupOpen, setIsInsertPopupOpen] = useState(false);
+
+    const tableRef = useRef<ListTableRef>(null);
+
+    useEffect(() => {
+        if (!open) return;
+        setData([]);
+        fetchData();
+    }, [open, menuCode]);
+
+    const fetchData = async () => {
+        try {
+            const config = apiConfig[menuCode as ApiMenuKey].list;
+            const response = await axiosInstance({
+                method: config.method,
+                url: config.url
+            });
+            setData(response.data);
+        } catch (err) {
+            console.error("데이터 불러오기 실패", err);
+        }
     };
 
-    const handleSubmit = (e: FormEvent) => {
-        e.preventDefault();
-        onSubmit(formData);
+    const handleSubmit = () => {
+        fetchData();
+    }
+
+    const handleEditMode = (newMode: string , id? :number) => {
+        setMode(newMode);
+        setTargetId(id);
+        setIsInsertPopupOpen(true);
     };
+
+    const handleDelete = async () => {
+        const selectedRows = tableRef.current?.getSelectedRows();
+        if (!selectedRows || selectedRows.length === 0) {
+            alert("삭제할 항목을 선택해주세요.");
+            return;
+        }
+        try {
+            const idsToDelete = selectedRows.map(row => row.id);
+            const config = apiConfig[menuCode as ApiMenuKey].delete;
+
+            await axiosInstance({
+                method: config.method,
+                url: config.url,
+                data: idsToDelete,
+            });
+
+            handleSubmit();
+            alert('삭제하였습니다.')
+        } catch (err) {
+            console.error("데이터 삭제하기 실패", err);
+            alert("삭제 실패했습니다.");
+        }
+    }
+
+    const ActiveComponent = tabComponent[type];
 
     return (
-        <PropertyPopup open={open} title={title} onClose={onClose} onSubmit={handleSubmit}>
-            <form className="property-form" onSubmit={handleSubmit}>
-                {fields.map(({ name, label, type }) => (
-                    <div key={name} className="form-field">
-                        <label htmlFor={name}>{label}</label>
-                        <input
-                            id={name}
-                            name={name}
-                            type={type ?? 'text'}
-                            value={formData[name]}
-                            onChange={handleChange}
-                        />
-                    </div>
-                ))}
-            </form>
-        </PropertyPopup>
+        <>
+            <PropertyPopup open={open} title={title} onClose={onClose} type={type} inputFields={inputFields} rowFields={rowFields} mode={mode} onEditMode={handleEditMode} onDelete={handleDelete} >
+                {ActiveComponent && (
+                    <ActiveComponent
+                        ref={tableRef}
+                        title={title}
+                        fields={fields}
+                        onClose={onClose}
+                        open={open}
+                        type={type}
+                        data={data}
+                        onEditMode={handleEditMode}
+                    />
+                )}
+            </PropertyPopup>
+
+            {isInsertPopupOpen && (
+                <FormPopup
+                    menuCode={menuCode}
+                    mode={mode}
+                    open={isInsertPopupOpen}
+                    fields={fields}
+                    inputFields={inputFields}
+                    rowFields={rowFields}
+                    onClose={() => setIsInsertPopupOpen(false)}
+                    onSubmit={handleSubmit}
+                    targetId={targetId}
+                    onEditMode={handleEditMode}
+                />
+            )}
+        </>
     );
 };
 
 export default PropertyForm;
 
-interface PropertyPopupProps {
+
+export interface PropertyPopupProps {
     open: boolean;
     title: string;
+    inputFields: fieldType[];
+    rowFields: fieldType[];
     children: React.ReactNode;
     onClose: () => void;
-    onSubmit: () => void;
+    type: string;
+    mode: string;
+    onEditMode: (mode: string) => void;
+    onDelete: () => void;
 }
 
-export const PropertyPopup: FC<PropertyPopupProps> = ({ open, title, children, onClose, onSubmit }) => {
+export const PropertyPopup: FC<PropertyPopupProps> = ({ open, title, children, onClose, type, onEditMode, onDelete }) => {
     if (!open) return null;
-    console.log(title)
+
     return (
-        <div className="popup-overlay" onClick={onClose}>
-            <div className="popup-container" onClick={ event => event.stopPropagation()}>
-                <div className="popup-header">{title}</div>
-                <div className="popup-body">{children}</div>
-                <div className="popup-footer">
-                    <button className="popup-button submit" onClick={onSubmit}>
-                        Submit
-                    </button>
-                    <button className="popup-button cancel" onClick={onClose}>
-                        Cancel
-                    </button>
+        <div className={`popup-overlay${type ? `-${type}` : ''}`}>
+            <div className={`popup-container${type ? `-${type}` : ''}`} onClick={event => event.stopPropagation()}>
+                <div className="popup-header">
+                    <span>{title}</span>
+                    <div className="popup-header-actions">
+                        <button className="add-btn" onClick={() => onEditMode('create')}>추가</button>
+                        <button className="delete-btn" onClick={onDelete}>삭제</button>
+                    </div>
+                    <button className="close-btn" onClick={onClose}>×</button>
                 </div>
+
+                <div className="popup-body">{children}</div>
             </div>
         </div>
     );

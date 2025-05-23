@@ -28,12 +28,6 @@ const LeftPanel: React.FC = () => {
         }
     };
 
-    // 팝업 제출 핸들러 (각 팝업의 onSubmit prop으로 전달)
-    const handlePopupSubmit = (data: any) => {
-        console.log("팝업 데이터:", data);
-        setActivePopupMenu(null);
-    };
-
     // 팝업 렌더링 함수: activePopupKey에 따라 popupMapping에서 구성정보를 가져와 단일 팝업 컴포넌트를 렌더링합니다.
     const renderActivePopup = () => {
         if (!activePopupMenu) return null;
@@ -43,9 +37,12 @@ const LeftPanel: React.FC = () => {
             <PropertyForm
                 open
                 title={ activePopupMenu.nameKor }
+                menuCode={activePopupMenu.menuCode}
                 fields={ config.fields }
                 onClose={ () => setActivePopupMenu(null) }
-                onSubmit={ handlePopupSubmit }
+                type={config.type}
+                inputFields={ config.inputFields}
+                rowFields={ config.rowFields}
             />
         );
     };
