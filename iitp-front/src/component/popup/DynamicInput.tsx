@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import ColorInput from "../util/ColorInput";
 import { apiConfig, ApiMenuKey } from "../../config/apiConfig";
 import axiosInstance from "../../api/axiosInstance";
+import FileInput from "../util/FileInput";
 
 interface SelectOption {
     value: string;
@@ -18,7 +19,6 @@ interface DynamicInputProps {
 
 const DynamicInput: React.FC<DynamicInputProps> = ({ menuCode, type, value, onChange, readOnly = false }) => {
     const [options, setOptions] = useState<SelectOption[]>([]);
-    const baseUrl = process.env.REACT_APP_FILE_BASE_URL || '';
 
     useEffect(() => {
         if (type !== 'select') return;
@@ -80,23 +80,12 @@ const DynamicInput: React.FC<DynamicInputProps> = ({ menuCode, type, value, onCh
             );
 
         case 'file':
-            const fileName = stringValue.split('/').pop();
             return (
-                <div>
-                    {stringValue && (
-                        <div>
-                            <a href={baseUrl + stringValue} target="_blank" rel="noopener noreferrer">
-                                {fileName}
-                            </a>
-                        </div>
-                    )}
-                    {!readOnly && (
-                        <input
-                            type="file"
-                            onChange={(e) => onChange(e.target.files?.[0] || null)}
-                        />
-                    )}
-                </div>
+                <FileInput
+                    value={value}
+                    onChange={(val) => onChange(val)}
+                    readOnly={readOnly}
+                />
             );
 
         default:
