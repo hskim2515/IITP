@@ -51,6 +51,8 @@ dependencies {
 	implementation 'org.json:json:20231013'
 
 	implementation 'org.xerial:sqlite-jdbc:3.36.0.3'  // SQLite JDBC 의존성 추가
+	implementation 'com.jcraft:jsch:0.1.55'
+
 }
 
 tasks.named('test') {
