@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React from 'react';
 import { fieldType } from './PropertyPopup';
 
 interface Props {
@@ -30,7 +30,18 @@ const getCellValue = (data: string[][], row: number, col: number): string => {
 const getMetaValue = (metaData: Record<string, string>, key: string): string => {
     return metaData[key] || '';
 };
-
+const renderActionButton = (mode: string, targetId: number, onEditMode: (mode: string, targetId: number) => void) => {
+    switch (mode) {
+        case 'create':
+            return <button type="submit" className="submit-btn">등록</button>;
+        case 'edit':
+            return <button type="submit" className="submit-btn">저장</button>;
+        case 'view':
+            return <button type="button" className="submit-btn"  onClick={(e) => {e.preventDefault();e.stopPropagation();onEditMode('edit', targetId);}}>편집</button>;
+        default:
+            return null;
+    }
+};
 export const TableForm = ({
                               fields, inputFields, rowFields, formData, metaData, handleChange, handleChangeMeta, handleSubmitTable, isReadOnly, mode, onClose, onEditMode, targetId
                           }: Props) =>{
@@ -83,9 +94,7 @@ export const TableForm = ({
                             ))}
                             </tbody>
                         </table>
-                        {mode !== 'view' && <button type="submit" className="submit-btn">저장</button>}
-                        {mode === 'view' && <button type="button" className="submit-btn"
-                                                    onClick={() => onEditMode('edit', targetId)}>편집</button>}
+                        {renderActionButton(mode, targetId, onEditMode)}
                     </form>
                 </div>
             </div>

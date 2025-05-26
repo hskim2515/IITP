@@ -31,7 +31,7 @@ const renderActionButton = (mode: string, targetId: number, onEditMode: (mode: s
         case 'edit':
             return <button type="submit" className="submit-btn">저장</button>;
         case 'view':
-            return <button type="button" className="submit-btn" onClick={() => onEditMode('edit', targetId)}>편집</button>;
+            return <button type="button" className="submit-btn"  onClick={(e) => {e.preventDefault(); e.stopPropagation();onEditMode('edit', targetId);}}>편집</button>;
         default:
             return null;
     }
