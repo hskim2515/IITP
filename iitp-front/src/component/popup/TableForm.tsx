@@ -1,10 +1,11 @@
 import React from 'react';
-import { fieldType } from './PropertyPopup';
+import {PropertyFormSchemaProps} from "../form/propertyFormSchema";
+import DynamicInput from "./DynamicInput";
+import {MenuTree} from "@stores/useMenuStore";
 
 interface Props {
-    fields: fieldType[];
-    inputFields: fieldType[];
-    rowFields: fieldType[];
+    activePopupMenu:MenuTree;
+    config: PropertyFormSchemaProps
     metaData: Record<string, string>;
     formData: string[][];
     handleChange: (row: number, col: number, value: string) => void;
@@ -13,91 +14,127 @@ interface Props {
     isReadOnly: boolean;
     mode: 'create' | 'edit' | 'view';
     onClose: () => void;
-    onEditMode: (mode:string, targetId:number) => void;
+    onEditMode: (mode: string, targetId: number) => void;
     targetId: number;
 }
-const getTitleByMode = (mode: string) => {
-    switch (mode) {
-        case 'create': return '새 데이터 추가';
-        case 'edit': return '데이터 편집';
-        case 'view': return '상세 데이터 조회';
-        default: return '';
+
+const getTitleByMode = (mode: string) => ({
+    create: '새 데이터 추가',
+    edit: '데이터 편집',
+    view: '상세 데이터 조회'
+}[mode] ?? '');
+
+const renderActionButton = (
+    mode: string,
+    targetId: number,
+    onEditMode: (mode: string, targetId: number) => void
+) => {
+    if (mode === 'view') {
+        return (
+            <button type="button" className="submit-btn" onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onEditMode('edit', targetId);
+            }}>편집</button>
+        );
     }
-};
-const getCellValue = (data: string[][], row: number, col: number): string => {
-    return data[row]?.[col] ?? '';
-};
-const getMetaValue = (metaData: Record<string, string>, key: string): string => {
-    return metaData[key] || '';
-};
-const renderActionButton = (mode: string, targetId: number, onEditMode: (mode: string, targetId: number) => void) => {
-    switch (mode) {
-        case 'create':
-            return <button type="submit" className="submit-btn">등록</button>;
-        case 'edit':
-            return <button type="submit" className="submit-btn">저장</button>;
-        case 'view':
-            return <button type="button" className="submit-btn"  onClick={(e) => {e.preventDefault();e.stopPropagation();onEditMode('edit', targetId);}}>편집</button>;
-        default:
-            return null;
-    }
-};
-export const TableForm = ({
-                              fields, inputFields, rowFields, formData, metaData, handleChange, handleChangeMeta, handleSubmitTable, isReadOnly, mode, onClose, onEditMode, targetId
-                          }: Props) =>{
     return (
-        <div className="popup-overlay-input-table">
-            <div className="popup-container-input-table" onClick={(e) => e.stopPropagation()}>
-                <div className="popup-header">
-                    <span>{getTitleByMode(mode)}</span>
-                    <button className="close-btn" onClick={onClose}>×</button>
-                </div>
-                <div className="popup-body">
-                    <form onSubmit={handleSubmitTable}>
-                        <div className="meta-inputs">
-                            {fields.map(({ name, label }, idx) => (
-                                <label key={idx}>
-                                    {label}:
-                                    <input
-                                        type="text"
-                                        value={getMetaValue(metaData, name)}
-                                        onChange={(e) => {handleChangeMeta(name, e.target.value)}}
-                                        readOnly={isReadOnly}
-                                    />
-                                </label>
-                            ))}
-                        </div>
-                        <table className="input-table">
-                            <thead>
-                            <tr>
-                                <th></th>
-                                {inputFields.map(({label}, colIdx) => (
-                                    <th key={colIdx}>{label}</th>
-                                ))}
-                            </tr>
-                            </thead>
-                            <tbody>
-                            {rowFields.map(({label}, rowIdx) => (
-                                <tr key={rowIdx}>
-                                    <th>{label}</th>
-                                    {inputFields.map((_, colIdx) => (
-                                        <td key={colIdx}>
-                                            <input
-                                                type="text"
-                                                value={getCellValue(formData, rowIdx, colIdx)}
-                                                onChange={(e) => handleChange(rowIdx, colIdx, e.target.value)}
-                                                readOnly={isReadOnly}
-                                            />
-                                        </td>
-                                    ))}
-                                </tr>
-                            ))}
-                            </tbody>
-                        </table>
-                        {renderActionButton(mode, targetId, onEditMode)}
-                    </form>
-                </div>
-            </div>
-        </div>
+        <button type="submit" className="submit-btn">
+            {mode === 'edit' ? '저장' : '등록'}
+        </button>
     );
 };
+
+const renderMetaInputs = (
+    activePopupMenu:MenuTree,
+    config: PropertyFormSchemaProps,
+    metaData: Record<string, string>,
+    isReadOnly: boolean,
+    handleChangeMeta: (key: string, value: string) => void
+) => (
+    <div className="meta-inputs">
+        {config.fields.map(({ name, label },idx) => (
+            <label key={name}>
+                {label}:
+                <DynamicInput
+                    activePopupMenu={activePopupMenu}
+                    type={config.fields[idx].type}
+                    propsOptions={config.fields[idx].options}
+                    value={metaData[name] ?? ''}
+                    onChange={(val) => {handleChangeMeta(name, val);}}
+                    readOnly={isReadOnly}
+                />
+            </label>
+        ))}
+    </div>
+);
+
+const renderInputTable = (
+    activePopupMenu: MenuTree,
+    config: PropertyFormSchemaProps,
+    formData: string[][],
+    handleChange: (row: number, col: number, value: string) => void,
+    isReadOnly: boolean
+) => (
+    <table className="input-table">
+        <thead>
+        <tr>
+            <th></th>
+            {config.inputFields.map(({ label }) => (
+                <th key={label}>{label}</th>
+            ))}
+        </tr>
+        </thead>
+        <tbody>
+        {config.rowFields.map(({ label }, rowIdx) => (
+            <tr key={label}>
+                <th>{label}</th>
+                {config.inputFields.map((_, colIdx) => (
+                    <td key={colIdx}>
+                        <DynamicInput
+                            activePopupMenu={activePopupMenu}
+                            type={config.inputFields[colIdx].type}
+                            propsOptions={config.inputFields[colIdx].options}
+                            value={formData[rowIdx]?.[colIdx] ?? ''}
+                            onChange={(val) => handleChange(rowIdx, colIdx, val)}
+                            readOnly={isReadOnly}
+                        />
+                    </td>
+                ))}
+            </tr>
+        ))}
+        </tbody>
+    </table>
+);
+
+
+export const TableForm: React.FC<Props> = ({
+                                               activePopupMenu,
+                                               config,
+                                               formData,
+                                               metaData,
+                                               handleChange,
+                                               handleChangeMeta,
+                                               handleSubmitTable,
+                                               isReadOnly,
+                                               mode,
+                                               onClose,
+                                               onEditMode,
+                                               targetId
+                                           }) => (
+    <div className="popup-overlay-input-table">
+        <div className="popup-container-input-table" onClick={(e) => e.stopPropagation()}>
+            <div className="popup-header">
+                <span>{getTitleByMode(mode)}</span>
+                <button className="close-btn" onClick={onClose}>×</button>
+            </div>
+            <div className="popup-body">
+                <form onSubmit={handleSubmitTable}>
+                    {renderMetaInputs(activePopupMenu, config, metaData, isReadOnly, handleChangeMeta)}
+                    {renderInputTable(activePopupMenu, config, formData, handleChange, isReadOnly)}
+                    {renderActionButton(mode, targetId, onEditMode)}
+                </form>
+            </div>
+        </div>
+    </div>
+);
