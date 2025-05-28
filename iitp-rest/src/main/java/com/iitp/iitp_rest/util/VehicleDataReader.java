@@ -24,50 +24,61 @@ public class VehicleDataReader {
     public List<VehicleState> readLimited(int numVehicles) {
         List<VehicleState> vehicleList = new ArrayList<>();
 
-        ClassPathResource resource = new ClassPathResource(dbPath);
+        try {
+            ClassPathResource resource = new ClassPathResource(dbPath);
 
-        try (InputStream inputStream = resource.getInputStream()) {
-            String url = "jdbc:sqlite::memory:";
+            File tempDbFile = File.createTempFile("vehicle_sim", ".db");
+            tempDbFile.deleteOnExit();
 
-            try (Connection conn = DriverManager.getConnection(url)) {
-                try (Statement stmt = conn.createStatement()) {
-                    String attachSQL = "ATTACH DATABASE '" + resource.getFile().getAbsolutePath() + "' AS vehicle_sim_db";
-                    stmt.execute(attachSQL);
+            try (InputStream is = resource.getInputStream();
+                 OutputStream os = new FileOutputStream(tempDbFile)) {
+                byte[] buffer = new byte[1024];
+                int bytesRead;
+                while ((bytesRead = is.read(buffer)) != -1) {
+                    os.write(buffer, 0, bytesRead);
+                }
+            }
 
-                    List<String> limitedIds = new ArrayList<>();
-                    String idQuery = "SELECT DISTINCT id FROM vehicle_sim_db.vehicle_sim LIMIT ?";
-                    try (PreparedStatement pstmt = conn.prepareStatement(idQuery)) {
-                        pstmt.setInt(1, numVehicles);
-                        try (ResultSet rs = pstmt.executeQuery()) {
-                            while (rs.next()) {
-                                limitedIds.add(rs.getString("id"));
-                            }
+            String memoryUrl = "jdbc:sqlite::memory:";
+            try (Connection conn = DriverManager.getConnection(memoryUrl);
+                 Statement stmt = conn.createStatement()) {
+
+                String attachSQL = "ATTACH DATABASE '" + tempDbFile.getAbsolutePath() + "' AS vehicle_sim_db";
+                stmt.execute(attachSQL);
+
+                List<String> limitedIds = new ArrayList<>();
+                String idQuery = "SELECT DISTINCT id FROM vehicle_sim_db.vehicle_sim LIMIT ?";
+                try (PreparedStatement pstmt = conn.prepareStatement(idQuery)) {
+                    pstmt.setInt(1, numVehicles);
+                    try (ResultSet rs = pstmt.executeQuery()) {
+                        while (rs.next()) {
+                            limitedIds.add(rs.getString("id"));
                         }
                     }
+                }
 
-                    if (limitedIds.isEmpty()) return vehicleList;
+                if (limitedIds.isEmpty()) return vehicleList;
 
-                    String inClause = String.join(",", Collections.nCopies(limitedIds.size(), "?"));
-                    String dataQuery = "SELECT id, timestep, link_id, lane_id, pos_x, pos_y FROM vehicle_sim_db.vehicle_sim WHERE id IN (" + inClause + ")";
-                    try (PreparedStatement pstmt = conn.prepareStatement(dataQuery)) {
-                        for (int i = 0; i < limitedIds.size(); i++) {
-                            pstmt.setString(i + 1, limitedIds.get(i));
-                        }
-
-                        try (ResultSet rs = pstmt.executeQuery()) {
-                            while (rs.next()) {
-                                VehicleState v = new VehicleState();
-                                v.setId(rs.getString("id"));
-                                v.setTimestep(rs.getFloat("timestep"));
-                                v.setLinkId(rs.getString("link_id"));
-                                v.setLaneId(rs.getString("lane_id"));
-                                v.setPosX(rs.getFloat("pos_x"));
-                                v.setPosY(rs.getFloat("pos_y"));
-                                vehicleList.add(v);
-                            }
-                        }
+                String inClause = String.join(",", Collections.nCopies(limitedIds.size(), "?"));
+                String dataQuery = "SELECT id, timestep, link_id, lane_id, pos_x, pos_y " +
+                        "FROM vehicle_sim_db.vehicle_sim WHERE id IN (" + inClause + ")";
+                try (PreparedStatement pstmt = conn.prepareStatement(dataQuery)) {
+                    for (int i = 0; i < limitedIds.size(); i++) {
+                        pstmt.setString(i + 1, limitedIds.get(i));
                     }
 
+                    try (ResultSet rs = pstmt.executeQuery()) {
+                        while (rs.next()) {
+                            VehicleState v = new VehicleState();
+                            v.setId(rs.getString("id"));
+                            v.setTimestep(rs.getFloat("timestep"));
+                            v.setLinkId(rs.getString("link_id"));
+                            v.setLaneId(rs.getString("lane_id"));
+                            v.setPosX(rs.getFloat("pos_x"));
+                            v.setPosY(rs.getFloat("pos_y"));
+                            vehicleList.add(v);
+                        }
+                    }
                 }
             }
         } catch (SQLException | IOException e) {
@@ -76,5 +87,4 @@ public class VehicleDataReader {
 
         return vehicleList;
     }
-
 }
