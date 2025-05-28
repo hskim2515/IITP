@@ -1,10 +1,11 @@
 import React from 'react';
-import { fieldType } from './PropertyPopup';
 import DynamicInput from "./DynamicInput";
+import {PropertyFormSchemaProps} from "../form/propertyFormSchema";
+import {MenuTree} from "@stores/useMenuStore";
 
 interface Props {
-    menuCode: string;
-    inputFields: fieldType[];
+    activePopupMenu:MenuTree;
+    config: PropertyFormSchemaProps;
     formData: string[];
     handleSimpleChange: (idx: number, value: string | File | null) => void;
     handleSubmitSimple: (e: React.FormEvent) => void;
@@ -15,30 +16,35 @@ interface Props {
     targetId: number;
 }
 
-const getTitleByMode = (mode: string) => {
-    switch (mode) {
-        case 'create': return '새 데이터 추가';
-        case 'edit': return '데이터 편집';
-        case 'view': return '상세 데이터 조회';
-        default: return '';
-    }
-};
+const getTitleByMode = (mode: string) => ({
+    create: '새 데이터 추가',
+    edit: '데이터 편집',
+    view: '상세 데이터 조회'
+}[mode] ?? '');
 
-const renderActionButton = (mode: string, targetId: number, onEditMode: (mode: string, targetId: number) => void) => {
-    switch (mode) {
-        case 'create':
-            return <button type="submit" className="submit-btn">등록</button>;
-        case 'edit':
-            return <button type="submit" className="submit-btn">저장</button>;
-        case 'view':
-            return <button type="button" className="submit-btn"  onClick={(e) => {e.preventDefault(); e.stopPropagation();onEditMode('edit', targetId);}}>편집</button>;
-        default:
-            return null;
+const renderActionButton = (
+    mode: string,
+    targetId: number,
+    onEditMode: (mode: string, targetId: number) => void
+) => {
+    if (mode === 'view') {
+        return (
+            <button type="button" className="submit-btn" onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onEditMode('edit', targetId);
+            }}>편집</button>
+        );
     }
+    return (
+        <button type="submit" className="submit-btn">
+            {mode === 'edit' ? '저장' : '등록'}
+        </button>
+    );
 };
 
 export const SimpleForm = ({
-                               menuCode, inputFields, formData, handleSimpleChange, handleSubmitSimple, isReadOnly, mode, onClose, onEditMode, targetId
+                               activePopupMenu, config, formData, handleSimpleChange, handleSubmitSimple, isReadOnly, mode, onClose, onEditMode, targetId
                            }: Props) => (
     <div className="popup-overlay">
         <div className="popup-container" onClick={(e) => e.stopPropagation()}>
@@ -48,11 +54,12 @@ export const SimpleForm = ({
             </div>
             <div className="popup-body">
                 <form onSubmit={handleSubmitSimple}>
-                    {inputFields.map(({name, label, type}, idx) => (
+                    {config.inputFields.map(({name, label, type}, idx) => (
                         <div key={name} className="form-field">
                             <label>{label}</label>
                             <DynamicInput
-                                menuCode={menuCode}
+                                activePopupMenu={activePopupMenu}
+                                propsOptions={config.fields[idx].options}
                                 type={type}
                                 value={formData[idx] ?? ''}
                                 onChange={(val) => handleSimpleChange(idx, val)}

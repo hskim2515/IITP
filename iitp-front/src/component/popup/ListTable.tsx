@@ -1,24 +1,21 @@
-import React, {useState, useRef, forwardRef, useImperativeHandle} from 'react';
+import React, {useRef, forwardRef, useImperativeHandle} from 'react';
 import { AgGridReact } from 'ag-grid-react';
 import {AllCommunityModule, ColDef, ModuleRegistry} from 'ag-grid-community';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import ColorCellRenderer from "../util/ColorCellRenderer";
 import FileCellRenderer from "../util/FileCellRenderer";
+import {fieldType} from "./PropertyPopup";
+import {PropertyFormSchemaProps} from "../form/propertyFormSchema";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
 export interface ListTableRef {
     getSelectedRows: () => any[];
 }
-export interface fieldType {
-    name: string;
-    label: string;
-    type?: string;
-}
 
 export interface PropertyFormProps {
-    fields: fieldType[];
+    config: PropertyFormSchemaProps
     onClose: () => void;
     data: { [key: string]: any }[];
     onEditMode?: (mode: string, id: string | number) => void;
@@ -56,7 +53,7 @@ const getCellRenderer = (type?: string) => {
 };
 
 const ListTable = forwardRef<ListTableRef, PropertyFormProps>((props, ref) => {
-    const { fields, data, onEditMode } = props;
+    const { config, data, onEditMode } = props;
     const gridRef = useRef<AgGridReact>(null);
     useImperativeHandle(ref, () => ({
         getSelectedRows: () => {
@@ -64,7 +61,7 @@ const ListTable = forwardRef<ListTableRef, PropertyFormProps>((props, ref) => {
         }
     }));
 
-    const columnDefs = buildColumnDefs(fields);
+    const columnDefs = buildColumnDefs(config.fields);
 
     const handleRowDoubleClicked = (event: any) => {
         if (onEditMode && event.data?.id !== undefined) {

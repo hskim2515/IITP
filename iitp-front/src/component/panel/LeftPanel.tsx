@@ -36,13 +36,9 @@ const LeftPanel: React.FC = () => {
         return (
             <PropertyForm
                 open
-                title={ activePopupMenu.nameKor }
-                menuCode={activePopupMenu.menuCode}
-                fields={ config.fields }
+                activePopupMenu={activePopupMenu}
                 onClose={ () => setActivePopupMenu(null) }
-                type={config.type}
-                inputFields={ config.inputFields}
-                rowFields={ config.rowFields}
+                config={config}
             />
         );
     };

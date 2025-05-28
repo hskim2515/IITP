@@ -4,6 +4,8 @@ import ListTable, {ListTableRef} from "./ListTable"
 import FormPopup from "./FormPopup";
 import {apiConfig, ApiMenuKey} from "../../config/apiConfig";
 import axiosInstance from "../../api/axiosInstance";
+import {PropertyFormSchemaProps} from "../form/propertyFormSchema";
+import {MenuTree} from "@stores/useMenuStore";
 
 export interface fieldType {
     [key: string]: string;
@@ -11,13 +13,9 @@ export interface fieldType {
 
 export interface PropertyFormProps {
     open: boolean;
-    title: string;
-    menuCode: string;
-    fields: fieldType[];
-    inputFields: fieldType[];
-    rowFields: fieldType[];
+    config: PropertyFormSchemaProps;
     onClose: () => void;
-    type: string;
+    activePopupMenu: MenuTree;
 }
 
 const tabComponent: Record<string, React.FC<PropertyFormProps>> = {
@@ -25,7 +23,7 @@ const tabComponent: Record<string, React.FC<PropertyFormProps>> = {
     //file: FilePopup
 };
 
-const PropertyForm: FC<PropertyFormProps> = ({ open, title, menuCode, fields, inputFields, rowFields, onClose, type }) => {
+const PropertyForm: FC<PropertyFormProps> = ({ open, activePopupMenu, onClose, config }) => {
     const [mode, setMode] = useState<string>('view');
     const [targetId, setTargetId] = useState<string | number | null>(null);
 
@@ -38,11 +36,11 @@ const PropertyForm: FC<PropertyFormProps> = ({ open, title, menuCode, fields, in
         if (!open) return;
         setData([]);
         fetchData();
-    }, [open, menuCode]);
+    }, [open, activePopupMenu.menuCode]);
 
     const fetchData = async () => {
         try {
-            const config = apiConfig[menuCode as ApiMenuKey].list;
+            const config = apiConfig[activePopupMenu.menuCode as ApiMenuKey].list;
             const response = await axiosInstance({
                 method: config.method,
                 url: config.url
@@ -71,7 +69,7 @@ const PropertyForm: FC<PropertyFormProps> = ({ open, title, menuCode, fields, in
         }
         try {
             const idsToDelete = selectedRows.map(row => row.id);
-            const config = apiConfig[menuCode as ApiMenuKey].delete;
+            const config = apiConfig[activePopupMenu.menuCode as ApiMenuKey].delete;
 
             await axiosInstance({
                 method: config.method,
@@ -87,19 +85,18 @@ const PropertyForm: FC<PropertyFormProps> = ({ open, title, menuCode, fields, in
         }
     }
 
-    const ActiveComponent = tabComponent[type];
+    const ActiveComponent = tabComponent[config.type];
 
     return (
         <>
-            <PropertyPopup open={open} title={title} onClose={onClose} type={type} inputFields={inputFields} rowFields={rowFields} mode={mode} onEditMode={handleEditMode} onDelete={handleDelete} >
+            <PropertyPopup open={open} activePopupMenu={activePopupMenu} onClose={onClose} config={config} mode={mode} onEditMode={handleEditMode} onDelete={handleDelete} >
                 {ActiveComponent && (
                     <ActiveComponent
                         ref={tableRef}
-                        title={title}
-                        fields={fields}
+                        activePopupMenu={activePopupMenu}
+                        config={config}
                         onClose={onClose}
                         open={open}
-                        type={type}
                         data={data}
                         onEditMode={handleEditMode}
                     />
@@ -108,12 +105,10 @@ const PropertyForm: FC<PropertyFormProps> = ({ open, title, menuCode, fields, in
 
             {isInsertPopupOpen && (
                 <FormPopup
-                    menuCode={menuCode}
+                    activePopupMenu={activePopupMenu}
                     mode={mode}
                     open={isInsertPopupOpen}
-                    fields={fields}
-                    inputFields={inputFields}
-                    rowFields={rowFields}
+                    config={config}
                     onClose={() => setIsInsertPopupOpen(false)}
                     onSubmit={handleSubmit}
                     targetId={targetId}
@@ -129,25 +124,23 @@ export default PropertyForm;
 
 export interface PropertyPopupProps {
     open: boolean;
-    title: string;
-    inputFields: fieldType[];
-    rowFields: fieldType[];
+    activePopupMenu:MenuTree;
+    config: PropertyFormSchemaProps;
     children: React.ReactNode;
     onClose: () => void;
-    type: string;
     mode: string;
     onEditMode: (mode: string) => void;
     onDelete: () => void;
 }
 
-export const PropertyPopup: FC<PropertyPopupProps> = ({ open, title, children, onClose, type, onEditMode, onDelete }) => {
+export const PropertyPopup: FC<PropertyPopupProps> = ({ open, activePopupMenu, children, onClose, config, onEditMode, onDelete }) => {
     if (!open) return null;
 
     return (
-        <div className={`popup-overlay${type ? `-${type}` : ''}`}>
-            <div className={`popup-container${type ? `-${type}` : ''}`} onClick={event => event.stopPropagation()}>
+        <div className={`popup-overlay${config.type ? `-${config.type}` : ''}`}>
+            <div className={`popup-container${config.type ? `-${config.type}` : ''}`} onClick={event => event.stopPropagation()}>
                 <div className="popup-header">
-                    <span>{title}</span>
+                    <span>{activePopupMenu.nameKor}</span>
                     <div className="popup-header-actions">
                         <button className="add-btn" onClick={() => onEditMode('create')}>추가</button>
                         <button className="delete-btn" onClick={onDelete}>삭제</button>

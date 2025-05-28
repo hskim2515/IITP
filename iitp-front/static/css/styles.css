@@ -161,6 +161,13 @@
     font-size: 14px;
 }
 
+.meta-inputs select {
+    padding: 6px 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
 /* 공통 속성 입력 폼 스타일 */
 .property-form {
     display: flex;

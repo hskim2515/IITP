@@ -3,6 +3,7 @@ import ColorInput from "../util/ColorInput";
 import { apiConfig, ApiMenuKey } from "../../config/apiConfig";
 import axiosInstance from "../../api/axiosInstance";
 import FileInput from "../util/FileInput";
+import {MenuTree} from "@stores/useMenuStore";
 
 interface SelectOption {
     value: string;
@@ -10,37 +11,46 @@ interface SelectOption {
 }
 
 interface DynamicInputProps {
-    menuCode: string;
+    activePopupMenu: MenuTree;
+    propsOptions?: (string | { value: string; label: string })[];
     type: 'text' | 'number' | 'select' | 'file' | 'color';
     value: string | File | null;
     onChange: (value: string | File | null) => void;
     readOnly?: boolean;
 }
 
-const DynamicInput: React.FC<DynamicInputProps> = ({ menuCode, type, value, onChange, readOnly = false }) => {
+const DynamicInput: React.FC<DynamicInputProps> = ({ activePopupMenu, propsOptions, type, value, onChange, readOnly = false }) => {
     const [options, setOptions] = useState<SelectOption[]>([]);
 
     useEffect(() => {
         if (type !== 'select') return;
 
-        const fetchOptions = async () => {
-            try {
-                const config = apiConfig[menuCode as ApiMenuKey].selectList;
-                const response = await axiosInstance(config);
-                const parsed = response.data.map((item: any) => ({
-                    value: item.name,
-                    label: item.name
-                }));
-                setOptions(parsed);
-            } catch (err) {
-                console.error("select 옵션 로딩 실패", err);
-            }
-        };
-
-        fetchOptions();
-    }, [menuCode, type]);
+        if (propsOptions && propsOptions.length > 0) {
+            const parsed = propsOptions.map(opt =>
+                typeof opt === 'string' ? {value: opt, label: opt} : opt
+            );
+            setOptions(parsed);
+            return;
+        } else{
+            fetchOptions();
+        }
+    }, [activePopupMenu.menuCode, type, propsOptions]);
 
     const stringValue = typeof value === 'string' ? value : '';
+
+    const fetchOptions = async () => {
+        try {
+            const api = apiConfig[activePopupMenu.menuCode as ApiMenuKey].selectList;
+            const response = await axiosInstance(api);
+            const parsed = response.data.map((item: any) => ({
+                value: item.name,
+                label: item.name,
+            }));
+            setOptions(parsed);
+        } catch (err) {
+            console.error("select 옵션 로딩 실패", err);
+        }
+    };
 
     switch (type) {
         case 'text':
@@ -70,7 +80,6 @@ const DynamicInput: React.FC<DynamicInputProps> = ({ menuCode, type, value, onCh
                     onChange={(e) => onChange(e.target.value)}
                     disabled={readOnly}
                 >
-                    <option value="">선택안함</option>
                     {options.map(({ value, label }) => (
                         <option key={value} value={value}>
                             {label}

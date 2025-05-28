@@ -61,17 +61,17 @@ const FileCellRenderer: React.FC<Props> = ({ value }) => {
     }, [value]);
 
     return (
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{display: "flex", alignItems: "center", gap: 6}}>
             {imageUrl && (
                 <img
                     src={imageUrl}
                     width={30}
                     height={30}
                     alt="GLB Preview"
-                    style={{ verticalAlign: "middle", marginTop: 5, border: "1px solid #ccc", borderRadius: 4 }}
+                    style={{verticalAlign: "middle", marginTop: 5, border: "1px solid #ccc", borderRadius: 4}}
                 />
             )}
-            <span>{value.split('/').pop()}</span>
+            <span>{typeof value === 'string' ? value.split('/').pop() ?? '' : ''}</span>
         </div>
     );
 };

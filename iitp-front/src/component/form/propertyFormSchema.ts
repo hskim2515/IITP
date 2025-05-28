@@ -2,6 +2,7 @@ export interface FormField {
     name: string;
     label: string;
     type?: string;
+    options?: (string | { value: string; label: string })[];
 }
 
 export interface PropertyFormSchemaProps {
@@ -220,8 +221,8 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         fields: [
             { name: "vehicleId", label: "차종 ID", type: "text" },
             { name: "name", label: "이름", type: "text" },
-            { name: "v2x", label: "v2x", type: "text" },
-            { name: "drt", label: "drt", type: "text" },
+            { name: "v2x", label: "v2x", type: "select" , options: ['on', 'off'] },
+            { name: "drt", label: "drt", type: "select" , options: ['0', '1'] },
             { name: "maxPax", label: "최대 탑승 승객 수", type: "text" },
         ],
         inputFields: [
@@ -229,7 +230,7 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
             { name: "sd", label: "표준편차", type: "text" },
             { name: "min", label: "최소값", type: "text" },
             { name: "max", label: "최대값", type: "text" },
-            { name: "dist", label: "분포종류", type: "text" },
+            { name: "dist", label: "분포종류", type: "select", options: ['normal', 'lognormal'] },
         ],
         rowFields: [
             { name: "veh_len", label: "차량 길이", type: "text" },
@@ -254,7 +255,7 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         ],
         inputFields: [
             // { name: "id", label: "model ID", type: "text" },
-            { name: "name", label: "model name", type: "select" },
+            { name: "name", label: "model name", type: 'select'},
             { name: "color", label: "color", type: "color" },
             { name: "length", label: "length", type: "text" },
             { name: "filePath", label: "file3D", type: "file" },
