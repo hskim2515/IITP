@@ -4,10 +4,10 @@ import com.iitp.iitp_rest.model.VehicleState;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Component;
 
 import java.io.*;
+import java.net.URL;
 import java.sql.*;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -18,26 +18,34 @@ public class VehicleDataReader {
 
     private static final Logger logger = LoggerFactory.getLogger(VehicleDataReader.class);
 
-    @Value("${database.vehicle_sim.dbPath}")
-    private String dbPath;
+    @Value("${database.vehicle_sim.remoteUrl}")
+    private String remoteUrl;
+
+    private File prepareDbFile() throws IOException {
+
+        File tempDbFile = File.createTempFile("vehicle_sim_test", ".db");
+        tempDbFile.deleteOnExit();
+
+        try (InputStream in = new URL(remoteUrl).openStream();
+             OutputStream out = new FileOutputStream(tempDbFile)) {
+
+            byte[] buffer = new byte[8192];
+            int len;
+            while ((len = in.read(buffer)) != -1) {
+                out.write(buffer, 0, len);
+            }
+        }
+
+        return tempDbFile;
+    }
+
 
     public List<VehicleState> readLimited(int numVehicles) {
         List<VehicleState> vehicleList = new ArrayList<>();
 
         try {
-            ClassPathResource resource = new ClassPathResource(dbPath);
-
-            File tempDbFile = File.createTempFile("vehicle_sim", ".db");
+            File tempDbFile = prepareDbFile();
             tempDbFile.deleteOnExit();
-
-            try (InputStream is = resource.getInputStream();
-                 OutputStream os = new FileOutputStream(tempDbFile)) {
-                byte[] buffer = new byte[1024];
-                int bytesRead;
-                while ((bytesRead = is.read(buffer)) != -1) {
-                    os.write(buffer, 0, bytesRead);
-                }
-            }
 
             String memoryUrl = "jdbc:sqlite::memory:";
             try (Connection conn = DriverManager.getConnection(memoryUrl);
