@@ -13,7 +13,7 @@ interface SelectOption {
 interface DynamicInputProps {
     activePopupMenu: MenuTree;
     propsOptions?: (string | { value: string; label: string })[];
-    type: 'text' | 'number' | 'select' | 'file' | 'color';
+    type: 'text' | 'number' | 'float' | 'select' | 'file' | 'color';
     value: string | File | null;
     onChange: (value: string | File | null) => void;
     readOnly?: boolean;
@@ -40,7 +40,7 @@ const DynamicInput: React.FC<DynamicInputProps> = ({ activePopupMenu, propsOptio
 
     const fetchOptions = async () => {
         try {
-            const api = apiConfig[activePopupMenu.menuCode as ApiMenuKey].selectList;
+            const api = apiConfig[activePopupMenu.menuCode as ApiMenuKey].optionList;
             const response = await axiosInstance(api);
             const parsed = response.data.map((item: any) => ({
                 value: item.name,
@@ -55,9 +55,11 @@ const DynamicInput: React.FC<DynamicInputProps> = ({ activePopupMenu, propsOptio
     switch (type) {
         case 'text':
         case 'number':
+        case 'float':
             return (
                 <input
-                    type={type}
+                    type={type === 'float' ? 'number' : type}
+                    step={type === 'float' ? '0.01' : undefined}
                     value={stringValue}
                     onChange={(e) => onChange(e.target.value)}
                     readOnly={readOnly}

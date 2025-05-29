@@ -117,7 +117,7 @@ const FormPopup: FC<InsertPopupProps> = ({
 
             let dataToSend;
 
-            if (useFormData) {
+            if (useFormData) { //file 데이터 포함
                 const formDataToSend = new FormData();
                 Object.entries(dataObj).forEach(([key, value]) => {
                     formDataToSend.append(key, value);
