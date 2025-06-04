@@ -50,8 +50,12 @@ export default class DomePrimitive {
                 #version 300 es
                 in vec3 a_position;
                 uniform mat4 u_modelViewProjectionMatrix;
+             
                 void main() {
-                    gl_Position = u_modelViewProjectionMatrix * vec4(a_position, 1.0);
+                    vec3 position = a_position;
+                    position.z += 5.0; // z 방향으로 올림
+
+                    gl_Position = u_modelViewProjectionMatrix * vec4(position, 1.0);
                     gl_PointSize = 10.0;
                 }
             `,
@@ -87,7 +91,7 @@ export default class DomePrimitive {
             primitiveType: Cesium.PrimitiveType.POINTS,
             renderState: Cesium.RenderState.fromCache({
                 depthTest: {
-                    enabled: false,
+                    enabled: true,
                 },
                 blending: Cesium.BlendingState.ALPHA_BLEND,
             }),
@@ -99,11 +103,11 @@ export default class DomePrimitive {
 
     update(frameState) {
         if (this.destroyed || !this.show) return;
-
         // 워커에서 받은 위치를 vertexBuffer에 반영
-        if (this.latestPositions) {
+        const filteredPositions = this.latestPositions?.filter(item => item !== undefined)
+        if (this.latestPositions && filteredPositions.length > 0) {
 
-            this.latestPositions = this.latestPositions.filter(item => item !== undefined)
+            this.latestPositions = filteredPositions
 
             const flatResult = new Float32Array(this.latestPositions.length * 3);
             for (let i = 0; i < this.latestPositions.length; i++) {
@@ -241,3 +245,4 @@ export default class DomePrimitive {
         }
     }
 }
+

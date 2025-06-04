@@ -4,6 +4,10 @@ import { immer } from 'zustand/middleware/immer';
 import type { Extent } from 'ol/extent';
 import { Map, View } from "ol";
 import { createSelectors } from "@stores/createSelectors";
+import { OLEventAdapter } from '@adaptor/OLEventAdapter';
+import { EventManager } from '@managers/EventManager';
+import { useEventStore } from './useEventStore';
+
 
 interface State {
     map: Map | null;
@@ -27,7 +31,13 @@ export const useOpenLayersStore = createSelectors(create<State & Actions>(
         subscribeWithSelector(
             immer(
                 combine(initialState, (set) => ({
-                        setMap: (map)   => set({ map }),
+                        setMap: (map)   => {
+                            const adapter = new OLEventAdapter(map);
+                            const manager = new EventManager(adapter);
+                            useEventStore.getState().setOlManager(manager);
+
+                            set({ map })
+                        },
                         setView: (view) => set({ view }),
                         setExtent: (extent) => set({ extent }),
                         removeLayer: (key) => set((state) => { delete state.layers[key]; }),

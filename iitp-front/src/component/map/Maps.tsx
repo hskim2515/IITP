@@ -8,6 +8,7 @@ import useSimulation from "../../hooks/useSimulation";
 import useMapSync from "../../hooks/useMapSync";
 import useLayer from "../../hooks/useLayer";
 import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
+import useSelect from "../../hooks/select/useSelect";
 
 const Maps = () => {
 
@@ -29,6 +30,7 @@ const Maps = () => {
     useSimulation();
     useMapSync();
     useLayer();
+    useSelect();
 
     return (
 

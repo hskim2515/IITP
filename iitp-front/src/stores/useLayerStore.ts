@@ -14,9 +14,7 @@ interface State {
 interface Actions {
     setActiveLayerName: (state: Array<string> | null) => void;
     setActiveLayerGroupName: (state: Array<string> | null) => void;
-
     setLayerManager: (state: LayerManager | null) => void;
-
 }
 
 const initialState: State = {

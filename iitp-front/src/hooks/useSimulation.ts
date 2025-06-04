@@ -194,7 +194,7 @@ const useSimulation = () => {
     };
 
     const setSimulation = () => {
-        if (!viewer || !czml || !vehicleData || vehicleRoute.length === 0) return;
+        if (!viewer || !czml || !vehicleData || vehicleRoute.length === 0 || !layerManager) return;
 
         const newVehicleData = vehicleDataRef.current = vehicleData
 

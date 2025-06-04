@@ -132,13 +132,6 @@ function getNeighborKeys(cameraPos) {
     return keys;
 }
 
-// function calculateDistance(p1, p2) {
-//     const dx = p2.x - p1.x;
-//     const dy = p2.y - p1.y;
-//     const dz = p2.z - p1.z;
-//     return Math.sqrt(dx * dx + dy * dy + dz * dz);
-// }
-
 function isInCameraFOV(cameraDir, cameraPos, objectPos, cosThreshold = COS_THRESHOLD) {
     const dx = objectPos.x - cameraPos.x;
     const dy = objectPos.y - cameraPos.y;

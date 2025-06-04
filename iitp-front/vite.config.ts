@@ -24,6 +24,8 @@ export default defineConfig(({ mode }) => {
                 '@stores': path.resolve(__dirname, 'src/stores'),
                 '@schema': path.resolve(__dirname, 'src/schema'),
                 '@utils': path.resolve(__dirname, 'src/utils'),
+                '@adaptor': path.resolve(__dirname, 'src/adaptor'),
+                '@managers': path.resolve(__dirname, 'src/managers'),
                 '@features': path.resolve(__dirname, 'src/features'),
             }
         }
