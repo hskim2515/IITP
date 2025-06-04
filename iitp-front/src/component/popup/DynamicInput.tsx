@@ -82,6 +82,7 @@ const DynamicInput: React.FC<DynamicInputProps> = ({ activePopupMenu, propsOptio
                     onChange={(e) => onChange(e.target.value)}
                     disabled={readOnly}
                 >
+                    <option>선택안함</option>
                     {options.map(({ value, label }) => (
                         <option key={value} value={value}>
                             {label}

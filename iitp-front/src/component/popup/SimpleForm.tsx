@@ -27,24 +27,44 @@ const renderActionButton = (
     targetId: number,
     onEditMode: (mode: string, targetId: number) => void
 ) => {
-    if (mode === 'view') {
-        return (
-            <button type="button" className="submit-btn" onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onEditMode('edit', targetId);
-            }}>편집</button>
-        );
-    }
-    return (
-        <button type="submit" className="submit-btn">
-            {mode === 'edit' ? '저장' : '등록'}
+    const createButton = (
+        label: string,
+        onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void,
+        type: "submit" | "button" = "submit"
+    ) => (
+        <button type={type} className="submit-btn" onClick={onClick}>
+            {label}
         </button>
     );
+
+    if (mode === 'view') {
+        return createButton('편집', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onEditMode('edit', targetId);
+        }, 'button');
+    }
+
+    if (mode === 'edit') {
+        return (
+            <>
+                {createButton('저장')}
+                {createButton('취소', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onEditMode('view', targetId);
+                }, 'button')}
+            </>
+        );
+    }
+
+    return createButton('등록');
 };
 
 export const SimpleForm = ({
-                               activePopupMenu, config, formData, handleSimpleChange, handleSubmitSimple, isReadOnly, mode, onClose, onEditMode, targetId
+                               activePopupMenu,
+                               config,
+                               formData, handleSimpleChange, handleSubmitSimple, isReadOnly, mode, onClose, onEditMode, targetId
                            }: Props) => (
     <div className="popup-overlay">
         <div className="popup-container" onClick={(e) => e.stopPropagation()}>
