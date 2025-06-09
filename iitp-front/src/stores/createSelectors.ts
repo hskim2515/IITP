@@ -26,15 +26,14 @@ export function createSelectors<S extends UseBoundStore<StoreApi<object>>>(
     store.actions = {} as any;
 
     const initial = store.getState();
-    for (const [key, value] of Object.entries(initial)) {
+    for (const key of Object.keys(initial)) {
+        const value = initial[key]
         if (typeof value === 'function') {
             // 함수면 actions 네임스페이스로
-            (store.actions as any)[key] = () =>
-                store((s: any) => s[key as keyof typeof s]);
+            store.actions[key] = () => store((s) => s[key as keyof typeof s])
         } else {
             // 함수 아니면 state 네임스페이스로
-            (store.state as any)[key] = () =>
-                store((s: any) => s[key as keyof typeof s]);
+            store.state[key] = () => store((s) => s[key as keyof typeof s])
         }
     }
 
