@@ -18,6 +18,8 @@
       "@adaptor/*": ["src/adaptor/*"],
       "@managers/*": ["src/managers/*"],
       "@features/*": ["src/features/*"],
+      "@type/*": ["src/type/*"],
+      "@hooks/*": ["src/hooks/*"],
     }
   },
   "exclude": ["node_modules", "**/*.js"] // JS 파일 제외
