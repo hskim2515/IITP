@@ -6,7 +6,7 @@ export interface FormField {
 }
 
 export interface PropertyFormSchemaProps {
-    type: String;
+    type: string;
     fields: FormField[];
     inputFields: FormField[];
     rowFields: FormField[];
@@ -110,40 +110,59 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         rowFields: []
     },
     PT_BUS_STATION: {
-        type:"",
+        type:"table",
         fields: [
-            { name: "position", label: "위치 (Position)", type: "number" },
-            { name: "name", label: "정류장명 (Stop Name)", type: "text" },
+            { name: "id", label: "id", type: "number" },
+            { name: "linkRef", label: "정류장 위치 링크", type: "number" },
+            { name: "laneRef", label: "정류장 위치 차로", type: "number" },
+            { name: "transitMode", label: "대중교통 수단", type: "text" },
+            { name: "type", label: "정류장 형태", type: "text" },
+            { name: "offset", label: "정류장 위치 링크 오프셋", type: "number" },
+            { name: "address", label: "사물주소", type: "text" },
+            { name: "parkingLots", label: "주정차 가능 대수", type: "number" },
+            { name: "geometryType", label: "geometryType", type: "text" },
+            { name: "crs", label: "crs", type: "text" },
+            { name: "lon", label: "lon", type: "number" },
+            { name: "lat", label: "lat", type: "number" },
         ],
-        inputFields: [],
+        inputFields: [
+        ],
         rowFields: []
     },
     PT_DRT_STATION: {
-        type:"",
+        type:"table",
         fields: [
-            { name: "position", label: "위치 (Position)", type: "number" },
-            { name: "name", label: "정류장명 (Stop Name)", type: "text" },
-            { name: "schedule", label: "스케줄 (Schedule)", type: "text" },
+            { name: "id", label: "id", type: "number" },
+            { name: "linkRef", label: "정류장 위치 링크", type: "number" },
+            { name: "laneRef", label: "정류장 위치 차로", type: "number" },
+            { name: "offset", label: "정류장 위치 범위 오프셋", type: "number" },
         ],
-        inputFields: [],
+        inputFields: [
+        ],
         rowFields: []
     },
     PT_RAIL_STATION: {
-        type:"",
+        type:"table",
         fields: [
-            { name: "position", label: "위치 (Position)", type: "number" },
-            { name: "name", label: "정류장명 (Stop Name)", type: "text" },
+            { name: "id", label: "id", type: "number" },
+            { name: "transitMode", label: "대중교통 수단", type: "text" },
+            { name: "type", label: "정류장 형태", type: "text" },
+            { name: "address", label: "사물주소", type: "text" },
         ],
-        inputFields: [],
+        inputFields: [
+        ],
         rowFields: []
     },
     PT_TRAM_STATION: {
-        type:"",
+        type:"table",
         fields: [
-            { name: "position", label: "위치 (Position)", type: "number" },
-            { name: "name", label: "정류장명 (Stop Name)", type: "text" },
+            { name: "id", label: "id", type: "number" },
+            { name: "transitMode", label: "대중교통 수단", type: "text" },
+            { name: "type", label: "정류장 형태", type: "text" },
+            { name: "address", label: "사물주소", type: "text" },
         ],
-        inputFields: [],
+        inputFields: [
+        ],
         rowFields: []
     },
     PT_BUS_GARAGE: {

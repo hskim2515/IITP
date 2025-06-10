@@ -435,7 +435,7 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
 
         setLayerManager(layerManager);
         layerManager.addBaseMapLayer(layerGroups);
-        // await layerManager.addBusStationLayer(layerGroups);
+        layerManager.addBusStationLayer();
         await layerManager.addNetworkLayer(layerGroups);
     };
 

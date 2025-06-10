@@ -14,8 +14,8 @@ import BaseLayer from "ol/layer/Base";
 import ODMatrixLayer from "@features/ODMatrixLayer";
 import VehicleLayer from "@features/VehicleLayer";
 import TrailLayer from "@features/TrailLayer";
-// import BusStationLayer from "@features/BusStationLayer";
 import NetworkLayer from "@features/NetworkLayer";
+import BusStationLayer from "@features/BusStationLayer";
 
 type LayerItem = {
     id: number;
@@ -198,28 +198,27 @@ export class LayerManager {
         this._removeLayers("layer", "vehicle");
     }
 
+    addBusStationLayer() {
 
-    // async addBusStationLayer(schema: any[]) {
-    //     if (!Array.isArray(schema) || schema.length === 0) return;
-    //     const groupName = "edit";
-    //     const layerName = "PT_BUS_STATION"
-    //
-    //     const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
-    //     if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
-    //
-    //     //ol
-    //     const busStation = new BusStationLayer();
-    //     const layers = this.vectorLayerManager.add(busStation, groupName, layerName);
-    //
-    //     const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
-    //
-    //     layers.forEach((layer: BaseLayer) => {
-    //         if (!vectorLayers.includes(layer)) {
-    //             vectorLayers.push(layer);
-    //         }
-    //     })
-    //     await busStation.load();
-    // }
+        const groupName = "edit";
+        const layerName = "PT_BUS_STATION"
+
+        const layerGroup: Record<string, BaseLayer[]> = (this.layerGroups.get(groupName) || {});
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        //ol
+        const busStation = new BusStationLayer();
+        const layers = this.vectorLayerManager.add(busStation, groupName, layerName);
+
+        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+
+        layers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) {
+                vectorLayers.push(layer);
+            }
+        })
+        busStation.loadFromStore();
+    }
 
     async addNetworkLayer() {
         const groupName = "edit";
