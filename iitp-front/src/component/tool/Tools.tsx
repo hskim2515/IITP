@@ -15,8 +15,7 @@ const Tools = () => {
                 fontSize: '20px',
                 padding: '15px',
                 cursor: 'pointer',
-                boxShadow: '0 4px 10px rgba(0,0,0,0.5)',
-                zIndex: 1000,
+                zIndex: 999,
             }}
             onClick={toggleTools}
         >

@@ -28,9 +28,10 @@ INSERT INTO layer_group (key, label) VALUES
 -- baseMap 그룹
 INSERT INTO layer (id, group_id, key, label, basic, auth) VALUES
                                                               (1, 1, 'osm',       'OSM 지도',            false, 0),
-                                                              (2, 1, 'base',      'VWorld 일반지도',     true,  0),
+                                                              (2, 1, 'base',      'VWorld 일반지도',     false,  0),
                                                               (3, 1, 'satellite', 'VWorld 위성지도',     false, 0),
-                                                              (4, 1, 'hybrid',    'VWorld Hybrid지도',   false, 0);
+                                                              (4, 1, 'hybrid',    'VWorld Hybrid지도',   false, 0),
+                                                              (11, 1, 'midnight',    'VWorld 야간지도',   true, 0);
 
 -- layer 그룹
 INSERT INTO layer (id, group_id, key, label, basic, auth) VALUES

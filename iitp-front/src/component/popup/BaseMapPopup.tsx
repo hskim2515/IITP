@@ -6,7 +6,8 @@ const BaseMapPopup = () => {
         { value: 'osm', label: 'OSM 지도' },
         { value: 'base', label: 'VWorld 일반지도' },
         { value: 'satellite', label: 'VWorld 위성지도' },
-        { value: 'hybrid', label: 'VWorld Hybrid지도' }
+        { value: 'hybrid', label: 'VWorld Hybrid지도' },
+        { value: 'midnight', label: 'VWorld 야간지도' },
     ];
 
     const currentBaseMap = useMapStore((state) => state.currentBaseMap);

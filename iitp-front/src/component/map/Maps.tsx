@@ -1,15 +1,18 @@
-import React, { useEffect, useRef } from 'react';
+import React, {Suspense, useEffect, useRef} from 'react';
 import 'ol/ol.css';
 import MapCesium from "./MapCesium";
 import MapOL from "./MapOL";
+import { useMenuStore } from "@stores/useMenuStore";
 import useMapInit from "@hooks/useMapInit";
 import useSimulation from "@hooks/useSimulation";
-import useMapSync from "@hooks/useMapSync";
+import useMapSync from "@hooks/sync/useMapSync";
 import useLayer from "@hooks/useLayer";
 import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
-import useSelect from "../../hooks/select/useSelect";
 import useFeatureInit from "@hooks/useFeatureInit";
-import { useMenuStore } from "@stores/useMenuStore";
+import useDefaultSelect from "../../hooks/sync/select/useDefaultSelect";
+import {useScenarioStore} from "@stores/useScenarioStore";
+import '../../App.css'
+import {useCesiumStore} from "@stores/useCesiumStore";
 
 const Maps = () => {
 
@@ -25,22 +28,21 @@ const Maps = () => {
 
     useEffect(() => {
         fetchLayerSchema()
-    }, [ fetchLayerSchema ]);
+    }, [fetchLayerSchema]);
 
     useFeatureInit()
     useMapInit(openlayersMapRef, cesiumMapRef);
     useSimulation();
     useMapSync();
     useLayer();
-    useSelect();
-
+    useDefaultSelect();
 
     return (
-
         <div style={{ position: 'fixed', top: '50px', width: '100vw', height: '100vh' }}>
+
             <div style={{ display: "flex", transition: "margin 0.3s ease", float: "inline-end" }}>
-                <MapOL ref={ openlayersMapRef } style={{ width: mapWidth, transition: "width 0.3s ease" }}/>
-                <MapCesium ref={ cesiumMapRef } style={{ width: mapWidth, transition: "width 0.3s ease" }}/>
+                <MapOL ref={openlayersMapRef} style={{ width: mapWidth, transition: "width 0.3s ease" }} />
+                <MapCesium ref={cesiumMapRef} style={{ width: mapWidth, transition: "width 0.3s ease" }} />
             </div>
         </div>
     );

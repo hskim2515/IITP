@@ -381,31 +381,6 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
             cesiumViewer.zoomTo(cesiumViewer.entities);
         });
 
-        useEventStore.getState().cesiumEventManager.bind('select', (e) => {
-                const picked = cesiumViewer.scene.pick(e.position);
-                if (Cesium.defined(picked) && picked.id?.properties) {
-                    const props: Record<string, any> = {};
-                    const cartesian = cesiumViewer.scene.camera.pickEllipsoid(e.position, cesiumViewer.scene.globe.ellipsoid);
-                    if (cartesian) {
-                        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-                        const longitude = Cesium.Math.toDegrees(cartographic.longitude);
-                        const latitude = Cesium.Math.toDegrees(cartographic.latitude);
-                        const height = cartographic.height;
-
-                        props.longitude = longitude;
-                        props.latitude = latitude;
-                        props.height = height; // 높이도 함께 포함
-                    }
-                    const propBag = picked.id.properties;
-                    propBag.propertyNames.forEach((key: string) => {
-                        props[key] = propBag[key].getValue(Cesium.JulianDate.now());
-                    });
-                    setProperty(props);
-                } else {
-                    setProperty(null);
-                }
-        });
-
         // const handler = new Cesium.ScreenSpaceEventHandler(cesiumViewer.scene.canvas);
         //
         // handler.setInputAction((movement) => {
@@ -487,6 +462,8 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
         });
         cesiumViewer.scene.globe.depthTestAgainstTerrain = true;
         cesiumViewer.scene.useDepthPicking = true
+        console.log('viewer', cesiumViewer)
+
         setViewer(cesiumViewer);
 
         fetch("CesiumMilkTruck.glb")
