@@ -18,7 +18,7 @@ export default class TailPrimitive {
 
 
         this.trailPosition = [];
-        this.MAX_TRAIL_LENGTH = 100;
+        this.MAX_TRAIL_LENGTH = 50;
 
 
         this.trails = [];

@@ -23,7 +23,7 @@ const ToolsPanel = () => {
                 top: '150px',
                 borderRadius: '8px',
                 padding: '15px',
-                zIndex: 1000,
+                zIndex: 999,
                 transform: showTools ? 'translateY(0)' : 'translateY(0)', // Slide in/out
                 opacity: showTools ? 1 : 0, // Fade in/out
                 transition: 'transform 0.3s ease, opacity 0.3s ease', // Smooth slide and fade animation
@@ -37,7 +37,7 @@ const ToolsPanel = () => {
                     cursor: 'pointer',
                     fontSize: '20px',
                     display: 'flex',
-                    alignItems: 'center',
+                    alignItems: 'center'
                 }}
                 onClick={() => togglePopup(0)}
             >

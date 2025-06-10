@@ -6,7 +6,7 @@ import { immer } from "zustand/middleware/immer";
 interface State {
     isCesiumSyncingState: boolean;
     isOLSyncingState: boolean;
-    currentBaseMap: 'osm' | 'satellite' | 'hybrid' | 'base';
+    currentBaseMap: 'osm' | 'satellite' | 'hybrid' | 'base' | 'midnight';
 }
 
 interface Actions {

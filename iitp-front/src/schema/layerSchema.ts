@@ -11,6 +11,7 @@ export const localLayerSchema: Record<string, LocalLayerFieldSchema> = {
     base:       { type: 'radio', url: `http://api.vworld.kr/req/wmts/1.0.0/${API_KEY}/Base/{z}/{y}/{x}.png` },
     satellite:  { type: 'radio', url: `http://api.vworld.kr/req/wmts/1.0.0/${API_KEY}/Satellite/{z}/{y}/{x}.jpeg` },
     hybrid:     { type: 'radio', url: `http://api.vworld.kr/req/wmts/1.0.0/${API_KEY}/Hybrid/{z}/{y}/{x}.png`, providers: ['satellite', 'hybrid'] },
+    midnight:     { type: 'radio', url: `http://api.vworld.kr/req/wmts/1.0.0/${API_KEY}/midnight/{z}/{y}/{x}.png` },
     heatmap:    { type: 'checkbox' },
     trip:       { type: 'checkbox' },
     od:         { type: 'checkbox' },
