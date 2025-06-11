@@ -14,6 +14,8 @@ import BaseLayer from "ol/layer/Base";
 import ODMatrixLayer from "@features/ODMatrixLayer";
 import VehicleLayer from "@features/VehicleLayer";
 import TrailLayer from "@features/TrailLayer";
+import NetworkLayer from "@features/NetworkLayer";
+import BusStationLayer from "@features/BusStationLayer";
 
 type LayerItem = {
     id: number;
@@ -195,6 +197,50 @@ export class LayerManager {
     removeVehicleLayer(): void {
         this._removeLayers("layer", "vehicle");
     }
+
+    addBusStationLayer() {
+
+        const groupName = "edit";
+        const layerName = "PT_BUS_STATION"
+
+        const layerGroup: Record<string, BaseLayer[]> = (this.layerGroups.get(groupName) || {});
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        //ol
+        const busStation = new BusStationLayer();
+        const layers = this.vectorLayerManager.add(busStation, groupName, layerName);
+
+        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+
+        layers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) {
+                vectorLayers.push(layer);
+            }
+        })
+        busStation.loadFromStore();
+    }
+
+    async addNetworkLayer() {
+        const groupName = "edit";
+        const layerName = "NETWORK"
+
+        const layerGroup = this.layerGroups.get(groupName) || {};
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        //ol
+        const network = new NetworkLayer();
+        const layers = this.vectorLayerManager.add(network, groupName, layerName);
+
+        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+
+        layers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) {
+                vectorLayers.push(layer);
+            }
+        })
+        await network.load();
+    }
+
     addBaseMapLayer(schema: any[]) {
         if (!Array.isArray(schema) || schema.length === 0) return;
         const groupName = "baseMap";
@@ -320,6 +366,10 @@ export class LayerManager {
 
     getLayerGroup(groupName: string) {
         return this.getAllLayersByGroup(groupName);
+    }
+
+    getLayerByName(layerName: string) {
+        return this.vectorLayerManager.getLayerByName(layerName)
     }
 
     private _removeLayers(groupName: string, ...layers: string[]): void {

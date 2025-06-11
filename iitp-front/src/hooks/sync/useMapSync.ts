@@ -1,7 +1,6 @@
 import {useEffect, useRef} from 'react';
 import * as Cesium from "cesium";
 import {Camera, Cartesian3} from "cesium";
-import {usePanelStore} from "@stores/usePanelStore";
 import {useCesiumStore} from "@stores/useCesiumStore";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import * as olProj from "ol/proj";

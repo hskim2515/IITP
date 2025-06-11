@@ -27,6 +27,18 @@ class VectorLayerManager {
         return this.olMap;
     }
 
+    getLayerByName(layerName: string): BaseLayer | null {
+        for (const groupName in this.layerGroups) {
+            const group = this.layerGroups[groupName];
+            for (const layer of group) {
+                if (layer["layer"] === layerName || layer.get("name") === layerName) {
+                    return layer;
+                }
+            }
+        }
+        return null;
+    }
+
     _getOrCreateGroup(groupName: string) {
         if (!this.layerGroups[groupName]) {
             this.layerGroups[groupName] = [];

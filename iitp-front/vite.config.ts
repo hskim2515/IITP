@@ -27,6 +27,8 @@ export default defineConfig(({ mode }) => {
                 '@adaptor': path.resolve(__dirname, 'src/adaptor'),
                 '@managers': path.resolve(__dirname, 'src/managers'),
                 '@features': path.resolve(__dirname, 'src/features'),
+                '@type': path.resolve(__dirname, 'src/type'),
+                '@hooks': path.resolve(__dirname, 'src/hooks'),
             }
         }
     };

@@ -17,6 +17,11 @@ export const apiConfig = {
         //delete:  { url: '/vehicle-models/{id}',  method: 'DELETE' },
         delete:  { url: '/vehicle-models/delete',  method: 'POST', useFormData: false },
     },
+    PT_BUS_STATION: {
+        list: {url: '/public-transit/station/bus', method: 'GET', useFormData: false },
+        update: {url: '/public-transit/station/bus/2', method: 'POST', useFormData: false },
+        create: {url: '/public-transit/station/bus/2', method: 'POST', useFormData: false },
+    },
 } as const;
 
 export type ApiMenuKey = keyof typeof apiConfig;

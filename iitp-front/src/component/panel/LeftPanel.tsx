@@ -4,40 +4,49 @@ import { useShallow } from "zustand/react/shallow";
 
 import { propertyFormSchema } from "../form/propertyFormSchema";
 import PropertyForm from "../popup/PropertyPopup";
+import PropertyPanel from "./PropertyPanel";
 
 const LeftPanel: React.FC = () => {
-    const { activeDropdownMenu, setActiveDropdownMenu } = useMenuStore(useShallow((state) => ({
-        activeDropdownMenu: state.activeDropdownMenu,
-        setActiveDropdownMenu : state.setActiveDropdownMenu,
-    })));
-
-    // 하나의 상태 변수 activePopupKey로 현재 열려 있는 팝업을 관리합니다.
-    const [ activePopupMenu, setActivePopupMenu ] = useState<MenuTree | null>(null);
+    const {
+        activeDropdownMenu,
+        activeSubmenu,
+        setActiveDropdownMenu,
+        setActiveSubmenu,
+    } = useMenuStore();
 
     if (!activeDropdownMenu) return null;
 
-    // activeMenu의 children (2뎁스 메뉴들)으로 itemsData 배열을 구성합니다.
-    const itemsData: MenuTree[] = activeDropdownMenu.children || [];
+    // 서브 메뉴 데이터 배열(필드 포함) - 좌측에 서브메뉴 목록 띄우기 위함
+    const submenuData: MenuTree[] = activeDropdownMenu.children;
 
-    // 2뎁스 메뉴 클릭 시 처리하는 함수
-    const handleClick = (item: MenuTree) => {
+    // 서브메뉴 클릭 시 처리
+    const handleClickSubmenu = (item: MenuTree) => {
         if (propertyFormSchema[item.menuCode]) {
-            setActivePopupMenu(item);
+            setActiveSubmenu(item);
         } else {
-            setActivePopupMenu(null);
+            setActiveSubmenu(null);
         }
     };
 
     // 팝업 렌더링 함수: activePopupKey에 따라 popupMapping에서 구성정보를 가져와 단일 팝업 컴포넌트를 렌더링합니다.
     const renderActivePopup = () => {
-        if (!activePopupMenu) return null;
-        const config = propertyFormSchema[activePopupMenu.menuCode];
+        if (!activeSubmenu) return null;
+
+        const config = propertyFormSchema[activeSubmenu.menuCode];
         if (!config) return null;
+
+        // map과 상호작용이 필요한 컴포넌트 임시로 분리
+        if (activeDropdownMenu.menuCode === "FACILITY") return (
+            <PropertyPanel
+                activeSubmenu={ activeSubmenu }
+                onClose={ () => setActiveSubmenu(null) }
+            />
+        )
         return (
             <PropertyForm
                 open
-                activePopupMenu={activePopupMenu}
-                onClose={ () => setActivePopupMenu(null) }
+                activePopupMenu={activeSubmenu}
+                onClose={ () => setActiveSubmenu(null) }
                 config={config}
             />
         );
@@ -52,10 +61,10 @@ const LeftPanel: React.FC = () => {
                 </button>
             </div>
             <div>
-                { itemsData.map((item) => (
+                { submenuData.map((item) => (
                     <p
                         key={ item.menuId }
-                        onClick={ () => handleClick(item) }
+                        onClick={ () => handleClickSubmenu(item) }
                         style={ styles.menuItem }
                     >
                         { item.nameKor }

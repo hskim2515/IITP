@@ -92,7 +92,7 @@ const styles = {
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '0 20px',
-        zIndex: 999,
+        zIndex: 1000,
     },
     nav: {
         display: 'flex',

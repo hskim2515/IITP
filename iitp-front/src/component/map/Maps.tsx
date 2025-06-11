@@ -2,12 +2,13 @@ import React, {Suspense, useEffect, useRef} from 'react';
 import 'ol/ol.css';
 import MapCesium from "./MapCesium";
 import MapOL from "./MapOL";
-import { usePanelStore } from "@stores/usePanelStore";
-import useMapInit from "../../hooks/useMapInit";
-import useSimulation from "../../hooks/useSimulation";
-import useMapSync from "../../hooks/sync/useMapSync";
-import useLayer from "../../hooks/useLayer";
+import { useMenuStore } from "@stores/useMenuStore";
+import useMapInit from "@hooks/useMapInit";
+import useSimulation from "@hooks/useSimulation";
+import useMapSync from "@hooks/sync/useMapSync";
+import useLayer from "@hooks/useLayer";
 import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
+import useFeatureInit from "@hooks/useFeatureInit";
 import useDefaultSelect from "../../hooks/sync/select/useDefaultSelect";
 import {useScenarioStore} from "@stores/useScenarioStore";
 import '../../App.css'
@@ -18,10 +19,10 @@ const Maps = () => {
     const openlayersMapRef = useRef(null);
     const cesiumMapRef = useRef(null);
 
-    const { activePanel } = usePanelStore();
+    const activeSubmenu = useMenuStore.state.activeSubmenu()
 
-    const panelWidth = activePanel ? 250 : 0; // 패널이 열리면 250px 너비 적용
-    const mapWidth = `calc((100vw - ${panelWidth}px) / 2)`; // 패널이 열리면 남은 공간을 2등분
+    const panelWidth = activeSubmenu ? 250 : 0; // 패널이 열리면 250px 너비 적용
+    const mapWidth = `calc((100vw - ${ panelWidth }px) / 2)`; // 패널이 열리면 남은 공간을 2등분
 
     const fetchLayerSchema = useLayerSchemaStore.actions.fetchLayerSchema()
 
@@ -29,6 +30,7 @@ const Maps = () => {
         fetchLayerSchema()
     }, [fetchLayerSchema]);
 
+    useFeatureInit()
     useMapInit(openlayersMapRef, cesiumMapRef);
     useSimulation();
     useMapSync();

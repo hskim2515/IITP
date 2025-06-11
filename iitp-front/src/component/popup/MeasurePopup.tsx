@@ -1,8 +1,8 @@
 import React, {useState} from "react";
-import { useCesiumMeasure } from "../../hooks/sync/measure/useCesiumMeasure";
+import { useCesiumMeasure } from "@hooks/sync/measure/useCesiumMeasure";
 import {useCesiumStore} from "@stores/useCesiumStore";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
-import {useOlMeasure} from "../../hooks/sync/measure/useOlMeasure";
+import {useOlMeasure} from "@hooks/sync/measure/useOlMeasure";
 
 interface MeasurePopupProps {
     isOpen: boolean;
