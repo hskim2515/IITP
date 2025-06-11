@@ -40,7 +40,7 @@ public class NetworkController {
         List<NodeData> nodes = new ArrayList<>();
         List<LinkData> links = new ArrayList<>();
 
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream("xmls/network.xml")) {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream("networks/network.xml")) {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document doc = builder.parse(is);

@@ -21,7 +21,7 @@ class SignalController {
 
     @GetMapping
     public ResponseEntity<SignalData> getSignalData() {
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream("xmls/signal.xml")) {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream("signals/signal.xml")) {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document doc = builder.parse(is);
