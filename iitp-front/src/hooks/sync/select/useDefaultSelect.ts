@@ -116,6 +116,10 @@ const useDefaultSelect = () => {
     }
 
     useEffect(() => {
+        // useEventStore.getState().olEventManager?.bind("draw", (m)=>{
+        //     console.log(m)
+        // });
+
         useEventStore.getState().cesiumEventManager?.bind('select', (e) => {
             const picked = viewer.scene.pick(e.position);
             if (Cesium.defined(picked) && picked.id?.properties) {
