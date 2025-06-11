@@ -183,7 +183,7 @@ const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueC
     }));
     return (
         <div>
-            <div className="ag-theme-alpine" style={ { height: 190, width: '100%' } }>
+            <div className="ag-theme-alpine" style={ { height: 180, width: '99%' } }>
                 <AgGridReact
                     theme={ "legacy" }
                     ref={ gridRef }

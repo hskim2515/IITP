@@ -21,8 +21,9 @@ const Maps = () => {
     const containerRef = useRef(null);
 
     const activeSubmenu = useMenuStore.state.activeSubmenu()
+    const activeDropdownMenu = useMenuStore.state.activeDropdownMenu()
 
-    const panelWidth = activeSubmenu ? 250 : 0; // 패널이 열리면 250px 너비 적용
+    const panelWidth = (!activeSubmenu && activeDropdownMenu) ? 250 : 0; // 패널이 열리면 250px 너비 적용
     const mapWidth = `calc((100vw - ${ panelWidth }px) / 2)`; // 패널이 열리면 남은 공간을 2등분
 
     const isResizing = useRef(false);
