@@ -71,7 +71,7 @@ const ListTable = forwardRef<ListTableRef, PropertyFormProps>((props, ref) => {
 
     return (
         <div>
-            <div className="ag-theme-alpine" style={{ height: 190, width: '100%' }}>
+            <div className="ag-theme-alpine" style={{ height: 200, width: '100%' }}>
                 <AgGridReact
                     theme={"legacy"}
                     ref={gridRef}

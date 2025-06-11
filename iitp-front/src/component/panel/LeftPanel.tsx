@@ -16,10 +16,19 @@ const LeftPanel: React.FC = () => {
 
     if (!activeDropdownMenu) return null;
 
-    // 서브 메뉴 데이터 배열(필드 포함) - 좌측에 서브메뉴 목록 띄우기 위함
+    // FACILITY인 경우: 사이드바 없이 PropertyPanel만 렌더링
+    if (activeDropdownMenu.menuCode === "FACILITY" && activeSubmenu) {
+        return (
+            <PropertyPanel
+                activeSubmenu={activeSubmenu}
+                onClose={() => setActiveSubmenu(null)}
+            />
+        );
+    }
+
+    // 일반 메뉴인 경우: 사이드바 + 팝업
     const submenuData: MenuTree[] = activeDropdownMenu.children;
 
-    // 서브메뉴 클릭 시 처리
     const handleClickSubmenu = (item: MenuTree) => {
         if (propertyFormSchema[item.menuCode]) {
             setActiveSubmenu(item);
@@ -28,58 +37,51 @@ const LeftPanel: React.FC = () => {
         }
     };
 
-    // 팝업 렌더링 함수: activePopupKey에 따라 popupMapping에서 구성정보를 가져와 단일 팝업 컴포넌트를 렌더링합니다.
     const renderActivePopup = () => {
         if (!activeSubmenu) return null;
 
         const config = propertyFormSchema[activeSubmenu.menuCode];
         if (!config) return null;
 
-        // map과 상호작용이 필요한 컴포넌트 임시로 분리
-        if (activeDropdownMenu.menuCode === "FACILITY") return (
-            <PropertyPanel
-                activeSubmenu={ activeSubmenu }
-                onClose={ () => setActiveSubmenu(null) }
-            />
-        )
         return (
             <PropertyForm
                 open
                 activePopupMenu={activeSubmenu}
-                onClose={ () => setActiveSubmenu(null) }
+                onClose={() => setActiveSubmenu(null)}
                 config={config}
             />
         );
     };
 
     return (
-        <div style={ styles.sidebar }>
-            <div style={ styles.header }>
-                <h3>{ activeDropdownMenu.nameKor }</h3>
-                <button style={ styles.closeButton } onClick={ () => setActiveDropdownMenu(null) }>
+        <div style={styles.sidebar}>
+            <div style={styles.header}>
+                <h3>{activeDropdownMenu.nameKor}</h3>
+                <button style={styles.closeButton} onClick={() => setActiveDropdownMenu(null)}>
                     ×
                 </button>
             </div>
             <div>
-                { submenuData.map((item) => (
+                {submenuData.map((item) => (
                     <p
-                        key={ item.menuId }
-                        onClick={ () => handleClickSubmenu(item) }
-                        style={ styles.menuItem }
+                        key={item.menuId}
+                        onClick={() => handleClickSubmenu(item)}
+                        style={styles.menuItem}
                     >
-                        { item.nameKor }
+                        {item.nameKor}
                     </p>
-                )) }
+                ))}
             </div>
-            { renderActivePopup() }
+            {renderActivePopup()}
         </div>
     );
 };
 
+
 const styles = {
     sidebar: {
-        width: "200px",
-        backgroundColor: "#222",
+        width: "12vw",
+        backgroundColor: "rgba(0, 0, 0, 0.75)",
         color: "#fff",
         padding: "20px",
         position: "fixed" as const,

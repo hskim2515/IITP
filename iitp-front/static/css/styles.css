@@ -13,11 +13,11 @@
 
 .popup-overlay-table {
     position: absolute;
-    bottom: 0;      /* 하단 정렬 */
-    left: 100%;     /* 바로 옆에 붙이기 */
-    right: 100%;
-    width: 600px;
-    height: 300px;
+    bottom: 35px;      /* 하단 정렬 */
+    /*left: 14vw;     !* 바로 옆에 붙이기 *!*/
+    /*right: 100%;*/
+    /*width: 100vw;*/
+    /*height: 300px;*/
     z-index: 1000;
 }
 
@@ -34,7 +34,7 @@
     background-color: rgba(0, 0, 0, 0.75);
     border-radius: 8px;
     padding: 16px;
-    width: 500%;
+    width: 99vw;
     height: 100%;
     max-width: 1865px;
     box-shadow: 0px 2px 10px rgba(0, 0, 0, 0.3);
@@ -113,7 +113,7 @@
 }
 
 .popup-body {
-    margin-bottom: 12px;
+    margin-bottom: 10px;
 }
 
 .popup-footer {

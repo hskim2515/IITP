@@ -168,6 +168,9 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
                 <div className={ `popup-container${ submenu.item.type ? `-${ submenu.item.type }` : '' }` }>
                     <div className="popup-header">
                         <span>{ submenu.title }</span>
+                        <button className="close-btn" onClick={ onClose }>×</button>
+                    </div>
+                    <div>
                         <div className="popup-header-actions">
                             <button className="add-btn" onClick={ () => handleAddBtn() }>추가</button>
                             <button className="delete-btn" onClick={ () => handleDeleteBtn() }>삭제</button>
@@ -176,8 +179,9 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
                             <button className="edit-btn" onClick={ () => handleEditableBtn() }>그리드 편집활성화</button>
                             <button onClick={ () => handleCheck() }>Interaction 객체 목록 log 확인</button>
                         </div>
-                        <button className="close-btn" onClick={ onClose }>×</button>
+                        <br/>
                     </div>
+
                     <div className="popup-body">
                         { submenu.item && colDefs &&
                             <Grid
