@@ -3,3 +3,18 @@ export interface FetchFeatureDataType {
     geojson: Record<string, unknown>
     name: string;
 }
+
+export enum GeometryType {
+    POINT = 'Point',
+    LINE_STRING = 'LineString',
+    LINEAR_RING = 'LinearRing',
+    POLYLINE = 'Polyline',
+    POLYGON = 'Polygon',
+    MULTI_POINT = 'MultiPoint',
+    MULTI_LINE_STRING = 'MultiLineString',
+    MULTI_POLYGON = 'MultiPolygon',
+    GEOMETRY_COLLECTION = 'GeometryCollection',
+    CIRCLE = 'Circle',
+}
+
+export default GeometryType;
