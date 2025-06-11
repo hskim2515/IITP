@@ -85,7 +85,7 @@ const styles = {
         position: "fixed" as const,
         left: 0,
         top: "50px",
-        zIndex: 999,
+        zIndex: 998,
         bottom: 0,
         display: "flex",
         flexDirection: "column" as const,

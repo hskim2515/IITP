@@ -70,7 +70,7 @@ const modalStyle: React.CSSProperties = {
     maxWidth: '400px',
     maxHeight: '80vh',
     overflowY: 'auto',
-    zIndex: 1000,
+    zIndex: 998,
     backdropFilter: 'blur(5px)',
     boxShadow: '0 0 12px rgba(0,0,0,0.3)',
 };

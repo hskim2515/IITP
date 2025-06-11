@@ -1,4 +1,4 @@
-import React, {Suspense, useEffect, useRef} from 'react';
+import React, {Suspense, useEffect, useRef, useState} from 'react';
 import 'ol/ol.css';
 import MapCesium from "./MapCesium";
 import MapOL from "./MapOL";
@@ -18,11 +18,16 @@ const Maps = () => {
 
     const openlayersMapRef = useRef(null);
     const cesiumMapRef = useRef(null);
+    const containerRef = useRef(null);
 
     const activeSubmenu = useMenuStore.state.activeSubmenu()
 
     const panelWidth = activeSubmenu ? 250 : 0; // 패널이 열리면 250px 너비 적용
     const mapWidth = `calc((100vw - ${ panelWidth }px) / 2)`; // 패널이 열리면 남은 공간을 2등분
+
+    const isResizing = useRef(false);
+
+    const [dividerPosition, setDividerPosition] = useState(window.innerWidth / 2);
 
     const fetchLayerSchema = useLayerSchemaStore.actions.fetchLayerSchema()
 
@@ -37,13 +42,69 @@ const Maps = () => {
     useLayer();
     useDefaultSelect();
 
-    return (
-        <div style={{ position: 'fixed', top: '50px', width: '100vw', height: '100vh' }}>
+    // Mouse event handlers
+    useEffect(() => {
+        const handleMouseMove = (e: MouseEvent) => {
+            if (!isResizing.current) return;
+            const containerLeft = containerRef.current?.getBoundingClientRect().left || 0;
+            setDividerPosition(e.clientX - containerLeft);
+        };
 
-            <div style={{ display: "flex", transition: "margin 0.3s ease", float: "inline-end" }}>
-                <MapOL ref={openlayersMapRef} style={{ width: mapWidth, transition: "width 0.3s ease" }} />
-                <MapCesium ref={cesiumMapRef} style={{ width: mapWidth, transition: "width 0.3s ease" }} />
-            </div>
+        const handleMouseUp = () => {
+            isResizing.current = false;
+        };
+
+        window.addEventListener("mousemove", handleMouseMove);
+        window.addEventListener("mouseup", handleMouseUp);
+
+        return () => {
+            window.removeEventListener("mousemove", handleMouseMove);
+            window.removeEventListener("mouseup", handleMouseUp);
+        };
+    }, []);
+
+    const handleMouseDown = () => {
+        isResizing.current = true;
+    };
+
+    const containerWidth = window.innerWidth - panelWidth;
+    const leftWidth = `${dividerPosition}px`;
+    const rightWidth = `${containerWidth - dividerPosition}px`;
+
+    return (
+        <div
+            ref={containerRef}
+            style={{
+                position: "fixed",
+                top: "50px",
+                left: `${panelWidth}px`,
+                width: `calc(100vw - ${panelWidth}px)`,
+                height: "90vh",
+                display: "flex",
+                overflow: "hidden",
+                userSelect: isResizing.current ? "none" : "auto"
+            }}
+        >
+            <MapOL
+                ref={openlayersMapRef}
+                style={{ width: leftWidth, transition: isResizing.current ? "none" : "width 0.3s ease" }}
+            />
+
+            {/* Divider / Slider */}
+            <div
+                onMouseDown={handleMouseDown}
+                style={{
+                    width: "6px",
+                    cursor: "col-resize",
+                    backgroundColor: "#ccc",
+                    zIndex: 10
+                }}
+            />
+
+            <MapCesium
+                ref={cesiumMapRef}
+                style={{ width: rightWidth, transition: isResizing.current ? "none" : "width 0.3s ease" }}
+            />
         </div>
     );
 };
