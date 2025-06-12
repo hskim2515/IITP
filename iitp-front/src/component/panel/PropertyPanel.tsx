@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import "/static/css/styles.css";
 import { MenuTree } from "@stores/useMenuStore";
 import { propertyFormSchema } from "../form/propertyFormSchema";
@@ -6,39 +6,66 @@ import Grid from "../util/Grid";
 import { buildColumnDefs, featureCollectionToFlatRow, } from "@utils/grid";
 import { ColDef } from "ag-grid-community";
 import { GridHandle } from "@type/GirdOptions";
-import { Feature, MapBrowserEvent } from "ol";
 import { menuCodeToStoreMap } from "@hooks/useFeatureInit";
 import { useEventStore } from "@stores/useEventStore";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
-import { OpenLayersScreenSpaceEventType } from "@type/OpenLayersKeyOptions";
-import useModifyInteraction from "@hooks/interaction/useModifyInteraction";
-import useGrid from "@hooks/useGrid";
+import useGrid, { AddOptions } from "@hooks/useGrid";
+import GeometryType from "@type/FeatureOptions";
+import { SelectEvent } from "ol/interaction/Select";
+import { Feature } from "ol";
+import VectorLayer from "ol/layer/Vector";
+import BaseLayer from "ol/layer/Base";
+import WebGLVectorLayer from "ol/layer/WebGLVector";
+import { ModifyEvent } from "ol/interaction/Modify";
+import { DrawEvent } from "ol/interaction/Draw";
+import { GeoJSON } from "ol/format";
+import { apiConfig, ApiMenuKey } from "../../config/apiConfig";
+import axiosInstance from "../../api/axiosInstance";
 
 export interface BottomTableProps {
     activeSubmenu: MenuTree
     onClose: () => void;
 }
 
+const geometryTypeOptions: GeometryType[] = [
+    GeometryType.POINT,
+    GeometryType.LINE_STRING,
+    GeometryType.POLYGON,
+];
 const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
     const submenu = {
         menuCode: activeSubmenu.menuCode,
         item: propertyFormSchema[activeSubmenu.menuCode],
         title: activeSubmenu.nameKor
     }
+
     const gridRef = useRef<GridHandle>(null)
-
-    const manager = useEventStore.getState().olEventManager;
-    // 동적 스토어
-    const store = menuCodeToStoreMap[submenu.menuCode];
-
-    const [ pickedFeature, setPickedFeature ] = useState()
-
-    const [ defaultData, setDefaultData ] = useState<Record<string, number | string>>({})
-
     const [ rowData, setRowData ] = useState<Record<string, unknown>[]>([])
     const [ colDefs, setColDefs ] = useState<ColDef[] | undefined>(undefined)
 
+    // 동적 스토어
+    const store = menuCodeToStoreMap[submenu.menuCode];
+
+    const eventManager = useEventStore.getState().olEventManager;
+    const [ drawGeometryType, setDrawGeometryType ] = useState<GeometryType>(GeometryType.POINT)
+
+    const selectedFeatureIdRef = useRef<[]>([]);
+    const [ addedData, setAddedData ] = useState<AddOptions>({})
+
+    const [ isEditable, setIsEditable ] = useState<boolean>(false)
+    const [ isDrawing, setIsDrawing ] = useState<boolean>(false)
+
     const map = useOpenLayersStore.state.map()
+
+    const layer = useMemo(() => {
+        return map?.getLayers().getArray()
+            .find((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layer"] === submenu.menuCode);
+    }, [ map, submenu.menuCode ]);
+
+    const layers = useMemo(() => {
+        return map?.getLayers().getArray()
+            .filter((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layerGroup"] === "edit");
+    }, [ map, submenu.menuCode ]);
 
     const {
         addRow,
@@ -48,67 +75,132 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         switchEditable
     } = useGrid(gridRef, store, colDefs)
 
+    const onDrawEnd = (e: DrawEvent) => {
+        const feature: Feature = e.feature;
+        const selected = 1;
+        feature.set("id", Date.now());
+        feature.set("selected", selected);
+        feature.changed();
+        const format = new GeoJSON({ featureProjection: 'EPSG:3857', dataProjection: 'EPSG:4326' });
+        const geojsonFeature = format.writeFeatureObject(feature);
+
+        const defaultGeometry = geojsonFeature.geometry;
+
+
+        saveModifiedFeatures([ feature ]);
+
+        const baseData = addedData?.baseData ?? {};
+        addRow({ baseData, defaultGeometry })
+        setIsDrawing(false)
+    };
     useEffect(() => {
-        if (!manager || !submenu.menuCode || !map) return;
+        if (!eventManager || !submenu.menuCode || !map || !layer) return;
 
-        const onSelect = (e: MapBrowserEvent) => {
-            const pixel = map.getEventPixel(e.originalEvent);
-            const coordinate = e.coordinate; // 클릭한 좌표
-
-            map.forEachFeatureAtPixel(
-                pixel,
-                (feature) => {
-                    setPickedFeature(feature);
-                    const id = feature.get("id");
-                    if (id) {
-                        gridRef.current?.setSelectRowsWithField("id", [ id ]);
-                    }
-
-                    const geom = feature.getGeometry();
-                    if (geom?.getType() === "LineString") {
-                        const closestPoint = geom.getClosestPoint(coordinate);
-                        console.log("[LineString] 클릭한 위치와 가장 가까운 점:", closestPoint);
-                    }
-                },
-                {
-                    layerFilter: (layer) =>
-                        layer["layer"] === "NETWORK" || layer["layer"] === submenu.menuCode,
-                }
-            );
+        const options = {
+            olLayer: layer,
+            drawGeometryType: drawGeometryType
         };
 
-        manager.bind("select", onSelect);
-        return () => {
-            manager.unbind("select", onSelect);
-        };
-    }, [ submenu.menuCode ]);
-
-    useEffect(() => {
-        console.log("pickedFeature:::", pickedFeature) // select 디버깅용
-    }, [ pickedFeature ]);
-
-    // 일단 click, dbclick 등은 event로 관리, interaction 은 추후 개편
-    const modifyInteraction = useModifyInteraction({
-        layerName: submenu.menuCode,
-        condition: {
-            button: OpenLayersScreenSpaceEventType.MIDDLE_CLICK
-        },
-        onModifyEnd: e => {
-            const features: Feature[] = e.features.getArray(); // ✅ Collection → 배열
-            saveModifiedFeatures(features);
-            return features
+        if (isDrawing) {
+            eventManager.bind("drawend", onDrawEnd, options);
+        } else {
+            eventManager.unbind("drawend", onDrawEnd);
         }
-    })
 
+        return () => {
+            eventManager.unbind("drawend", onDrawEnd);
+        };
+    }, [ isDrawing, submenu.menuCode, onDrawEnd ]);
+
+    const onModifyEnd = useCallback((e: ModifyEvent) => {
+
+        const features: Feature[] = e.features.getArray();
+        saveModifiedFeatures(features);
+
+        const selected = 1;
+
+        features.forEach(feature => {
+            feature.set("selected", selected);
+            feature.changed();
+        });
+
+    }, []);
+    useEffect(() => {
+        if (!eventManager || !submenu.menuCode || !map || !layer) return;
+
+        const options = {
+            olLayer: layer,
+        };
+
+        if (isEditable) {
+            eventManager.bind("modifyend", onModifyEnd, options);
+        } else {
+            eventManager.unbind("modifyend", onModifyEnd);
+        }
+
+        return () => {
+            eventManager.unbind("modifyend", onModifyEnd);
+        };
+    }, [ isEditable, submenu.menuCode, onModifyEnd ]);
+
+    const onSelect = useCallback((e: SelectEvent) => {
+
+        const targets = e.target.getFeatures().getArray();
+
+        const isEditingLayer = (feature: Feature) => layer.getSource().hasFeature(feature)
+
+        // 원하는 레이어만 selected 속성 수정
+        //선택된 feature에 selected = 1 설정
+        e.selected.forEach((feature) => {
+            if (isEditingLayer(feature)) {
+                feature.set("selected", 1);
+                feature.changed(); // 스타일} 갱신용
+            }
+        });
+        // 선택 해제된 feature에 selected = 0 설정
+        e.deselected.forEach((feature) => {
+            if (isEditingLayer(feature)) {
+                feature.set("selected", 0);
+                feature.changed();
+            }
+        });
+
+        const selectedIds = targets
+            .map((feature: Feature) => feature.get("id"))
+            .filter((id: string | number) => id !== undefined);
+
+        const prevIds = selectedFeatureIdRef.current;
+        const isChanged = JSON.stringify(prevIds) !== JSON.stringify(selectedIds);
+
+        if (isChanged) {
+            const firstFeature = selectedIds[0];
+            if (firstFeature !== undefined) {
+                gridRef.current?.setSelectRowsWithField("id", firstFeature);
+
+
+            }
+            selectedFeatureIdRef.current = selectedIds;
+        }
+        const baseData = targets[0].get("properties")
+        setAddedData({ baseData })
+    }, [ map, layers, submenu.menuCode ]);
+    useEffect(() => {
+        if (!eventManager || !submenu.menuCode || !map) return;
+
+        const options = {
+            olLayers: layers,
+        }
+        if (layer) eventManager.bind("select", onSelect, options)
+        return () => {
+            if (layer) eventManager.unbind("select", onSelect)
+        };
+    }, [ submenu.menuCode, onSelect ]);
+
+    useEffect(() => {
+        console.log("drawGeometryType:::", drawGeometryType)
+    }, [ drawGeometryType ]);
 
     const handleCheck = () => {
-        // console.log("선택된 feature:", selectInteraction.ref.current);
-        // selectInteraction.ref.current.map((feature: Feature) => {
-        //     console.log("id:::", feature.get("id"))
-        // });
-        //
-        // console.log("그려진 feature:", drawInteraction.ref.current);
-        // console.log("이동된 feature:", modifyInteraction.ref.current);
         console.log("체크한 row:", gridRef.current?.getSelectedRow());
         console.log("그리드 업데이트 확인:", gridRef.current?.isGridChanged());
         console.log("changed?", gridRef.current?.getChangedValue())
@@ -125,6 +217,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         }
         console.log("rowData store.getState():::", store.getState())
         const currentGeojson = store.getState().currentGeojson
+        if (currentGeojson == undefined) return;
         const flatRow = featureCollectionToFlatRow(currentGeojson);
 
         console.log("rowData currentGeojson:::", currentGeojson)
@@ -137,25 +230,62 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
     }, [ submenu.menuCode ]);
 
 
-    const handleAddBtn = () => {
-        addRow()
-    }
+    const handleGridSelectionChanged = () => {
+        const selectedRows = gridRef.current?.getSelectedRow() ?? [];
+        const selectedIds = selectedRows.map((row: Record<string, unknown>) => row.id);
 
+        const source = layer.getSource();
+        const features = source?.getFeatures() ?? [];
+
+        features.forEach((feature: Feature) => {
+            const fid = feature.get("id");
+            const selected = selectedIds.includes(fid) ? 1 : 0;
+            feature.set("selected", selected);
+            feature.changed();
+        });
+    };
+
+    const handleAddBtn = () => {
+        const baseData = addedData?.baseData ?? {};
+        addRow({ baseData });
+    }
+    const handleDrawBtn = () => {
+        setIsDrawing(true)
+    }
     const handleDeleteBtn = () => {
         deleteSelected()
     }
 
-    const handleSaveBtn = () => {
-        console.log(store.getState().currentGeojson)
+    const handleSaveBtn = async () => {
+        const api = apiConfig[submenu.menuCode as ApiMenuKey].update;
+        const geojson = store.getState().currentGeojson;
+        const payload = {
+            id: 2,
+            name: "busStation",
+            geojson,
+        };
+        try {
+            await axiosInstance({
+                method: api.method,
+                url: api.url,
+                data: payload,
+            });
+
+            console.log("저장 완료:",);
+        } catch (error) {
+            console.error("저장 실패:", error);
+        }
     }
 
     const handleEditableBtn = () => {
-        switchEditable()
+        setIsEditable(!isEditable);
+        switchEditable(!isEditable);
     }
 
     const handleInitBtn = () => {
         store.getState().initCurrentData()
         const restoredGeojson = store.getState().currentGeojson;
+        if (restoredGeojson == undefined) return;
         const restoredFlatRow = featureCollectionToFlatRow(restoredGeojson);
 
         store.getState().setFlatRow(restoredFlatRow);
@@ -168,20 +298,25 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
                 <div className={ `popup-container${ submenu.item.type ? `-${ submenu.item.type }` : '' }` }>
                     <div className="popup-header">
                         <span>{ submenu.title }</span>
-                        <button className="close-btn" onClick={ onClose }>×</button>
-                    </div>
-                    <div>
                         <div className="popup-header-actions">
+                            <select
+                                value={ drawGeometryType ?? '' }
+                                onChange={ (e) => setDrawGeometryType(e.target.value as GeometryType) }
+                            >
+                                { geometryTypeOptions.map(type => (
+                                    <option key={ type } value={ type }>{ type }</option>
+                                )) }
+                            </select>
                             <button className="add-btn" onClick={ () => handleAddBtn() }>추가</button>
+                            <button className="add-btn" onClick={ () => handleDrawBtn() }>그리기</button>
                             <button className="delete-btn" onClick={ () => handleDeleteBtn() }>삭제</button>
                             <button className="save-btn" onClick={ () => handleSaveBtn() }>저장</button>
                             <button className="save-btn" onClick={ () => handleInitBtn() }>되돌리기</button>
                             <button className="edit-btn" onClick={ () => handleEditableBtn() }>그리드 편집활성화</button>
-                            <button onClick={ () => handleCheck() }>Interaction 객체 목록 log 확인</button>
+                            <button onClick={ () => handleCheck() }>Interaction 객체 목록 디버깅</button>
                         </div>
-                        <br/>
+                        <button className="close-btn" onClick={ onClose }>×</button>
                     </div>
-
                     <div className="popup-body">
                         { submenu.item && colDefs &&
                             <Grid
@@ -189,6 +324,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
                                 colDefs={ colDefs }
                                 rowData={ rowData }
                                 onCellValueChanged={ updateFeatureByRow }
+                                onSelectionChanged={ handleGridSelectionChanged }
                             />
                         }
                     </div>

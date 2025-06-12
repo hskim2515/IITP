@@ -17,7 +17,7 @@ const DEFAULT_GRID_OPTIONS = {
     }
 };
 
-const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueChanged }, ref: ForwardedRef<GridHandle>) => {
+const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueChanged, onSelectionChanged }, ref: ForwardedRef<GridHandle>) => {
     ModuleRegistry.registerModules([ AllCommunityModule ]);
 
     const gridRef = useRef<AgGridReact>(null);
@@ -44,12 +44,15 @@ const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueC
     const addRow = (rawData: Record<string, unknown>): void => {
         if (!gridRef) return;
 
-        gridRef.current.api.applyTransaction({ add: [ rawData ], addIndex: 0 })
-        gridRef.current.api.ensureIndexVisible(0, 'top');
+        const rowCount = gridRef.current.api.getDisplayedRowCount();
+        console.log("size:::",rowCount)
+        gridRef.current.api.applyTransaction({ add: [ rawData ], addIndex: rowCount })
+        gridRef.current.api.ensureIndexVisible(rowCount, 'bottom');
         gridRef.current.api.deselectAll();
 
-        const firstRow = gridRef.current.api.getDisplayedRowAtIndex(0);
-        if (firstRow) firstRow.setSelected(true);
+        const newRow = gridRef.current.api.getDisplayedRowAtIndex(rowCount);
+        console.log("size:::::",newRow)
+        if (newRow) newRow.setSelected(true);
 
         requestAnimationFrame(() => {
             const editableCol = columnDefsState.find(
@@ -57,7 +60,7 @@ const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueC
             );
             if (editableCol?.field) {
                 gridRef.current.api.startEditingCell({
-                    rowIndex: 0,
+                    rowIndex: rowCount,
                     colKey: editableCol.field,
                 });
             }
@@ -136,15 +139,19 @@ const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueC
             .map(node => node.updateData(data))
         setIsChanged(true)
     }
-    const switchEditable = () => {
-        const newEditable = !editable;
-        if (editable) gridRef.current.api?.stopEditing(true)
-        setEditable(newEditable);
+    const switchEditable = (active: boolean) => {
+        if (!gridRef.current) return;
 
+        // 활성화 해제 시 편집 중단
+        if (!active) {
+            gridRef.current.api?.stopEditing(true);
+        }
+
+        setEditable(active);
 
         const updatedDefs = columnDefsState.map((col) => ({
             ...col,
-            editable: newEditable,
+            editable: col.field !== 'selected' ? active : false, // selected 직접 편집 X
         }));
 
         setColumnDefsState(updatedDefs);
@@ -195,6 +202,7 @@ const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueC
                     defaultColDef={ DEFAULT_GRID_OPTIONS.defaultColDef }
                     onCellValueChanged={ handleCellValueChange }
                     onRowValueChanged={ () => setIsChanged(true) }
+                    onSelectionChanged={ onSelectionChanged }
                 />
             </div>
         </div>

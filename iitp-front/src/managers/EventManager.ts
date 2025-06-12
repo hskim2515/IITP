@@ -44,7 +44,6 @@ export class EventManager {
     private dispatch(eventType: string, event: any) {
         const callbacks = this.listeners.get(eventType);
         if (callbacks) {
-            console.log("interaction callbacks:::", callbacks)
             for (const cb of callbacks) cb(event);
         }
     }

@@ -35,6 +35,7 @@ export class OLEventAdapter implements EventAdapter {
         // Interaction 이벤트
         if(!options) return;
         const interaction = this.getOrCreateInteraction(interactionType, options);
+
         this.map.addInteraction(interaction);
         this.interactionMap.set(interactionType, interaction);
         const key = interaction.on(eventType, (e) => callback(e));
@@ -81,9 +82,16 @@ export class OLEventAdapter implements EventAdapter {
 
     private getOrCreateInteraction(type: InteractionType, options: EventOptions): OLInteraction {
         if (this.interactionMap.has(type)) return this.interactionMap.get(type)!;
-
+        console.log("options:::", options)
         let interaction: OLInteraction;
         switch (type) {
+            case 'snap': {
+                const source = options.olLayer?.getSource();
+                interaction = new Snap({
+                    source
+                });
+                break;
+            }
             case 'draw': {
                 const source = options.olLayer?.getSource();
                 const geometryType = options.drawGeometryType || GeometryType.POINT
@@ -96,20 +104,17 @@ export class OLEventAdapter implements EventAdapter {
             }
             case 'modify': {
                 const source = options.olLayer?.getSource();
+
+                // if (features?.getArray().length == 0) break;
                 // this.attachLayer(type, source)
-                interaction = new Modify({ source });
+                interaction = new Modify({
+                    source,
+                });
                 break;
             }
             case 'select': {
                 interaction = new Select({
                     layers: options.olLayers
-                });
-                break;
-            }
-            case 'snap': {
-                const source = options.olLayer?.getSource();
-                interaction = new Snap({
-                    source
                 });
                 break;
             }

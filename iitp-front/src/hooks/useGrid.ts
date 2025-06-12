@@ -6,21 +6,22 @@ import { GridHandle } from "@type/GirdOptions";
 import { Feature } from "ol";
 import { GeoJSON } from "ol/format";
 
-type GeometryInput = {
-    type: "Point" | "LineString" | "Polygon" | "MultiPoint" | "MultiLineString" | "MultiPolygon";
-    coordinates: [];
-};
+export interface AddOptions {
+    baseData: Record<string, unknown>,
+    defaultGeometry?: Record<string, unknown>
+}
 
-const useGrid = (gridRef:RefObject<GridHandle>, store: FeatureStoreFactoryType, colDefs: ColDef) => {
+const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType, colDefs: ColDef) => {
 
-    const addRow = (defaultData?: Record<string, unknown>, defaultGeometry?: GeometryInput) => {
+    const addRow = ({
+                        baseData, defaultGeometry
+                    }: AddOptions) => {
         const id = Date.now();
-        const props = { id, ...defaultData };
+        const props = { id };
 
-        const geometry = defaultGeometry ?? {
-            type: "Point",
-            coordinates: [126.75986139827108, 37.500677366470114]
-        };
+        console.log("useGrid baseData:::", baseData)
+        console.log("useGrid defaultGeometry:::", defaultGeometry)
+        const geometry = defaultGeometry ?? null;
 
         const newFeature: GeoJSON.Feature = {
             type: "Feature",
@@ -31,11 +32,11 @@ const useGrid = (gridRef:RefObject<GridHandle>, store: FeatureStoreFactoryType, 
         const prevGeojson = store.getState().currentGeojson;
         const updatedGeojson = {
             type: "FeatureCollection",
-            features: [...(prevGeojson?.features ?? []), newFeature]
+            features: [ ...(prevGeojson?.features ?? []), newFeature ]
         };
 
         const newRow = buildNewRow({ colDefs, defaultData: featureToFlatRow(newFeature) });
-        const updatedRows = [...store.getState().flatRow, newRow];
+        const updatedRows = [ ...store.getState().flatRow, newRow ];
 
         store.getState().setCurrentGeojson(updatedGeojson);
         store.getState().setFlatRow(updatedRows);
@@ -95,6 +96,7 @@ const useGrid = (gridRef:RefObject<GridHandle>, store: FeatureStoreFactoryType, 
     };
 
     const updateFeatureByRow = () => {
+        console.log("updateFeatureByRow:::", updateFeatureByRow)
         const row = gridRef.current?.getChangedValue();
         if (!row || typeof row !== "object") return;
 
@@ -132,8 +134,8 @@ const useGrid = (gridRef:RefObject<GridHandle>, store: FeatureStoreFactoryType, 
         });
     };
 
-    const switchEditable = () => {
-        gridRef.current?.switchEditable()
+    const switchEditable = (active: boolean) => {
+        gridRef.current?.switchEditable(active)
     }
 
     return {
