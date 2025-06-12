@@ -30,7 +30,8 @@ public class StationController {
     }
 
     @PostMapping("/bus/{id}")
-    public ResponseEntity<Void> saveBusStation(@RequestBody StationEntity entity, @PathVariable Long id) {
+    public ResponseEntity<Void> saveBusStation(@RequestBody StationEntity entity, @PathVariable("id") Long id) {
+        logger.info("[saveBusStation] entity: {}", entity);
         stationService.saveBusStation(entity, id);
         return ResponseEntity.ok().build();
     }

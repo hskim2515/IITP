@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { combine, subscribeWithSelector } from 'zustand/middleware';
 import { createSelectors } from './createSelectors';
 import { FetchFeatureDataType } from "@type/FeatureOptions";
+import { GeoJSON } from "ol/format";
 
 export interface FeatureStoreFactoryType {
     getState: () => State & Actions;
@@ -12,7 +13,7 @@ export interface State {
     // fetch 한 data
     originData: FetchFeatureDataType | undefined
     // fetch data 기반, 화면에 띄울 geojson 데이터
-    currentGeojson: Record<string, unknown> | undefined
+    currentGeojson: GeoJSON.FeatureCollection | undefined
     // fetch data 기반, flatRow로 변환한 데이터
     flatRow: Record<string, unknown>[]
     // 변경 확인
@@ -21,7 +22,7 @@ export interface State {
 
 export interface Actions {
     setOriginData: (data: FetchFeatureDataType) => void;
-    setCurrentGeojson: (currentGeoJson: Record<string, unknown>) => void;
+    setCurrentGeojson: (currentGeoJson: GeoJSON.FeatureCollection) => void;
     setFlatRow: (flatRow: Record<string, unknown>[]) => void;
     setChange: () => boolean;
     initCurrentData: () => void;

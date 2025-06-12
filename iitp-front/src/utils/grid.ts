@@ -2,6 +2,7 @@ import { ColDef } from "ag-grid-community";
 import ColorCellRenderer from "../component/util/ColorCellRenderer";
 import FileCellRenderer from "../component/util/FileCellRenderer";
 import { PropertyFieldType } from "@type/PropertyField";
+import { GeoJSON } from "ol/format";
 
 // property schema 를 받아서 grid colDef 로 변환
 export const buildColumnDefs = (fields: PropertyFieldType[]): ColDef[] => [
