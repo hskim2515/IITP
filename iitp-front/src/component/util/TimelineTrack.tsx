@@ -16,7 +16,7 @@ export default function TimelineTrack() {
     const { startTime, endTime } = useSimulationStore();
 
 
-    const blockWidth = 2; // 1프레임 = 2px
+    const blockWidth = 1; // 1프레임 = 2px
     const minFrame = 0;
     const maxFrame = endTime?.secondsOfDay - startTime?.secondsOfDay;
 
@@ -33,7 +33,7 @@ export default function TimelineTrack() {
     const dragOffset = useRef<number>(0); // 마우스와 블록 사이 오프셋
     const trackRef = useRef<HTMLDivElement>(null);
 
-    const [range, setRangeValue] = useState((active.end - active.start )/20); // 0~100%
+    const [range, setRangeValue] = useState((active.end - active.start )/50); // 0~100%
 
     useEffect(() => {
         const onMouseMove = (e: MouseEvent) => {
@@ -208,7 +208,7 @@ export default function TimelineTrack() {
 
             <div className="ruler">
                 {[...Array(range)].map((_, i) => (
-                    <div key={i} className="tick">{(i +1) * 20}</div>
+                    <div key={i} className="tick">{(i +1) * 50}</div>
                 ))}
                 <div className="slider-icon"
                      style={{
