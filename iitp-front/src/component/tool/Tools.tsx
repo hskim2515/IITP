@@ -9,7 +9,7 @@ const Tools = () => {
             style={{
                 position: 'fixed',
                 right: '20px',
-                top: '80px',
+                bottom: '50px',
                 color: 'white',
                 borderRadius: '50%',
                 fontSize: '20px',

@@ -2,9 +2,9 @@ import React, {useState} from 'react';
 import { useToolStore } from '@stores/useToolStore';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRuler, faLayerGroup, faCog } from '@fortawesome/free-solid-svg-icons';
-import Tools from "./Tools";
 import LayerPopup from "../popup/LayerPopup";
 import MeasurePopup from "../popup/MeasurePopup";
+import SettingPopup from "../popup/SettingPopup";
 
 const ToolsPanel = () => {
     const { showTools } = useToolStore();
@@ -20,7 +20,7 @@ const ToolsPanel = () => {
             style={{
                 position: 'fixed',
                 right: '0px',
-                top: '150px',
+                bottom: '150px',
                 borderRadius: '8px',
                 padding: '15px',
                 zIndex: 999,
@@ -65,11 +65,13 @@ const ToolsPanel = () => {
                     display: 'flex',
                     alignItems: 'center',
                 }}
+                onClick={() => togglePopup(2)}
             >
                 <FontAwesomeIcon icon={faCog} />
             </button>
             {activePopup === 0 && <LayerPopup isOpen={true} />}
             {activePopup === 1 && <MeasurePopup isOpen={true} />}
+            {activePopup === 2 && <SettingPopup isOpen={true} />}
         </div>
     );
 };

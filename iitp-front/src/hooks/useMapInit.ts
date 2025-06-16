@@ -273,6 +273,7 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
                 // }
 
                 if (connections) {
+                    console.log(node)
                     for (const conn of node.connections || []) {
                         const fromLink = links.find(l => l.id === conn.fromLink);
                         const toLink = links.find(l => l.id === conn.toLink);
@@ -308,6 +309,21 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
                         //         }
                         //     });
                         // }
+
+                        console.log(fromLane.laneTarget)
+
+                        const spline = new Cesium.CatmullRomSpline({
+                            times: [0.0, 0.5, 1.0],
+                            points: [
+                                fromLane.laneTarget,
+                                Cartesian3.fromDegrees(node.lat,node.lng,0),
+                                toLane.laneSource,
+                            ]
+                        });
+                        const points = [];
+                        for (let i = 0.0; i < 1.0; i+= 0.01) {
+                            points.push(spline.evaluate(i));
+                        }
 
                         cesiumViewer.entities.add({
                             polyline: {
@@ -452,6 +468,7 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
             requestRenderMode: true,
             maximumRenderTimeChange: Infinity,
             baseLayerPicker: false,
+            creditContainer: document.createElement("div")
             // contextOptions: {
             //     webgl: gl, // ✅ OpenLayers의 WebGL 컨텍스트 재사용
             // },
@@ -460,9 +477,21 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
         cesiumViewer.camera.setView({
             destination: Cartesian3.fromDegrees(126.77496, 37.49720, 10000) // Adjust the height as needed
         });
+
+        cesiumViewer.cesiumWidget.creditContainer.style.display = "none";
+
         cesiumViewer.scene.globe.depthTestAgainstTerrain = true;
         cesiumViewer.scene.useDepthPicking = true
-        console.log('viewer', cesiumViewer)
+
+        cesiumViewer.scene.backgroundColor = Cesium.Color.BLACK;
+        cesiumViewer.scene.skyAtmosphere.show = false;
+        cesiumViewer.scene.skyBox.show = false;
+        cesiumViewer.scene.globe.baseColor = Cesium.Color.DARKGRAY;
+        cesiumViewer.scene.globe.enableLighting = false;
+
+        // cesiumViewer.scene.light = new Cesium.DirectionalLight({
+        //     direction: new Cesium.Cartesian3(0.0, 0.0, 0.0) // 빛 없음
+        // });
 
         setViewer(cesiumViewer);
 

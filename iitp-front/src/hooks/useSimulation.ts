@@ -10,6 +10,7 @@ import VectorSource from "ol/source/Vector";
 import { parseRawODInputFromFlatArray } from "@utils/transform";
 import LayerManager from "../managers/LayerManager";
 import HeatBarLayer from "@primitives/HeatBarLayer";
+import {JulianDate} from "cesium";
 
 const useSimulation = () => {
     const { isRunning, isStop, speed } = useSimulationStore();
@@ -144,6 +145,15 @@ const useSimulation = () => {
                 setCzml(czml);
                 setVehicleData(newVehicleData);
                 setFeatures(features);
+
+                const clock = czml[0].clock;
+                const [startTime, endTime] = czml[0].clock.interval.split('/');
+                const start = JulianDate.fromIso8601(startTime);
+                const end = JulianDate.fromIso8601(endTime);
+                const current = JulianDate.fromIso8601(clock.currentTime);
+
+                useSimulationStore.getState().setClock(start, end, current);
+
             });
     }, [ numVehicle, speedFactor ]);
 
@@ -186,11 +196,13 @@ const useSimulation = () => {
             makeOdDataWorkerRef.current?.postMessage({ lastPositions, newVehicleRoute })
         }
 
-        if (!isRunningRef.current) {
-            czmlPositionWorkerRef.current.postMessage({ type: 'pause', currentTime: simTime });
-        } else {
-            czmlPositionWorkerRef.current.postMessage({ type: 'tick', currentTime: simTime });
-        }
+        czmlPositionWorkerRef.current.postMessage({ type: 'tick', currentTime: simTime });
+
+        // if (!isRunningRef.current) {
+        //     czmlPositionWorkerRef.current.postMessage({ type: 'pause', currentTime: simTime });
+        // } else {
+        //
+        // }
     };
 
     const setSimulation = () => {
@@ -237,7 +249,6 @@ const useSimulation = () => {
                     }
                 }
             });
-
             vehicleDataRef.current = e.data;
         };
 
@@ -254,11 +265,9 @@ const useSimulation = () => {
                         }
                     } else {
                         console.log("[LayerManager] 해당 layer는 setLatestPositions를 지원하지 않음:", layer);
-
                     }
                 });
             }
-
         }
 
         makeOdDataWorkerRef.current.onmessage = (e) => {
