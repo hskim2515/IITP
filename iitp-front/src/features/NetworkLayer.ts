@@ -25,6 +25,12 @@ export default class NetworkLayer extends VectorLayer {
         const geom = feature.getGeometry();
         const styles: Style[] = [];
 
+        if (geom instanceof Polygon && props.featureType === "link") {
+            styles.push(new Style({
+                fill: new Fill({ color: "#000000" }),
+            }));
+        }
+
         if (geom instanceof Polygon && props.featureType === "lane") {
             styles.push(new Style({
                 fill: new Fill({ color: "#7f7f7f" }),
@@ -32,7 +38,7 @@ export default class NetworkLayer extends VectorLayer {
             }));
         }
 
-        if (geom instanceof LineString && props.featureType === "lane-line") {
+        if (geom instanceof LineString && props.featureType === "lane-edit") {
             styles.push(new Style({
                 stroke: new Stroke({ color: "#003cff", width: Math.min(3, 0.5 / resolution) }),
             }));
@@ -44,12 +50,8 @@ export default class NetworkLayer extends VectorLayer {
             }));
         }
 
-        if (geom instanceof LineString && props.featureType === "connection-line") {
-            const { turning, fromNodeType } = props;
+        if (geom instanceof LineString && props.featureType === "connection-edit") {
             let color = "#ffffff";
-            if (fromNodeType === "intersection") {
-                color = turning === "S" ? "#00ffff" : "#ffff00";
-            }
 
             styles.push(new Style({
                 stroke: new Stroke({ color, width: Math.min(3, 0.5 / resolution) }),
@@ -60,19 +62,43 @@ export default class NetworkLayer extends VectorLayer {
                 const [start, end] = [coordinates[coordinates.length - 2], coordinates[coordinates.length - 1]];
                 const dx = end[0] - start[0];
                 const dy = end[1] - start[1];
-                const rotation = Math.atan2(dy, dx);
+                const len = Math.hypot(dx, dy);
+                if (len === 0) return [];
+
+                const ux = dx / len;
+                const uy = dy / len;
+
+                const nx = -uy;
+                const ny = ux;
+
+                const arrowLength = 1
+                const baseWidth = 0.3
+
+                // ⬅️ 밑변 중심 = end에서 뒤로 arrowLength만큼
+                const baseCenter: [number, number] = [
+                    end[0] - ux * arrowLength,
+                    end[1] - uy * arrowLength,
+                ];
+
+                // base 좌우 계산
+                const baseLeft: [number, number] = [
+                    baseCenter[0] + nx * baseWidth / 2,
+                    baseCenter[1] + ny * baseWidth / 2,
+                ];
+                const baseRight: [number, number] = [
+                    baseCenter[0] - nx * baseWidth / 2,
+                    baseCenter[1] - ny * baseWidth / 2,
+                ];
+
+                const tip = end; // ⬅️ 꼭짓점은 도착 지점
 
                 styles.push(new Style({
-                    geometry: new Point(end),
-                    image: new RegularShape({
-                        points: 3,
-                        radius:  Math.min(3 ,0.8 / resolution),
-                        rotation,
-                        rotateWithView: true,
-                        fill: new Fill({ color }),
-                    }),
+                    geometry: new Polygon([[baseLeft, baseRight, tip, baseLeft]]),
+                    fill: new Fill({ color }),
+                    stroke: new Stroke({ color, width: 0.1 }),
                 }));
             }
+
         }
 
         // node 임시 비활성화
@@ -91,12 +117,44 @@ export default class NetworkLayer extends VectorLayer {
         return styles;
     }
 
+    private getRatioBasedBezierPoints(
+        from: [number, number],
+        to: [number, number],
+        node: [number, number],
+        segmentCount: number = 50,
+        ratioAlongLine: number = 0.1,
+        nodePullScale: number = 0.5
+    ): [number, number][] {
+        // from → to 선분 상의 점 P
+        const px = from[0] + (to[0] - from[0]) * ratioAlongLine;
+        const py = from[1] + (to[1] - from[1]) * ratioAlongLine;
+
+        // P → node 방향 벡터에 scale 적용
+        const dx = node[0] - px;
+        const dy = node[1] - py;
+        const cx = px + dx * nodePullScale;
+        const cy = py + dy * nodePullScale;
+        const control: [number, number] = [cx, cy];
+
+        // Quadratic Bezier 보간
+        const points: [number, number][] = [];
+        for (let i = 0; i <= segmentCount; i++) {
+            const t = i / segmentCount;
+            const x = (1 - t) ** 2 * from[0] + 2 * (1 - t) * t * control[0] + t ** 2 * to[0];
+            const y = (1 - t) ** 2 * from[1] + 2 * (1 - t) * t * control[1] + t ** 2 * to[1];
+            points.push([x, y]);
+        }
+
+        return points;
+    }
+
+
     public async load(): Promise<void> {
         const url = import.meta.env.VITE_API_URL + "/network";
         try {
             const response = await fetch(url);
             const { nodes, links } = await response.json();
-
+            console.log("links:::", links[0])
             const baseLng = 126.7325;
             const baseLat = 37.4928;
             const toCoord = (x: number, y: number) =>
@@ -130,7 +188,7 @@ export default class NetworkLayer extends VectorLayer {
                 const line = new LineString([p1, p2]);
                 featureBuffer.push(new Feature({
                     geometry: line,
-                    properties: { ...link, featureType: "link-line" },
+                    properties: { ...link, featureType: "link-edit", linkRef: link.id },
                 }));
 
                 const half = link.width / 2;
@@ -158,11 +216,10 @@ export default class NetworkLayer extends VectorLayer {
 
                     const laneProps = {
                         ...lane,
-                        linkId: link.id,
-                        laneId: lane.id,
-                        fromLink: link.id,
+                        linkRef: link.id,
                         featureType: "lane",
-                        laneIndex: i,
+                        length: link.length,
+                        laneRef: i,
                         laneSource: centerP1,
                         laneTarget: centerP2,
                     };
@@ -173,7 +230,7 @@ export default class NetworkLayer extends VectorLayer {
                     featureBuffer.push(laneFeature);
 
                     const laneLineFeature = new Feature(new LineString([centerP1, centerP2]));
-                    laneLineFeature.set("properties", { ...laneProps, featureType: "lane-line" });
+                    laneLineFeature.set("properties", { ...laneProps, featureType: "lane-edit" });
                     featureBuffer.push(laneLineFeature);
                 }
             }
@@ -187,36 +244,23 @@ export default class NetworkLayer extends VectorLayer {
 
                     const fromPt = from.get("properties")?.laneTarget;
                     const toPt = to.get("properties")?.laneSource;
-
-                    const dx = toPt[0] - fromPt[0];
-                    const dy = toPt[1] - fromPt[1];
-                    const len = Math.hypot(dx, dy);
-                    const unitNormal: [number, number] = len > 0 ? [-dy / len, dx / len] : [0, 0];
-                    const half = conn.width / 2;
-
-                    const connLine = new LineString([fromPt, toPt]);
+                    const nodePt = fromLonLat([node.lng, node.lat]);
+                    const numPoints = 50
+                    const bezierPoints = this.getRatioBasedBezierPoints(
+                        fromPt, toPt, nodePt,
+                        100,       // 점 개수
+                        0.5,      // from - to 중간 지점
+                        0.1       // node 방향으로 당기는 정도 10%
+                    );
+                    const connLine = new LineString(bezierPoints);
                     const connLineFeature = new Feature(connLine);
                     connLineFeature.set("properties", {
                         ...conn,
-                        featureType: "connection-line",
+                        featureType: "connection-edit",
                         fromNodeType: node.type,
                     });
                     featureBuffer.push(connLineFeature);
 
-                    const outer1 = [fromPt[0] + unitNormal[0] * half, fromPt[1] + unitNormal[1] * half];
-                    const outer2 = [toPt[0] + unitNormal[0] * half, toPt[1] + unitNormal[1] * half];
-                    const inner2 = [toPt[0] - unitNormal[0] * half, toPt[1] - unitNormal[1] * half];
-                    const inner1 = [fromPt[0] - unitNormal[0] * half, fromPt[1] - unitNormal[1] * half];
-
-                    const connPolygon = new Polygon([[outer1, outer2, inner2, inner1, outer1]]);
-                    const connFeature = new Feature(connPolygon);
-                    connFeature.set("properties", {
-                        ...conn,
-                        featureType: "connection",
-                        arrowStart: fromPt,
-                        arrowEnd: toPt,
-                    });
-                    featureBuffer.push(connFeature);
                 }
             }
 
