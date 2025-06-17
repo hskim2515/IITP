@@ -1,10 +1,10 @@
-// NetworkLayer.ts
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import { Feature } from "ol";
 import { LineString, Point, Polygon } from "ol/geom";
 import { Fill, Stroke, Style, RegularShape } from "ol/style";
 import { fromLonLat } from "ol/proj";
+import { Coordinate } from "ol/coordinate";
 
 export default class NetworkLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -71,10 +71,9 @@ export default class NetworkLayer extends VectorLayer {
                 const nx = -uy;
                 const ny = ux;
 
-                const arrowLength = 1
+                const arrowLength = 0.6
                 const baseWidth = 0.3
 
-                // ⬅️ 밑변 중심 = end에서 뒤로 arrowLength만큼
                 const baseCenter: [number, number] = [
                     end[0] - ux * arrowLength,
                     end[1] - uy * arrowLength,
@@ -90,7 +89,7 @@ export default class NetworkLayer extends VectorLayer {
                     baseCenter[1] - ny * baseWidth / 2,
                 ];
 
-                const tip = end; // ⬅️ 꼭짓점은 도착 지점
+                const tip = end;
 
                 styles.push(new Style({
                     geometry: new Polygon([[baseLeft, baseRight, tip, baseLeft]]),
@@ -120,7 +119,7 @@ export default class NetworkLayer extends VectorLayer {
     private getRatioBasedBezierPoints(
         from: [number, number],
         to: [number, number],
-        node: [number, number],
+        node: Coordinate,
         segmentCount: number = 50,
         ratioAlongLine: number = 0.1,
         nodePullScale: number = 0.5
