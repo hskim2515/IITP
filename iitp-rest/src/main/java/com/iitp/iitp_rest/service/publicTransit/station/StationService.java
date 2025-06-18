@@ -28,14 +28,14 @@ public class StationService {
     }
 
     @Transactional
-    public void saveBusStation(StationEntity entity, Long id) {
-        if (entity.getId() == null) {
+    public void saveStation(StationEntity entity, Long id) {
+        if (id == null) {
             // 새로 생성(create)
             stationRepository.save(entity);
         } else {
             // 수정(update): 존재 여부 확인
-            StationEntity existing = stationRepository.findById(entity.getId())
-                    .orElseThrow(() -> new EntityNotFoundException("Station not found: " + entity.getId()));
+            StationEntity existing = stationRepository.findById(id)
+                    .orElseThrow(() -> new EntityNotFoundException("Station not found: " + id));
             existing.setName(entity.getName());
             existing.setGeojson(entity.getGeojson());
             stationRepository.save(existing);

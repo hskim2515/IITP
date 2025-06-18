@@ -29,10 +29,10 @@ public class StationController {
         return ResponseEntity.ok(stationService.getStation(2L));
     }
 
-    @PostMapping("/bus/{id}")
-    public ResponseEntity<Void> saveBusStation(@RequestBody StationEntity entity, @PathVariable("id") Long id) {
+    @PostMapping("/bus")
+    public ResponseEntity<Void> saveBusStation(@RequestBody StationEntity entity) {
         logger.info("[saveBusStation] entity: {}", entity);
-        stationService.saveBusStation(entity, id);
+        stationService.saveStation(entity, 2L);
         return ResponseEntity.ok().build();
     }
 

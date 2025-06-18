@@ -17,10 +17,12 @@ const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType,
                         baseData, defaultGeometry
                     }: AddOptions) => {
         const id = Date.now();
-        const props = { id };
+        const { id: ignored, ...restProps } = baseData; // baseData의 id는 제외(예: station 생성 시 station id와 lane id 중복 예방)
+        const props = { id, ...restProps };
 
         console.log("useGrid baseData:::", baseData)
         console.log("useGrid defaultGeometry:::", defaultGeometry)
+
         const geometry = defaultGeometry ?? null;
 
         const newFeature: GeoJSON.Feature = {
@@ -44,7 +46,7 @@ const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType,
     };
 
     const deleteSelected = () => {
-        const selectedRows = gridRef.current?.getSelectedRow() ?? [];
+        const selectedRows: Record<string, unknown>[] = gridRef.current?.getSelectedRow() ?? [];
         const selectedIds = selectedRows.map(row => row.id).filter(Boolean);
 
         const prevGeojson = store.getState().currentGeojson;

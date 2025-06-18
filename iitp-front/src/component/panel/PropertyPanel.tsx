@@ -21,6 +21,7 @@ import { DrawEvent } from "ol/interaction/Draw";
 import { GeoJSON } from "ol/format";
 import { apiConfig, ApiMenuKey } from "../../config/apiConfig";
 import axiosInstance from "../../api/axiosInstance";
+import { EventManager } from "@managers/EventManager";
 
 export interface BottomTableProps {
     activeSubmenu: MenuTree
@@ -46,16 +47,24 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
     // 동적 스토어
     const store = menuCodeToStoreMap[submenu.menuCode];
 
-    const eventManager = useEventStore.getState().olEventManager;
+    const olEventManager: EventManager = useEventStore.getState().olEventManager;
     const [ drawGeometryType, setDrawGeometryType ] = useState<GeometryType>(GeometryType.POINT)
 
     const selectedFeatureIdRef = useRef<[]>([]);
-    const [ addedData, setAddedData ] = useState<AddOptions>({})
+    const [ addedData, setAddedData ] = useState<AddOptions>({
+        baseData: {},
+        defaultGeometry: {}
+    })
 
     const [ isEditable, setIsEditable ] = useState<boolean>(false)
     const [ isDrawing, setIsDrawing ] = useState<boolean>(false)
 
     const map = useOpenLayersStore.state.map()
+
+    const networkLayer = useMemo(() => {
+        return map?.getLayers().getArray()
+            .find((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layer"] === "NETWORK");
+    }, [ map ]);
 
     const layer = useMemo(() => {
         return map?.getLayers().getArray()
@@ -75,94 +84,81 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         switchEditable
     } = useGrid(gridRef, store, colDefs)
 
+    const onSnap = useCallback((e: any) => {
+
+    }, [])
+    useEffect(() => {
+
+        const options = {
+            olLayer: networkLayer,
+        };
+
+        olEventManager.bind("snap", onSnap, options);
+
+        return () => {
+            olEventManager.unbind("snap", onSnap);
+        };
+    }, [networkLayer, onSnap]);
     const onDrawEnd = (e: DrawEvent) => {
         const feature: Feature = e.feature;
-        const selected = 1;
         feature.set("id", Date.now());
-        feature.set("selected", selected);
-        feature.changed();
+
         const format = new GeoJSON({ featureProjection: 'EPSG:3857', dataProjection: 'EPSG:4326' });
         const geojsonFeature = format.writeFeatureObject(feature);
 
         const defaultGeometry = geojsonFeature.geometry;
 
-
         saveModifiedFeatures([ feature ]);
-
         const baseData = addedData?.baseData ?? {};
         addRow({ baseData, defaultGeometry })
         setIsDrawing(false)
     };
     useEffect(() => {
-        if (!eventManager || !submenu.menuCode || !map || !layer) return;
-
         const options = {
             olLayer: layer,
             drawGeometryType: drawGeometryType
         };
 
         if (isDrawing) {
-            eventManager.bind("drawend", onDrawEnd, options);
+            olEventManager.bind("drawend", onDrawEnd, options);
         } else {
-            eventManager.unbind("drawend", onDrawEnd);
+            olEventManager.unbind("drawend", onDrawEnd);
         }
 
         return () => {
-            eventManager.unbind("drawend", onDrawEnd);
+            olEventManager.unbind("drawend", onDrawEnd);
         };
-    }, [ isDrawing, submenu.menuCode, onDrawEnd ]);
-
-    const onModifyEnd = useCallback((e: ModifyEvent) => {
+    }, [ olEventManager, layer, isDrawing, drawGeometryType, onDrawEnd ]);
+    const onModifyEnd = (e: ModifyEvent) => {
 
         const features: Feature[] = e.features.getArray();
         saveModifiedFeatures(features);
 
-        const selected = 1;
 
-        features.forEach(feature => {
-            feature.set("selected", selected);
-            feature.changed();
-        });
-
-    }, []);
+    };
     useEffect(() => {
-        if (!eventManager || !submenu.menuCode || !map || !layer) return;
-
         const options = {
             olLayer: layer,
         };
 
         if (isEditable) {
-            eventManager.bind("modifyend", onModifyEnd, options);
-        } else {
-            eventManager.unbind("modifyend", onModifyEnd);
+            olEventManager.bind("modifyend", onModifyEnd, options);
         }
 
         return () => {
-            eventManager.unbind("modifyend", onModifyEnd);
+            olEventManager.unbind("modifyend", onModifyEnd);
         };
-    }, [ isEditable, submenu.menuCode, onModifyEnd ]);
-
-    const onSelect = useCallback((e: SelectEvent) => {
+    }, [ olEventManager, layer, isEditable, onModifyEnd ]);
+    const onSelect = (e: SelectEvent) => {
 
         const targets = e.target.getFeatures().getArray();
 
-        const isEditingLayer = (feature: Feature) => layer.getSource().hasFeature(feature)
-
-        // 원하는 레이어만 selected 속성 수정
-        //선택된 feature에 selected = 1 설정
         e.selected.forEach((feature) => {
-            if (isEditingLayer(feature)) {
-                feature.set("selected", 1);
-                feature.changed(); // 스타일} 갱신용
-            }
+            feature.set("selected", true);
         });
-        // 선택 해제된 feature에 selected = 0 설정
+
         e.deselected.forEach((feature) => {
-            if (isEditingLayer(feature)) {
-                feature.set("selected", 0);
-                feature.changed();
-            }
+            feature.set("selected", false);
         });
 
         const selectedIds = targets
@@ -176,29 +172,21 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
             const firstFeature = selectedIds[0];
             if (firstFeature !== undefined) {
                 gridRef.current?.setSelectRowsWithField("id", firstFeature);
-
-
             }
             selectedFeatureIdRef.current = selectedIds;
         }
         const baseData = targets[0].get("properties")
         setAddedData({ baseData })
-    }, [ map, layers, submenu.menuCode ]);
+    };
     useEffect(() => {
-        if (!eventManager || !submenu.menuCode || !map) return;
-
         const options = {
             olLayers: layers,
         }
-        if (layer) eventManager.bind("select", onSelect, options)
+        if (layer) olEventManager.bind("select", onSelect, options)
         return () => {
-            if (layer) eventManager.unbind("select", onSelect)
+            if (layer) olEventManager.unbind("select", onSelect)
         };
-    }, [ submenu.menuCode, onSelect ]);
-
-    useEffect(() => {
-        console.log("drawGeometryType:::", drawGeometryType)
-    }, [ drawGeometryType ]);
+    }, [ olEventManager, layers, layer, onSelect ]);
 
     const handleCheck = () => {
         console.log("체크한 row:", gridRef.current?.getSelectedRow());
@@ -210,6 +198,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
     // currentGeojson 기반으로 Grid용 데이터 가공
     useEffect(() => {
         console.log("rowData menu:::", submenu.menuCode)
+        console.log("submenu.item:::", submenu.item)
         if (!submenu.menuCode || !submenu.item?.fields) return;
         if (!store) {
             setRowData([])
@@ -229,7 +218,6 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
 
     }, [ submenu.menuCode ]);
 
-
     const handleGridSelectionChanged = () => {
         const selectedRows = gridRef.current?.getSelectedRow() ?? [];
         const selectedIds = selectedRows.map((row: Record<string, unknown>) => row.id);
@@ -239,10 +227,10 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
 
         features.forEach((feature: Feature) => {
             const fid = feature.get("id");
-            const selected = selectedIds.includes(fid) ? 1 : 0;
+            const selected = selectedIds.includes(fid);
             feature.set("selected", selected);
-            feature.changed();
         });
+        selectedFeatureIdRef.current = selectedIds;
     };
 
     const handleAddBtn = () => {
@@ -250,7 +238,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         addRow({ baseData });
     }
     const handleDrawBtn = () => {
-        setIsDrawing(true)
+        setIsDrawing(!isDrawing)
     }
     const handleDeleteBtn = () => {
         deleteSelected()
@@ -260,8 +248,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         const api = apiConfig[submenu.menuCode as ApiMenuKey].update;
         const geojson = store.getState().currentGeojson;
         const payload = {
-            id: 2,
-            name: "busStation",
+            name: submenu.menuCode,
             geojson,
         };
         try {
@@ -308,11 +295,11 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
                                 )) }
                             </select>
                             <button className="add-btn" onClick={ () => handleAddBtn() }>추가</button>
-                            <button className="add-btn" onClick={ () => handleDrawBtn() }>그리기</button>
+                            <button className="add-btn" onClick={ () => handleDrawBtn() }>{ !isDrawing ? '그리기' : '그리기 취소' }</button>
                             <button className="delete-btn" onClick={ () => handleDeleteBtn() }>삭제</button>
                             <button className="save-btn" onClick={ () => handleSaveBtn() }>저장</button>
                             <button className="save-btn" onClick={ () => handleInitBtn() }>되돌리기</button>
-                            <button className="edit-btn" onClick={ () => handleEditableBtn() }>그리드 편집활성화</button>
+                            <button className="edit-btn" onClick={ () => handleEditableBtn() }>{ !isEditable ? '편집 활성화' : '편집 비활성화' }</button>
                             <button onClick={ () => handleCheck() }>Interaction 객체 목록 디버깅</button>
                         </div>
                         <button className="close-btn" onClick={ onClose }>×</button>

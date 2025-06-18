@@ -41,8 +41,8 @@ const createFeatureStore = () =>
             subscribeWithSelector(
                 combine(initialState, (set, get) => ({
                     setOriginData: (data: FetchFeatureDataType) => set({ originData: data }),
-                    setCurrentGeojson: (geojson: Record<string, unknown>) => {
-                        set({ currentGeojson: { ...geojson } })
+                    setCurrentGeojson: (geojson: GeoJSON.FeatureCollection) => {
+                        set({ currentGeojson: structuredClone(geojson) });
                     },
                     setFlatRow: (flatRow: Record<string, unknown>[]) => set({ flatRow: flatRow }),
                     setChange: (changed: boolean) => set({ isChanged: changed}),
