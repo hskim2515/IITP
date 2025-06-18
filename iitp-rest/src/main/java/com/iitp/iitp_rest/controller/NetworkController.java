@@ -6,11 +6,8 @@ import com.iitp.iitp_rest.model.Network;
 import com.iitp.iitp_rest.model.network.*;
 import com.iitp.iitp_rest.repository.NetworkRepository;
 import lombok.AllArgsConstructor;
-import lombok.Data;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.*;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -18,13 +15,10 @@ import org.w3c.dom.NodeList;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 
 @RestController
@@ -34,13 +28,13 @@ public class NetworkController {
 
     private final NetworkRepository networkRepository;
 
-    @GetMapping
-    public ResponseEntity<NetworkData> getNetwork() {
+    @GetMapping("/{key}")
+    public ResponseEntity<NetworkData> getNetwork(@PathVariable String key) {
         NetworkData result = new NetworkData();
         List<NodeData> nodes = new ArrayList<>();
         List<LinkData> links = new ArrayList<>();
 
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream("networks/network.xml")) {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream(key + "/network.xml")) {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document doc = builder.parse(is);
@@ -54,8 +48,7 @@ public class NetworkController {
                 node.setType(nodeElement.getAttribute("type"));
                 node.setNumPort(Integer.parseInt(nodeElement.getAttribute("num_port")));
                 node.setNumConnection(Integer.parseInt(nodeElement.getAttribute("num_connection")));
-                node.setXCoord(Double.parseDouble(nodeElement.getAttribute("x_coord")));
-                node.setYCoord(Double.parseDouble(nodeElement.getAttribute("y_coord")));
+                node.setCenter(nodeElement.getAttribute("center"));
 
                 // Ports
                 NodeList portList = nodeElement.getElementsByTagName("port");
@@ -83,6 +76,7 @@ public class NetworkController {
                     conn.setLength(Double.parseDouble(connElement.getAttribute("length")));
                     conn.setWidth(Double.parseDouble(connElement.getAttribute("width")));
                     conn.setFfSpd(Double.parseDouble(connElement.getAttribute("ff_spd")));
+                    conn.setShape(connElement.getAttribute("shape"));
                     node.getConnections().add(conn);
                 }
 
@@ -121,6 +115,7 @@ public class NetworkController {
                     lane.setNumCell(Integer.parseInt(laneElement.getAttribute("num_cell")));
                     lane.setLeftLaneId(laneElement.getAttribute("left_lane_id"));
                     lane.setRightLaneId(laneElement.getAttribute("right_lane_id"));
+                    lane.setShape(laneElement.getAttribute("shape"));
 
                     // Cells
                     NodeList cellList = laneElement.getElementsByTagName("cell");

@@ -1,7 +1,7 @@
 import {useEffect, useRef, useState} from 'react';
 import {useCesiumStore} from "@stores/useCesiumStore";
 import * as Cesium from "cesium";
-import {Cartesian3, HeightReference, Viewer} from "cesium";
+import {Cartesian3, Cartographic, HeightReference, Viewer} from "cesium";
 import PrimitiveLayerManager from "../managers/PrimitiveLayerManager";
 import {useLayerStore} from "@stores/useLayerStore";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
@@ -16,6 +16,7 @@ import {useSimulationStore} from "@stores/useSimulationStore";
 import {usePropertyStore} from "@stores/usePropertyStore";
 import cesium from "vite-plugin-cesium";
 import {useEventStore} from "@stores/useEventStore";
+import {useScenarioStore} from "@stores/useScenarioStore";
 
 
 type Node = { id: string; x?: number; y?: number; lng?: number; lat?: number };
@@ -30,6 +31,8 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
     const setViewer = useCesiumStore((state) => state.setViewer);
     const setLayerManager = useLayerStore((state) => state.setLayerManager);
     const lodLevels = [1.0, 0.5, 0.2];
+
+    const selectedScenario = useScenarioStore((state) => state.selectedScenario);
 
     const layerGroups = useLayerSchemaStore.state.groups();
 
@@ -69,7 +72,9 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
             useSimulationStore
         );
 
-        fetch(process.env.VITE_API_URL + "/network", {
+        console.log(selectedScenario)
+
+        fetch(process.env.VITE_API_URL + "/network/" + selectedScenario.key, {
             method: "GET",
             headers: { "Content-Type": "application/json" },
         })
@@ -83,13 +88,15 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
                 return nodeIds.has(link.source) && nodeIds.has(link.target);
             });
 
-            const baseLng = 126.7325;
-            const baseLat = 37.4928;
+            const baseLng = selectedScenario.longitude;
+            const baseLat = selectedScenario.latitude;
             const scale = 0.00001;
 
+
             nodes.forEach(node => {
-                node.lng = baseLng + (node.xCoord/ 88000);
-                node.lat = baseLat + (node.yCoord/ 111000);
+                const [xCoord, yCoord] = node.center.split(" ");
+                node.lng = baseLng + (xCoord/ 88000);
+                node.lat = baseLat + (yCoord/ 111000);
             });
 
             // 링크 그리기
@@ -123,11 +130,7 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
                         cornerType: Cesium.CornerType.MITERED,
                         positions: [sourceCart, targetCart],
                         width: link.width, // 레인별 폭 적용
-                        material: new Cesium.ImageMaterialProperty({
-                            image: 'road4.jpg',
-                            repeat: new Cesium.Cartesian2(1, 1),
-                            transparent: true
-                        }),
+                        material: Cesium.Color.WHITE,
                         height: 0.02,
                     },
                     properties:link
@@ -135,185 +138,147 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
 
                 const laneCount = link.lanes.length || 2; // 차선 수
 
-                const corridorGeometry = new Cesium.CorridorGeometry({
-                    positions: [sourceCart, targetCart],
-                    height:0.01,
-                    width: link.width - 0.1,
-                    vertexFormat: Cesium.MaterialAppearance.MaterialSupport.TEXTURED.vertexFormat,
-                    cornerType: Cesium.CornerType.MITERED,
-                });
+                // cesiumViewer.entities.add(new Cesium.Entity({
+                //     corridor: {
+                //         cornerType: Cesium.CornerType.MITERED,
+                //         positions: [sourceCart, targetCart],
+                //         width: link.width, // 레인별 폭 적용
+                //         material: new Cesium.ImageMaterialProperty({
+                //             image: 'road6.jpg',
+                //             repeat: new Cesium.Cartesian2(1, 1),
+                //             transparent: true
+                //         }),
+                //         height: 0.02,
+                //     },
+                //     properties:link
+                // }));
 
-                const geometryInstance = new Cesium.GeometryInstance({
-                    geometry: corridorGeometry,
-                    id: 'road-corridor',
-                    attributes: {
-                        color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.WHITE),
-                    }
-                });
+//                 const corridorGeometry = new Cesium.CorridorGeometry({
+//                     positions: [sourceCart, targetCart],
+//                     height:0.01,
+//                     width: link.width - 0.1,
+//                     vertexFormat: Cesium.MaterialAppearance.MaterialSupport.TEXTURED.vertexFormat,
+//                     cornerType: Cesium.CornerType.MITERED,
+//                 });
+//
+//                 const geometryInstance = new Cesium.GeometryInstance({
+//                     geometry: corridorGeometry,
+//                     id: 'road-corridor',
+//                     attributes: {
+//                         color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.WHITE),
+//                     }
+//                 });
+//
+//                 const primitive = new Cesium.Primitive({
+//                     geometryInstances: geometryInstance,
+//                     appearance: new Cesium.MaterialAppearance({
+//                         material: new Cesium.Material({
+//                             fabric: {
+//                                 type: 'CustomRoadMaterial',
+//                                 uniforms: {
+//                                     baseColor: Cesium.Color.BLACK,
+//                                     lineColor: Cesium.Color.WHITE,
+//                                     laneCount: laneCount,
+//                                     repeat: 50.0,       // 도로 길이 방향 반복 횟수 (줄 수)
+//                                     dashLength: 0.5,
+//                                     gapLength: 0.5,
+//
+//                                 },
+//                                 source:
+//                                 `czm_material czm_getMaterial(czm_materialInput materialInput) {
+//                     czm_material material = czm_getDefaultMaterial(materialInput);
+//
+//                     vec2 st = materialInput.st;
+//
+//                     float laneStep = 1.0 / float(laneCount);
+//                     float stripe = mod(st.t * repeat, dashLength + gapLength) < dashLength ? 1.0 : 0.0;
+//
+//                     float laneLine = 0.0;
+//                     for (int i = 1; i < 10; i++) {
+//                         if (float(i) >= float(laneCount)) break;
+//
+//                         float center = float(i) * laneStep;
+//                         float dist = abs(st.t - center);
+//                         laneLine += step(dist, 0.005) * stripe; // 선 굵기 조정
+//                     }
+//
+//                     material.diffuse = mix(baseColor.rgb, lineColor.rgb, laneLine);
+//                     material.alpha = mix(baseColor.a, lineColor.a, laneLine);
+//
+//                     return material;
+//                 }
+// `
+//             }
+//             }),
+//                 faceForward: true,
+//                     closed: false,
+//             }),
+//                 asynchronous: false,
+//                     show: true,
+//             });
+//
+//
+//                 cesiumViewer.scene.primitives.add(primitive);
 
-                const primitive = new Cesium.Primitive({
-                    geometryInstances: geometryInstance,
-                    appearance: new Cesium.MaterialAppearance({
-                        material: new Cesium.Material({
-                            fabric: {
-                                type: 'CustomRoadMaterial',
-                                uniforms: {
-                                    baseColor: Cesium.Color.BLACK,
-                                    lineColor: Cesium.Color.WHITE,
-                                    laneCount: laneCount,
-                                    repeat: 50.0,       // 도로 길이 방향 반복 횟수 (줄 수)
-                                    dashLength: 0.5,
-                                    gapLength: 0.5,
+                const n = link.lanes.length;
 
-                                },
-                                source:
-                                `czm_material czm_getMaterial(czm_materialInput materialInput) {
-                    czm_material material = czm_getDefaultMaterial(materialInput);
+                for (let i = 0; i < n; i++) {
+                    const lane = link.lanes[i];
 
-                    vec2 st = materialInput.st;
+                    const [firstPointStr, lastPointStr] = lane.shape.split(" ");
+                    const [x1, y1] = firstPointStr.split(",").map(parseFloat);
+                    const [x2, y2] = lastPointStr.split(",").map(parseFloat);
 
-                    float laneStep = 1.0 / float(laneCount);
-                    float stripe = mod(st.t * repeat, dashLength + gapLength) < dashLength ? 1.0 : 0.0;
+                    const sourceCart = Cesium.Cartesian3.fromDegrees(baseLng + x1/ 88000, baseLat + y1/ 111000);
+                    const targetCart = Cesium.Cartesian3.fromDegrees(baseLng + x2/ 88000, baseLat + y2/ 111000);
 
-                    float laneLine = 0.0;
-                    for (int i = 1; i < 10; i++) {
-                        if (float(i) >= float(laneCount)) break;
+                    lane.laneSource = sourceCart;
+                    lane.laneTarget = targetCart;
 
-                        float center = float(i) * laneStep;
-                        float dist = abs(st.t - center);
-                        laneLine += step(dist, 0.005) * stripe; // 선 굵기 조정
-                    }
-
-                    material.diffuse = mix(baseColor.rgb, lineColor.rgb, laneLine);
-                    material.alpha = mix(baseColor.a, lineColor.a, laneLine);
-
-                    return material;
-                }
-`
-            }
-            }),
-                faceForward: true,
-                    closed: false,
-            }),
-                asynchronous: false,
-                    show: true,
-            });
-
-
-                cesiumViewer.scene.primitives.add(primitive);
-
-                for (let i = 0; i < link.lanes.length; i++) {
-                    const offset = (i - (link.lanes.length - 1) / 2.0) * laneWidth;
-
-                    // 레인 오프셋 계산 (ENU 기준으로 right 방향으로 offset)
-                    const laneOffset = Cesium.Cartesian3.multiplyByScalar(right, offset, new Cesium.Cartesian3());
-
-                    const laneSource = Cesium.Cartesian3.add(sourceCart, laneOffset, new Cesium.Cartesian3());
-                    const laneTarget = Cesium.Cartesian3.add(targetCart, laneOffset, new Cesium.Cartesian3());
-                    link.lanes[i].laneSource = laneSource
-                    link.lanes[i].laneTarget = laneTarget
-
+                    cesiumViewer.entities.add({
+                        corridor: {
+                            cornerType: Cesium.CornerType.MITERED,
+                            positions: [sourceCart, targetCart],
+                            width: (link.width / laneCount) - 0.05, // 레인별 폭 적용
+                            material: Cesium.Color.GREY.withAlpha(0.8),
+                            height: 0.03,
+                        },
+                        properties: link.lanes[i]
+                    });
                 }
             }
 
             for (const node of nodes) {
-                // const center = Cesium.Cartesian3.fromDegrees(node.lng, node.lat);
 
-                // === 1. Node 표시 ===
-                // cesiumViewer.entities.add({
-                //     position: center,
-                //     point: {
-                //         pixelSize: 8,
-                //         color: Cesium.Color.ORANGE
-                //     },
-                //     // label: {
-                //     //     text: node.id,
-                //     //     font: '12px sans-serif',
-                //     //     scale: 0.6,
-                //     //     pixelOffset: new Cesium.Cartesian2(10, -10),
-                //     //     showBackground: true,
-                //     //     backgroundColor: Cesium.Color.WHITE
-                //     // }
-                // });
-                // const ports = node.ports
                 const connections = node.connections
-
-                // if(ports){
-                //     // === 2. Port 표시 ===
-                //     for (const port of node.ports || []) {
-                //         const link = links.find(l => l.id === port.linkId);
-                //         if (!link) continue;
-                //
-                //         const targetNode = port.direction === 'in'
-                //             ? nodes.find(n => n.id === link.fromNode)
-                //             : nodes.find(n => n.id === link.toNode);
-                //
-                //         if (!targetNode || !targetNode.lat || !targetNode.lng) continue;
-                //
-                //         const target = Cesium.Cartesian3.fromDegrees(targetNode.lng, targetNode.lat);
-                //
-                //         const dir = Cesium.Cartesian3.subtract(target, center, new Cesium.Cartesian3());
-                //         const len = Cesium.Cartesian3.magnitude(dir);
-                //
-                //         if (len === 0 || isNaN(len)) {
-                //             // console.warn('Invalid direction vector: zero-length or NaN', { center, target });
-                //             continue; // skip this item
-                //         }
-                //         const portPos = Cesium.Cartesian3.add(center, dir, new Cesium.Cartesian3());
-                //
-                //         // cesiumViewer.entities.add({
-                //         //     position: portPos,
-                //         //     point: {
-                //         //         pixelSize: 10,
-                //         //         heightReference:HeightReference.CLAMP_TO_GROUND,
-                //         //         color: port.direction === 'in' ? Cesium.Color.GREEN : Cesium.Color.RED
-                //         //     }
-                //         // });
-                //     }
-                // }
 
                 if (connections) {
                     for (const conn of node.connections || []) {
-                        const fromLink = links.find(l => l.id === conn.fromLink);
-                        const toLink = links.find(l => l.id === conn.toLink);
-                        if (!fromLink || !toLink) continue;
 
-                        const fromLaneIdx = parseInt(conn.fromLane);
-                        const toLaneIdx = parseInt(conn.toLane);
-
-                        const fromLane = fromLink.lanes[fromLaneIdx];
-                        const toLane = toLink.lanes[toLaneIdx];
-                        if (!fromLane || !toLane || !fromLane.laneTarget || !toLane.laneSource) continue;
-
-                        // if(conn.turning !== 'S'){
+                        // const fromLink = links.find(l => l.id === conn.fromLink);
+                        // const toLink = links.find(l => l.id === conn.toLink);
+                        // if (!fromLink || !toLink) continue;
                         //
-                        //     const points = [fromLane.laneTarget, center, toLane.laneSource]
+                        // const fromLaneIdx = parseInt(conn.fromLane);
+                        // const toLaneIdx = parseInt(conn.toLane);
                         //
-                        //     const spline = new Cesium.CatmullRomSpline({
-                        //         times: [0.0, 0.5, 1.0],
-                        //         points
-                        //     });
+                        // const fromLane = fromLink.lanes[fromLaneIdx];
+                        // const toLane = toLink.lanes[toLaneIdx];
+                        // if (!fromLane || !toLane || !fromLane.laneTarget || !toLane.laneSource) continue;
                         //
-                        //     const curve = [];
-                        //     for (let i = 0; i <= 100; i++) {
-                        //         curve.push(spline.evaluate(i / 100));
-                        //     }
+                        // const fromPos = fromLane.laneTarget; // Cartesian3
+                        // const toPos = toLane.laneSource;     // Cartesian3
                         //
-                        //     cesiumViewer.entities.add({
-                        //         polyline: {
-                        //             positions: curve,
-                        //             width: 2,
-                        //             clampToGround: true,
-                        //             material: Cesium.Color.PURPLE.withAlpha(0.6)
-                        //         }
-                        //     });
-                        // }
 
+                        const [firstPointStr, lastPointStr] = conn.shape.split(" ");
+                        const [x1, y1] = firstPointStr.split(",").map(parseFloat);
+                        const [x2, y2] = lastPointStr.split(",").map(parseFloat);
 
-                        const fromPos = fromLane.laneTarget; // Cartesian3
-                        const toPos = toLane.laneSource;     // Cartesian3
+                        const sourceCart = Cesium.Cartesian3.fromDegrees(baseLng + x1/ 88000, baseLat + y1/ 111000);
+                        const targetCart = Cesium.Cartesian3.fromDegrees(baseLng + x2/ 88000, baseLat + y2/ 111000);
 
-                        const position = [fromPos]
+                        const position = [sourceCart]
+
 
                         if(conn.turning != 'S'){
 
@@ -322,7 +287,7 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
                             const nodeHeight = 0;
                             const nodePos = Cesium.Cartesian3.fromDegrees(nodeLon, nodeLat, nodeHeight);
 
-                            const midpoint = Cesium.Cartesian3.midpoint(fromPos, toPos, new Cesium.Cartesian3());
+                            const midpoint = Cesium.Cartesian3.midpoint(sourceCart, targetCart, new Cesium.Cartesian3());
 
                             const direction = Cesium.Cartesian3.subtract(nodePos, midpoint, new Cesium.Cartesian3());
 
@@ -331,7 +296,7 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
                             const adjustedMid = Cesium.Cartesian3.add(midpoint, direction, new Cesium.Cartesian3());
 
                             //position.push(adjustedMid)
-                            const points = [fromLane.laneTarget, adjustedMid, toLane.laneSource]
+                            const points = [sourceCart, adjustedMid, targetCart]
 
                             const spline = new Cesium.CatmullRomSpline({
                                 times: [0.0, 0.5, 1.0],
@@ -341,11 +306,9 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
                             for (let i = 0; i <= 10; i++) {
                                 position.push(spline.evaluate(i / 10));
                             }
-
                         }
 
-                        position.push(toPos)
-
+                        position.push(targetCart)
 
                         cesiumViewer.entities.add({
                             polyline: {
@@ -358,8 +321,6 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
                                 clampToGround: true,
                             },
                         });
-
-
 
                         // cesiumViewer.entities.add({
                         //     corridor: {
@@ -376,68 +337,32 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
                         //     },
                         //     properties : conn
                         // });
-                        conn.from = fromLane.laneTarget
-                        conn.to = toLane.laneSource
-
+                        conn.from = sourceCart
+                        conn.to = targetCart
                     }
-
                 }
-
             }
 
             fetch(process.env.VITE_API_URL + "/signal", {
                 method: "GET",
                 headers: { "Content-Type": "application/json" },
             })
-                .then((response) => {
-                    return response.json();
-                })
-                .then(({nodes : signalNodes}) => {
-                    console.log(signalNodes);
-                    signalNodes.forEach(node => {
-                        node.turns.forEach(turn => {
-                            turn.connList.forEach(connId => {
-                                const targetNode = nodes.find(t => t.id === node.id)
-                                const conn = findConnectionById(targetNode, connId); // conn에서 from → to 좌표 구함
-                                if (!conn) return;
+            .then((response) => {
+                return response.json();
+            })
+            .then(({nodes : signalNodes}) => {
+                signalNodes.forEach(node => {
+                    node.turns.forEach(turn => {
+                        turn.connList.forEach(connId => {
+                            const targetNode = nodes.find(t => t.id === node.id)
+                            const conn = findConnectionById(targetNode, connId); // conn에서 from → to 좌표 구함
+                            if (!conn) return;
 
-                                const from = conn.from;
-                                const to = conn.to;
-
-//                                 cesiumViewer.entities.add({
-//                                     position: from,
-//                                     box: {
-//                                         dimensions: new Cesium.Cartesian3(0.3, 0.3, 1.0),
-//                                         material: Cesium.Color.DARKSLATEGRAY
-//                                     }
-//                                 });
-//
-// // 빨간불
-//                                 cesiumViewer.entities.add({
-//                                     position: from,
-//                                     ellipse: {
-//                                         semiMinorAxis: 0.1,
-//                                         semiMajorAxis: 0.1,
-//                                         height: 1.4,
-//                                         material: Cesium.Color.RED
-//                                     }
-//                                 });
-
-                                // cesiumViewer.entities.add({
-                                //     corridor: {
-                                //         positions: [from, to],
-                                //         width: 3.5,
-                                //         material: turn.type === "RTOR"
-                                //             ? Cesium.Color.YELLOW.withAlpha(0.2)
-                                //             : Cesium.Color.CYAN.withAlpha(0.2),
-                                //     },
-                                //     description: `turn ${turn.turning} (conn: ${connId})`,
-                                // });
-                            });
                         });
                     });
+                });
 
-                })
+            })
             cesiumViewer.zoomTo(cesiumViewer.entities);
         });
 

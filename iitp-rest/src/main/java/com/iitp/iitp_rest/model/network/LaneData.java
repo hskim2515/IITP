@@ -11,6 +11,7 @@ public class LaneData {
     public int numCell;
     public String leftLaneId;
     public String rightLaneId;
+    public String shape;
 
     public List<CellData> cells = new ArrayList<>();
     public List<SegmentData> segments = new ArrayList<>();

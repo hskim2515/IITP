@@ -8,6 +8,7 @@ public class ConnectionData {
     public String fromLink;
     public int fromLane;
     public String toLink;
+    public String shape;
     public int toLane;
     public String turning;
     public double length;

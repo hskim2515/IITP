@@ -256,7 +256,7 @@ public class VehicleController {
     public ResponseEntity<Map<String, Object>> generateVehicleRoute(@RequestBody VehicleRequest request) throws IOException {
 
         // 네트워크 및 도로 데이터 로드
-        Network network = networkRepository.findById(1L).orElse(null);
+        Network network = networkRepository.findById(4L).orElse(null);
         if (network == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "Network data not found"));
         }
