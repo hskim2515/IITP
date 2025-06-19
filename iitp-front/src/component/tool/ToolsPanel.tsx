@@ -20,7 +20,7 @@ const ToolsPanel = () => {
             style={{
                 position: 'fixed',
                 right: '0px',
-                bottom: '150px',
+                top: '100px',
                 borderRadius: '8px',
                 padding: '15px',
                 zIndex: 999,

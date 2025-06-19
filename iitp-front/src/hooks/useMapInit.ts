@@ -2,19 +2,11 @@ import {useEffect, useRef, useState} from 'react';
 import {useCesiumStore} from "@stores/useCesiumStore";
 import * as Cesium from "cesium";
 import {Cartesian3, Cartographic, HeightReference, Viewer} from "cesium";
-import PrimitiveLayerManager from "../managers/PrimitiveLayerManager";
 import {useLayerStore} from "@stores/useLayerStore";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import {useLayerSchemaStore} from "@stores/useLayerSchemaStore";
 import {Map as OLMap, View} from "ol";
 import * as olProj from "ol/proj";
-import {LayerManager} from "../managers/LayerManager";
-import BaseMapLayerManager from "../managers/BaseMapLayerManager";
-import VectorLayerManager from "../managers/VectorLayerManager";
-import TileLayerManager from "../managers/TileLayerManager";
-import {useSimulationStore} from "@stores/useSimulationStore";
-import {useScenarioStore} from "@stores/useScenarioStore";
-import DataSourceLayerManager from "@managers/DataSourceLayerManager";
 
 const useMapInit = (openlayersMapRef, cesiumMapRef) => {
 
