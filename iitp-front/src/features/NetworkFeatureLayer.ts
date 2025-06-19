@@ -11,19 +11,20 @@ import {
 } from "ol/style";
 import { LineString, Point, Polygon } from "ol/geom";
 import { fromLonLat } from "ol/proj";
+import {menuCodeToStoreMap} from "@hooks/useFeatureInit";
+import {GeoJSON} from "ol/format";
+import {useScenarioStore} from "@stores/useScenarioStore";
 
-export default class NetworkLayer extends VectorLayer {
+export default class NetworkFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
+    private readonly LAYER_NAME = "ROAD"
+
+    private unsubscribe: () => void;
 
     constructor() {
-        // LayerStore에서 활성화된 레이어 이름(필요 시 visible 제어)
-        const layerStore = useLayerStore.getState();
-        const activeLayerName = layerStore.activeLayerName;
-        // const isVisible = activeLayerName?.includes("network") ?? false;
 
         // 1) VectorSource 생성
         const source = new VectorSource();
-
         // 2) VectorLayer(super) 생성 시 styleFunction 지정
         super({
             source,
@@ -31,6 +32,24 @@ export default class NetworkLayer extends VectorLayer {
             style: (feature) => this.styleFunction(feature),
             zIndex: 300,
         });
+        // LayerStore에서 활성화된 레이어 이름(필요 시 visible 제어)
+        const layerStore = useLayerStore.getState();
+
+        const activeLayerName = layerStore.activeLayerName;
+
+        const store = menuCodeToStoreMap["ROAD"];
+        this.unsubscribe = store.subscribe(
+            (state) => state.currentGeojson,
+            (geojson) => {
+                if (!geojson) return;
+                const format = new GeoJSON({ featureProjection: "EPSG:3857" });
+                const features = format.readFeatures(geojson);
+                features.forEach(f => f.set("selected", 0));
+                source.clear(true);
+                source.addFeatures(features);
+            },
+            { fireImmediately: true }
+        );
 
         this.source = source;
     }
@@ -142,19 +161,18 @@ export default class NetworkLayer extends VectorLayer {
      * - Node(Point) 생성
      */
     public async load(): Promise<void> {
-        console.log("NetworkLayer.load() 호출됨");
 
-        const url = process.env.VITE_API_URL + "/network";
+        const store = menuCodeToStoreMap[this.LAYER_NAME]
+
         try {
-            const response = await fetch(url, {
-                method: "GET",
-                headers: { "Content-Type": "application/json" },
-            });
-            const { nodes, links, lanes, cells, segments } = await response.json();
+            const { nodes, links, lanes, cells, segments } = store.getState().originData;
+
+
+            const selectedScenario = useScenarioStore.getState().selectedScenario;
 
             // Nodes 좌표 계산 (WGS84 → EPSG:3857)
-            const baseLng = 126.7325;
-            const baseLat = 37.4928;
+            const baseLng = selectedScenario.longitude;
+            const baseLat = selectedScenario.latitude;
             const scaleX = 1 / 88000;
             const scaleY = 1 / 111000;
 
@@ -372,9 +390,9 @@ export default class NetworkLayer extends VectorLayer {
                 this.source.addFeature(nodeFeature);
             });
 
-            console.log("NetworkLayer: 모든 Feature가 추가됨");
+            console.log("NetworkDataSourceLayer: 모든 Feature가 추가됨");
         } catch (error) {
-            console.error("NetworkLayer.load() 중 에러 발생:", error);
+            console.error("NetworkDataSourceLayer.load() 중 에러 발생:", error);
         }
     }
 }

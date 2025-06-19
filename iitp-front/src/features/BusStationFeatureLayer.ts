@@ -7,8 +7,8 @@ import { Feature } from "ol";
 import { Icon, Style } from "ol/style";
 import VectorLayer from "ol/layer/Vector";
 
-// export default class BusStationLayer extends VectorLayer {
-export default class BusStationLayer extends WebGLVectorLayer {
+// export default class BusStationDatasourceLayer extends VectorLayer {
+export default class BusStationFeatureLayer extends WebGLVectorLayer {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "PT_BUS_STATION"
     private readonly TRANSIT_MODE = "bus"
@@ -109,7 +109,7 @@ export default class BusStationLayer extends WebGLVectorLayer {
             this.source.addFeatures(features);
 
         } catch (error) {
-            console.error("[BusStationLayer] store 기반 로딩 실패:", error);
+            console.error("[BusStationDatasourceLayer] store 기반 로딩 실패:", error);
         }
     }
 

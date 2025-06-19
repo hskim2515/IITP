@@ -6,7 +6,7 @@ import { fromLonLat } from "ol/proj";
 import { Cartographic, Ellipsoid } from "cesium";
 import * as Cesium from "cesium";
 
-export default class VehicleLayer extends WebGLVectorLayer {
+export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private source: VectorSource;
     private features: Feature<Point>[] = [];
     private speed: number;
@@ -62,7 +62,7 @@ export default class VehicleLayer extends WebGLVectorLayer {
             const lat = Cesium.Math.toDegrees(carto.latitude);
             return fromLonLat([lon, lat]);
         } catch (error) {
-            console.warn("[VehicleLayer] Failed to convert position:", error);
+            console.warn("[VehicleFeatureLayer] Failed to convert position:", error);
             // 에러 발생 시 기본값으로 처리
             return fromLonLat([0, 0]);
         }
@@ -159,17 +159,17 @@ export default class VehicleLayer extends WebGLVectorLayer {
         }
     }
     public start() {
-        console.log("[VehicleLayer] start() called");
+        console.log("[VehicleFeatureLayer] start() called");
         this.setStatus(true);
     }
 
     public stop() {
-        console.log("[VehicleLayer] stop() called");
+        console.log("[VehicleFeatureLayer] stop() called");
         this.setStatus(false);
     }
 
     public destroy() {
-        console.log("[VehicleLayer] Destroying layer");
+        console.log("[VehicleFeatureLayer] Destroying layer");
         if (this.animationId !== null) {
             cancelAnimationFrame(this.animationId);
             this.animationId = null;

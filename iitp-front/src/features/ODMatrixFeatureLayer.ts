@@ -14,7 +14,7 @@ export interface ODData {
     toKey: string;               // "12739_3637"
 }
 
-export default class ODMatrixLayer extends WebGLVectorLayer {
+export default class ODMatrixFeatureLayer extends WebGLVectorLayer {
     private source: VectorSource;
     private odData: ODData[] = [];
     private features: Feature<Geometry>[] = [];
@@ -173,7 +173,7 @@ export default class ODMatrixLayer extends WebGLVectorLayer {
     }
 
     public destroy() {
-        console.log("ODMatrixLayer:::destroy");
+        console.log("ODMatrixFeatureLayer:::destroy");
         this.source.clear();
         this.source.refresh();
         this.running = false;

@@ -23,7 +23,7 @@ public class StationController {
 //        return ResponseEntity.ok(stationService.getAllStations());
 //    }
 
-    @GetMapping("/bus")
+    @GetMapping("/bus/{key}")
 //    public ResponseEntity<StationEntity> getBusStation(@PathVariable Long id) {
     public ResponseEntity<StationEntity> getBusStation() {
         return ResponseEntity.ok(stationService.getStation(2L));

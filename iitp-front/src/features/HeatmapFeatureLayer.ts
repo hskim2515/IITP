@@ -4,7 +4,7 @@ import { useLayerStore } from "@stores/useLayerStore";
 import { Feature } from "ol";
 import { Point } from "ol/geom";
 
-export default class HeatmapLayer extends Heatmap {
+export default class HeatmapFeatureLayer extends Heatmap {
     private source: VectorSource;
     private features: Feature<Point>[] = [];
     private speed: number;

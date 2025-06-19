@@ -9,13 +9,17 @@ import * as Cesium from "cesium";
 import { Map as OLMap } from "ol";
 import TileLayerManager from "./TileLayerManager";
 import VectorLayerManager from "./VectorLayerManager";
-import HeatmapLayer from "@features/HeatmapLayer";
+import HeatmapFeatureLayer from "@features/HeatmapFeatureLayer";
 import BaseLayer from "ol/layer/Base";
-import ODMatrixLayer from "@features/ODMatrixLayer";
-import VehicleLayer from "@features/VehicleLayer";
-import TrailLayer from "@features/TrailLayer";
-import NetworkLayer from "@features/NetworkLayer";
-import BusStationLayer from "@features/BusStationLayer";
+import ODMatrixFeatureLayer from "@features/ODMatrixFeatureLayer";
+import VehicleFeatureLayer from "@features/VehicleFeatureLayer";
+import TrailFeatureLayer from "@features/TrailFeatureLayer";
+import NetworkFeatureLayer from "@features/NetworkFeatureLayer";
+import BusStationFeatureLayer from "@features/BusStationFeatureLayer";
+import BusStationDatasourceLayer from "../datasource/BusStationDatasourceLayer";
+import EntityLayerManager from "@managers/DataSourceLayerManager";
+import DataSourceLayerManager from "@managers/DataSourceLayerManager";
+import NetworkDataSourceLayer from "../datasource/NetworkDataSourceLayer";
 
 type LayerItem = {
     id: number;
@@ -25,7 +29,7 @@ type LayerItem = {
     auth: number;
 };
 
-type Manager = PrimitiveLayerManager | BaseMapLayerManager | VectorLayerManager | TileLayerManager;
+type Manager = PrimitiveLayerManager | BaseMapLayerManager | VectorLayerManager | TileLayerManager | DataSourceLayerManager;
 
 type LayerGroupSchema = {
     id: number;
@@ -46,11 +50,12 @@ export class LayerManager {
         private baseMapLayerManager: BaseMapLayerManager,
         private cesiumViewer: Cesium.Viewer,
         private vectorLayerManager: VectorLayerManager,
+        private dataSourceLayerManager: DataSourceLayerManager,
         private tileLayerManager: TileLayerManager,
         private olMap: OLMap,
         private simulationStore: any
     ) {
-        this.managers = [ primitiveLayerManager, baseMapLayerManager, vectorLayerManager, tileLayerManager ]
+        this.managers = [ primitiveLayerManager, baseMapLayerManager, vectorLayerManager, tileLayerManager, dataSourceLayerManager ]
     }
 
     // 레이어 그룹에서 레이어 제거
@@ -87,7 +92,7 @@ export class LayerManager {
             managedCollection.push(primitiveCollections);
         }
         //ol
-        const olHeatmap = new HeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunning, colors, blur);
+        const olHeatmap = new HeatmapFeatureLayer(vehicleRoute, vectorSource, speedFactor, isRunning, colors, blur);
         const layers = this.vectorLayerManager.add(olHeatmap, groupName, layerName);
 
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
@@ -123,7 +128,7 @@ export class LayerManager {
             managedCollection.push(primitiveCollections);
         }
 
-        const odLayer = new ODMatrixLayer(vehicleRoute, speedFactor, isRunning);
+        const odLayer = new ODMatrixFeatureLayer(vehicleRoute, speedFactor, isRunning);
         const layers = this.vectorLayerManager.add(odLayer, groupName, layerName);
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
 
@@ -160,7 +165,7 @@ export class LayerManager {
         //     this.layerGroups.set("layer", group);
         // });
 
-        const tripLayer = new TrailLayer(vehicleRoute, speedFactor, isRunning)
+        const tripLayer = new TrailFeatureLayer(vehicleRoute, speedFactor, isRunning)
         const layers = this.vectorLayerManager.add(tripLayer, groupName, "trip");
 
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
@@ -181,7 +186,7 @@ export class LayerManager {
         const groupName = "layer"
         const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
         if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
-        const vehicleLayer = new VehicleLayer(vehicleRoute, vectorSource, speedFactor, isRunning);
+        const vehicleLayer = new VehicleFeatureLayer(vehicleRoute, vectorSource, speedFactor, isRunning);
         const layers = this.vectorLayerManager.add(vehicleLayer, groupName, "vehicle");
 
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
@@ -206,8 +211,12 @@ export class LayerManager {
         const layerGroup: Record<string, BaseLayer[]> = (this.layerGroups.get(groupName) || {});
         if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
 
+        //cesium
+        const busStationDataSourceLayer = new BusStationDatasourceLayer(this.cesiumViewer);
+        this.dataSourceLayerManager.add(busStationDataSourceLayer, groupName, layerName);
+
         //ol
-        const busStation = new BusStationLayer();
+        const busStation = new BusStationFeatureLayer();
         const layers = this.vectorLayerManager.add(busStation, groupName, layerName);
 
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
@@ -221,14 +230,18 @@ export class LayerManager {
     }
 
     async addNetworkLayer() {
-        const groupName = "edit";
+        const groupName = "road";
         const layerName = "NETWORK"
 
         const layerGroup = this.layerGroups.get(groupName) || {};
         if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
 
+        //cesium
+        const networkDataSourceLayer = new NetworkDataSourceLayer(this.cesiumViewer);
+        this.dataSourceLayerManager.add(networkDataSourceLayer, groupName, layerName);
+
         //ol
-        const network = new NetworkLayer();
+        const network = new NetworkFeatureLayer();
         const layers = this.vectorLayerManager.add(network, groupName, layerName);
 
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
