@@ -22,6 +22,9 @@ export const apiConfig = {
         update: {url: '/public-transit/station/bus/2', method: 'POST', useFormData: false },
         create: {url: '/public-transit/station/bus/2', method: 'POST', useFormData: false },
     },
+    ROAD: {
+        list: {url: '/network', method: 'GET', useFormData: false },
+    },
 } as const;
 
 export type ApiMenuKey = keyof typeof apiConfig;
