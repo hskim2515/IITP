@@ -11,13 +11,13 @@ import {
 } from "ol/style";
 import { LineString, Point, Polygon } from "ol/geom";
 import { fromLonLat } from "ol/proj";
-import {menuCodeToStoreMap} from "@hooks/useFeatureInit";
+import {menuCodeToStoreMap} from "@hooks/useLayerInit";
 import {GeoJSON} from "ol/format";
 import {useScenarioStore} from "@stores/useScenarioStore";
 
 export default class NetworkFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
-    private readonly LAYER_NAME = "ROAD"
+    private readonly LAYER_NAME = "NETWORK"
 
     private unsubscribe: () => void;
 
@@ -28,7 +28,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         // 2) VectorLayer(super) 생성 시 styleFunction 지정
         super({
             source,
-            visible: true,
+            visible: false,
             style: (feature) => this.styleFunction(feature),
             zIndex: 300,
         });
@@ -37,7 +37,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
         const activeLayerName = layerStore.activeLayerName;
 
-        const store = menuCodeToStoreMap["ROAD"];
+        const store = menuCodeToStoreMap["NETWORK"];
         this.unsubscribe = store.subscribe(
             (state) => state.currentGeojson,
             (geojson) => {

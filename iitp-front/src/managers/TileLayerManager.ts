@@ -31,11 +31,18 @@ class TileLayerManager {
             const { key, url, basic } = field;
             if (!url || !key) return;
 
+            const apiKey = process.env.REACT_APP_VWORLD_API_KEY;
+
+            let finalUrl = url;
+            if (url.includes("${API_KEY}")) {
+                finalUrl = url.replace("${API_KEY}", apiKey ?? "");
+            }
+
             const layer = new TileLayer({
                 visible: basic,
                 zIndex: 1,
                 source: new XYZ({
-                    url: url
+                    url: finalUrl
                 })
             })
             this.olMap.addLayer(layer);

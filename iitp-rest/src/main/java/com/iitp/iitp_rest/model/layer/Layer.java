@@ -34,4 +34,10 @@ public class Layer {
 
     @Column(name = "auth", nullable = false)
     private int auth = 0;
+
+    @Column(name = "formType", nullable = false)
+    private String formType;
+
+    @Column(name = "url", nullable = false)
+    private String url;
 }

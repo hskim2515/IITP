@@ -46,7 +46,7 @@ class VectorLayerManager {
         return this.layerGroups[groupName];
     }
 
-    add(layer, groupName, layerName) {
+    add(layer, groupName, layerName, basic) {
         const group = this._getOrCreateGroup(groupName);
 
         const existingLayer = group.find(layer => layer["layer"] === layerName);
@@ -60,6 +60,7 @@ class VectorLayerManager {
                 const index = group.indexOf(existingLayer);
                 if (index > -1) group.splice(index, 1);
             }
+            layer.values_.visible = basic;
 
             group.push(layer);
             if (!isOnMap) {

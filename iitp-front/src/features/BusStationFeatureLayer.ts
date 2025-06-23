@@ -2,12 +2,12 @@ import WebGLVectorLayer from "ol/layer/WebGLVector";
 import VectorSource from "ol/source/Vector";
 import { GeoJSON } from "ol/format";
 import { useLayerStore } from "@stores/useLayerStore";
-import { menuCodeToStoreMap } from "@hooks/useFeatureInit";
+import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 import { Feature } from "ol";
 import { Icon, Style } from "ol/style";
 import VectorLayer from "ol/layer/Vector";
 
-// export default class BusStationDatasourceLayer extends VectorLayer {
+// export default class BusStationDataSourceLayer extends VectorLayer {
 export default class BusStationFeatureLayer extends WebGLVectorLayer {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "PT_BUS_STATION"
@@ -109,7 +109,7 @@ export default class BusStationFeatureLayer extends WebGLVectorLayer {
             this.source.addFeatures(features);
 
         } catch (error) {
-            console.error("[BusStationDatasourceLayer] store 기반 로딩 실패:", error);
+            console.error("[BusStationDataSourceLayer] store 기반 로딩 실패:", error);
         }
     }
 

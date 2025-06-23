@@ -78,7 +78,6 @@ class HeatMapBend {
         this.heatmapInstance = instance;
         container.style.position = "fixed";
         document.body.removeChild(container);
-        console.log(this.getDataPoints(this.geoData) )
         this.heatmapInstance.setData({ max: this.maxValue, min: this.minValue, data: this.getDataPoints(this.geoData) });
 
         const material = new Cesium.Material({
@@ -207,7 +206,6 @@ class HeatMapBend {
     update(frameState) {
         if (this.destroyed) return;
 
-        console.log(this.positions)
         // 경로 데이터가 충분한지 확인
         if (!this.positions || this.positions.length < 2) {
             console.error("🚨 경로 데이터가 부족합니다.");
@@ -257,7 +255,6 @@ class HeatMapBend {
             // console.log(data.length)
             // console.log(this.maxValue)
             // console.log(this.heatmapInstance)
-            console.log(this.heatmapInstance.getData())
             const newData = {data:data}
             //this.heatmapInstance.setData(newData);
         }

@@ -8,7 +8,7 @@ import useSimulation from "@hooks/useSimulation";
 import useMapSync from "@hooks/sync/useMapSync";
 import useLayer from "@hooks/useLayer";
 import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
-import useFeatureInit from "@hooks/useFeatureInit";
+import useLayerInit from "@hooks/useLayerInit";
 import useDefaultSelect from "../../hooks/sync/select/useDefaultSelect";
 import {useScenarioStore} from "@stores/useScenarioStore";
 import '../../App.css'
@@ -40,7 +40,7 @@ const Maps = () => {
         fetchLayerSchema()
     }, [fetchLayerSchema]);
 
-    useFeatureInit();
+    useLayerInit();
     useMapInit(openlayersMapRef, cesiumMapRef);
     useSimulation();
     useMapSync();
@@ -49,7 +49,7 @@ const Maps = () => {
 
     // useEffect(() => {
     //     if (olMap) {
-    //         useFeatureInit(); // ✅ 맵 초기화가 완료된 후 실행
+    //         useLayerInit(); // ✅ 맵 초기화가 완료된 후 실행
     //     }
     // }, [olMap]);
 

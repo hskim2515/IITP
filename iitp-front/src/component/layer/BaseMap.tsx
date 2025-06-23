@@ -54,7 +54,7 @@ const BaseMap: React.FC<BaseMapProps> = ({ fields }) => {
             {fields.map(field => (
                 <label key={field.key} style={{ color: 'white', display: 'block', margin: '4px 0' }}>
                     <input
-                        type={field.type}
+                        type={field.formType}
                         name="baseMap"
                         value={field.key}
                         checked={selected === field.key}

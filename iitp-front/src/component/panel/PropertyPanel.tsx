@@ -6,7 +6,7 @@ import Grid from "../util/Grid";
 import { buildColumnDefs, featureCollectionToFlatRow, } from "@utils/grid";
 import { ColDef } from "ag-grid-community";
 import { GridHandle } from "@type/GirdOptions";
-import { menuCodeToStoreMap } from "@hooks/useFeatureInit";
+import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 import { useEventStore } from "@stores/useEventStore";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import useGrid, { AddOptions } from "@hooks/useGrid";

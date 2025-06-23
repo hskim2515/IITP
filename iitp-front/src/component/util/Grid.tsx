@@ -45,13 +45,11 @@ const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueC
         if (!gridRef) return;
 
         const rowCount = gridRef.current.api.getDisplayedRowCount();
-        console.log("size:::",rowCount)
         gridRef.current.api.applyTransaction({ add: [ rawData ], addIndex: rowCount })
         gridRef.current.api.ensureIndexVisible(rowCount, 'bottom');
         gridRef.current.api.deselectAll();
 
         const newRow = gridRef.current.api.getDisplayedRowAtIndex(rowCount);
-        console.log("size:::::",newRow)
         if (newRow) newRow.setSelected(true);
 
         requestAnimationFrame(() => {

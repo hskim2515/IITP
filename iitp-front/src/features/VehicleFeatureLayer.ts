@@ -19,7 +19,7 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
 
         super({
             source: vectorSource,
-            visible: true,
+            visible: false,
             style: {
                 "circle-radius": 4,
                 "circle-fill-color": "rgb(251,188,96)",

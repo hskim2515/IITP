@@ -92,7 +92,7 @@ const useSimulation = () => {
     // Cesium 시뮬레이션 업데이트 (재생/일시정지/초기화 적용)
     useEffect(() => {
         if (viewer) {
-            layerManager.getLayerGroup("layer").forEach((layer) => {
+            layerManager.getLayerGroup("analyze").forEach((layer) => {
                 layer.setSpeed(speed * speedFactor);
                 layer.setStatus(isRunning);
             });
@@ -111,7 +111,7 @@ const useSimulation = () => {
     // cesium heatmap
     useEffect(() => {
         if (!viewer) return;
-        const layers = layerManager?.getLayer("layer", "heatmap");
+        const layers = layerManager?.getLayer("analyze", "heatmap");
         (Array.isArray(layers) ? layers : [ layers ]).forEach((heatMap) => {
             if (heatMap instanceof HeatBarLayer) {
                 heatMap.setColors(heatmapSetting.colors);
@@ -123,7 +123,7 @@ const useSimulation = () => {
     // ol heatmap
     useEffect(() => {
         if (!viewer) return;
-        const layers = layerManager?.getLayer("layer", "heatmap");
+        const layers = layerManager?.getLayer("analyze", "heatmap");
         (Array.isArray(layers) ? layers : [ layers ]).forEach((heatMap) => {
             if (heatMap instanceof Heatmap) {
                 heatMap.setRadius(heatmapSetting.blur);
@@ -198,11 +198,6 @@ const useSimulation = () => {
 
         czmlPositionWorkerRef.current.postMessage({ type: 'tick', currentTime: simTime });
 
-        // if (!isRunningRef.current) {
-        //     czmlPositionWorkerRef.current.postMessage({ type: 'pause', currentTime: simTime });
-        // } else {
-        //
-        // }
     };
 
     const setSimulation = () => {
@@ -219,18 +214,20 @@ const useSimulation = () => {
             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
         });
         // CZML
-        loadCzmlDataSource(czml);
+        loadCzmlDataSource(czml).then((czmlSource) => {
+            // Clock 설정
+            viewer.clock.shouldAnimate = isRunningRef.current;
 
-        // Clock 설정
-        viewer.clock.shouldAnimate = isRunningRef.current;
+            // 초기화
+            layerManager.removeSimulationLayers();
+            const vectorSource = new VectorSource();
+            layerManager.addVehicleLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, czmlSource);
+            layerManager.addHeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, heatmapSetting)
+            layerManager.addODArrows(vehicleRoute, speedFactor, isRunningRef.current)
+            layerManager.addTripLayer(vehicleRoute, speedFactor, isRunningRef.current)
+        });
 
-        // 초기화
-        layerManager.removeSimulationLayers();
-        const vectorSource = new VectorSource();
-        layerManager.addVehicleLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current);
-        layerManager.addHeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, heatmapSetting)
-        layerManager.addODArrows(vehicleRoute, speedFactor, isRunningRef.current)
-        layerManager.addTripLayer(vehicleRoute, speedFactor, isRunningRef.current)
+
 
         // Worker 메시지 처리
         changeModelWorkerRef.current.onmessage = (e) => {
@@ -245,7 +242,7 @@ const useSimulation = () => {
                         //layerManager?.hideLayer("layer", "default");
                     } else {
                         vehicleEntity.model = undefined;
-                        layerManager?.showLayer("layer", "default");
+                        layerManager?.showLayer("analyze", "default");
                     }
                 }
             });
@@ -255,7 +252,7 @@ const useSimulation = () => {
         czmlPositionWorkerRef.current.onmessage = (e) => {
             const { positions } = e.data;
             if (positions) {
-                layerManager.getLayerGroup("layer").forEach((layer) => {
+                layerManager.getLayerGroup("analyze").forEach((layer) => {
                     if (layer && typeof layer.setLatestPositions === "function") {
                         try {
                             layer.setLatestPositions(positions)
@@ -273,7 +270,7 @@ const useSimulation = () => {
         makeOdDataWorkerRef.current.onmessage = (e) => {
             const { odData } = e.data;
             if (odData) {
-                layerManager.getLayer("layer", "od").forEach((layer)=> {
+                layerManager.getLayer("analyze", "od").forEach((layer)=> {
                     if (layer && typeof layer.setOdData === "function") {
                         try {
                             layer.setOdData(odData)
@@ -287,17 +284,18 @@ const useSimulation = () => {
                 });
             }
         }
-        layerManager?.showLayer("layer", "default");
+        layerManager?.showLayer("analyze", "default");
     };
 
     const loadCzmlDataSource = (czml) => {
         const czmlSource = new Cesium.CzmlDataSource();
+
         if (czmlDataSourceRef.current) {
             viewer.dataSources.remove(czmlDataSourceRef.current, true);
         }
 
-        czmlSource.load(czml).then(() => {
-            viewer.dataSources.add(czmlSource).then(() => {
+        return czmlSource.load(czml).then(() => {
+            return viewer.dataSources.add(czmlSource).then((d) => {
                 viewer?.scene.preRender.removeEventListener(updateFrameFunc);
                 czmlDataSourceRef.current = czmlSource;
 
@@ -307,17 +305,23 @@ const useSimulation = () => {
                 });
                 entityMapRef.current = map;
 
-                if (viewerClockMultiplier.current)
+                if (viewerClockMultiplier.current) {
                     viewer.clock.multiplier = viewerClockMultiplier.current;
+                }
+
                 czmlPositionWorkerRef.current.postMessage({
                     type: 'init',
                     czmlPackets: vehicleRoute,
                     currentTime: Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime()
                 });
+
                 viewer.scene.preRender.addEventListener(updateFrameFunc);
+
+                return d; // ✅ CzmlDataSource를 반환
             });
         });
     };
+
 
 };
 

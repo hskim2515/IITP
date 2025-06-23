@@ -6,8 +6,6 @@ import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 const Tools = () => {
     const { toggleTools, showTools } = useToolStore();
 
-    console.log(showTools)
-
     return (
         <div
             style={{

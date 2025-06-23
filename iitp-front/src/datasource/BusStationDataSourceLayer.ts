@@ -1,8 +1,8 @@
 import { GeoJsonDataSource, Viewer, Color } from "cesium";
-import { menuCodeToStoreMap } from "@hooks/useFeatureInit";
+import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 
 
-export default class BusStationDatasourceLayer {
+export default class BusStationDataSourceLayer {
     private readonly LAYER_NAME = "PT_BUS_STATION";
     private dataSource: GeoJsonDataSource;
     private unsubscribe: () => void;
@@ -18,7 +18,7 @@ export default class BusStationDatasourceLayer {
                 try {
                     await this.load(geojson);
                 } catch (error) {
-                    console.error("[BusStationDatasourceLayer] GeoJSON 로드 실패:", error);
+                    console.error("[BusStationDataSourceLayer] GeoJSON 로드 실패:", error);
                 }
             },
             { fireImmediately: true }

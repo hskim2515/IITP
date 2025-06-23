@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, {useEffect, useState} from 'react';
 import { useLayerStore } from '@stores/useLayerStore';
 import { faCog } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -20,11 +20,17 @@ const Analysis: React.FC<AnalysisProps> = ({ fields }) => {
         setSelectedLayerType(type);
     };
 
+    const defaultSelected = fields.find(field => field.basic)?.key || null;
+
+    useEffect(() => {
+        if (defaultSelected) {
+            addActiveLayerName(defaultSelected);
+        }
+    }, [defaultSelected, addActiveLayerName]);
+
     const handleToggle = (value: string, checked: boolean) => {
         checked ? addActiveLayerName(value) : removeActiveLayerName(value);
     };
-
-    console.log(fields)
 
     return (
         <div>
@@ -32,7 +38,7 @@ const Analysis: React.FC<AnalysisProps> = ({ fields }) => {
             {fields.map(field => (
                 <label key={ field.key } style={ { color: 'white', display: 'block', margin: '4px 0' } }>
                     <input
-                        type={ field.type }
+                        type={ field.formType }
                         value={ field.key }
                         checked={ activeLayerName.includes(field.key) }
                         onChange={ e => handleToggle(field.key, e.target.checked) }

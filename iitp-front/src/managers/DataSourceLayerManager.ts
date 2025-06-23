@@ -1,5 +1,5 @@
 import * as Cesium from "cesium";
-import BusStationDatasourceLayer from "../datasource/BusStationDatasourceLayer";
+import BusStationDataSourceLayer from "../datasource/BusStationDataSourceLayer";
 
 class DataSourceLayerManager {
     private id: string;
@@ -29,8 +29,9 @@ class DataSourceLayerManager {
         return this.layerGroups[groupName];
     }
 
-    add(ds, groupName, layerName): void {
+    add(ds, groupName, layerName, basic): void {
         const group = this._getOrCreateGroup(groupName);
+        ds.dataSource.show = basic
         group.set(layerName, ds);
 
         //await this.viewer.dataSources.add(ds);
@@ -48,7 +49,7 @@ class DataSourceLayerManager {
 
     get(groupName: string, layerName: string): Cesium.DataSource | undefined {
         const group = this.layerGroups[groupName];
-        return group?.get(layerName);
+        return group?.get(layerName)?.dataSource;
     }
 
     getAllByGroup(groupName: string): Cesium.DataSource[] {

@@ -21,13 +21,13 @@ import {useLayerSchemaStore} from "@stores/useLayerSchemaStore";
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToStoreMap: Record<string, FeatureStoreFactoryType> = {
     // menuCode: store
-    ROAD: useRoadStore,
+    NETWORK: useRoadStore,
     PT_BUS_STATION: usePTBusStationStore,
 }
 
 
 
-const useFeatureInit = (): void => {
+const useLayerInit = (): void => {
 
     const olMap = useOpenLayersStore.state.map();
     const cesiumViewer = useCesiumStore.getState().viewer;
@@ -86,9 +86,8 @@ const useFeatureInit = (): void => {
 
         setLayerManager(layerManager);
         layerManager.addBaseMapLayer(layerGroups);
-        await layerManager.addNetworkLayer(layerGroups);
-        layerManager.addBusStationLayer();
+        await layerManager.addFacilityLayers(layerGroups)
     };
 };
 
-export default useFeatureInit;
+export default useLayerInit;

@@ -1,10 +1,10 @@
 import { GeoJsonDataSource, Viewer } from "cesium";
 import * as Cesium from "cesium";
-import {menuCodeToStoreMap} from "@hooks/useFeatureInit";
+import {menuCodeToStoreMap} from "@hooks/useLayerInit";
 import {useScenarioStore} from "@stores/useScenarioStore";
 
 export default class NetworkDataSourceLayer {
-    private readonly LAYER_NAME = "ROAD";
+    private readonly LAYER_NAME = "NETWORK";
     private dataSource: GeoJsonDataSource;
 
     constructor(private viewer: Viewer) {
@@ -13,7 +13,6 @@ export default class NetworkDataSourceLayer {
 
     public async load(): Promise<GeoJsonDataSource> {
 
-        console.log("NetworkDataSourceLayer.load() 호출됨");
         const store = menuCodeToStoreMap[this.LAYER_NAME]
         const selectedScenario = useScenarioStore.getState().selectedScenario;
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
@@ -21,7 +20,6 @@ export default class NetworkDataSourceLayer {
         try {
 
             const { nodes, links, lanes, cells, segments } = store.getState().originData;
-            console.log(store.getState().originData);
             const baseLng = selectedScenario.longitude;
             const baseLat = selectedScenario.latitude;
 
@@ -54,7 +52,7 @@ export default class NetworkDataSourceLayer {
                 const right = Cesium.Cartesian3.cross(direction, up, new Cesium.Cartesian3());
                 Cesium.Cartesian3.normalize(right, right);
 
-                this.viewer.entities.add(new Cesium.Entity({
+                this.dataSource.entities.add(new Cesium.Entity({
                     corridor: {
                         cornerType: Cesium.CornerType.MITERED,
                         positions: [sourceCart, targetCart],
@@ -82,7 +80,7 @@ export default class NetworkDataSourceLayer {
                     lane.laneSource = sourceCart;
                     lane.laneTarget = targetCart;
 
-                    this.viewer.entities.add({
+                    this.dataSource.entities.add({
                         corridor: {
                             cornerType: Cesium.CornerType.MITERED,
                             positions: [sourceCart, targetCart],
@@ -141,7 +139,7 @@ export default class NetworkDataSourceLayer {
 
                         position.push(targetCart)
 
-                        this.viewer.entities.add({
+                        this.dataSource.entities.add({
                             polyline: {
                                 positions: position,
                                 width: 5,
