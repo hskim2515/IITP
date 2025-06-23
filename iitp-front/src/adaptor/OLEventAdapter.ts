@@ -1,11 +1,13 @@
 import { EventAdapter } from '@adaptor/EventAdapter';
-import { Map as OLMap, MapBrowserEvent } from 'ol';
+import { Feature, Map as OLMap, MapBrowserEvent } from 'ol';
 import VectorSource from 'ol/source/Vector';
 import VectorLayer from 'ol/layer/Vector';
 import { Draw, Modify, Select, Snap } from 'ol/interaction';
 import { unByKey } from 'ol/Observable';
 import { EventOptions } from "@type/EventOptions";
 import GeometryType from "@type/FeatureOptions";
+import { Circle as CircleStyle, Fill, Stroke, Style } from "ol/style";
+import Collection from "ol/Collection";
 
 type InteractionType = 'draw' | 'modify' | 'select' | 'snap';
 type OLInteraction = Draw | Modify | Select | Snap;
@@ -85,36 +87,45 @@ export class OLEventAdapter implements EventAdapter {
         console.log("options:::", options)
         let interaction: OLInteraction;
         switch (type) {
-            case 'snap': {
-                const source = options.olLayer?.getSource();
-                interaction = new Snap({
-                    source
-                });
-                break;
-            }
             case 'draw': {
-                const source = options.olLayer?.getSource();
                 const geometryType = options.drawGeometryType || GeometryType.POINT
                 // this.attachLayer(type, source)
                 interaction = new Draw({
                     type: geometryType,
-                    source,
                 });
                 break;
             }
             case 'modify': {
-                const source = options.olLayer?.getSource();
+                const rawFeatures = options.features;
 
-                // if (features?.getArray().length == 0) break;
-                // this.attachLayer(type, source)
+                // Feature[]를 Collection으로 감싸기
+                const featuresCollection = Array.isArray(rawFeatures)
+                    ? new Collection<Feature>(rawFeatures)
+                    : rawFeatures;
+
                 interaction = new Modify({
-                    source,
+                    features: featuresCollection,
+                    wrapX: false,
+                    style: new Style({
+                        image: new CircleStyle({
+                            radius: 8,
+                            fill: new Fill({ color: "rgba(0,255,0,1)" }),
+                            stroke: new Stroke({ color: "rgba(255,0,0,0)", width: 1 }),
+                        }),
+                    })
                 });
                 break;
             }
             case 'select': {
                 interaction = new Select({
-                    layers: options.olLayers
+                    layers: options.olLayers,
+                });
+                break;
+            }
+            case 'snap': {
+                const source = options.olLayer?.getSource();
+                interaction = new Snap({
+                    source
                 });
                 break;
             }

@@ -3,17 +3,33 @@ import { combine, subscribeWithSelector } from 'zustand/middleware';
 import { createSelectors } from './createSelectors';
 import { FetchFeatureDataType } from "@type/FeatureOptions";
 import { GeoJSON } from "ol/format";
+import { featureCollectionToFlatRow } from "@utils/grid";
 
 export interface FeatureStoreFactoryType {
     getState: () => State & Actions;
     setState: (partial: Partial<State & Actions>, replace?: boolean) => void;
 }
 
+export interface GeoJSONFeature extends Record<string, any> {
+    type: "Feature";
+    geometry: Record<string, any> | null;
+    properties: {
+        id: string | number;
+        [key: string]: any;
+    };
+}
+
+export interface GeoJSONFeatureCollection {
+    type: "FeatureCollection";
+    features: GeoJSONFeature[];
+}
+
+
 export interface State {
     // fetch 한 data
     originData: FetchFeatureDataType | undefined
     // fetch data 기반, 화면에 띄울 geojson 데이터
-    currentGeojson: GeoJSON.FeatureCollection | undefined
+    currentGeojson: GeoJSONFeatureCollection | undefined
     // fetch data 기반, flatRow로 변환한 데이터
     flatRow: Record<string, unknown>[]
     // 변경 확인
@@ -22,7 +38,8 @@ export interface State {
 
 export interface Actions {
     setOriginData: (data: FetchFeatureDataType) => void;
-    setCurrentGeojson: (currentGeoJson: GeoJSON.FeatureCollection) => void;
+    setCurrentGeojson: (currentGeoJson: GeoJSONFeatureCollection) => void;
+    setCurrentData: (currentGeoJson: GeoJSONFeatureCollection) => void;
     setFlatRow: (flatRow: Record<string, unknown>[]) => void;
     setChange: () => boolean;
     initCurrentData: () => void;
@@ -40,18 +57,26 @@ const createFeatureStore = () =>
         create<State & Actions>(
             subscribeWithSelector(
                 combine(initialState, (set, get) => ({
-                    setOriginData: (data: FetchFeatureDataType) => set({ originData: data }),
-                    setCurrentGeojson: (geojson: GeoJSON.FeatureCollection) => {
-                        set({ currentGeojson: structuredClone(geojson) });
-                    },
-                    setFlatRow: (flatRow: Record<string, unknown>[]) => set({ flatRow: flatRow }),
-                    setChange: (changed: boolean) => set({ isChanged: changed}),
-                    initCurrentData: () => {
-                        const origin = get().originData?.geojson;
-                        if (origin) set({ currentGeojson: origin });
-                    }
-                }))
-            ))
+                        setOriginData: (data: FetchFeatureDataType) => set({ originData: data }),
+                        setCurrentGeojson: (geojson: GeoJSON.FeatureCollection) => {
+                            set({ currentGeojson: structuredClone(geojson) });
+                        },
+                        setCurrentData: (geojson: GeoJSON.FeatureCollection) => {
+                            set({
+                                currentGeojson: structuredClone(geojson),
+                                flatRow: featureCollectionToFlatRow(geojson)
+                            });
+                        },
+                        setFlatRow: (flatRow: Record<string, unknown>[]) => set({ flatRow: flatRow }),
+                        setChange: (changed: boolean) => set({ isChanged: changed }),
+                        initCurrentData: () => {
+                            const origin = get().originData?.geojson;
+                            if (origin) set({ currentGeojson: origin });
+                        }
+                    })
+                )
+            )
+        )
     );
 
 export default createFeatureStore;

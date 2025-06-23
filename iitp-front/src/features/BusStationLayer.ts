@@ -37,12 +37,13 @@ export default class BusStationLayer extends VectorLayer {
             visible: true,
             zIndex: 410,
             // updateWhileAnimating: true,
-            style: (feature: Feature):Style => {
-                if(feature.get("selected") === true) {
-                    return this.selectedStyle
-                }
-                return this.defaultStyle;
-            },
+            style: new Style({
+                image: new CircleStyle({
+                    radius: 6,
+                    fill: new Fill({ color: "rgba(255,0,0,1)" }),
+                    stroke: new Stroke({ color: "rgba(0,0,0,0)", width: 1 }),
+                }),
+            }),
         });
 
         this.source = source;
@@ -93,7 +94,6 @@ export default class BusStationLayer extends VectorLayer {
         incoming.forEach((newF) => {
             const id = newF.get("id");
             if (id !== undefined && !existingById.has(id)) {
-                newF.set("selected", false); // 초기 선택 해제
                 this.source.addFeature(newF);
             }
         });

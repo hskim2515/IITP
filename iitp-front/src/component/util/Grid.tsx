@@ -13,11 +13,16 @@ const DEFAULT_GRID_OPTIONS = {
     },
     rowSelection: {
         mode: 'multiRow',
-        enableClickSelection: true,
+        enableClickSelection: false,
     }
 };
 
-const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueChanged, onSelectionChanged }, ref: ForwardedRef<GridHandle>) => {
+const Grid = forwardRef<GridHandle, GridProps>(({
+                                                    colDefs,
+                                                    rowData,
+                                                    onCellValueChanged,
+                                                    onSelectionChanged
+                                                }, ref: ForwardedRef<GridHandle>) => {
     ModuleRegistry.registerModules([ AllCommunityModule ]);
 
     const gridRef = useRef<AgGridReact>(null);
@@ -27,37 +32,33 @@ const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueC
     const [ editable, setEditable ] = useState<boolean>(false);
 
     const [ isChanged, setIsChanged ] = useState<boolean>(false)
-    const [ changedCellValue, setChangedCellValue ] = useState<undefined | unknown>(undefined)
+    const [ changedCellValue, setChangedCellValue ] = useState<Record<string, unknown>>({})
 
     useEffect(() => {
         const updatedDefs = colDefs.map((col) => ({
             ...col,
-            editable: editable,
+            editable: (params: any) => editable && params.node.isSelected(),
         }));
         setColumnDefsState(updatedDefs);
-    }, [ colDefs, editable ]);
+    }, [colDefs, editable]);
 
     useEffect(() => {
         console.log("rowData:::", rowData)
-    }, [rowData]);
+    }, [ rowData ]);
 
     const addRow = (rawData: Record<string, unknown>): void => {
         if (!gridRef) return;
 
         const rowCount = gridRef.current.api.getDisplayedRowCount();
-        console.log("size:::",rowCount)
+        console.log("gird rowCount:::", rowCount)
         gridRef.current.api.applyTransaction({ add: [ rawData ], addIndex: rowCount })
         gridRef.current.api.ensureIndexVisible(rowCount, 'bottom');
-        gridRef.current.api.deselectAll();
 
         const newRow = gridRef.current.api.getDisplayedRowAtIndex(rowCount);
-        console.log("size:::::",newRow)
-        if (newRow) newRow.setSelected(true);
+        console.log("size:::::", newRow)
 
         requestAnimationFrame(() => {
-            const editableCol = columnDefsState.find(
-                (col) => col.editable && col.field
-            );
+            const editableCol = columnDefsState.find((col) => col.editable && col.field);
             if (editableCol?.field) {
                 gridRef.current.api.startEditingCell({
                     rowIndex: rowCount,
@@ -77,7 +78,6 @@ const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueC
 
     const removeRow = (rows: []) => {
         gridRef.current.api.applyTransaction({ remove: rows })
-        gridRef.current.api.deselectAll()
     }
     const getRowNodesByField = (field: string, value: unknown): IRowNode[] => {
         const foundNode: IRowNode[] = []
@@ -101,26 +101,35 @@ const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueC
         return gridRef.current.api.getSelectedRows();
     }
 
-    const setSelectRow = (node: IRowNode | IRowNode[]): void => {
-        gridRef.current.api.deselectAll();
+    const setSelectRow = (node: IRowNode | IRowNode[], isSelect: boolean = true): void => {
         const nodes: IRowNode[] = Array.isArray(node)
             ? node
             : [ node ];
         if (nodes.length === 0) {
             return;
         }
-        nodes.forEach((node) => node.setSelected(true));
+        nodes.forEach((node) => node.setSelected(isSelect));
 
         const firstNode = nodes[0];
-        if (firstNode.rowIndex !== undefined && firstNode.rowIndex !== null) {
+        console.log("test nodes:::", nodes)
+        if (isSelect) {
             gridRef.current.api.ensureIndexVisible(firstNode.rowIndex, 'top');
         }
+
     }
 
-    const setSelectRowsWithField = (field: string, value: unknown): void => {
-        gridRef.current.api.deselectAll();
+    const ensureIndexVisible = (index:number, position?: string):void => {
+        gridRef.current.api.ensureIndexVisible(index, position);
+    }
+
+    const setSelectRowsWithField = (field: string, value: unknown, isSelect?: boolean): void => {
         const nodes = getRowNodesByField(field, value);
-        setSelectRow(nodes)
+        if (nodes.length === 0) return;
+
+        console.log("test flow grid setSelectRowsWithField")
+        console.log("test nodes setSelectRowsWithField input :::", field, value, isSelect)
+        console.log("test nodes setSelectRowsWithField:::", nodes)
+        setSelectRow(nodes, isSelect)
     }
 
     const getRowNodeByRowIndex = (rowIndex: number): IRowNode => {
@@ -139,22 +148,11 @@ const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueC
             .map(node => node.updateData(data))
         setIsChanged(true)
     }
+
     const switchEditable = (active: boolean) => {
         if (!gridRef.current) return;
-
-        // 활성화 해제 시 편집 중단
-        if (!active) {
-            gridRef.current.api?.stopEditing(true);
-        }
-
+        if (!active) gridRef.current.api?.stopEditing(true);
         setEditable(active);
-
-        const updatedDefs = columnDefsState.map((col) => ({
-            ...col,
-            editable: col.field !== 'selected' ? active : false, // selected 직접 편집 X
-        }));
-
-        setColumnDefsState(updatedDefs);
     };
 
     const isGridChanged = (): boolean => {
@@ -162,7 +160,7 @@ const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueC
     }
 
     const handleRowDoubleClick = (event: RowDoubleClickedEvent) => {
-        console.log("[Grid] handleRowDoubleClick:::",event.data)
+        console.log("[Grid] handleRowDoubleClick:::", event.data)
     };
 
     const handleRowClick = (event: RowClickedEvent) => {
@@ -175,6 +173,7 @@ const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueC
     }
 
     const getChangedValue = () => {
+        console.log("test flow grid getChangedValue")
         return changedCellValue;
     }
 
@@ -187,6 +186,7 @@ const Grid = forwardRef<GridHandle, GridProps>(({ colDefs, rowData, onCellValueC
         setRowDataByField: setRowDataByField,
         isGridChanged: isGridChanged,
         getChangedValue: getChangedValue,
+        ensureIndexVisible: ensureIndexVisible,
     }));
     return (
         <div>

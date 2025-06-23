@@ -31,6 +31,12 @@ export default class NetworkLayer extends VectorLayer {
             }));
         }
 
+        // if (geom instanceof LineString && props.featureType === "link-edit") {
+        //     styles.push(new Style({
+        //         stroke: new Stroke({ color: "#ffea00", width: Math.min(3, 0.5 / resolution) }),
+        //     }));
+        // }
+
         if (geom instanceof Polygon && props.featureType === "lane") {
             styles.push(new Style({
                 fill: new Fill({ color: "#7f7f7f" }),
@@ -71,8 +77,8 @@ export default class NetworkLayer extends VectorLayer {
                 const nx = -uy;
                 const ny = ux;
 
-                const arrowLength = 0.6
-                const baseWidth = 0.3
+                const arrowLength = 1.8
+                const baseWidth = 0.8
 
                 const baseCenter: [number, number] = [
                     end[0] - ux * arrowLength,
@@ -120,8 +126,8 @@ export default class NetworkLayer extends VectorLayer {
         from: [number, number],
         to: [number, number],
         node: Coordinate,
-        segmentCount: number = 50,
-        ratioAlongLine: number = 0.1,
+        segmentCount: number = 100,
+        ratioAlongLine: number = 0.15,
         nodePullScale: number = 0.5
     ): [number, number][] {
         // from → to 선분 상의 점 P
@@ -244,12 +250,12 @@ export default class NetworkLayer extends VectorLayer {
                     const fromPt = from.get("properties")?.laneTarget;
                     const toPt = to.get("properties")?.laneSource;
                     const nodePt = fromLonLat([node.lng, node.lat]);
-                    const numPoints = 50
+
                     const bezierPoints = this.getRatioBasedBezierPoints(
                         fromPt, toPt, nodePt,
                         100,       // 점 개수
                         0.5,      // from - to 중간 지점
-                        0.1       // node 방향으로 당기는 정도 10%
+                        0.15       // node 방향으로 당기는 정도
                     );
                     const connLine = new LineString(bezierPoints);
                     const connLineFeature = new Feature(connLine);

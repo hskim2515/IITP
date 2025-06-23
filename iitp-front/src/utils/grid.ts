@@ -3,6 +3,7 @@ import ColorCellRenderer from "../component/util/ColorCellRenderer";
 import FileCellRenderer from "../component/util/FileCellRenderer";
 import { PropertyFieldType } from "@type/PropertyField";
 import { GeoJSON } from "ol/format";
+import { GeoJSONFeature, GeoJSONFeatureCollection } from "@stores/useFeatureStoreFactory";
 
 // property schema 를 받아서 grid colDef 로 변환
 export const buildColumnDefs = (fields: PropertyFieldType[]): ColDef[] => [
@@ -75,7 +76,7 @@ export const buildNewRow = ({
 };
 
 export function featureCollectionToFlatRow(
-    featureCollection: GeoJSON.FeatureCollection,
+    featureCollection: GeoJSONFeatureCollection,
 ): Record<string, unknown>[] {
     console.log("rowData featureCollectionToFlatRow init")
     if (!featureCollection || featureCollection.type !== "FeatureCollection" || !Array.isArray(featureCollection.features)) return [];
@@ -83,7 +84,7 @@ export function featureCollectionToFlatRow(
     return featureCollection.features.map(featureToFlatRow) || []
 }
 
-export function featureToFlatRow(feature: GeoJSON.Feature): Record<string, unknown> {
+export function featureToFlatRow(feature: GeoJSONFeature): Record<string, unknown> {
     const props = feature.properties || {};
     const geom = feature.geometry;
 
@@ -91,7 +92,7 @@ export function featureToFlatRow(feature: GeoJSON.Feature): Record<string, unkno
         ...props,
     };
 
-    if (geom) {
+    if (geom) { // 블럭을 나눌 수 있도록
         flatRow.geometryType = geom.type;
 
         switch (geom.type) {

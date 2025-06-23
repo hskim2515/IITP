@@ -7,25 +7,49 @@ import { Feature } from "ol";
 import { GeoJSON } from "ol/format";
 
 export interface AddOptions {
+    id: null | string | number,
     baseData: Record<string, unknown>,
-    defaultGeometry?: Record<string, unknown>
+    addedProperties?: Record<string, unknown>
 }
 
 const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType, colDefs: ColDef) => {
 
-    const addRow = ({
-                        baseData, defaultGeometry
-                    }: AddOptions) => {
-        const id = Date.now();
-        const { id: ignored, ...restProps } = baseData; // baseData의 id는 제외(예: station 생성 시 station id와 lane id 중복 예방)
-        const props = { id, ...restProps };
+    // addRow는 row를 추가하기만 하도록
+    // generate Row, mergeRow 등 baseData 와 added Properties 병합 메서드 필요
+    // 생성할 객체 id,
+    // 생성할 객체 속성 (geometry 포함)
+    // 바탕이 되는 객체
+    // 이렇게 3개의 인자를 넣도록
 
-        console.log("useGrid baseData:::", baseData)
-        console.log("useGrid defaultGeometry:::", defaultGeometry)
 
-        const geometry = defaultGeometry ?? null;
 
-        const newFeature: GeoJSON.Feature = {
+    const createRowFromOptions = ({
+                                      baseData,
+                                      addedProperties
+                                  }: Omit<AddOptions, 'id'>): Record<string, unknown> => {
+        console.log("flow test createRowFromOptions")
+        console.log("flow test createRowFromOptions baseData:::", baseData)
+        // baseData의 id는 무시
+        const { id: ignored, ...baseProps } = baseData ?? {};
+
+        // addedProperties가 geometry, id, selected 등을 포함한다고 가정
+        const {
+            id,
+            geometry,
+            selected = false,        // 기본 선택 상태
+            ...otherProps            // 기타 속성들 (type 등)
+        } = addedProperties ?? {};
+
+        const props = {
+            id,
+            ...baseProps,
+            ...otherProps,
+            selected
+        };
+
+        console.log("flow test createRowFromOptions props:::", props)
+
+        const newFeature = {
             type: "Feature",
             geometry,
             properties: props,
@@ -40,9 +64,10 @@ const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType,
         const newRow = buildNewRow({ colDefs, defaultData: featureToFlatRow(newFeature) });
         const updatedRows = [ ...store.getState().flatRow, newRow ];
 
-        store.getState().setCurrentGeojson(updatedGeojson);
-        store.getState().setFlatRow(updatedRows);
-        gridRef.current?.addRow(newRow);
+        // store.getState().setCurrentGeojson(updatedGeojson);
+        // store.getState().setFlatRow(updatedRows);
+
+        return newRow;
     };
 
     const deleteSelected = () => {
@@ -63,6 +88,9 @@ const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType,
     };
 
     const saveModifiedFeatures = (features: Feature[]) => {
+        console.log("flow test saveModifiedFeatures")
+        console.log("props saveModifiedFeatures")
+        console.log("props saveModifiedFeatures features:::", features)
         const geojsonFormat = new GeoJSON();
 
         features.forEach((feature) => {
@@ -98,42 +126,42 @@ const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType,
     };
 
     const updateFeatureByRow = () => {
-        console.log("updateFeatureByRow:::", updateFeatureByRow)
-        const row = gridRef.current?.getChangedValue();
-        if (!row || typeof row !== "object") return;
-
-        const id = row.id;
-        if (typeof id !== "string" && typeof id !== "number") return;
-
-        const currentGeojson = store.getState().currentGeojson;
-        if (!currentGeojson) return;
-
-        const updatedFeatures = currentGeojson.features.map((feature) => {
-            if (feature.properties?.id !== id) return feature;
-
-            // geometry 갱신
-            const newGeometry = {
-                type: row.geometryType ?? feature.geometry?.type,
-                coordinates: [
-                    row.lon ?? feature.geometry?.coordinates?.[0],
-                    row.lat ?? feature.geometry?.coordinates?.[1]
-                ]
-            };
-
-            return {
-                ...feature,
-                properties: {
-                    ...feature.properties,
-                    ...row,
-                },
-                geometry: newGeometry
-            };
-        });
-
-        store.getState().setCurrentGeojson({
-            ...currentGeojson,
-            features: updatedFeatures,
-        });
+        // console.log("test call updateFeatureByRow")
+        // const row = gridRef.current?.getChangedValue();
+        // if (!row || typeof row !== "object") return;
+        //
+        // const id = row.id;
+        // if (typeof id !== "string" && typeof id !== "number") return;
+        //
+        // const currentGeojson = store.getState().currentGeojson;
+        // if (!currentGeojson) return;
+        //
+        // const updatedFeatures = currentGeojson.features.map((feature) => {
+        //     if (feature.properties?.id !== id) return feature;
+        //
+        //     // geometry 갱신
+        //     const newGeometry = {
+        //         type: row.geometryType ?? feature.geometry?.type,
+        //         coordinates: [
+        //             row.lon ?? feature.geometry?.coordinates?.[0],
+        //             row.lat ?? feature.geometry?.coordinates?.[1]
+        //         ]
+        //     };
+        //
+        //     return {
+        //         ...feature,
+        //         properties: {
+        //             ...feature.properties,
+        //             ...row,
+        //         },
+        //         geometry: newGeometry
+        //     };
+        // });
+        //
+        // store.getState().setCurrentGeojson({
+        //     ...currentGeojson,
+        //     features: updatedFeatures,
+        // });
     };
 
     const switchEditable = (active: boolean) => {
@@ -141,9 +169,8 @@ const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType,
     }
 
     return {
-        addRow,
+        createRowFromOptions,
         deleteSelected,
-        saveModifiedFeatures,
         updateFeatureByRow,
         switchEditable
     };
