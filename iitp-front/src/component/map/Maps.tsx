@@ -8,11 +8,12 @@ import useSimulation from "@hooks/useSimulation";
 import useMapSync from "@hooks/sync/useMapSync";
 import useLayer from "@hooks/useLayer";
 import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
-import useFeatureInit from "@hooks/useFeatureInit";
+import useLayerInit from "@hooks/useLayerInit";
 import useDefaultSelect from "../../hooks/sync/select/useDefaultSelect";
 import {useScenarioStore} from "@stores/useScenarioStore";
 import '../../App.css'
 import {useCesiumStore} from "@stores/useCesiumStore";
+import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 
 const Maps = () => {
 
@@ -32,16 +33,28 @@ const Maps = () => {
 
     const fetchLayerSchema = useLayerSchemaStore.actions.fetchLayerSchema()
 
+    const olMap = useOpenLayersStore.state.map();
+    const cesiumViewer = useCesiumStore.getState().viewer;
+
     useEffect(() => {
         fetchLayerSchema()
     }, [fetchLayerSchema]);
 
-    useFeatureInit()
+    useLayerInit();
     useMapInit(openlayersMapRef, cesiumMapRef);
     useSimulation();
     useMapSync();
     useLayer();
     useDefaultSelect();
+
+    // useEffect(() => {
+    //     if (olMap) {
+    //         useLayerInit(); // ✅ 맵 초기화가 완료된 후 실행
+    //     }
+    // }, [olMap]);
+
+
+
 
     // Mouse event handlers
     useEffect(() => {

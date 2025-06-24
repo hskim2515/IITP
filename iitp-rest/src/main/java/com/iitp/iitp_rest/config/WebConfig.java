@@ -36,6 +36,9 @@ public class WebConfig {
                 registry.addMapping("/layers/**")
                         .allowedOrigins("*")
                         .allowedMethods("GET", "POST", "PUT", "DELETE");
+                registry.addMapping("/scenario/**")
+                        .allowedOrigins("*")
+                        .allowedMethods("GET", "POST", "PUT", "DELETE");
             }
         };
     }

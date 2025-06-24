@@ -40,11 +40,11 @@ const Grid = forwardRef<GridHandle, GridProps>(({
             editable: (params: any) => editable && params.node.isSelected(),
         }));
         setColumnDefsState(updatedDefs);
-    }, [colDefs, editable]);
+    }, [ colDefs, editable ]);
 
     useEffect(() => {
         console.log("rowData:::", rowData)
-    }, [ rowData ]);
+    }, [rowData]);
 
     const addRow = (rawData: Record<string, unknown>): void => {
         if (!gridRef) return;

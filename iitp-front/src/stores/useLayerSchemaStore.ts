@@ -47,12 +47,10 @@ export const useLayerSchemaStore = createSelectors(create<State & Actions>(
                     set({ loading: true });
                     try {
                         const res = await fetch(process.env.VITE_API_URL + '/layers/group'); // fetch 사용
-                        console.log(res)
                         if (!res.ok) {
                             throw new Error('Network response was not ok');
                         }
                         const data: LayerGroup[] = await res.json(); // 응답을 JSON으로 파싱
-                        console.log(data)
                         const enrichedGroups = mapWithLocalSchema(data); // API 데이터와 localLayerSchema 매핑
                         set({ groups: enrichedGroups, loading: false });
                     } catch (error) {
@@ -71,7 +69,7 @@ function mapWithLocalSchema(groupsFromApi: LayerGroup[]): LayerGroup[] {
         ...group,
         fields: group.layers.map(layer => ({
             ...layer,
-            ...localLayerSchema[layer.key], // UI 속성 추가
+            //...localLayerSchema[layer.key], // UI 속성 추가
         })),
     }));
 }

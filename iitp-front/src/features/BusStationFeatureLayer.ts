@@ -3,32 +3,12 @@ import VectorSource from "ol/source/Vector";
 import { GeoJSON as GeoJSONFormat } from "ol/format";
 import { Feature } from "ol";
 import { Fill, Stroke, Circle as CircleStyle, Style } from "ol/style";
-import { menuCodeToStoreMap } from "@hooks/useFeatureInit";
+import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 
-export default class BusStationLayer extends VectorLayer {
+export default class BusStationFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
-    private readonly LAYER_NAME = "PT_BUS_STATION";
+    private readonly LAYER_NAME = "BUS_STATION";
     private unsubscribe: () => void;
-
-    public readonly defaultStyle = new Style({
-        image: new CircleStyle({
-            radius: 6,
-            fill: new Fill({ color: "rgba(255,0,0,1)" }),
-            stroke: new Stroke({ color: "rgba(0,0,0,0)", width: 1 }),
-        }),
-    })
-
-    public readonly selectedStyle = new Style({
-        image: new CircleStyle({
-            radius: 8,
-            fill: new Fill({ color: "rgba(0,255,0,1)" }),
-            stroke: new Stroke({ color: "rgba(255,0,0,0)", width: 1 }),
-        }),
-    })
-
-    //
-    // default style && selected Style
-
 
     constructor() {
         const source = new VectorSource();
@@ -117,17 +97,6 @@ export default class BusStationLayer extends VectorLayer {
                 oldF.changed();
             }
         });
-    }
-
-    /**
-     * 초기 로드 또는 수동 호출 시에도 diff 업데이트 사용
-     */
-    public loadFromStore(): void {
-        const store = menuCodeToStoreMap[this.LAYER_NAME];
-        const geojson = store.getState().currentGeojson;
-        if (geojson) {
-            this.applyDiffUpdate(geojson);
-        }
     }
 
     /** 레이어 제거 시 구독 해제 */

@@ -9,13 +9,18 @@ import * as Cesium from "cesium";
 import { Map as OLMap } from "ol";
 import TileLayerManager from "./TileLayerManager";
 import VectorLayerManager from "./VectorLayerManager";
-import HeatmapLayer from "@features/HeatmapLayer";
+import HeatmapFeatureLayer from "@features/HeatmapFeatureLayer";
 import BaseLayer from "ol/layer/Base";
-import ODMatrixLayer from "@features/ODMatrixLayer";
-import VehicleLayer from "@features/VehicleLayer";
-import TrailLayer from "@features/TrailLayer";
-import NetworkLayer from "@features/NetworkLayer";
-import BusStationLayer from "@features/BusStationLayer";
+import ODMatrixFeatureLayer from "@features/ODMatrixFeatureLayer";
+import VehicleFeatureLayer from "@features/VehicleFeatureLayer";
+import TrailFeatureLayer from "@features/TrailFeatureLayer";
+import NetworkFeatureLayer from "@features/NetworkFeatureLayer";
+import BusStationFeatureLayer from "@features/BusStationFeatureLayer";
+import BusStationDataSourceLayer from "../datasource/BusStationDataSourceLayer";
+import EntityLayerManager from "@managers/DataSourceLayerManager";
+import DataSourceLayerManager from "@managers/DataSourceLayerManager";
+import NetworkDataSourceLayer from "../datasource/NetworkDataSourceLayer";
+import VehicleDataSourceLayer from "../datasource/VehicleDataSourceLayer";
 
 type LayerItem = {
     id: number;
@@ -25,7 +30,7 @@ type LayerItem = {
     auth: number;
 };
 
-type Manager = PrimitiveLayerManager | BaseMapLayerManager | VectorLayerManager | TileLayerManager;
+type Manager = PrimitiveLayerManager | BaseMapLayerManager | VectorLayerManager | TileLayerManager | DataSourceLayerManager;
 
 type LayerGroupSchema = {
     id: number;
@@ -46,11 +51,12 @@ export class LayerManager {
         private baseMapLayerManager: BaseMapLayerManager,
         private cesiumViewer: Cesium.Viewer,
         private vectorLayerManager: VectorLayerManager,
+        private dataSourceLayerManager: DataSourceLayerManager,
         private tileLayerManager: TileLayerManager,
         private olMap: OLMap,
         private simulationStore: any
     ) {
-        this.managers = [ primitiveLayerManager, baseMapLayerManager, vectorLayerManager, tileLayerManager ]
+        this.managers = [ primitiveLayerManager, baseMapLayerManager, vectorLayerManager, tileLayerManager, dataSourceLayerManager ]
     }
 
     // 레이어 그룹에서 레이어 제거
@@ -73,7 +79,7 @@ export class LayerManager {
 
     addHeatmapLayer(vehicleRoute: any[], vectorSource, speedFactor: number, isRunning: boolean, heatmapSetting) {
         const { colors, exaggeration, blur } = heatmapSetting;
-        const groupName = "layer"
+        const groupName = "analyze"
         const layerName = "heatmap"
 
         const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
@@ -87,8 +93,8 @@ export class LayerManager {
             managedCollection.push(primitiveCollections);
         }
         //ol
-        const olHeatmap = new HeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunning, colors, blur);
-        const layers = this.vectorLayerManager.add(olHeatmap, groupName, layerName);
+        const olHeatmap = new HeatmapFeatureLayer(vehicleRoute, vectorSource, speedFactor, isRunning, colors, blur);
+        const layers = this.vectorLayerManager.add(olHeatmap, groupName, layerName, heatmapSetting.basic);
 
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
 
@@ -100,11 +106,11 @@ export class LayerManager {
     }
 
     removeHeatmapLayer() {
-        this._removeLayers("layer", "heatmap");
+        this._removeLayers("analyze", "heatmap");
     }
 
     addODArrows(vehicleRoute: any[], speedFactor: number, isRunning: boolean) {
-        const groupName = "layer";
+        const groupName = "analyze";
         const layerName = "od";
         const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
         if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
@@ -123,8 +129,8 @@ export class LayerManager {
             managedCollection.push(primitiveCollections);
         }
 
-        const odLayer = new ODMatrixLayer(vehicleRoute, speedFactor, isRunning);
-        const layers = this.vectorLayerManager.add(odLayer, groupName, layerName);
+        const odLayer = new ODMatrixFeatureLayer(vehicleRoute, speedFactor, isRunning);
+        const layers = this.vectorLayerManager.add(odLayer, groupName, layerName, false);
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
 
         layers.forEach((layer: BaseLayer) => {
@@ -135,17 +141,16 @@ export class LayerManager {
     }
 
     removeODArrows(): void {
-        this._removeLayers("layer", "od");
+        this._removeLayers("analyze", "od");
     }
 
     addTripLayer(vehicleRoute: any[], speedFactor: number, isRunning: boolean) {
-        const groupName = "layer"
+        const groupName = "analyze"
         const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
         if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
 
         this.primitiveLayerManager.add(new FieldPrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning), groupName, "trip");
-        this.primitiveLayerManager.add(new TailPrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning), groupName, "trip");
-        const primitiveCollections = this.primitiveLayerManager.add(new DomePrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning), groupName, "default");
+        const primitiveCollections = this.primitiveLayerManager.add(new TailPrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning), groupName, "trip");
         const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
         if (!managedCollection.includes(primitiveCollections)) {
             managedCollection.push(primitiveCollections);
@@ -160,8 +165,8 @@ export class LayerManager {
         //     this.layerGroups.set("layer", group);
         // });
 
-        const tripLayer = new TrailLayer(vehicleRoute, speedFactor, isRunning)
-        const layers = this.vectorLayerManager.add(tripLayer, groupName, "trip");
+        const tripLayer = new TrailFeatureLayer(vehicleRoute, speedFactor, isRunning)
+        const layers = this.vectorLayerManager.add(tripLayer, groupName, "trip", false);
 
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
 
@@ -174,15 +179,31 @@ export class LayerManager {
     }
 
     removeTripLayer(): void {
-        this._removeLayers("layer", "trip","default"); // trip + default
+        this._removeLayers("analyze", "trip","default"); // trip + default
     }
 
-    addVehicleLayer(vehicleRoute, vectorSource, speedFactor, isRunning) {
-        const groupName = "layer"
+    addVehicleLayer(vehicleRoute, vectorSource, speedFactor, isRunning, czmlSource) {
+        const groupName = "analyze"
         const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+
+        if (czmlSource) {
+            const vehicleDataSourceLayer = new VehicleDataSourceLayer(this.cesiumViewer, czmlSource);
+            const dataSourceCollection = this.dataSourceLayerManager.add(vehicleDataSourceLayer, groupName, "vehicle", true);
+            const managedCollection = (layerGroup["dataSourceLayerManager"] ||= []);
+            if (!managedCollection.includes(dataSourceCollection)) {
+                managedCollection.push(dataSourceCollection);
+            }
+        }
+
+        const primitiveCollections = this.primitiveLayerManager.add(new DomePrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning), groupName, "vehicle", true)
+        const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
+        if (!managedCollection.includes(primitiveCollections)) {
+            managedCollection.push(primitiveCollections);
+        }
+
         if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
-        const vehicleLayer = new VehicleLayer(vehicleRoute, vectorSource, speedFactor, isRunning);
-        const layers = this.vectorLayerManager.add(vehicleLayer, groupName, "vehicle");
+        const vehicleLayer = new VehicleFeatureLayer(vehicleRoute, vectorSource, speedFactor, isRunning);
+        const layers = this.vectorLayerManager.add(vehicleLayer, groupName, "vehicle", true);
 
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
 
@@ -192,53 +213,9 @@ export class LayerManager {
             }
         })
 
-        console.log("this.layerGroups.addVehicleLayer:::", this.layerGroups)
     }
     removeVehicleLayer(): void {
-        this._removeLayers("layer", "vehicle");
-    }
-
-    addBusStationLayer() {
-
-        const groupName = "edit";
-        const layerName = "PT_BUS_STATION"
-
-        const layerGroup: Record<string, BaseLayer[]> = (this.layerGroups.get(groupName) || {});
-        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
-
-        //ol
-        const busStation = new BusStationLayer();
-        const layers = this.vectorLayerManager.add(busStation, groupName, layerName);
-
-        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
-
-        layers.forEach((layer: BaseLayer) => {
-            if (!vectorLayers.includes(layer)) {
-                vectorLayers.push(layer);
-            }
-        })
-        busStation.loadFromStore();
-    }
-
-    async addNetworkLayer() {
-        const groupName = "edit";
-        const layerName = "NETWORK"
-
-        const layerGroup = this.layerGroups.get(groupName) || {};
-        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
-
-        //ol
-        const network = new NetworkLayer();
-        const layers = this.vectorLayerManager.add(network, groupName, layerName);
-
-        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
-
-        layers.forEach((layer: BaseLayer) => {
-            if (!vectorLayers.includes(layer)) {
-                vectorLayers.push(layer);
-            }
-        })
-        await network.load();
+        this._removeLayers("analyze", "vehicle");
     }
 
     addBaseMapLayer(schema: any[]) {
@@ -263,8 +240,81 @@ export class LayerManager {
                 }
             })
         });
-        console.log("this.layerGroups.addBaseMapLayer:::", this.layerGroups);
     }
+
+    async addFacilityLayers(schema: any[]) {
+        const groupName = "facility";
+
+        const facilityGroup = schema.find(group => group.key === groupName);
+        if (!facilityGroup || !Array.isArray(facilityGroup.fields)) return;
+
+        if (!this.layerGroups.has(groupName)) {
+            this.layerGroups.set(groupName, facilityGroup);
+        }
+
+        // 모든 레이어 동적 import (eager로 정적 분석 시점에 가져옴)
+        const cesiumModules = import.meta.glob("@datasource/*DataSourceLayer.ts", { eager: true });
+        const olModules = import.meta.glob("@features/*FeatureLayer.ts", { eager: true });
+
+        const classRegistry: Record<string, any> = {};
+
+        // 클래스명으로 매핑
+        Object.values(cesiumModules).forEach((mod: any) => {
+            const cls = Object.values(mod)[0];
+            classRegistry[cls.name] = cls;
+        });
+
+        Object.values(olModules).forEach((mod: any) => {
+            const cls = Object.values(mod)[0];
+            classRegistry[cls.name] = cls;
+        });
+
+
+        for (const { key, basic } of facilityGroup.fields) {
+            const layerName = key;
+            const pascalKey = toPascalCase(key);
+
+
+            const CesiumLayerClass = classRegistry[`${pascalKey}DataSourceLayer`];
+            const OLFeatureLayerClass = classRegistry[`${pascalKey}FeatureLayer`];
+            console.log("add facilityGroup layerName:::", layerName)
+            console.log("add facilityGroup pascalKey:::", pascalKey)
+            console.log("add facilityGroup OLFeatureLayerClass:::", OLFeatureLayerClass)
+
+            if (!CesiumLayerClass || !OLFeatureLayerClass) {
+                console.warn(`Missing layer classes for key: ${key}`);
+                continue;
+            }
+
+            const layerGroup = this.layerGroups.get(groupName) || {};
+            if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+            // Cesium 처리
+            const cesiumLayer = new CesiumLayerClass(this.cesiumViewer);
+            const dataSourceCollection = this.dataSourceLayerManager.add(cesiumLayer, groupName, layerName, basic);
+            const managedCollection = (layerGroup["dataSourceLayerManager"] ||= []);
+            if (!managedCollection.includes(dataSourceCollection)) {
+                managedCollection.push(dataSourceCollection);
+            }
+
+            // OpenLayers 처리
+            const olLayer = new OLFeatureLayerClass();
+            console.log("add OLFeatureLayerClass:::", OLFeatureLayerClass)
+            const layers = this.vectorLayerManager.add(olLayer, groupName, layerName, basic);
+            console.log("add layers:::", layers)
+            console.log("add layerName:::", layerName)
+            const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+            layers.forEach((layer: BaseLayer) => {
+                if (!vectorLayers.includes(layer)) {
+                    vectorLayers.push(layer);
+                }
+            });
+
+            // 비동기 로딩 지원
+            await olLayer.load?.();
+        }
+    }
+
 
     // === 레이어 그룹 관련 기능 ===
 
@@ -273,7 +323,7 @@ export class LayerManager {
         const group = this.layerGroups.get(groupName);
         if (group) {
             group.layers.forEach(({ layer }) => {
-                this.primitiveLayerManager.remove("layer", layer);
+                this.primitiveLayerManager.remove("analyze", layer);
             });
             group.layers = [];
         } else {
@@ -323,14 +373,14 @@ export class LayerManager {
     // 개별 레이어 보이기
     showLayer(groupName: string, layerName: string) {
         this.getManagersByGroupAndLayerName(groupName, layerName).forEach((manager) => {
-            manager.show(groupName, layerName);
+            manager?.show(groupName, layerName);
         })
     }
 
     // 개별 레이어 숨기기
     hideLayer(groupName: string, layerName: string) {
         this.getManagersByGroupAndLayerName(groupName, layerName).forEach((manager) => {
-            manager.hide(groupName, layerName);
+            manager?.hide(groupName, layerName);
         })
     }
 
@@ -351,7 +401,7 @@ export class LayerManager {
                 const res = manager.get(groupName, layerName);
                 return Array.isArray(res) ? res.length > 0 : !!res;
             });
-        }
+    }
 
 
     getAllLayersByGroup(groupName: string) {
@@ -388,6 +438,11 @@ export class LayerManager {
         this.removeODArrows();
         this.removeVehicleLayer()
     }
+
+
+}
+function toPascalCase(key: string) {
+    return key.replace(/(^\w|_\w)/g, s => s.replace('_', '').toUpperCase());
 }
 
 export default LayerManager;

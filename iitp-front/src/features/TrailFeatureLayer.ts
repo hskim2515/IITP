@@ -6,7 +6,7 @@ import { fromLonLat } from "ol/proj";
 import { Cartographic, Ellipsoid, Math as CesiumMath } from "cesium";
 import { useLayerStore } from "@stores/useLayerStore";
 
-export default class TrailLayer extends WebGLVectorLayer {
+export default class TrailFeatureLayer extends WebGLVectorLayer {
     private source: VectorSource;
     private running: boolean;
     private animationId: number | null = null;
@@ -61,7 +61,7 @@ export default class TrailLayer extends WebGLVectorLayer {
             const lat = CesiumMath.toDegrees(carto.latitude);
             return fromLonLat([lon, lat]);
         } catch (err) {
-            console.warn("[TrailLayer] Conversion failed", err);
+            console.warn("[TrailFeatureLayer] Conversion failed", err);
             return null;
         }
     }

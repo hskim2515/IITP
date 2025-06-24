@@ -30,14 +30,15 @@ class PrimitiveLayerManager {
     }
 
     // Primitive 추가
-    add(primitive, groupName, layerName) {
+    add(primitive, groupName, layerName, basic) {
         primitive.layerGroup = groupName;
         primitive.layer = layerName;
         const group = this._getOrCreateGroup(groupName);
+        primitive.show = basic;
         group.add(primitive);
         this.layerStore.getState().activeLayerName?.forEach((activeLayerName) => {
             if(activeLayerName === layerName){
-                this.show('layer', activeLayerName);
+                this.show('analyze', activeLayerName);
             }
         });
 

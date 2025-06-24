@@ -16,7 +16,7 @@ interface LayerPopupProps {
 
 const tabComponentMap: Record<string, React.FC<{ fields: any[] }>> = {
     baseMap: BaseMap,
-    layer: Analysis,
+    analyze: Analysis,
     facility: Facility,
 };
 

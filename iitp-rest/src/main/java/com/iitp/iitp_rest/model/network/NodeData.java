@@ -11,8 +11,7 @@ public class NodeData {
     public String type;
     public int numPort;
     public int numConnection;
-    public double xCoord;
-    public double yCoord;
+    public String center;
     public List<PortData> ports = new ArrayList<>();
     public List<ConnectionData> connections = new ArrayList<>();
     public List<String> portLinkIds = new ArrayList<>();

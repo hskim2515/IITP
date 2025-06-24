@@ -1,4 +1,4 @@
-import React, {useRef} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import './App.css'
 import Maps from "./component/map/Maps";
 import Header from "./component/header/Header";
@@ -19,8 +19,22 @@ function App() {
         setScenario(scenario);
     };
 
+    const [scenarioList, setScenarioList] = useState([]);
+
+    useEffect(() => {
+        fetch(process.env.VITE_API_URL + "/scenario", {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+        }).then((response) => {
+                return response.json();
+            })
+            .then((data) => {
+                setScenarioList(data);
+            })
+    }, []);
+
     // 시나리오 선택 화면
-    if (!selectedScenario) {
+    if (scenarioList && !selectedScenario) {
         return (
             <div className="scenario-container">
                 <video
@@ -36,18 +50,18 @@ function App() {
                 <p className="description">실제 교통 데이터를 바탕으로 시뮬레이션 결과를 분석하고 시나리오를 선택하세요.</p>
 
                 <div className="card-container">
-                    <div className="scenario-card" onClick={() => handleScenarioSelect("morning_rush")}>
-                        <h2>출근 시간대 시뮬레이션</h2>
-                        <p>오전 7시 ~ 9시 혼잡도 분석</p>
-                    </div>
-                    <div className="scenario-card" onClick={() => handleScenarioSelect("evening_rush")}>
-                        <h2>퇴근 시간대 시뮬레이션</h2>
-                        <p>오후 6시 ~ 8시 교차로 체증 분석</p>
-                    </div>
-                    <div className="scenario-card" onClick={() => handleScenarioSelect("event_traffic")}>
-                        <h2>이벤트 발생 시뮬레이션</h2>
-                        <p>도심 내 대형 행사에 따른 우회 경로 분석</p>
-                    </div>
+
+                    {scenarioList?.map((scenario) => (
+                        <div
+                            key={scenario.key}
+                            className="scenario-card"
+                            onClick={() => handleScenarioSelect(scenario)}
+                        >
+                            <h2>{scenario.label}</h2>
+                            <p>{scenario.description}</p>
+                        </div>
+                    ))}
+
                 </div>
             </div>
         );

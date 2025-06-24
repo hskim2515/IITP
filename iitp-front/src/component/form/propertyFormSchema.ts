@@ -55,7 +55,7 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         rowFields: []
     },
 
-    ROAD: {
+    NETWORK: {
         type:"table",
         fields: [
             { name: "ffspeed", label: "Freeflow speed (km/h)", type: "number" },
@@ -109,7 +109,7 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         inputFields: [],
         rowFields: []
     },
-    PT_BUS_STATION: {
+    BUS_STATION: {
         type:"table",
         fields: [
             { name: "id", label: "id", type: "number" },

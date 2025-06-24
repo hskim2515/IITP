@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useEffect} from 'react';
 import { useLayerStore } from '@stores/useLayerStore';
 import {LayerField} from "@stores/useLayerSchemaStore";
 
@@ -13,14 +13,18 @@ const Facility: React.FC<FacilityProps> = ({ fields }) => {
         removeActiveLayerName,
     } = useLayerStore();
 
-    const handleToggle = (value: string, checked: boolean) => {
+    const defaultSelected = fields.find(field => field.basic)?.key || null;
 
-        if (checked) {
-            addActiveLayerName(value);
-        } else {
-            removeActiveLayerName(value);
+    useEffect(() => {
+        if (defaultSelected) {
+            addActiveLayerName(defaultSelected);
         }
+    }, [defaultSelected, addActiveLayerName]);
+
+    const handleToggle = (value: string, checked: boolean) => {
+        checked ? addActiveLayerName(value) : removeActiveLayerName(value);
     };
+
 
     return (
         <div>
@@ -30,7 +34,7 @@ const Facility: React.FC<FacilityProps> = ({ fields }) => {
                     style={{ color: 'white', display: 'block', margin: '4px 0' }}
                 >
                     <input
-                        type={field.type}
+                        type={field.formType}
                         value={field.key}
                         checked={activeLayerName.includes(field.key)}
                         onChange={e => handleToggle(field.key, e.target.checked)}

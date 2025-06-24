@@ -6,7 +6,7 @@ import Grid from "../util/Grid";
 import { buildColumnDefs, featureCollectionToFlatRow, } from "@utils/grid";
 import { ColDef } from "ag-grid-community";
 import { GridHandle } from "@type/GirdOptions";
-import { menuCodeToStoreMap } from "@hooks/useFeatureInit";
+import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 import { useEventStore } from "@stores/useEventStore";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import useGrid from "@hooks/useGrid";
@@ -65,11 +65,6 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
 
     const lastSnappedFeatureRef = useRef<Feature | null>(null);
 
-    const [ baseData, setBaseData ] = useState<Record<string, Record<string, unknown>>>({ // 새롭게 생성할 객체를 위한 state,
-        properties: {},
-        geometry: {},
-    })
-
     const [ isEditable, setIsEditable ] = useState<boolean>(false)
     const [ isDrawing, setIsDrawing ] = useState<boolean>(false)
     const [ drawGeometryType, setDrawGeometryType ] = useState<GeometryType>(GeometryType.POINT)
@@ -78,17 +73,12 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
 
     const networkLayer = useMemo(() => {
         return olMap?.getLayers().getArray()
-            .find((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layer"] === "NETWORK");
+            .find((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["LAYER_NAME"] === "NETWORK");
     }, [ olMap ]);
 
     const layer = useMemo(() => {
         return olMap?.getLayers().getArray()
-            .find((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layer"] === submenu.menuCode);
-    }, [ olMap, submenu.menuCode ]);
-
-    const layers = useMemo(() => {
-        return olMap?.getLayers().getArray()
-            .filter((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layerGroup"] === "edit");
+            .find((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["LAYER_NAME"] === submenu.menuCode);
     }, [ olMap, submenu.menuCode ]);
 
     const {
@@ -102,7 +92,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         if (!olMap) return;
 
         const select = new Select({
-            layers: layers,
+            layers: [layer],
             multi: true,
         });
 
@@ -127,15 +117,15 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
             select.un("select", onSelect);
             olMap.removeInteraction(select);
         };
-    }, [ olMap, layers ]);
+    }, [ olMap, layer ]);
 
     useEffect(() => {
-        if (!selectInteractionRef.current || !layers) return;
+        if (!selectInteractionRef.current || !layer) return;
         console.log("changed!", selectionIds)
 
         const selectedFeatures: Feature[] = [];
 
-        layers.forEach((layer) => {
+        [layer].forEach((layer) => { // select 적용할 layer 배열로 저장 (현재는 단일 레이어)
             const source = (layer as VectorLayer).getSource() as VectorSource;
             if (!source) return;
 
@@ -149,7 +139,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
 
         selectInteractionRef.current.getFeatures().clear();
         selectInteractionRef.current.getFeatures().extend(selectedFeatures);
-    }, [ selectionIds, layers ]);
+    }, [ selectionIds, layer ]);
 
 
     useEffect(() => {
@@ -289,7 +279,10 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
             //     ...currentFeature.getProperties().properties
             // })
         };
-
+        if (!networkLayer) {
+            console.warn("networkLayer가 없습니다. snap 이벤트 비활성화됨");
+            return;
+        }
         const options = {
             olLayer: networkLayer,
         };
@@ -356,6 +349,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         const addedProperties = {
             id: Date.now(),
         }
+        const baseData = {}
         const newRow = createRowFromOptions({ baseData, addedProperties });
         gridRef.current?.addRow(newRow)
     }

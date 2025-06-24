@@ -4,11 +4,12 @@ import { useShallow } from "zustand/react/shallow";
 import SimulationControls from "./SimulationControls";
 
 const Header: React.FC = () => {
-    const { menu, setMenu, activeDropdownMenu, setActiveDropdownMenu } = useMenuStore(useShallow((state) => ({
+    const { menu, setMenu, activeDropdownMenu, setActiveDropdownMenu, activeSubmenu } = useMenuStore(useShallow((state) => ({
         menu: state.menu,
         setMenu: state.setMenu,
         activeDropdownMenu: state.activeDropdownMenu,
         setActiveDropdownMenu: state.setActiveDropdownMenu,
+        activeSubmenu : state.activeSubmenu
     })));
     const baseUrl =process.env.VITE_API_URL;
     const menuTreeUrl = `${baseUrl}/menu/tree`;
@@ -51,32 +52,38 @@ interface DropdownMenuProps {
 
 const DropdownMenu: React.FC<DropdownMenuProps> = ({ title, items, setActiveDropdownMenu }) => {
     const [isOpen, setIsOpen] = useState(false);
+    const {activeSubmenu } = useMenuStore(useShallow((state) => ({
+        activeSubmenu : state.activeSubmenu
+    })));
+    if(!activeSubmenu){
+        return (
 
-    return (
-        <div
-            style={styles.menuContainer}
-            onMouseEnter={() => setIsOpen(true)}
-            onMouseLeave={() => setIsOpen(false)}
-        >
-            <span style={styles.menuTitle}>{title}</span>
-            {isOpen && (
-                <div style={styles.dropdown}>
-                    {items.map((item, index) => (
-                        <div
-                            key={item.menuId} // key로 menuId를 사용하는 것이 고유 식별에 좋습니다.
-                            style={styles.menuItem}
-                            onClick={() => {
-                                setActiveDropdownMenu(item);
-                                console.log("activeDropdownMenu set:", item);
-                            }}
-                        >
-                            {item.nameKor}
-                        </div>
-                    ))}
-                </div>
-            )}
-        </div>
-    );
+            <div
+                style={styles.menuContainer}
+                onMouseEnter={() => setIsOpen(true)}
+                onMouseLeave={() => setIsOpen(false)}
+            >
+                <span style={styles.menuTitle}>{title}</span>
+                {isOpen && (
+                    <div style={styles.dropdown}>
+                        {items.map((item, index) => (
+                            <div
+                                key={item.menuId} // key로 menuId를 사용하는 것이 고유 식별에 좋습니다.
+                                style={styles.menuItem}
+                                onClick={() => {
+                                    setActiveDropdownMenu(item);
+                                    console.log("activeDropdownMenu set:", item);
+                                }}
+                            >
+                                {item.nameKor}
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
 };
 
 const styles = {
@@ -92,7 +99,7 @@ const styles = {
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '0 20px',
-        zIndex: 1000,
+        zIndex: 999,
     },
     nav: {
         display: 'flex',

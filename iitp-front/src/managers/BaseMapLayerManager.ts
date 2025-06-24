@@ -30,7 +30,10 @@ class BaseMapLayerManager {
             const { key, url, basic } = field;
             if (!url || !key) return;
 
-            const provider = new Cesium.UrlTemplateImageryProvider({ url });
+            const apiKey = process.env.REACT_APP_VWORLD_API_KEY;
+            const finalUrl = url.replace("${API_KEY}", apiKey ?? "");
+
+            const provider = new Cesium.UrlTemplateImageryProvider({ url : finalUrl });
             const imageryLayer = new Cesium.ImageryLayer(provider, { show: basic });
 
             this.viewer.imageryLayers.add(imageryLayer);

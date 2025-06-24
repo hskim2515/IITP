@@ -84,7 +84,6 @@ export class OLEventAdapter implements EventAdapter {
 
     private getOrCreateInteraction(type: InteractionType, options: EventOptions): OLInteraction {
         if (this.interactionMap.has(type)) return this.interactionMap.get(type)!;
-        console.log("options:::", options)
         let interaction: OLInteraction;
         switch (type) {
             case 'draw': {

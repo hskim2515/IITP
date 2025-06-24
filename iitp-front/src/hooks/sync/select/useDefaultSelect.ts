@@ -155,6 +155,8 @@ const useDefaultSelect = () => {
                 viewer?.entities.remove(infoEntityRef.current)
             }
 
+            console.log(selectedProps)
+
             const positions = generateWallFacingCamera(selectedProps.longitude, selectedProps.latitude, 30)
 
             infoEntityRef.current = viewer.entities.add({

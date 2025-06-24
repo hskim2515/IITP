@@ -28,18 +28,24 @@ const useLayer = () => {
             !viewer
             || !map
             || !activeLayerGroupName
-            || activeLayerGroupName !== "layer"
         ) return;
-        console.log("useLayer:::activeLayer", activeLayerGroupName, activeLayerName)
+
         const added = activeLayerName?.filter(name => !prevLayerNames.includes(name)) || [];
         const removed = prevLayerNames?.filter(name => !activeLayerName?.includes(name)) || [];
 
         removed.forEach(name => {
-            layerManager?.hideLayer(activeLayerGroupName, name);
+            if(layerManager?.getLayerByName(name)){
+                layerManager?.hideLayer(activeLayerGroupName, name);
+            }
+
+
         });
 
         added.forEach(name => {
-            layerManager?.showLayer(activeLayerGroupName, name);
+            if(layerManager?.getLayerByName(name)){
+                layerManager?.showLayer(activeLayerGroupName, name);
+            }
+
         });
 
     }, [activeLayerName, activeLayerGroupName, viewer]);

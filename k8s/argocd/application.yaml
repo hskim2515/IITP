@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: iitp
+  namespace: argocd
+spec:
+  destination:
+    namespace: default
+    server: https://kubernetes.default.svc
+  source:
+    repoURL: 'https://github.com/hskim2515/iitp.git'
+    targetRevision: HEAD
+    path: k8s
+  project: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
