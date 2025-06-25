@@ -53,6 +53,7 @@ export default class NetworkDataSourceLayer {
                 Cesium.Cartesian3.normalize(right, right);
 
                 this.dataSource.entities.add(new Cesium.Entity({
+                    id: link.__guid,
                     corridor: {
                         cornerType: Cesium.CornerType.MITERED,
                         positions: [sourceCart, targetCart],
@@ -81,6 +82,7 @@ export default class NetworkDataSourceLayer {
                     lane.laneTarget = targetCart;
 
                     this.dataSource.entities.add({
+                        id: lane.__guid,
                         corridor: {
                             cornerType: Cesium.CornerType.MITERED,
                             positions: [sourceCart, targetCart],
@@ -140,6 +142,7 @@ export default class NetworkDataSourceLayer {
                         position.push(targetCart)
 
                         this.dataSource.entities.add({
+                            id: conn.__guid,
                             polyline: {
                                 positions: position,
                                 width: 5,

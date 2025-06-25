@@ -7,6 +7,7 @@ export interface FormField {
 
 export interface PropertyFormSchemaProps {
     type: string;
+    layer?: string;
     fields: FormField[];
     inputFields: FormField[];
     rowFields: FormField[];
@@ -57,6 +58,7 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
 
     NETWORK: {
         type:"table",
+        layer: "network",
         fields: [
             { name: "ffspeed", label: "Freeflow speed (km/h)", type: "number" },
             { name: "waveSpeed", label: "Wave speed (km/h)", type: "number" },
@@ -111,6 +113,7 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
     },
     BUS_STATION: {
         type:"table",
+        layer: "busStation",
         fields: [
             { name: "id", label: "id", type: "number" },
             { name: "linkRef", label: "정류장 위치 링크", type: "number" },

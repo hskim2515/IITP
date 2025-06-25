@@ -21,8 +21,8 @@ const ToolsPanel = () => {
                 position: 'fixed',
                 right: '0px',
                 top: '100px',
-                borderRadius: '8px',
-                padding: '15px',
+                borderRadius: '10px',
+                padding: '8px',
                 zIndex: 999,
                 transform: showTools ? 'translateY(0)' : 'translateY(0)', // Slide in/out
                 opacity: showTools ? 1 : 0, // Fade in/out
