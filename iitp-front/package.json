@@ -23,6 +23,7 @@
     "@types/node": "^22.10.2",
     "ag-grid-community": "^33.3.0",
     "ag-grid-react": "^33.3.0",
+    "antd": "^5.26.2",
     "axios": "^1.9.0",
     "cesium": "^1.127.0",
     "heatmap.js": "^2.0.5",
