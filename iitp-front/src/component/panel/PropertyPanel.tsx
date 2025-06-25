@@ -21,6 +21,9 @@ import { DrawEvent } from "ol/interaction/Draw";
 import { GeoJSON } from "ol/format";
 import { apiConfig, ApiMenuKey } from "../../config/apiConfig";
 import axiosInstance from "../../api/axiosInstance";
+import JsonGrid from "../util/JsonGrid";
+import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
+import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 
 export interface BottomTableProps {
     activeSubmenu: MenuTree
@@ -55,16 +58,23 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
     const [ isEditable, setIsEditable ] = useState<boolean>(false)
     const [ isDrawing, setIsDrawing ] = useState<boolean>(false)
 
+    const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
     const map = useOpenLayersStore.state.map()
 
     const layer = useMemo(() => {
         return map?.getLayers().getArray()
-            .find((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layer"] === submenu.menuCode);
+            .find((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layer"] === submenu.item?.layer);
     }, [ map, submenu.menuCode ]);
+
+
+    const toggleGrid = (key: string) => {
+        setExpandedKey((prevKey) => (prevKey === key ? null : key)); // 같은 key면 닫기
+    };
 
     const layers = useMemo(() => {
         return map?.getLayers().getArray()
-            .filter((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layerGroup"] === "edit");
+            .filter((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layerGroup"] === "facility");
     }, [ map, submenu.menuCode ]);
 
     const {
@@ -209,19 +219,15 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
 
     // currentGeojson 기반으로 Grid용 데이터 가공
     useEffect(() => {
-        console.log("rowData menu:::", submenu.menuCode)
         if (!submenu.menuCode || !submenu.item?.fields) return;
         if (!store) {
             setRowData([])
             return;
         }
-        console.log("rowData store.getState():::", store.getState())
         const currentGeojson = store.getState().currentGeojson
         if (currentGeojson == undefined) return;
         const flatRow = featureCollectionToFlatRow(currentGeojson);
 
-        console.log("rowData currentGeojson:::", currentGeojson)
-        console.log("rowData flatRow:::", flatRow)
         store.getState().setFlatRow(flatRow)
         setRowData(flatRow);
         const defs = buildColumnDefs(submenu.item.fields);
@@ -318,14 +324,32 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
                         <button className="close-btn" onClick={ onClose }>×</button>
                     </div>
                     <div className="popup-body">
-                        { submenu.item && colDefs &&
-                            <Grid
-                                ref={ gridRef }
-                                colDefs={ colDefs }
-                                rowData={ rowData }
-                                onCellValueChanged={ updateFeatureByRow }
-                                onSelectionChanged={ handleGridSelectionChanged }
-                            />
+                        { submenu.item &&
+                        //{ submenu.item colDefs && &&
+                            // <Grid
+                            //     ref={ gridRef }
+                            //     colDefs={ colDefs }
+                            //     rowData={ rowData }
+                            //     onCellValueChanged={ updateFeatureByRow }
+                            //     onSelectionChanged={ handleGridSelectionChanged }
+                            // />
+                            <div>
+                                {Object.entries(store.getState().originData).map(([key, value]) => (
+                                    Array.isArray(value) && value.length > 0 && (
+                                        <div key={key} style={{ marginBottom: 24 }}>
+                                            <div style={{ display: 'flex', alignItems: 'center' }}>
+                                                <h4 style={{ margin: 12 }}>
+                                                    {key.charAt(0).toUpperCase() + key.slice(1)}
+                                                </h4>
+                                                <FontAwesomeIcon onClick={() => toggleGrid(key)} icon={expandedKey === key ? faChevronUp : faChevronDown} />
+                                            </div>
+                                            {expandedKey === key && (
+                                                <JsonGrid rowData={value} levelName={key} />
+                                            )}
+                                        </div>
+                                    )
+                                ))}
+                            </div>
                         }
                     </div>
                 </div>

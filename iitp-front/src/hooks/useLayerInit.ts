@@ -4,7 +4,7 @@ import { propertyFormSchema, PropertyFormSchemaProps } from "../component/form/p
 import { apiConfig, ApiMenuKey } from "../config/apiConfig";
 import axiosInstance from "../api/axiosInstance";
 import { FeatureStoreFactoryType } from "@stores/useFeatureStoreFactory";
-import {useRoadStore} from "@stores/useRoadStore";
+import {useNetworkStore} from "@stores/useNetworkStore";
 import {useScenarioStore} from "@stores/useScenarioStore";
 import VectorLayerManager from "@managers/VectorLayerManager";
 import {useLayerStore} from "@stores/useLayerStore";
@@ -17,15 +17,14 @@ import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import {useCesiumStore} from "@stores/useCesiumStore";
 import LayerManager from "@managers/LayerManager";
 import {useLayerSchemaStore} from "@stores/useLayerSchemaStore";
+import {assignGUIDsToTrafficData} from "@utils/guid";
 
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToStoreMap: Record<string, FeatureStoreFactoryType> = {
     // menuCode: store
-    NETWORK: useRoadStore,
+    NETWORK: useNetworkStore,
     PT_BUS_STATION: usePTBusStationStore,
 }
-
-
 
 const useLayerInit = (): void => {
 
@@ -58,7 +57,10 @@ const useLayerInit = (): void => {
                 });
 
                 store.getState().setOriginData(response.data);
+                assignGUIDsToTrafficData(response.data)
                 store.getState().initCurrentData();
+
+                console.log(store.getState().originData)
                 console.log(`${menuCode} 데이터 초기화 완료`);
             } catch (err) {
                 console.error(`[${menuCode}] 데이터 불러오기 실패`, err);
