@@ -14,12 +14,7 @@ import BaseLayer from "ol/layer/Base";
 import ODMatrixFeatureLayer from "@features/ODMatrixFeatureLayer";
 import VehicleFeatureLayer from "@features/VehicleFeatureLayer";
 import TrailFeatureLayer from "@features/TrailFeatureLayer";
-import NetworkFeatureLayer from "@features/NetworkFeatureLayer";
-import BusStationFeatureLayer from "@features/BusStationFeatureLayer";
-import BusStationDataSourceLayer from "../datasource/BusStationDataSourceLayer";
-import EntityLayerManager from "@managers/DataSourceLayerManager";
 import DataSourceLayerManager from "@managers/DataSourceLayerManager";
-import NetworkDataSourceLayer from "../datasource/NetworkDataSourceLayer";
 import VehicleDataSourceLayer from "../datasource/VehicleDataSourceLayer";
 
 type LayerItem = {
@@ -30,7 +25,12 @@ type LayerItem = {
     auth: number;
 };
 
-type Manager = PrimitiveLayerManager | BaseMapLayerManager | VectorLayerManager | TileLayerManager | DataSourceLayerManager;
+type Manager =
+    PrimitiveLayerManager
+    | BaseMapLayerManager
+    | VectorLayerManager
+    | TileLayerManager
+    | DataSourceLayerManager;
 
 type LayerGroupSchema = {
     id: number;
@@ -65,7 +65,7 @@ export class LayerManager {
         if (group) {
             group.layers = group.layers.filter(layer => layer.layerName !== layerName);
         } else {
-            console.log(`Group "${groupName}" does not exist.`);
+            console.log(`Group "${ groupName }" does not exist.`);
         }
     }
 
@@ -179,7 +179,7 @@ export class LayerManager {
     }
 
     removeTripLayer(): void {
-        this._removeLayers("analyze", "trip","default"); // trip + default
+        this._removeLayers("analyze", "trip", "default"); // trip + default
     }
 
     addVehicleLayer(vehicleRoute, vectorSource, speedFactor, isRunning, czmlSource) {
@@ -214,6 +214,7 @@ export class LayerManager {
         })
 
     }
+
     removeVehicleLayer(): void {
         this._removeLayers("analyze", "vehicle");
     }
@@ -274,44 +275,41 @@ export class LayerManager {
             const layerName = key;
             const pascalKey = toPascalCase(key);
 
-
-            const CesiumLayerClass = classRegistry[`${pascalKey}DataSourceLayer`];
-            const OLFeatureLayerClass = classRegistry[`${pascalKey}FeatureLayer`];
+            const CesiumLayerClass = classRegistry[`${ pascalKey }DataSourceLayer`];
+            const OLFeatureLayerClass = classRegistry[`${ pascalKey }FeatureLayer`];
             console.log("add facilityGroup layerName:::", layerName)
             console.log("add facilityGroup pascalKey:::", pascalKey)
             console.log("add facilityGroup OLFeatureLayerClass:::", OLFeatureLayerClass)
 
-            if (!CesiumLayerClass || !OLFeatureLayerClass) {
-                console.warn(`Missing layer classes for key: ${key}`);
-                continue;
-            }
-
             const layerGroup = this.layerGroups.get(groupName) || {};
             if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
 
-            // Cesium 처리
-            const cesiumLayer = new CesiumLayerClass(this.cesiumViewer);
-            const dataSourceCollection = this.dataSourceLayerManager.add(cesiumLayer, groupName, layerName, basic);
-            const managedCollection = (layerGroup["dataSourceLayerManager"] ||= []);
-            if (!managedCollection.includes(dataSourceCollection)) {
-                managedCollection.push(dataSourceCollection);
+            if (OLFeatureLayerClass) {
+                // OpenLayers 처리
+                const olLayer = new OLFeatureLayerClass();
+                console.log("add OLFeatureLayerClass:::", OLFeatureLayerClass)
+                const layers = this.vectorLayerManager.add(olLayer, groupName, layerName, basic);
+                console.log("add layers:::", layers)
+                console.log("add layerName:::", layerName)
+                const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+                layers.forEach((layer: BaseLayer) => {
+                    if (!vectorLayers.includes(layer)) {
+                        vectorLayers.push(layer);
+                    }
+                });
+                // 비동기 로딩 지원
+                await olLayer.load?.();
             }
 
-            // OpenLayers 처리
-            const olLayer = new OLFeatureLayerClass();
-            console.log("add OLFeatureLayerClass:::", OLFeatureLayerClass)
-            const layers = this.vectorLayerManager.add(olLayer, groupName, layerName, basic);
-            console.log("add layers:::", layers)
-            console.log("add layerName:::", layerName)
-            const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
-            layers.forEach((layer: BaseLayer) => {
-                if (!vectorLayers.includes(layer)) {
-                    vectorLayers.push(layer);
+            if (CesiumLayerClass) {
+                // Cesium 처리
+                const cesiumLayer = new CesiumLayerClass(this.cesiumViewer);
+                const dataSourceCollection = this.dataSourceLayerManager.add(cesiumLayer, groupName, layerName, basic);
+                const managedCollection = (layerGroup["dataSourceLayerManager"] ||= []);
+                if (!managedCollection.includes(dataSourceCollection)) {
+                    managedCollection.push(dataSourceCollection);
                 }
-            });
-
-            // 비동기 로딩 지원
-            await olLayer.load?.();
+            }
         }
     }
 
@@ -327,7 +325,7 @@ export class LayerManager {
             });
             group.layers = [];
         } else {
-            console.log(`Group "${groupName}" does not exist.`);
+            console.log(`Group "${ groupName }" does not exist.`);
         }
     }
 
@@ -339,10 +337,10 @@ export class LayerManager {
             if (layer) {
                 layer.layer.setVisibility(isVisible);
             } else {
-                console.log(`Layer "${layerName}" not found in group "${groupName}".`);
+                console.log(`Layer "${ layerName }" not found in group "${ groupName }".`);
             }
         } else {
-            console.log(`Group "${groupName}" does not exist.`);
+            console.log(`Group "${ groupName }" does not exist.`);
         }
     }
 
@@ -354,7 +352,7 @@ export class LayerManager {
                 layer.setVisibility(true); // setVisibility 메서드가 레이어에 있어야 함
             });
         } else {
-            console.log(`Group "${groupName}" does not exist.`);
+            console.log(`Group "${ groupName }" does not exist.`);
         }
     }
 
@@ -366,7 +364,7 @@ export class LayerManager {
                 layer.setVisibility(false); // setVisibility 메서드가 레이어에 있어야 함
             });
         } else {
-            console.log(`Group "${groupName}" does not exist.`);
+            console.log(`Group "${ groupName }" does not exist.`);
         }
     }
 
@@ -389,18 +387,18 @@ export class LayerManager {
         const manager = this.getManagersByGroupAndLayerName(groupName, layerName)
             .flatMap((manager) => { // 이중 배열 평탄화 [[HeatBarLayer],[Heatmap]] => [HeatBarLayer,Heatmap]
                 const res = manager.get(groupName, layerName);
-                return Array.isArray(res) ? res : res ? [res] : [];
+                return Array.isArray(res) ? res : res ? [ res ] : [];
             });
         // 하나면 단일 객체, 여러 개면 배열
         return manager.length === 1 ? manager[0] : manager;
     }
 
     getManagersByGroupAndLayerName(groupName: string, layerName: string): Manager[] {
-            return this.managers.filter((manager: any) => {
-                if (typeof manager.get !== "function") return false;
-                const res = manager.get(groupName, layerName);
-                return Array.isArray(res) ? res.length > 0 : !!res;
-            });
+        return this.managers.filter((manager: any) => {
+            if (typeof manager.get !== "function") return false;
+            const res = manager.get(groupName, layerName);
+            return Array.isArray(res) ? res.length > 0 : !!res;
+        });
     }
 
 
@@ -441,6 +439,7 @@ export class LayerManager {
 
 
 }
+
 function toPascalCase(key: string) {
     return key.replace(/(^\w|_\w)/g, s => s.replace('_', '').toUpperCase());
 }
