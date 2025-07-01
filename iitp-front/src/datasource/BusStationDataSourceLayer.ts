@@ -12,11 +12,11 @@ export default class BusStationDataSourceLayer {
 
         const store = menuCodeToStoreMap[this.LAYER_NAME];
         this.unsubscribe = store.subscribe(
-            (state) => state.originData,
-            async (originData) => {
-                if (!originData?.busStations) return;
+            (state) => state.currentJsonData,
+            async (currentJsonData) => {
+                if (!currentJsonData?.busStations) return;
                 try {
-                    await this.load(originData.busStations);
+                    await this.load(currentJsonData.busStations);
                 } catch (error) {
                     console.error("[BusStationDataSourceLayer] busStations 로드 실패:", error);
                 }

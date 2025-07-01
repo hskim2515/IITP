@@ -1,4 +1,3 @@
-
 export function generateGUID(): string {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
         const r = (Math.random() * 16) | 0; // 0~15 랜덤 정수
@@ -7,25 +6,33 @@ export function generateGUID(): string {
     });
 }
 
-
-export function assignGUIDsToTrafficData(data: any) {
-    const addIdRecursively = (obj: any, type: string) => {
-        if (Array.isArray(obj)) {
-            obj.forEach((item) => addIdRecursively(item, type));
-        } else if (typeof obj === 'object' && obj !== null) {
-            obj.__guid = `${type}-${generateGUID()}`;
-            for (const key in obj) {
-                if (Array.isArray(obj[key])) {
-                    addIdRecursively(obj[key], key); // 예: 'lanes', 'cells'
-                }
+export function addIdRecursively(obj: any, type: string) {
+    if (Array.isArray(obj)) {
+        obj.forEach((item) => addIdRecursively(item, type));
+    } else if (typeof obj === 'object' && obj !== null) {
+        if (!obj.__guid) { // 중복 생성 방지
+            obj.__guid = generateTrafficTypesGUID(type)
+        }
+        for (const key in obj) {
+            if (Array.isArray(obj[key])) {
+                addIdRecursively(obj[key], key); // 예: 'lanes', 'cells'
             }
         }
-    };
+    }
+};
+
+export function generateTrafficTypesGUID(type:string): string {
+    return `${ type }-${ generateGUID() }`;
+}
+
+export function assignGUIDsToTrafficData(data: any) {
 
     if (data.links) addIdRecursively(data.links, 'link');
     if (data.nodes) addIdRecursively(data.nodes, 'node');
     if (data.connections) addIdRecursively(data.connections, 'connection');
     if (data.signals) addIdRecursively(data.signals, 'signal');
+    if (data.busStations) addIdRecursively(data.busStations, 'busStations');
 
     return data;
 }
+

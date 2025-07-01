@@ -57,12 +57,12 @@ const useLayerInit = (): void => {
                     method: api.method,
                     url: api.url + '/' + selectedScenario.key,
                 });
-
+                console.log("response:::", response.data)
                 store.getState().setOriginData(response.data);
                 assignGUIDsToTrafficData(response.data)
                 store.getState().initCurrentData();
 
-                console.log(store.getState().originData)
+                console.log("response:::guid:::",store.getState().originData)
                 console.log(`${menuCode} 데이터 초기화 완료`);
             } catch (err) {
                 console.error(`[${menuCode}] 데이터 불러오기 실패`, err);

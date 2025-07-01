@@ -468,3 +468,16 @@ body {
 .measure-popup .tabs {
     margin: 5px;
 }
+
+.grid-container {
+    margin-bottom: 24px
+}
+.grid-header {
+    display: flex;
+    align-items: center;
+    color: #eaeaea;
+    fill: #eaeaea;
+}
+.grid-header h4 {
+    margin: 12px;
+}

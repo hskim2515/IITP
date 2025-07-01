@@ -1,12 +1,13 @@
-import React, {useState} from "react";
+import React, { useState } from "react";
 import { Table } from "antd";
 import {useSelectionStore} from "@stores/useSelectionStore";
+import { Input, InputNumber } from "antd/lib";
 
 // 컬럼 자동 추출
 function generateColumnsFromData(data: any[]) {
     if (!data?.length) return [];
 
-    const excludedFields = ['__guid', 'shape'];
+    const excludedFields = ['shape', '__guid'];
 
     return Object.keys(data[0])
         .filter((key) => !Array.isArray(data[0][key]) && !excludedFields.includes(key))
@@ -34,7 +35,6 @@ function generateColumnsFromData(data: any[]) {
         });
 }
 
-
 // 중첩 배열 필드 감지
 function getNestedArrayField(row: any): string | null {
     if (!row) return null;
@@ -52,29 +52,72 @@ const JsonGrid = ({
                       levelName,
                       depth = 0,
                       layerName,
-                      layerGroupName
+                      layerGroupName,
+                      editable = false,
                   }: {
     rowData: any[];
     levelName?: string;
     depth?: number;
     layerName: string;
     layerGroupName: string;
+    editable?: boolean;
 }) => {
 
     const setSelectedGuid = useSelectionStore((state) => state.setSelectedGuid);
+    const selectedGuid = useSelectionStore((state) => state.selectedGuid);
+    const clearSelected = useSelectionStore((state) => state.clearSelected);
 
     const handleSelect = (selectedRowKeys: React.Key[], selectedRows: any[]) => {
         if (selectedRows.length > 0) {
-            const guid = selectedRows[0]?.__guid;
-            if (guid) {
-                setSelectedGuid(guid);
+            if (selectedRowKeys) {
+                setSelectedGuid(selectedRowKeys);
             }
         } else {
-            setSelectedGuid(null); // 선택 해제 시 초기화
+            setSelectedGuid([]); // 선택 해제 시 초기화
         }
     };
-
+    const [rowEditValues, setRowEditValues] = useState<Record<string, any>>({});
+    const handleInputChange = (key: string, field: string, value: any) => {
+        setRowEditValues((prev) => ({
+            ...prev,
+            [key]: {
+                ...(prev[key] || {}),
+                [field]: value,
+            },
+        }));
+    };
     const columns = generateColumnsFromData(rowData);
+    const isEditableRow = (guid: string) =>
+        editable && selectedGuid?.includes(guid);
+    const enhancedColumns = columns.map((col) => ({
+        ...col,
+        render: (value, record) => {
+            const guid = record.__guid;
+            const currentValue = rowEditValues[guid]?.[col.dataIndex] ?? value;
+
+            if (!isEditableRow(guid)) {
+                return <span>{String(value)}</span>;
+            }
+
+            const inputType = typeof value === 'number' ? 'number' : 'text';
+
+            return inputType === 'number' ? (
+                <InputNumber
+                    value={currentValue}
+                    onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
+                    size="small"
+                />
+            ) : (
+                <Input
+                    value={currentValue}
+                    onChange={(e) =>
+                        handleInputChange(guid, col.dataIndex, e.target.value)
+                    }
+                    size="small"
+                />
+            );
+        },
+    }));
     const nestedField = getNestedArrayField(rowData?.[0]);
 
     return (
@@ -84,15 +127,17 @@ const JsonGrid = ({
             </h3>
             <Table
                 dataSource={rowData}
-                columns={columns}
-                rowKey="id"
+                columns={enhancedColumns}
+                rowKey="__guid"
                 size="small"
                 pagination={false}
                 scroll={{ y: 200 }}
                 rowSelection={{
                     type: "checkbox", // or "radio"
                     onChange: handleSelect,
+                    selectedRowKeys: selectedGuid,
                 }}
+
                 expandable={
                     nestedField
                         ? {
@@ -100,7 +145,7 @@ const JsonGrid = ({
                                 <JsonGrid
                                     rowData={record[nestedField] || []}
                                     levelName={nestedField.slice(0, -1)}
-                                    depth={depth + 1} // ⬅ 들여쓰기 수준 증가
+                                    depth={depth + 1} // 들여쓰기 수준 증가
                                 />
                             ),
                             rowExpandable: (record) =>

@@ -105,26 +105,21 @@ export class OLEventAdapter implements EventAdapter {
                 interaction = new Modify({
                     features: featuresCollection,
                     wrapX: false,
-                    style: new Style({
-                        image: new CircleStyle({
-                            radius: 8,
-                            fill: new Fill({ color: "rgba(0,255,0,1)" }),
-                            stroke: new Stroke({ color: "rgba(255,0,0,0)", width: 1 }),
-                        }),
-                    })
+                    style: options.style ?? undefined
                 });
                 break;
             }
             case 'select': {
                 interaction = new Select({
                     layers: options.olLayers,
+                    style: options.style ?? undefined
                 });
                 break;
             }
             case 'snap': {
-                const source = options.olLayer?.getSource();
+                const features = options.features
                 interaction = new Snap({
-                    source
+                    features
                 });
                 break;
             }

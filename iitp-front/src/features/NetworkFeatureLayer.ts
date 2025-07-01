@@ -2,11 +2,10 @@ import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import { useLayerStore } from "@stores/useLayerStore";
 import { Feature } from "ol";
-import { Fill, RegularShape, Stroke, Style, } from "ol/style";
+import { Fill, Stroke, Style, } from "ol/style";
 import { LineString, Point, Polygon } from "ol/geom";
 import { fromLonLat } from "ol/proj";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
-import { GeoJSON } from "ol/format";
 import { useScenarioStore } from "@stores/useScenarioStore";
 import { Coordinate } from "ol/coordinate";
 
@@ -37,15 +36,15 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
         const activeLayerName = layerStore.activeLayerName;
 
-        const store = menuCodeToStoreMap["NETWORK"];
+        const store = menuCodeToStoreMap[this.LAYER_NAME];
         this.unsubscribe = store.subscribe(
-            (state) => state.currentGeojson,
-            (geojson) => {
-                if (!geojson) return;
-                const format = new GeoJSON({ featureProjection: "EPSG:3857" });
-                const features = format.readFeatures(geojson);
-                source.clear(true);
-                source.addFeatures(features);
+            (state) => state.currentJsonData,
+            (jsonData) => {
+                if (!Array.isArray(jsonData) || jsonData.length === 0) return;
+                // JSON 레코드가 변경되었으니, load()를 통해 피처를 재생성
+                this.load().catch((error) =>
+                    console.error("[NetworkFeatureLayer] load failed:", error)
+                );
             },
             { fireImmediately: true }
         );
@@ -56,7 +55,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
     }
 
     private styleFunction(feature: Feature, resolution: number): Style[] {
-        const props = feature.get("properties") ?? {};
+        const props = feature.getProperties() ?? {};
         const geom = feature.getGeometry();
         const styles: Style[] = [];
 
@@ -110,7 +109,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
             const coordinates = geom.getCoordinates();
             if (coordinates.length >= 2) {
-                const [start, end] = [coordinates[coordinates.length - 2], coordinates[coordinates.length - 1]];
+                const [ start, end ] = [ coordinates[coordinates.length - 2], coordinates[coordinates.length - 1] ];
                 const dx = end[0] - start[0];
                 const dy = end[1] - start[1];
                 const len = Math.hypot(dx, dy);
@@ -125,23 +124,23 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 const arrowLength = 1.8
                 const baseWidth = 0.8
 
-                const baseCenter: [number, number] = [
+                const baseCenter: [ number, number ] = [
                     end[0] - ux * arrowLength,
                     end[1] - uy * arrowLength,
                 ];
 
                 // base 좌우 계산
-                const baseLeft: [number, number] = [
+                const baseLeft: [ number, number ] = [
                     baseCenter[0] + nx * baseWidth / 2,
                     baseCenter[1] + ny * baseWidth / 2,
                 ];
-                const baseRight: [number, number] = [
+                const baseRight: [ number, number ] = [
                     baseCenter[0] - nx * baseWidth / 2,
                     baseCenter[1] - ny * baseWidth / 2,
                 ];
 
                 styles.push(new Style({
-                    geometry: new Polygon([[baseLeft, baseRight, end, baseLeft]]),
+                    geometry: new Polygon([ [ baseLeft, baseRight, end, baseLeft ] ]),
                     fill: new Fill({ color }),
                     stroke: new Stroke({ color, width: 0.1 }),
                 }));
@@ -172,7 +171,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         segmentCount: number = 100,
         ratioAlongLine: number = 0.15,
         nodePullScale: number = 0.5
-    ): [number, number][] {
+    ): [ number, number ][] {
         // from → to 선분 상의 점 P
         const px = from[0] + (to[0] - from[0]) * ratioAlongLine;
         const py = from[1] + (to[1] - from[1]) * ratioAlongLine;
@@ -182,15 +181,15 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const dy = node[1] - py;
         const cx = px + dx * nodePullScale;
         const cy = py + dy * nodePullScale;
-        const control: [number, number] = [cx, cy];
+        const control: [ number, number ] = [ cx, cy ];
 
         // Quadratic Bezier 보간
-        const points: [number, number][] = [];
+        const points: [ number, number ][] = [];
         for (let i = 0; i <= segmentCount; i++) {
             const t = i / segmentCount;
             const x = (1 - t) ** 2 * from[0] + 2 * (1 - t) * t * control[0] + t ** 2 * to[0];
             const y = (1 - t) ** 2 * from[1] + 2 * (1 - t) * t * control[1] + t ** 2 * to[1];
-            points.push([x, y]);
+            points.push([ x, y ]);
         }
 
         return points;
@@ -211,51 +210,49 @@ export default class NetworkFeatureLayer extends VectorLayer {
             const scaleY = 1 / 111000;
 
             const toCoord = (x: number, y: number) =>
-                fromLonLat([baseLng + x * scaleX, baseLat + y * scaleY]);
+                fromLonLat([ baseLng + x * scaleX, baseLat + y * scaleY ]);
 
             const featureBuffer: Feature[] = [];
             const laneMap = new Map<string, Feature>();
 
             for (const link of links) {
-                const [firstPt, lastPt] = link.shape.split(" ");
-                const [x1, y1] = firstPt.split(",").map(parseFloat);
-                const [x2, y2] = lastPt.split(",").map(parseFloat);
+                const [ firstPt, lastPt ] = link.shape.split(" ");
+                const [ x1, y1 ] = firstPt.split(",").map(parseFloat);
+                const [ x2, y2 ] = lastPt.split(",").map(parseFloat);
                 const p1 = toCoord(x1, y1);
                 const p2 = toCoord(x2, y2);
 
                 const dx = p2[0] - p1[0];
                 const dy = p2[1] - p1[1];
                 const len = Math.hypot(dx, dy);
-                const unitNormal: [number, number] = len > 0 ? [-dy / len, dx / len] : [0, 0];
+                const unitNormal: [ number, number ] = len > 0 ? [ -dy / len, dx / len ] : [ 0, 0 ];
 
-                const line = new LineString([p1, p2]);
-                featureBuffer.push(new Feature({
-                    geometry: line,
-                    properties: { ...link, featureType: "link-edit", linkRef: link.id },
-                }));
+                const linkLine = new LineString([ p1, p2 ]);
+                const linkLineFeature = new Feature(linkLine)
+                linkLineFeature.setProperties({ ...link, featureType: "link-edit", linkRef: link.id })
+                featureBuffer.push(linkLineFeature);
 
                 const half = link.width / 2;
-                const left = [p1, p2].map(([x, y]) => [x - unitNormal[0] * half, y - unitNormal[1] * half]);
-                const right = [p2, p1].map(([x, y]) => [x + unitNormal[0] * half, y + unitNormal[1] * half]);
-                const polygon = new Polygon([[...left, ...right, left[0]]]);
-                featureBuffer.push(new Feature({
-                    geometry: polygon,
-                    properties: { ...link, featureType: "link" },
-                }));
+                const left = [ p1, p2 ].map(([ x, y ]) => [ x - unitNormal[0] * half, y - unitNormal[1] * half ]);
+                const right = [ p2, p1 ].map(([ x, y ]) => [ x + unitNormal[0] * half, y + unitNormal[1] * half ]);
+                const linkPolygon = new Polygon([ [ ...left, ...right, left[0] ] ]);
+                const linkPolygonFeature = new Feature(linkPolygon)
+                linkPolygonFeature.setProperties({ ...link, featureType: "link" })
+                featureBuffer.push(linkPolygonFeature);
 
                 const laneCount = link.lanes?.length ?? 1;
                 for (let i = 0; i < laneCount; i++) {
                     const lane = link.lanes[i];
                     const laneWidth = lane.width ?? 3.5;
                     const offset = ((laneCount - 1) / 2 - i) * laneWidth;
-                    const centerP1 = [p1[0] + unitNormal[0] * offset, p1[1] + unitNormal[1] * offset];
-                    const centerP2 = [p2[0] + unitNormal[0] * offset, p2[1] + unitNormal[1] * offset];
+                    const centerP1 = [ p1[0] + unitNormal[0] * offset, p1[1] + unitNormal[1] * offset ];
+                    const centerP2 = [ p2[0] + unitNormal[0] * offset, p2[1] + unitNormal[1] * offset ];
 
                     const halfWidth = laneWidth / 2;
-                    const outerP1 = [centerP1[0] + unitNormal[0] * halfWidth, centerP1[1] + unitNormal[1] * halfWidth];
-                    const outerP2 = [centerP2[0] + unitNormal[0] * halfWidth, centerP2[1] + unitNormal[1] * halfWidth];
-                    const innerP1 = [centerP1[0] - unitNormal[0] * halfWidth, centerP1[1] - unitNormal[1] * halfWidth];
-                    const innerP2 = [centerP2[0] - unitNormal[0] * halfWidth, centerP2[1] - unitNormal[1] * halfWidth];
+                    const outerP1 = [ centerP1[0] + unitNormal[0] * halfWidth, centerP1[1] + unitNormal[1] * halfWidth ];
+                    const outerP2 = [ centerP2[0] + unitNormal[0] * halfWidth, centerP2[1] + unitNormal[1] * halfWidth ];
+                    const innerP1 = [ centerP1[0] - unitNormal[0] * halfWidth, centerP1[1] - unitNormal[1] * halfWidth ];
+                    const innerP2 = [ centerP2[0] - unitNormal[0] * halfWidth, centerP2[1] - unitNormal[1] * halfWidth ];
 
                     const laneProps = {
                         ...lane,
@@ -267,36 +264,36 @@ export default class NetworkFeatureLayer extends VectorLayer {
                         laneTarget: centerP2,
                     };
 
-                    const laneFeature = new Feature(new Polygon([[innerP1, innerP2, outerP2, outerP1, innerP1]]));
-                    laneFeature.set("properties", laneProps);
-                    laneMap.set(`${link.id}_${lane.id}`, laneFeature);
+                    const laneFeature = new Feature(new Polygon([ [ innerP1, innerP2, outerP2, outerP1, innerP1 ] ]));
+                    laneFeature.setProperties(laneProps);
+                    laneMap.set(`${ link.id }_${ lane.id }`, laneFeature);
                     featureBuffer.push(laneFeature);
 
-                    const laneLineFeature = new Feature(new LineString([centerP1, centerP2]));
-                    laneLineFeature.set("properties", { ...laneProps, featureType: "lane-edit" });
+                    const laneLineFeature = new Feature(new LineString([ centerP1, centerP2 ]));
+                    laneLineFeature.setProperties({ ...laneProps, featureType: "lane-edit" });
                     featureBuffer.push(laneLineFeature);
                 }
             }
 
             for (const node of nodes) {
-                const [xCoord, yCoord] = node.center.split(" ");
-                node.lng = baseLng + (xCoord/ 88000);
-                node.lat = baseLat + (yCoord/ 111000);
+                const [ xCoord, yCoord ] = node.center.split(" ");
+                node.lng = baseLng + (xCoord / 88000);
+                node.lat = baseLat + (yCoord / 111000);
 
-                const point = new Point(fromLonLat([node.lng, node.lat]));
+                const point = new Point(fromLonLat([ node.lng, node.lat ]));
                 const nodeFeature = new Feature(point);
-                nodeFeature.set("properties", { ...node, featureType: "node" });
+                nodeFeature.setProperties({ ...node, featureType: "node" });
                 featureBuffer.push(nodeFeature);
 
                 if (!node.connections) continue;
                 for (const conn of node.connections) {
 
-                    const from = laneMap.get(`${conn.fromLink}_${conn.fromLane}`);
-                    const to = laneMap.get(`${conn.toLink}_${conn.toLane}`);
+                    const from = laneMap.get(`${ conn.fromLink }_${ conn.fromLane }`);
+                    const to = laneMap.get(`${ conn.toLink }_${ conn.toLane }`);
                     if (!from || !to) continue;
-                    const fromPt = from.get("properties")?.laneTarget;
-                    const toPt = to.get("properties")?.laneSource;
-                    const nodePt = fromLonLat([node.lng, node.lat]);
+                    const fromPt = from.get("laneTarget");
+                    const toPt = to.get("laneSource");
+                    const nodePt = fromLonLat([ node.lng, node.lat ]);
                     const bezierPoints = this.getRatioBasedBezierPoints(
                         fromPt, toPt, nodePt,
                         100,       // 점 개수
@@ -304,11 +301,17 @@ export default class NetworkFeatureLayer extends VectorLayer {
                         0.15       // node 방향으로 당기는 정도
                     );
 
-                    if (!bezierPoints || bezierPoints.length < 2)  continue;
+                    if (!bezierPoints || bezierPoints.length < 2) continue;
 
-                    const connLine = new LineString(bezierPoints);
+                    let coord: [ number, number ][];
+                    if (conn.turning === "S") {
+                        coord = [ fromPt, toPt ]
+                    } else {
+                        coord = bezierPoints;
+                    }
+                    const connLine = new LineString(coord);
                     const connLineFeature = new Feature(connLine);
-                    connLineFeature.set("properties", {
+                    connLineFeature.setProperties({
                         ...conn,
                         featureType: "connection-edit",
                         fromNodeType: node.type,
@@ -317,10 +320,15 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 }
             }
 
+            this.source.clear()
             this.source.addFeatures(featureBuffer);
             console.log("NetworkLayer: 로드 완료");
         } catch (e) {
             console.error("NetworkLayer.load 에러:", e);
         }
+    }
+
+    public getSnapLayerKey(): string {
+        return "network"
     }
 }

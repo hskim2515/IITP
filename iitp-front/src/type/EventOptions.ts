@@ -6,10 +6,12 @@ import GeometryType from "@type/FeatureOptions";
 import Collection from "ol/Collection";
 import Feature from "ol/Feature";
 import Geometry from "ol/geom/Geometry";
+import { StyleLike } from "ol/style/Style";
 
 export interface EventOptions {
     olLayer?: BaseLayer | VectorLayer | ImageLayer | WebGLVectorLayer
     drawGeometryType?: GeometryType
     olLayers?: [BaseLayer | VectorLayer | ImageLayer | WebGLVectorLayer]
     features?: Collection<Feature<Geometry>>
+    style?: StyleLike | null | undefined;
 }
