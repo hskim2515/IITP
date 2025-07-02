@@ -1,32 +1,67 @@
 import { buildNewRow, featureToFlatRow } from "@utils/grid";
-import { ColDef } from "ag-grid-community";
+import {CellValueChangedEvent, ColDef} from "ag-grid-community";
 import { FeatureStoreFactoryType } from "@stores/useFeatureStoreFactory";
 import { RefObject } from "react";
 import { GridHandle } from "@type/GirdOptions";
 import { Feature } from "ol";
 import { GeoJSON } from "ol/format";
+import {HistoryStoreFactoryType} from "@stores/useHistoryStoreFactory";
+import {featureUpdateLogs} from "@utils/featureUpdateLogs";
+import {interpolateByOffset} from "@utils/interpolateByOffset";
 
 export interface AddOptions {
     baseData: Record<string, unknown>,
     defaultGeometry?: Record<string, unknown>
+    defaultProperties?: Record<string, unknown>
 }
 
-const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType, colDefs: ColDef) => {
+const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType, historyStore: HistoryStoreFactoryType, colDefs: ColDef) => {
+
+    // const addRow = ({
+    //                     baseData, defaultGeometry
+    //                 }: AddOptions) => {
+    //
+    //     const id = Date.now();
+    //     const props = { id };
+    //
+    //     console.log("useGrid baseData:::", baseData)
+    //     console.log("useGrid defaultGeometry:::", defaultGeometry)
+    //     const geometry = defaultGeometry ?? null;
+    //
+    //     const newFeature: GeoJSON.Feature = {
+    //         type: "Feature",
+    //         geometry,
+    //         properties: props,
+    //     };
+    //
+    //     const prevGeojson = store.getState().currentGeojson;
+    //     const updatedGeojson = {
+    //         type: "FeatureCollection",
+    //         features: [ ...(prevGeojson?.features ?? []), newFeature ]
+    //     };
+    //
+    //     const newRow = buildNewRow({ colDefs, defaultData: featureToFlatRow(newFeature) });
+    //     const updatedRows = [ ...store.getState().flatRow, newRow ];
+    //
+    //     store.getState().setCurrentGeojson(updatedGeojson);
+    //     store.getState().setFlatRow(updatedRows);
+    //     gridRef.current?.addRow(newRow);
+    // };
 
     const addRow = ({
-                        baseData, defaultGeometry
+                        baseData, defaultGeometry, defaultProperties
                     }: AddOptions) => {
-        const id = Date.now();
-        const props = { id };
-
+        const id = defaultProperties.id;
         console.log("useGrid baseData:::", baseData)
         console.log("useGrid defaultGeometry:::", defaultGeometry)
+        console.log("useGrid defaultProperties:::", defaultProperties)
         const geometry = defaultGeometry ?? null;
+        const properties = defaultProperties ?? null;
 
         const newFeature: GeoJSON.Feature = {
             type: "Feature",
             geometry,
-            properties: props,
+            properties
         };
 
         const prevGeojson = store.getState().currentGeojson;
@@ -41,6 +76,12 @@ const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType,
         store.getState().setCurrentGeojson(updatedGeojson);
         store.getState().setFlatRow(updatedRows);
         gridRef.current?.addRow(newRow);
+        featureUpdateLogs(historyStore,{
+            versionId : 1,
+            featureId: id,
+            updateType: "added",
+            properties
+        });
     };
 
     const deleteSelected = () => {
@@ -58,6 +99,15 @@ const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType,
         store.getState().setCurrentGeojson(updatedGeojson);
         store.getState().setFlatRow(updatedRows);
         gridRef.current?.removeSelectedRow();
+
+        selectedRows.forEach(row => {
+            featureUpdateLogs(historyStore,{
+                versionId : 1,
+                featureId: row.id,
+                updateType: "deleted",
+                properties: row
+            });
+        });
     };
 
     const saveModifiedFeatures = (features: Feature[]) => {
@@ -95,9 +145,10 @@ const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType,
         });
     };
 
-    const updateFeatureByRow = () => {
+    const updateFeatureByRow = (e:CellValueChangedEvent) => {
         console.log("updateFeatureByRow:::", updateFeatureByRow)
-        const row = gridRef.current?.getChangedValue();
+        const row = e.data;
+        //const row = gridRef.current?.getChangedValue();
         if (!row || typeof row !== "object") return;
 
         const id = row.id;
@@ -128,9 +179,35 @@ const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType,
             };
         });
 
+        const format = new GeoJSON();
+
+        const features = format.readFeatures({
+            type: 'FeatureCollection',
+            features: updatedFeatures
+        }, {
+            featureProjection: 'EPSG:3857'
+        });
+
+        const mergeFeature = interpolateByOffset(features);
+
+        const geojsonStr = new GeoJSON().writeFeatures(mergeFeature, {
+            featureProjection: "EPSG:3857",
+            dataProjection: "EPSG:4326"
+        });
+        const geojsonObj = JSON.parse(geojsonStr);
+
         store.getState().setCurrentGeojson({
             ...currentGeojson,
-            features: updatedFeatures,
+            features: geojsonObj.features,
+        });
+
+        featureUpdateLogs(historyStore,{
+            versionId : 1,
+            featureId: row.id,
+            updateType: "modified",
+            field: e.colDef.field,
+            oldValue: e.oldValue,
+            newValue: e.newValue
         });
     };
 
