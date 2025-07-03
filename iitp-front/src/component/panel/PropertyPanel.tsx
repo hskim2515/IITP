@@ -24,6 +24,14 @@ import axiosInstance from "../../api/axiosInstance";
 import JsonGrid from "../util/JsonGrid";
 import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
+import {menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
+import {mergeGeojsonWithLog} from "@utils/mergeJsonWithLog";
+import {interpolateByOffset} from "@utils/interpolateByOffset";
+import HistoryController from "../modal/HistoryController";
+import {menuDrawRequirements} from "../../config/menuDrawConfig";
+import TypeSelectionModal from "../modal/TypeSelectionModal";
+import HistoryModal from "../modal/HistoryModal";
+import {getLinkLaneCellInfo} from "@utils/getPavementMarkingInfo";
 
 export interface BottomTableProps {
     activeSubmenu: MenuTree
@@ -48,6 +56,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
 
     // 동적 스토어
     const store = menuCodeToStoreMap[submenu.menuCode];
+    const historyStore = menuCodeToHistoryStoreMap[submenu.menuCode];
 
     const eventManager = useEventStore.getState().olEventManager;
     const [ drawGeometryType, setDrawGeometryType ] = useState<GeometryType>(GeometryType.POINT)
@@ -57,8 +66,13 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
 
     const [ isEditable, setIsEditable ] = useState<boolean>(false)
     const [ isDrawing, setIsDrawing ] = useState<boolean>(false)
+    const [isTypeSelect, setIsTypeSelect] = useState(false);
+    const [onConfirm, setOnConfirm] = useState<((selected: string) => void) | null>(null);
 
     const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
+    const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+    const [ selectedType, setSelectedType ] = useState<String>()
 
     const map = useOpenLayersStore.state.map()
 
@@ -83,7 +97,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         saveModifiedFeatures,
         updateFeatureByRow,
         switchEditable
-    } = useGrid(gridRef, store, colDefs)
+    } = useGrid(gridRef, store, historyStore, colDefs)
 
     const onDrawEnd = (e: DrawEvent) => {
         const feature: Feature = e.feature;
@@ -96,13 +110,48 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
 
         const defaultGeometry = geojsonFeature.geometry;
 
-
         saveModifiedFeatures([ feature ]);
 
         const baseData = addedData?.baseData ?? {};
         addRow({ baseData, defaultGeometry })
         setIsDrawing(false)
     };
+
+    // const onDrawEnd = (e: DrawEvent) => {
+    //     const feature = e.feature;
+    //     const coord = feature.getGeometry().getCoordinates();
+    //     const result = getLinkLaneCellInfo(map, coord);
+    //     const { linkId, laneId, cellId, offset, angle, iconPosition } = result;
+    //     const selected = 1;
+    //     feature.set("id", Date.now());
+    //     feature.set("selected", selected);
+    //
+    //     feature.set("markingType", selectedType);
+    //     feature.set("linkRef", parseInt(linkId));
+    //     feature.set("laneRef", parseInt(laneId));
+    //     feature.set("cellId", parseInt(cellId));
+    //     feature.set("offset", parseInt(offset));
+    //     feature.set("angle", angle);
+    //
+    //     feature.changed();
+    //     const format = new GeoJSON({ featureProjection: 'EPSG:3857', dataProjection: 'EPSG:4326' });
+    //     const geojsonFeature = format.writeFeatureObject(feature);
+    //     const defaultProperties = geojsonFeature.properties;
+    //     const defaultGeometry = geojsonFeature.geometry;
+    //
+    //     // if (defaultProperties.position) {
+    //     //     const originalCoord = defaultProperties.position;
+    //     //     const transformed = transform(originalCoord, 'EPSG:3857', 'EPSG:4326');
+    //     //     defaultGeometry.coordinates = transformed;
+    //     // }
+    //
+    //     saveModifiedFeatures([ feature ]);
+    //
+    //     const baseData = addedData?.baseData ?? {};
+    //     addRow({ baseData, defaultGeometry, defaultProperties})
+    //     setIsDrawing(false)
+    // };
+
     useEffect(() => {
         if (!eventManager || !submenu.menuCode || !map || !layer) return;
 
@@ -255,20 +304,60 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         const baseData = addedData?.baseData ?? {};
         addRow({ baseData });
     }
+
     const handleDrawBtn = () => {
-        setIsDrawing(true)
-    }
+        setIsDrawing(true);
+        const menuMeta = menuDrawRequirements[submenu.menuCode];
+        if (!menuMeta?.requiresType) {
+            setIsDrawing(true);
+            return;
+        }
+        else{
+            openTypeSelectionModal(menuMeta.typeKey!, (type: string) => {
+                setSelectedType(type);
+                setIsDrawing(true);
+            });
+        }
+    };
+
+    const openTypeSelectionModal = (typeKey: string, callback: (selected: string) => void) => {
+        setOnConfirm(() => callback);
+        setIsTypeSelect(true);
+    };
+
     const handleDeleteBtn = () => {
         deleteSelected()
     }
 
+    // const handleSaveBtn = async () => {
+    //     const api = apiConfig[submenu.menuCode as ApiMenuKey].update;
+    //     const geojson = store.getState().currentGeojson;
+    //     const payload = {
+    //         id: 2,
+    //         name: "busStation",
+    //         geojson,
+    //     };
+    //     try {
+    //         await axiosInstance({
+    //             method: api.method,
+    //             url: api.url,
+    //             data: payload,
+    //         });
+    //
+    //         console.log("저장 완료:",);
+    //     } catch (error) {
+    //         console.error("저장 실패:", error);
+    //     }
+    // }
+
     const handleSaveBtn = async () => {
         const api = apiConfig[submenu.menuCode as ApiMenuKey].update;
         const geojson = store.getState().currentGeojson;
+        const logJson = historyStore.getState().updateLogs;
         const payload = {
-            id: 2,
-            name: "busStation",
+            versionId : 1,
             geojson,
+            logJson
         };
         try {
             await axiosInstance({
@@ -278,9 +367,12 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
             });
 
             console.log("저장 완료:",);
+            alert("저장 완료")
         } catch (error) {
             console.error("저장 실패:", error);
+            alert("저장 실패")
         }
+        historyStore.getState().resetAllUpdates();
     }
 
     const handleEditableBtn = () => {
@@ -298,6 +390,45 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         setRowData(restoredFlatRow);
     }
 
+    const handleShowHistory = () => {
+        setIsHistoryOpen(true);
+    }
+
+    const handleHistoryApply = (isUndo: boolean) => {
+        if (!historyStore) return;
+        const historyFn = isUndo ? historyStore.getState().undo : historyStore.getState().redo;
+        const updateHistory = historyFn();
+
+        if (!updateHistory) {
+            console.warn(isUndo ? "No more undo steps available." : "No more redo steps available.");
+            return;
+        }
+
+        const mergeGeojson = mergeGeojsonWithLog(store, updateHistory, isUndo);
+
+        const format = new GeoJSON();
+        const features = format.readFeatures(mergeGeojson, {
+            featureProjection: "EPSG:4326",
+            dataProjection: "EPSG:3857",
+        });
+
+        const interpolated = interpolateByOffset(features);
+
+        const geojsonStr = format.writeFeatures(interpolated, {
+            featureProjection: "EPSG:3857",
+            dataProjection: "EPSG:4326",
+        });
+
+        const geojsonObj = JSON.parse(geojsonStr);
+        store.getState().setCurrentGeojson(geojsonObj);
+
+        const restoredFlatRow = featureCollectionToFlatRow(geojsonObj);
+        store.getState().setFlatRow(restoredFlatRow);
+        setRowData(restoredFlatRow);
+
+        alert(isUndo ? "Undo 성공" : "Redo 성공");
+    };
+
     return (
         <>
             <div className={ `popup-overlay${ submenu.item.type ? `-${ submenu.item.type }` : '' }` }>
@@ -306,26 +437,41 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
                         <span>{ submenu.title }</span>
                         <div className="popup-header-actions">
                             <select
-                                value={ drawGeometryType ?? '' }
-                                onChange={ (e) => setDrawGeometryType(e.target.value as GeometryType) }
+                                value={drawGeometryType ?? ''}
+                                onChange={(e) => setDrawGeometryType(e.target.value as GeometryType)}
                             >
-                                { geometryTypeOptions.map(type => (
-                                    <option key={ type } value={ type }>{ type }</option>
-                                )) }
+                                {geometryTypeOptions.map(type => (
+                                    <option key={type} value={type}>{type}</option>
+                                ))}
                             </select>
-                            <button className="add-btn" onClick={ () => handleAddBtn() }>추가</button>
-                            <button className="add-btn" onClick={ () => handleDrawBtn() }>그리기</button>
-                            <button className="delete-btn" onClick={ () => handleDeleteBtn() }>삭제</button>
-                            <button className="save-btn" onClick={ () => handleSaveBtn() }>저장</button>
-                            <button className="save-btn" onClick={ () => handleInitBtn() }>되돌리기</button>
-                            <button className="edit-btn" onClick={ () => handleEditableBtn() }>그리드 편집활성화</button>
-                            <button onClick={ () => handleCheck() }>Interaction 객체 목록 디버깅</button>
+                            <button className="add-btn" onClick={() => handleAddBtn()}>추가</button>
+                            <button className="add-btn" onClick={() => handleDrawBtn()}>그리기</button>
+                            <button className="delete-btn" onClick={() => handleDeleteBtn()}>삭제</button>
+                            <button className="save-btn" onClick={() => handleSaveBtn()}>저장</button>
+                            <button className="save-btn" onClick={() => handleInitBtn()}>되돌리기</button>
+                            <HistoryController onHistoryAply={handleHistoryApply}></HistoryController>
+                            <button className="edit-btn" onClick={() => handleEditableBtn()}>그리드 편집활성화</button>
+                            <button onClick={() => handleCheck()}>Interaction 객체 목록 디버깅</button>
+                            <button className="btn" onClick={() => handleShowHistory()}>변경 이력 보기</button>
                         </div>
-                        <button className="close-btn" onClick={ onClose }>×</button>
+                        <button className="close-btn" onClick={onClose}>×</button>
                     </div>
                     <div className="popup-body">
-                        { submenu.item &&
-                        //{ submenu.item colDefs && &&
+                        {isTypeSelect && (
+                            <TypeSelectionModal typeKey={submenu.menuCode} onConfirm={(selectedType) => {onConfirm?.(selectedType);setIsTypeSelect(false);}} onCancel={() => setIsTypeSelect(false)}/>
+                        )}
+                        {isHistoryOpen && (
+                            <HistoryModal
+                                onClose={() => setIsHistoryOpen(false)}
+                                open={isHistoryOpen}
+                                //onApply={handleApplyHistory}
+                                //historySteps={fakeHistorySteps}
+                                //originFeatures={originFeatures}
+                                menuCode={activeSubmenu.menuCode}
+                            />
+                        )}
+                            { submenu.item &&
+                            //{ submenu.item && colDefs &&
                             // <Grid
                             //     ref={ gridRef }
                             //     colDefs={ colDefs }

@@ -14,6 +14,7 @@ import {useScenarioStore} from "@stores/useScenarioStore";
 import '../../App.css'
 import {useCesiumStore} from "@stores/useCesiumStore";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
+import useHistoryInit from "@hooks/useHistoryInit";
 
 const Maps = () => {
 
@@ -35,12 +36,12 @@ const Maps = () => {
 
     const olMap = useOpenLayersStore.state.map();
     const cesiumViewer = useCesiumStore.getState().viewer;
-
     useEffect(() => {
         fetchLayerSchema()
     }, [fetchLayerSchema]);
 
     useLayerInit();
+    useHistoryInit();
     useMapInit(openlayersMapRef, cesiumMapRef);
     useSimulation();
     useMapSync();

@@ -190,8 +190,20 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         rowFields: []
     },
     PAVEMENT_MARKING: {
-        type:"",
-        fields: [],
+        type:"table",
+        layer: "pavementMarking",
+        fields: [
+            { name: "id", label: "id", type: "number" },
+            { name: "markingType", label: "Marking Type", type: "text" },
+            { name: "linkRef", label: "Link ID", type: "text" },
+            { name: "laneRef", label: "Lane ID", type: "text" },
+            { name: "cellId", label: "Cell ID", type: "text" },
+            { name: "offset", label: "offset", type: "text" },
+            // { name: "geometryType", label: "geometryType", type: "text" },
+            { name: "angle", label: "angle", type: "number" },
+            // { name: "lon", label: "lon", type: "number" },
+            // { name: "lat", label: "lat", type: "number" },
+        ],
         inputFields: [],
         rowFields: []
     },
