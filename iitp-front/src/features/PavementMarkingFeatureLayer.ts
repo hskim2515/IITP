@@ -33,7 +33,7 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
 
                 const markingType = feature.get("markingType");
                 const iconFile = PavementMarkingType[markingType];
-                const url = `http://192.168.10.182:58080/models/${iconFile}`;
+                const url = `${process.env.REACT_APP_FILE_BASE_URL}models/${iconFile}`;
 
                 const angle = feature.get("angle") || 0;
 
@@ -65,24 +65,15 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
                 });
 
                 const features = format.readFeatures(geojson);
-                console.log("feature : " + features);
-                const mergedFeatures = interpolateByOffset(features);
-
                 source.clear(true);
-                mergedFeatures.forEach(f => {
-                    f.setStyle(null);
-                    f.set("selected", 0);
-                    f.changed();
-                    console.log("👉 Geometry:", f.getGeometry());
-                });
-                source.addFeatures(mergedFeatures);
+                source.addFeatures(features);
             },
             { fireImmediately: true }
         );
         this.source = source;
     }
 
-    public load(): void {
+    public loadFromStore(): void {
         const store = menuCodeToStoreMap[this.LAYER_NAME];
         const geojson = store.getState().currentGeojson;
 
@@ -101,13 +92,6 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
         });
 
         this.source.addFeatures(mergeFeature);
-        const geojsonStr = new GeoJSON().writeFeatures(mergeFeature, {
-            featureProjection: "EPSG:3857",
-            dataProjection: "EPSG:4326"
-        });
-        const geojsonObj = JSON.parse(geojsonStr);
-        store.getState().setCurrentGeojson(geojsonObj);
-
     }
 
     public destroy() {
