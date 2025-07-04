@@ -292,9 +292,6 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     }, [ isDrawing, isEditable, snapLayer, selectedGuid ]);
 
     const handleCheck = () => {
-        console.log("체크한 row:", gridRef.current?.getSelectedRow());
-        console.log("그리드 업데이트 확인:", gridRef.current?.isGridChanged());
-        console.log("changed?", gridRef.current?.getChangedValue())
         console.log("currentGeojson:", store.getState().currentGeojson) // 디버깅용
         console.log("current originData:", useBusStationStore.getState().originData) // 디버깅용
         console.log("current currentJsonData:", useBusStationStore.getState().currentJsonData) // 디버깅용
@@ -341,6 +338,17 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     const handleAddBtn = () => {
         // const baseData = addedData?.baseData ?? {};
         // addRow({ baseData });
+        let dto;
+        if(typeof layer.createDto === "function") {
+            dto = layer.createDto()
+            dto.id = Date.now()
+
+            console.log("dto::::", dto)
+            store.getState().updateCurrentJsonData(dto);
+        } else {
+            console.error("createDto 메서드 필요")
+        }
+
     }
     const handleDrawBtn = () => {
         setIsDrawing(true);

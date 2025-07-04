@@ -110,10 +110,10 @@ export default class BusStationFeatureLayer extends VectorLayer {
                         const baseFeature = findFeatureByProperties(baseLayer,{
                             featureType: this.getSnapFeatureType(),
                             linkRef: item.linkRef,
-                            laneRef: item.laneRef,
+                            laneRef: item.laneRef ?? 0,
                         })
 
-                        const offset = item.offset
+                        const offset = item.offset ?? 0
                         const coord = getCoordinateByOffset(baseFeature, offset)
                         if (coord) {
                             const [ lng, lat ] = toLonLat(coord)
@@ -128,8 +128,11 @@ export default class BusStationFeatureLayer extends VectorLayer {
                 });
 
                 added.forEach((item) => {
+                    console.log("add btn item:::", item)
                     const dto = this.recordToDto(item);
+                    console.log("add btn dto:::", dto)
                     const feature = this.createFeature(dto);
+                    console.log("add btn feature:::", feature)
                     src.addFeature(feature);
                     console.log(`[추가] __guid: ${dto.__guid}`);
                 });
@@ -224,16 +227,41 @@ export default class BusStationFeatureLayer extends VectorLayer {
     /**
      * DTO로부터 Point Feature와 속성을 생성
      */
-    public createFeature(data: BusStationData): Feature<Point> {
-        const geom = new Point(fromLonLat([ data.lng, data.lat ]));
+    public createFeature(data: BusStationData): Feature<Point> | undefined {
         const props: BusStationData = {
             ...data,
             transitMode: data.transitMode ?? TRANSIT_MODE.BUS,
             featureType: data.featureType ?? FEATURE_TYPE.BUS_STATION,
         };
+
+
+        const hasValidCoordinate = typeof data.lng === 'number' && typeof data.lat === 'number';
+        const geom = hasValidCoordinate ? new Point(fromLonLat([data.lng!, data.lat!])) : undefined;
+
         const feature = new Feature<Point>(geom);
         feature.setProperties(props);
+
         return feature;
+    }
+
+    public createDto(): BusStationData {
+        const guid = generateGUIDWithType(this.getFeatureType());
+
+        const dto: BusStationData = {
+            id: undefined,
+            __guid: guid,
+            featureType: FEATURE_TYPE.BUS_STATION,
+            transitMode: TRANSIT_MODE.BUS,
+            linkRef: null,
+            laneRef: null,
+            offset: null,
+            lng: null,
+            lat: null,
+            type: null,
+            address: '',
+        };
+
+        return dto;
     }
 
     /**
@@ -320,16 +348,16 @@ export default class BusStationFeatureLayer extends VectorLayer {
      * offset 계산 로직
      */
     public computeMetadata(
-        snapLayer: VectorLayer | WebGLVectorLayer | BaseLayer,
-        snappedProperties: Record<string, unknown> | undefined,
+        baseLayer: VectorLayer | WebGLVectorLayer | BaseLayer,
+        basedProperties: Record<string, unknown> | undefined,
         fromCoord: Coordinate
     ): Record<string, unknown> {
         const filter = { featureType: this.getSnapFeatureType() };
-        const features = getFeaturesByProperties(snapLayer, filter);
-        const feature = findFeatureByProperties(features, snappedProperties);
+        const features = getFeaturesByProperties(baseLayer, filter);
+        const feature = findFeatureByProperties(features, basedProperties);
         const offset = getOffsetByCoordinate(feature, fromCoord);
 
-        console.log("before snappedProperties compute:::", snappedProperties);
+        console.log("before snappedProperties compute:::", basedProperties);
 
         const computeProperties: Record<string, unknown> = {};
         const [ lng, lat ] = toLonLat(fromCoord)
@@ -342,7 +370,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
             } else if (key === "lat") {
                 computeProperties[key] = lat ?? null;
             } else {
-                computeProperties[key] = snappedProperties?.[key] ?? null;
+                computeProperties[key] = basedProperties?.[key] ?? null;
             }
         });
 

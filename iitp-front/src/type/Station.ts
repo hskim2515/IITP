@@ -16,15 +16,15 @@ export type TransitMode = typeof TRANSIT_MODE[keyof typeof TRANSIT_MODE];
 export interface BusStationData {
     __guid: string;
     featureType: string;
-    id: string;
+    id: string | undefined;
     transitMode: string;
-    linkRef: number;
-    laneRef: number;
-    offset: number;
-    type: string;
-    address: string;
-    lng: number;
-    lat: number;
+    linkRef: number | null;
+    laneRef: number | null;
+    offset: number | null;
+    type: string | null;
+    address: string | null;
+    lng: number | null;
+    lat: number | null;
 }
 
 export type BusStationSnapProperties = Pick<BusStationData, BusStationSnapFields>;
