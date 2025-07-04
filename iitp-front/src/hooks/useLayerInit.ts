@@ -17,7 +17,7 @@ import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import {useCesiumStore} from "@stores/useCesiumStore";
 import LayerManager from "@managers/LayerManager";
 import {useLayerSchemaStore} from "@stores/useLayerSchemaStore";
-import {assignGUIDsToTrafficData} from "@utils/guid";
+import { assignFeatureTypeToResponseData, assignGUIDsToResponseData } from "@utils/guid";
 import {usePavementMarkingStore} from "@stores/usePavementMarkingStore";
 
 // 각 도메인 별로 store를 생성하기 위함
@@ -59,7 +59,8 @@ const useLayerInit = (): void => {
                 });
 
                 store.getState().setOriginData(response.data);
-                assignGUIDsToTrafficData(response.data)
+                assignGUIDsToResponseData(response.data)
+                assignFeatureTypeToResponseData(response.data)
                 store.getState().initCurrentData();
 
                 console.log("response guid:::",store.getState().originData)

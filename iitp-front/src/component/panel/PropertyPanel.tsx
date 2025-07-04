@@ -1,15 +1,13 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import "/static/css/styles.css";
 import { MenuTree } from "@stores/useMenuStore";
 import { propertyFormSchema } from "../form/propertyFormSchema";
-import { buildColumnDefs, featureCollectionToFlatRow, } from "@utils/grid";
-import { ColDef } from "ag-grid-community";
-import { GridHandle } from "@type/GirdOptions";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 import { useEventStore } from "@stores/useEventStore";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
+
 import GeometryType from "@type/FeatureOptions";
-import { SelectEvent } from "ol/interaction/Select";
+
 import { Feature } from "ol";
 import VectorLayer from "ol/layer/Vector";
 import BaseLayer from "ol/layer/Base";
@@ -30,22 +28,19 @@ import { menuDrawRequirements } from "../../config/menuDrawConfig";
 import TypeSelectionModal from "../modal/TypeSelectionModal";
 import HistoryModal from "../modal/HistoryModal";
 import { useSelectionStore } from "@stores/useSelectionStore";
-import {
-    filterFeaturesByIds,
-    findFeaturesToFeature,
-    getFeaturesByIdsFromLayer,
-    getFeaturesByPropertyFromLayer,
-    getFromToCoordinates,
-    getOffsetOnFeature,
-    getValuesFromFeatures
-} from "@utils/feature";
+
 import { useBusStationStore } from "@stores/useBusStationStore";
 import { Select } from "ol/interaction";
-import { toLonLat } from "ol/proj";
-import Collection from "ol/Collection";
-import { generateTrafficTypesGUID } from "@utils/guid";
 
-export interface BottomTableProps {
+import Collection from "ol/Collection";
+import { filterFeaturesByKey, getFromToCoordinates, getValuesFromFeatures } from "@utils/feature";
+import { generateGUIDWithType } from "@utils/guid";
+import { getSnapFeature } from "@utils/interaction";
+import { SelectEvent } from "ol/interaction/Select";
+import { featureCollectionToFlatRow } from "@utils/grid";
+
+
+export interface PropertyPanelProps {
     activeSubmenu: MenuTree
     onClose: () => void;
 }
@@ -55,16 +50,12 @@ const geometryTypeOptions: GeometryType[] = [
     GeometryType.LINE_STRING,
     GeometryType.POLYGON,
 ];
-const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
+const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     const submenu = {
         menuCode: activeSubmenu.menuCode,
         item: propertyFormSchema[activeSubmenu.menuCode],
         title: activeSubmenu.nameKor
     }
-
-    const gridRef = useRef<GridHandle>(null)
-    const [ rowData, setRowData ] = useState<Record<string, unknown>[]>([])
-    const [ colDefs, setColDefs ] = useState<ColDef[] | undefined>(undefined)
 
     // 동적 스토어
     const store = menuCodeToStoreMap[submenu.menuCode];
@@ -96,7 +87,6 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
     const [ isHistoryOpen, setIsHistoryOpen ] = useState(false);
     const [ selectedType, setSelectedType ] = useState<String>()
 
-    const map = useOpenLayersStore.state.map()
     const olMap = useOpenLayersStore.state.map()
 
     useEffect(() => {
@@ -118,26 +108,30 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
     useEffect(() => {
         if (!selectedGuidRef || !layer) return;
 
-        const allFeatures = layer.getSource().getFeatures();
-        const prevGuids = selectedGuidRef.current || [];
-        const nextGuids = selectedGuid || [];
+        const prevGuids: [] = selectedGuidRef.current;
+        const nextGuids: [] = selectedGuid;
 
-        // 선택 해제 > 기본 스타일 적용
+        function shallowEqualArray<T>(a: T[], b: T[]): boolean {
+            if (a.length !== b.length) return false;
+            return a.every((val, i) => val === b[i]);
+        }
+
+        if (shallowEqualArray(prevGuids, nextGuids)) return;
+
+        const allFeatures = layer.getSource().getFeatures();
         const deselected = prevGuids.filter((id) => !nextGuids.includes(id));
-        const deselectedFeatures = filterFeaturesByIds(allFeatures, deselected);
+        const deselectedFeatures = filterFeaturesByKey(allFeatures, deselected);
+
         deselectedFeatures.forEach((f) => {
-            if(typeof layer.getDefaultStyle ==="function") {
-                f.setStyle(layer.getDefaultStyle())
-            }
+            if (typeof layer.getDefaultStyle !== "function") return;
+            f.setStyle(layer.getDefaultStyle())
         });
 
-        // 선택 > 선택 스타일 적용
         const newlySelected = nextGuids.filter((id) => !prevGuids.includes(id));
-        const selectedFeatures = filterFeaturesByIds(allFeatures, newlySelected);
+        const selectedFeatures = filterFeaturesByKey(allFeatures, newlySelected);
         selectedFeatures.forEach((f) => {
-            if(typeof layer.getSelectStyle ==="function") {
-                f.setStyle(layer.getSelectStyle())
-            }
+            if (typeof layer.getSelectStyle !== "function") return;
+            f.setStyle(layer.getSelectStyle())
         });
 
         // 상태 갱신
@@ -161,158 +155,141 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
     }, [ olMap, submenu.menuCode ]);
 
     useEffect(() => {
-        if (!olEventManager || !submenu.menuCode || !map || !layer) return;
+        clearSelected()
+    }, [ activeSubmenu ]);
+
+    useEffect(() => {
+        if (!olEventManager || !submenu.menuCode || !olMap || !layer) return;
+
         const onDrawEnd = (e: DrawEvent) => {
-            setIsDrawing(false)
-            // generateTrafficTypesGUID()
-            const id = Date.now()
-            let featureType;
-            if(typeof layer.getFeatureType === "function") {
-                featureType = layer.getFeatureType()
-            } else {
-                featureType = submenu.item?.layer
+            setIsDrawing(false);
+
+            const id = Date.now();
+            if(typeof layer.getFeatureType !== "function") {
+                console.error("레이어 내부에 공통 메서드 getFeatureType 작성 필요 ")
+                return
             }
+            const featureType = layer.getFeatureType() || '';
+            const guid = generateGUIDWithType(featureType);
 
-            const guid = generateTrafficTypesGUID(featureType)
-
-            const feature: Feature = e.feature;
-            feature.setProperties({
+            e.feature.setProperties({
                 id,
                 __guid: guid
-            })
-            // selection id 추가
-            setSelectedGuid([ feature.get("__guid") ])
-            const drewProperties = feature.getProperties()
+            });
 
-            const snappedProperties = snappedPropertiesRef?.current
-            const snapFilter = { featureType }
+            // selection id 설정
+            const drewProperties = e.feature.getProperties();
+            const { fromCoord } = getFromToCoordinates(e.feature);
 
-            const snapFeatures = getFeaturesByPropertyFromLayer(snapLayer, snapFilter)
-            const snapFeature = findFeaturesToFeature(snapFeatures, snappedProperties)
-            const { startPosition } = getFromToCoordinates(e.feature)
-            const offset = getOffsetOnFeature(snapFeature, startPosition)
+            addSelectionId([ drewProperties["__guid"] ]);
 
-            const [ lng, lat ] = toLonLat(startPosition)
-
-            const mergedSnapProps = {
-                lng,
-                lat,
-                offset,
-                ...snappedProperties
+            // snap
+            const maxDistance = 10
+            const snapFeature = getSnapFeature(snapLayer, fromCoord, maxDistance)
+            if(typeof layer.recordToSnapProperties !== "function") {
+                console.error("레이어 내부에 공통 메서드 recordToSnapProperties 작성 필요 ")
+                return
             }
-            let dto;
-            if(typeof layer.recordToDto === "function") {
-                dto = layer.snapPropertiesToDto(mergedSnapProps, layer.recordToDto(drewProperties))
-            } else {
-                console.error("properties를 json 형식으로 변환해주는 메서드 생성 필요")
-                {
-                    dto = {
-                        mergedSnapProps,
-                        ...drewProperties
-                    }
-                }
-            }
+            const snapProperties = snapFeature
+                ? layer.recordToSnapProperties(snapFeature.getProperties())
+                : undefined;
 
-            console.log("draw dto:::", dto)
+            // metadata 생성 (offset 포함)
+            const metadata = layer.computeMetadata(snapLayer, snapProperties, fromCoord);
 
+            const dto = layer.snapPropertiesToDto(metadata, layer.recordToDto(drewProperties));
             store.getState().updateCurrentJsonData(dto);
-        }
-        const options = {
-            olLayer: layer,
-            drawGeometryType: drawGeometryType
         };
 
+        const options = { drawGeometryType };
         if (isDrawing) {
             olEventManager.bind("drawend", onDrawEnd, options);
-        } else {
-            olEventManager.unbind("drawend", onDrawEnd);
         }
-
         return () => {
             olEventManager.unbind("drawend", onDrawEnd);
         };
-    }, [ isDrawing, submenu.menuCode ]);
+    }, [ isDrawing, layer ]);
 
     useEffect(() => {
-        if (!olEventManager || !submenu.menuCode || !map || !layer) return;
+        if (!olEventManager || !layer) return;
+
         const onModifyEnd = (e: ModifyEvent) => {
             const features: Collection<Feature> = e.features;
             const modifiedIds = getValuesFromFeatures(features, "__guid")
             setSelectedGuid(modifiedIds)
 
             const modifiedFeature = e.features.getArray()[0]
-
-            const snappedProperties = snappedPropertiesRef?.current
-
-            const snapFilter = { featureType: layer.getSnapFeatureType() }
-            const snapFeatures = getFeaturesByPropertyFromLayer(snapLayer, snapFilter)
-            const snapFeature = findFeaturesToFeature(snapFeatures, snappedProperties)
-            const { startPosition } = getFromToCoordinates(modifiedFeature)
-            const offset = getOffsetOnFeature(snapFeature, startPosition)
-            const [ lng, lat ] = toLonLat(startPosition)
-            const mergedSnapProps = {
-                lng,
-                lat,
-                offset,
-                ...snappedProperties
+            const { fromCoord } = getFromToCoordinates(modifiedFeature)
+            if(typeof layer.recordToSnapProperties !== "function") {
+                console.error("레이어 내부에 공통 메서드 recordToSnapProperties 작성 필요 ")
+                return
             }
-            let dto;
-            if(typeof layer.recordToDto === "function") {
-                dto = layer.snapPropertiesToDto(mergedSnapProps, layer.recordToDto(modifiedFeature.getProperties()))
-            } else {
-                console.error("properties를 json 형식으로 변환해주는 메서드 생성 필요")
-                {
-                    dto = {
-                        mergedSnapProps,
-                        ...modifiedFeature.getProperties()
-                    }
-                }
-            }
+            // snap
+            const maxDistance = 10
+            const snapFeature = getSnapFeature(snapLayer, fromCoord, maxDistance)
+            const snapProperties = snapFeature
+                ? layer.recordToSnapProperties(snapFeature.getProperties())
+                : undefined;
 
+            const metadata = layer.computeMetadata(snapLayer, snapProperties, fromCoord)
 
-            console.log("modified dto:::", dto)
+            console.log("modify snappedProperties mergedSnapProps:::", metadata)
+            const modifiedRecord = layer.recordToDto(modifiedFeature.getProperties())
+            const dto = layer.snapPropertiesToDto(metadata, modifiedRecord)
+            console.log("modify snappedProperties dto:::", dto)
             store.getState().updateCurrentJsonData(dto);
         }
 
-        const selectedFeatures = getFeaturesByIdsFromLayer(layer, selectedGuid)
+        const selectedFeatures = filterFeaturesByKey(layer, selectedGuid)
         const options = {
-            olLayer: layer,
             features: selectedFeatures,
         };
 
         if (isEditable) {
             olEventManager.bind("modifyend", onModifyEnd, options);
-        } else {
-            olEventManager.unbind("modifyend", onModifyEnd);
         }
-
         return () => {
             olEventManager.unbind("modifyend", onModifyEnd);
         };
-    }, [ isEditable, submenu.menuCode ]);
+    }, [ isEditable, layer, selectedGuid ]);
 
+    //select
     useEffect(() => {
-        if (!olEventManager || !submenu.menuCode || !map) return;
+        if (!olEventManager || !layer) return;
         const onSelect = (e: SelectEvent) => {
-            selectInteractionRef.current = e.target
             const features: Collection<Feature> = e.target.getFeatures()
             console.log("selected features:::", features)
             const selectedIds = getValuesFromFeatures(features, "__guid")
             setSelectedGuid(selectedIds)
         };
-
         const options = {
-            olLayers: layers,
+            olLayers: [ layer ],
+            // style: layer.getInteractionStyle("select")
         }
         if (layer) olEventManager.bind("select", onSelect, options)
         return () => {
             if (layer) olEventManager.unbind("select", onSelect)
         };
-    }, [ submenu.menuCode ]);
+    }, [ olEventManager, layer ]);
 
+    //snap
     useEffect(() => {
-        console.log("drawGeometryType:::", drawGeometryType)
-    }, [ drawGeometryType ]);
+        if (!olEventManager || !snapLayer) return
+        const onSnap = (e: any) => {
+        };
+
+        const features = new Collection<Feature>(snapLayer.getSource().getFeatures())
+
+        const options = {
+            features
+        };
+
+        olEventManager.bind("snap", onSnap, options);
+
+        return () => {
+            olEventManager.unbind("snap", onSnap);
+        };
+    }, [ isDrawing, isEditable, snapLayer, selectedGuid ]);
 
     const handleCheck = () => {
         console.log("체크한 row:", gridRef.current?.getSelectedRow());
@@ -324,26 +301,26 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         console.log("current layer:", layer) // 디버깅용
         console.log("current source:", layer.getSource().getFeatures()) // 디버깅용
         console.log("current selectId:", useSelectionStore.getState().selectedGuid) // 디버깅용
-        console.log("current feature:::", filterFeaturesByIds(layer.getSource().getFeatures(), selectedGuid))
+        console.log("current feature:::", filterFeaturesByKey(layer.getSource().getFeatures(), selectedGuid))
     };
 
     // currentGeojson 기반으로 Grid용 데이터 가공
-    useEffect(() => {
-        if (!submenu.menuCode || !submenu.item?.fields) return;
-        if (!store) {
-            setRowData([])
-            return;
-        }
-        const currentGeojson = store.getState().currentGeojson
-        if (currentGeojson == undefined) return;
-        const flatRow = featureCollectionToFlatRow(currentGeojson);
-
-        store.getState().setFlatRow(flatRow)
-        setRowData(flatRow);
-        const defs = buildColumnDefs(submenu.item.fields);
-        setColDefs(defs);
-
-    }, [ submenu.menuCode ]);
+    // useEffect(() => {
+    //     if (!submenu.menuCode || !submenu.item?.fields) return;
+    //     if (!store) {
+    //         setRowData([])
+    //         return;
+    //     }
+    //     const currentGeojson = store.getState().currentGeojson
+    //     if (currentGeojson == undefined) return;
+    //     const flatRow = featureCollectionToFlatRow(currentGeojson);
+    //
+    //     store.getState().setFlatRow(flatRow)
+    //     setRowData(flatRow);
+    //     const defs = buildColumnDefs(submenu.item.fields);
+    //     setColDefs(defs);
+    //
+    // }, [ submenu.menuCode ]);
 
 
     const handleGridSelectionChanged = () => {
@@ -426,7 +403,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         const restoredFlatRow = featureCollectionToFlatRow(restoredGeojson);
 
         store.getState().setFlatRow(restoredFlatRow);
-        setRowData(restoredFlatRow);
+        // setRowData(restoredFlatRow);
     }
 
     const handleShowHistory = () => {
@@ -463,7 +440,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
 
         const restoredFlatRow = featureCollectionToFlatRow(geojsonObj);
         store.getState().setFlatRow(restoredFlatRow);
-        setRowData(restoredFlatRow);
+        // setRowData(restoredFlatRow);
 
         alert(isUndo ? "Undo 성공" : "Redo 성공");
     };

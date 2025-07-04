@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { combine, subscribeWithSelector } from 'zustand/middleware';
 import { createSelectors } from './createSelectors';
 import { FetchFeatureDataType } from "@type/FeatureOptions";
-import { applyDiffs, diffObjects } from "@utils/feature";
+import { applyDiffs, diffObjects } from "@utils/json";
 
 export interface FeatureStoreFactoryType {
     getState: () => State & Actions;

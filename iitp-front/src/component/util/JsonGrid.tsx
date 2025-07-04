@@ -1,18 +1,19 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Table } from "antd";
-import {useSelectionStore} from "@stores/useSelectionStore";
+import { useSelectionStore } from "@stores/useSelectionStore";
 import { Input, InputNumber } from "antd/lib";
+import { useBusStationStore } from "@stores/useBusStationStore";
 
 // 컬럼 자동 추출
 function generateColumnsFromData(data: any[]) {
     if (!data?.length) return [];
 
-    const excludedFields = ['shape', '__guid'];
+    const excludedFields = [ 'shape', '__guid', 'lat', 'lng', 'featureType' ];
 
     return Object.keys(data[0])
         .filter((key) => !Array.isArray(data[0][key]) && !excludedFields.includes(key))
         .map((key) => {
-            const uniqueValues = [...new Set(data.map((item) => item[key]))]
+            const uniqueValues = [ ...new Set(data.map((item) => item[key])) ]
                 .filter(v => v !== undefined && v !== null);
 
             return {
@@ -76,7 +77,10 @@ const JsonGrid = ({
             setSelectedGuid([]); // 선택 해제 시 초기화
         }
     };
-    const [rowEditValues, setRowEditValues] = useState<Record<string, any>>({});
+    const [ rowEditValues, setRowEditValues ] = useState<Record<string, any>>({});
+    useEffect(() => {
+        setRowEditValues({}); // 외부 currentJsonData 변경 시 내부 수정 상태 초기화
+    }, [ rowData ]);
     const handleInputChange = (key: string, field: string, value: any) => {
         setRowEditValues((prev) => ({
             ...prev,
@@ -96,23 +100,38 @@ const JsonGrid = ({
             const currentValue = rowEditValues[guid]?.[col.dataIndex] ?? value;
 
             if (!isEditableRow(guid)) {
-                return <span>{String(value)}</span>;
+                return <span>{ String(value) }</span>;
             }
 
             const inputType = typeof value === 'number' ? 'number' : 'text';
 
+            const handleCommit = () => {
+                const merged = {
+                    ...record,
+                    ...rowEditValues[guid],
+                };
+                // 변경점 병합
+                console.log("layerName:::", layerName)
+                const store = useBusStationStore
+                store.getState().updateCurrentJsonData(merged);
+            };
+
             return inputType === 'number' ? (
                 <InputNumber
-                    value={currentValue}
-                    onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
+                    value={ currentValue }
+                    onChange={ (val) => handleInputChange(guid, col.dataIndex, val) }
+                    onBlur={ handleCommit }
+                    onPressEnter={ handleCommit }
                     size="small"
                 />
             ) : (
                 <Input
-                    value={currentValue}
-                    onChange={(e) =>
+                    value={ currentValue }
+                    onChange={ (e) =>
                         handleInputChange(guid, col.dataIndex, e.target.value)
                     }
+                    onBlur={ handleCommit }
+                    onPressEnter={ handleCommit }
                     size="small"
                 />
             );
@@ -121,31 +140,31 @@ const JsonGrid = ({
     const nestedField = getNestedArrayField(rowData?.[0]);
 
     return (
-        <div style={{ marginBottom: 16, paddingLeft: depth * 24 }}>
-            <h3 style={{ marginBottom: 8 }}>
-                {depth > 0 ? `${levelName}` : ""}
+        <div style={ { marginBottom: 16, paddingLeft: depth * 24 } }>
+            <h3 style={ { marginBottom: 8 } }>
+                { depth > 0 ? `${ levelName }` : "" }
             </h3>
             <Table
-                dataSource={rowData}
-                columns={enhancedColumns}
+                dataSource={ rowData }
+                columns={ enhancedColumns }
                 rowKey="__guid"
                 size="small"
-                pagination={false}
-                scroll={{ y: 200 }}
-                rowSelection={{
+                pagination={ false }
+                scroll={ { y: 200 } }
+                rowSelection={ {
                     type: "checkbox", // or "radio"
                     onChange: handleSelect,
                     selectedRowKeys: selectedGuid,
-                }}
+                } }
 
                 expandable={
                     nestedField
                         ? {
                             expandedRowRender: (record) => (
                                 <JsonGrid
-                                    rowData={record[nestedField] || []}
-                                    levelName={nestedField.slice(0, -1)}
-                                    depth={depth + 1} // 들여쓰기 수준 증가
+                                    rowData={ record[nestedField] || [] }
+                                    levelName={ nestedField.slice(0, -1) }
+                                    depth={ depth + 1 } // 들여쓰기 수준 증가
                                 />
                             ),
                             rowExpandable: (record) =>

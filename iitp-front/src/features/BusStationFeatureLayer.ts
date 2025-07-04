@@ -3,7 +3,7 @@ import VectorSource from "ol/source/Vector";
 import { Feature } from "ol";
 import { Point } from "ol/geom";
 import { Circle as CircleStyle, Fill, Stroke, Style } from "ol/style";
-import { fromLonLat } from "ol/proj";
+import { fromLonLat, toLonLat } from "ol/proj";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 
 import {
@@ -15,8 +15,18 @@ import {
     SNAP_LAYER,
     TRANSIT_MODE
 } from "@type/Station";
-import { generateTrafficTypesGUID } from "@utils/guid";
-import { deepEqual } from "@utils/feature";
+import { generateGUIDWithType } from "@utils/guid";
+import { deepEqual } from "@utils/json";
+import {
+    findFeatureByProperties,
+    getCoordinateByOffset,
+    getFeaturesByProperties,
+    getOffsetByCoordinate
+} from "@utils/feature";
+import { useLayerStore } from "@stores/useLayerStore";
+import WebGLVectorLayer from "ol/layer/WebGLVector";
+import BaseLayer from "ol/layer/Base";
+import { Coordinate } from "ol/coordinate";
 
 export default class BusStationFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -29,6 +39,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
 
     constructor() {
         const source = new VectorSource();
+        const layerManager = useLayerStore.getState().layerManager
         super({
             source,
             visible: false,
@@ -92,11 +103,27 @@ export default class BusStationFeatureLayer extends VectorLayer {
 
                 changed.forEach((item) => {
                     const dto = this.recordToDto(item);
+
                     const feature = existing.find(f => f.get("__guid") === dto.__guid);
                     if (feature) {
+                        const baseLayer = layerManager?.getLayerByName(this.getSnapLayerKey())
+                        const baseFeature = findFeatureByProperties(baseLayer,{
+                            featureType: this.getSnapFeatureType(),
+                            linkRef: item.linkRef,
+                            laneRef: item.laneRef,
+                        })
+
+                        const offset = item.offset
+                        const coord = getCoordinateByOffset(baseFeature, offset)
+                        if (coord) {
+                            const [ lng, lat ] = toLonLat(coord)
+                            // 계산한 값을 json에 적용
+                            item.lng = lng
+                            item.lat = lat
+                            feature.setGeometry(new Point(fromLonLat([lng, lat])));
+                        }
+
                         feature.setProperties(dto);
-                        feature.setGeometry(new Point(fromLonLat([dto.lng, dto.lat])));
-                        feature.changed();
                     }
                 });
 
@@ -182,8 +209,9 @@ export default class BusStationFeatureLayer extends VectorLayer {
      * 스토어의 DTO 배열로부터 피처 생성 후 source에 추가
      */
     public async load(): Promise<void> {
+        console.log("load busStation")
         const store = menuCodeToStoreMap[this.LAYER_NAME];
-        const { busStations } = store.getState().originData;
+        const { busStations } = store.getState().currentJsonData;
 
         const source = this.source;
         source.clear();
@@ -200,8 +228,8 @@ export default class BusStationFeatureLayer extends VectorLayer {
         const geom = new Point(fromLonLat([ data.lng, data.lat ]));
         const props: BusStationData = {
             ...data,
-            transitMode: TRANSIT_MODE.BUS,
-            featureType: FEATURE_TYPE.BUS_STATION,
+            transitMode: data.transitMode ?? TRANSIT_MODE.BUS,
+            featureType: data.featureType ?? FEATURE_TYPE.BUS_STATION,
         };
         const feature = new Feature<Point>(geom);
         feature.setProperties(props);
@@ -213,7 +241,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
      */
     public recordToDto(record: Record<string, unknown>): BusStationData {
         const { geometry, ...cleaned } = record;
-        const guid = cleaned.__guid ?? generateTrafficTypesGUID(this.getFeatureType())
+        const guid = cleaned.__guid ?? generateGUIDWithType(this.getFeatureType())
         const dto = {
             ...(cleaned as Omit<BusStationData, "transitMode" | "featureType" | "__guid">),
             transitMode: TRANSIT_MODE.BUS,
@@ -224,27 +252,32 @@ export default class BusStationFeatureLayer extends VectorLayer {
     }
 
     /**
-     * 일반 객체 SnapProperty 추출
+     * Snap 된 일반 객체 Property 추출
      */
     public recordToSnapProperties(record: Record<string, unknown>): BusStationSnapProperties | undefined {
-        const properties = {} as BusStationSnapProperties;
-        console.log("recordToSnapProperties featureType:::", record["featureType"])
-        console.log("recordToSnapProperties record:::", record)
-        console.log("recordToSnapProperties this.getSnapFeatureType():::", this.getSnapFeatureType())
-        if (record["featureType"] == this.getSnapFeatureType()) {
-            BUS_STATION_SNAP_FIELDS.forEach(field => {
-                const v = record[field];
-                if (v != null) {
-                    if (field === '__guid' || field === 'id' || field.endsWith('Id')) {
-                        properties[field] = String(v); // string 유지
-                    } else {
-                        properties[field] = Number(v); // 나머지는 number로 변환
-                    }
+        if (record["featureType"] !== this.getSnapFeatureType()) return;
+
+        const properties: Partial<BusStationSnapProperties> = {};
+
+        BUS_STATION_SNAP_FIELDS.forEach(field => {
+            const v = record[field];
+            if (v != null) {
+                if (field === '__guid' || field === 'id') {
+                    properties[field] = String(v); // string 유지
+                } else {
+                    properties[field] = Number(v); // 나머지는 number로 변환
                 }
-            });
+            }
+        });
+
+        // 아무 필드도 채워지지 않았다면 undefined 반환
+        if (Object.keys(properties).length === 0) {
+            return undefined;
         }
-        return properties;
+
+        return properties as BusStationSnapProperties;
     }
+
 
     /**
      * Snap 속성을 기존 BusStationData에 병합
@@ -281,6 +314,40 @@ export default class BusStationFeatureLayer extends VectorLayer {
 
     public getFeatureType(): string {
         return FEATURE_TYPE.BUS_STATION;
+    }
+
+    /**
+     * offset 계산 로직
+     */
+    public computeMetadata(
+        snapLayer: VectorLayer | WebGLVectorLayer | BaseLayer,
+        snappedProperties: Record<string, unknown> | undefined,
+        fromCoord: Coordinate
+    ): Record<string, unknown> {
+        const filter = { featureType: this.getSnapFeatureType() };
+        const features = getFeaturesByProperties(snapLayer, filter);
+        const feature = findFeatureByProperties(features, snappedProperties);
+        const offset = getOffsetByCoordinate(feature, fromCoord);
+
+        console.log("before snappedProperties compute:::", snappedProperties);
+
+        const computeProperties: Record<string, unknown> = {};
+        const [ lng, lat ] = toLonLat(fromCoord)
+
+        BUS_STATION_SNAP_FIELDS.forEach((key) => {
+            if (key === "offset") {
+                computeProperties[key] = offset ?? null;
+            } else if (key === "lng") {
+                computeProperties[key] = lng ?? null;
+            } else if (key === "lat") {
+                computeProperties[key] = lat ?? null;
+            } else {
+                computeProperties[key] = snappedProperties?.[key] ?? null;
+            }
+        });
+
+        console.log("after snappedProperties compute:::", computeProperties);
+        return computeProperties;
     }
 
     public dispose(): void {

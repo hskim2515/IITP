@@ -8,6 +8,7 @@ import { fromLonLat } from "ol/proj";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 import { useScenarioStore } from "@stores/useScenarioStore";
 import { Coordinate } from "ol/coordinate";
+import { SNAP_FEATURE_TYPE } from "@type/Station";
 
 export default class NetworkFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -331,4 +332,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
     public getSnapLayerKey(): string {
         return "network"
     }
+    public getSnapFeatureType(): string {
+        return "link-edit";
+    }
+
 }

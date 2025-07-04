@@ -1,6 +1,11 @@
-import { MapBrowserEvent } from "ol";
+import { Feature, MapBrowserEvent } from "ol";
 import { InteractionCondition } from "@type/InteractionOptions";
 import { OpenLayersScreenSpaceEventType } from "@type/OpenLayersKeyOptions";
+import { Coordinate } from "ol/coordinate";
+import { getDistance } from "ol/sphere";
+import VectorLayer from "ol/layer/Vector";
+import WebGLVectorLayer from "ol/layer/WebGLVector";
+import BaseLayer from "ol/layer/Base";
 
 /**
  * Openlayers Interaction 의 condition 을 설정
@@ -28,4 +33,39 @@ function matchCondition(
         (condition.altKey === undefined || original.altKey === condition.altKey) &&
         (condition.button === undefined || original.button === condition.button)
     );
+}
+
+// snap
+export function findNearestFeature(
+    features: Feature[],
+    targetCoord: Coordinate,
+    maxDistance: number = 10
+): Feature | null {
+    let closest: Feature | null = null;
+    let minDistance = Infinity;
+
+    for (const feature of features) {
+        const geom = feature.getGeometry();
+        if (!geom) continue;
+
+        const closestCoord = geom.getClosestPoint(targetCoord);
+        const distance = getDistance(closestCoord, targetCoord);
+
+        if (distance < minDistance && distance <= maxDistance) {
+            closest = feature;
+            minDistance = distance;
+        }
+    }
+
+    return closest;
+}
+
+export function getSnapFeature(
+    targetLayer: VectorLayer | WebGLVectorLayer | BaseLayer,
+    targetCoord: Coordinate | null,
+    maxDistance: number
+) {
+    if(!targetCoord) return null;
+    const snappedFeatures = targetLayer.getSource()?.getFeatures();
+    return findNearestFeature(snappedFeatures, targetCoord, maxDistance);
 }
