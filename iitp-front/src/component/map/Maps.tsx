@@ -1,4 +1,4 @@
-import React, {Suspense, useEffect, useRef, useState} from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import 'ol/ol.css';
 import MapCesium from "./MapCesium";
 import MapOL from "./MapOL";
@@ -10,10 +10,10 @@ import useLayer from "@hooks/useLayer";
 import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
 import useLayerInit from "@hooks/useLayerInit";
 import useDefaultSelect from "../../hooks/sync/select/useDefaultSelect";
-import {useScenarioStore} from "@stores/useScenarioStore";
 import '../../App.css'
-import {useCesiumStore} from "@stores/useCesiumStore";
-import {useOpenLayersStore} from "@stores/useOpenLayersStore";
+import { useCesiumStore } from "@stores/useCesiumStore";
+import { useOpenLayersStore } from "@stores/useOpenLayersStore";
+import useHistoryInit from "@hooks/useHistoryInit";
 
 const Maps = () => {
 
@@ -29,18 +29,18 @@ const Maps = () => {
 
     const isResizing = useRef(false);
 
-    const [dividerPosition, setDividerPosition] = useState(window.innerWidth / 2);
+    const [ dividerPosition, setDividerPosition ] = useState(window.innerWidth / 2);
 
     const fetchLayerSchema = useLayerSchemaStore.actions.fetchLayerSchema()
 
     const olMap = useOpenLayersStore.state.map();
     const cesiumViewer = useCesiumStore.getState().viewer;
-
     useEffect(() => {
         fetchLayerSchema()
-    }, [fetchLayerSchema]);
+    }, [ fetchLayerSchema ]);
 
     useLayerInit();
+    useHistoryInit();
     useMapInit(openlayersMapRef, cesiumMapRef);
     useSimulation();
     useMapSync();
@@ -52,8 +52,6 @@ const Maps = () => {
     //         useLayerInit(); // ✅ 맵 초기화가 완료된 후 실행
     //     }
     // }, [olMap]);
-
-
 
 
     // Mouse event handlers
@@ -82,42 +80,42 @@ const Maps = () => {
     };
 
     const containerWidth = window.innerWidth - panelWidth;
-    const leftWidth = `${dividerPosition}px`;
-    const rightWidth = `${containerWidth - dividerPosition}px`;
+    const leftWidth = `${ dividerPosition }px`;
+    const rightWidth = `${ containerWidth - dividerPosition }px`;
 
     return (
         <div
-            ref={containerRef}
-            style={{
+            ref={ containerRef }
+            style={ {
                 position: "fixed",
                 top: "50px",
-                left: `${panelWidth}px`,
-                width: `calc(100vw - ${panelWidth}px)`,
+                left: `${ panelWidth }px`,
+                width: `calc(100vw - ${ panelWidth }px)`,
                 height: "90vh",
                 display: "flex",
                 overflow: "hidden",
                 userSelect: isResizing.current ? "none" : "auto"
-            }}
+            } }
         >
             <MapOL
-                ref={openlayersMapRef}
-                style={{ width: leftWidth, transition: isResizing.current ? "none" : "width 0.3s ease" }}
+                ref={ openlayersMapRef }
+                style={ { width: leftWidth, transition: isResizing.current ? "none" : "width 0.3s ease" } }
             />
 
-            {/* Divider / Slider */}
+            {/* Divider / Slider */ }
             <div
-                onMouseDown={handleMouseDown}
-                style={{
+                onMouseDown={ handleMouseDown }
+                style={ {
                     width: "6px",
                     cursor: "col-resize",
                     backgroundColor: "#ccc",
                     zIndex: 10
-                }}
+                } }
             />
 
             <MapCesium
-                ref={cesiumMapRef}
-                style={{ width: rightWidth, transition: isResizing.current ? "none" : "width 0.3s ease" }}
+                ref={ cesiumMapRef }
+                style={ { width: rightWidth, transition: isResizing.current ? "none" : "width 0.3s ease" } }
             />
         </div>
     );

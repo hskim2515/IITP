@@ -18,15 +18,15 @@ import {useCesiumStore} from "@stores/useCesiumStore";
 import LayerManager from "@managers/LayerManager";
 import {useLayerSchemaStore} from "@stores/useLayerSchemaStore";
 import {assignGUIDsToTrafficData} from "@utils/guid";
+import {usePavementMarkingStore} from "@stores/usePavementMarkingStore";
 
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToStoreMap: Record<string, FeatureStoreFactoryType> = {
     // menuCode: store
     NETWORK: useNetworkStore,
     BUS_STATION: useBusStationStore,
+    PAVEMENT_MARKING: usePavementMarkingStore,
 }
-
-
 
 const useLayerInit = (): void => {
 
@@ -57,12 +57,12 @@ const useLayerInit = (): void => {
                     method: api.method,
                     url: api.url + '/' + selectedScenario.key,
                 });
-                console.log("response:::", response.data)
+
                 store.getState().setOriginData(response.data);
                 assignGUIDsToTrafficData(response.data)
                 store.getState().initCurrentData();
 
-                console.log("response:::guid:::",store.getState().originData)
+                console.log("response guid:::",store.getState().originData)
                 console.log(`${menuCode} 데이터 초기화 완료`);
             } catch (err) {
                 console.error(`[${menuCode}] 데이터 불러오기 실패`, err);

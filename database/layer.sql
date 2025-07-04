@@ -55,5 +55,6 @@ INSERT INTO layer (id, group_id, key, label, basic, auth) VALUES
                                                               (17, 3, 'roadMarkings', '노면표시',         false, 0),
                                                               (18, 3, 'busRoute', '버스 노선',         false, 0),
                                                               (19, 3, 'railRoute', 'RAIL 노선',         false, 0),
-                                                              (20, 3, 'tramRoute', 'TRAM 노선',         false, 0);
+                                                              (20, 3, 'tramRoute', 'TRAM 노선',         false, 0),
+                                                              (22, 3, 'pavementMarking', '노면표시',         false, 0);
 

@@ -14,6 +14,7 @@ export interface State {
     // fetch 한 data
     originData: FetchFeatureDataType | undefined
     currentJsonData: unknown
+    currentGeojson: unknown
 
     // fetch data 기반, flatRow로 변환한 데이터
     flatRow: Record<string, unknown>[]
@@ -24,6 +25,7 @@ export interface State {
 export interface Actions {
     setOriginData: (data: FetchFeatureDataType) => void;
     setCurrentJsonData: (data: unknown) => void;
+    setCurrentGeojson: (data: unknown) => void;
     updateCurrentJsonData: (data: Record<string, unknown>) => void,
     removeRecordsByGuid: (guids: (string | number)[]) => void;
     setFlatRow: (flatRow: Record<string, unknown>[]) => void;
@@ -46,6 +48,9 @@ const createFeatureStore = () =>
                         setOriginData: (data: FetchFeatureDataType) => set({ originData: data }),
                         setCurrentJsonData: (data: unknown) => {
                             set({ currentJsonData: structuredClone(data) });
+                        },
+                        setCurrentGeojson: (geojson: Record<string, unknown>) => {
+                            set({ currentGeojson: { ...geojson } })
                         },
                         updateCurrentJsonData: (record) => {
                             const current = get().currentJsonData as Record<string, any>;

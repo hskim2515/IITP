@@ -1,5 +1,15 @@
+type ApiEndpoint = {
+    url: string;
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE' | '';
+    useFormData?: boolean;
+};
 
-export const apiConfig = {
+type ApiConfig = {
+    [key: string]: {
+        [action: string]: ApiEndpoint;
+    };
+};
+export const apiConfig:ApiConfig = {
     VEHICLE_TYPE: {
         list:    { url: '/vehicle-types',       method: 'GET', useFormData: false },
         optionList: { url: '/',       method: '', useFormData: false },
@@ -24,6 +34,12 @@ export const apiConfig = {
     },
     NETWORK: {
         list: {url: '/network', method: 'GET', useFormData: false },
+    },
+    PAVEMENT_MARKING: {
+        list:    { url: '/pavement-marking/geojson',       method: 'GET', useFormData: false },
+        update:  { url: '/pavement-marking/geojson', method: 'POST', useFormData: false },
+        create:  { url: '/pavement-marking/geojson', method: 'POST', useFormData: false },
+        historyList: { url: '/pavement-marking/historys', method: 'GET', useFormData: false },
     },
 } as const;
 
