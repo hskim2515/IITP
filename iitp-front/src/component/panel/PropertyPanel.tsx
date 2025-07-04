@@ -140,8 +140,10 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
 
     const snapLayer = useMemo(() => {
         return olMap?.getLayers().getArray()
-            .find((targetLayer: VectorLayer | BaseLayer | WebGLVectorLayer) =>
-                targetLayer["layer"] === layer.getSnapLayerKey()
+            .find((targetLayer: VectorLayer | BaseLayer | WebGLVectorLayer) => {
+                return targetLayer["layer"] === "network"
+                // return targetLayer["layer"] === layer.getSnapLayerKey()
+                }
             );
     }, [ olMap, submenu.menuCode, layer ]);
 

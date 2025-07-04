@@ -30,20 +30,10 @@ public class PavementMarkingController {
         return ResponseEntity.ok(Collections.singletonMap("geojson", json));
     }
 
-    @GetMapping("/historys/{versionId}")
-    public ResponseEntity<List<Map<String, Object>>> getLogsByVersion(@PathVariable String versionId) {
+    @GetMapping("/history/{versionId}")
+    public ResponseEntity<List<PavementMarkingLogs>> getLogsByVersion(@PathVariable String versionId) {
         List<PavementMarkingLogs> versions = pavementMarkingService.getLogsByVersion(versionId);
-
-        List<Map<String, Object>> result = versions.stream().map(v -> {
-            Map<String, Object> map = new HashMap<>();
-            map.put("id", v.getId());
-            map.put("versionId", v.getVersionId());
-            map.put("createdAt", v.getCreatedAt());
-            map.put("json", v.getData());
-            return map;
-        }).collect(Collectors.toList());
-
-        return ResponseEntity.ok(result);
+        return ResponseEntity.ok(versions);
     }
 
     @PostMapping("/geojson/{versionId}")

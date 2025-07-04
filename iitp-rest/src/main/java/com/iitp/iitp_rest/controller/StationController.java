@@ -1,9 +1,10 @@
 package com.iitp.iitp_rest.controller;
 
-import com.iitp.iitp_rest.model.network.*;
 import com.iitp.iitp_rest.model.publicTransit.station.BusStationData;
+import com.iitp.iitp_rest.model.publicTransit.station.BusStationLogs;
 import com.iitp.iitp_rest.model.publicTransit.station.PublicTransitData;
 import com.iitp.iitp_rest.model.publicTransit.station.StationEntity;
+import com.iitp.iitp_rest.service.publicTransit.station.BusStationService;
 import com.iitp.iitp_rest.service.publicTransit.station.StationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +31,7 @@ import java.util.List;
 public class StationController {
     private final Logger logger = LoggerFactory.getLogger(this.getClass());
     private final StationService stationService;
+    private final BusStationService busStationService;
 
 //    @GetMapping("/bus")
 //    public ResponseEntity<List<StationEntity>> getAllBusStations() {
@@ -42,7 +44,7 @@ public class StationController {
 //        return ResponseEntity.ok(stationService.getStation(2L));
 //    }
 
-    @GetMapping("/bus/{key}")
+    @GetMapping("/bus/json/{key}")
     public ResponseEntity<PublicTransitData> getBusStation(@PathVariable String key) {
         PublicTransitData result = new PublicTransitData();
         List<BusStationData> stations = new ArrayList<>();
@@ -78,6 +80,12 @@ public class StationController {
             e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
+    }
+
+    @GetMapping("/bus/history/{versionId}")
+    public ResponseEntity<List<BusStationLogs>> getLogsByVersion(@PathVariable String versionId) {
+        List<BusStationLogs> versions = busStationService.getLogsByVersion(versionId);
+        return ResponseEntity.ok(versions);
     }
 
     @PostMapping("/bus")
