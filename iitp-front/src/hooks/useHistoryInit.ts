@@ -14,7 +14,7 @@ export const menuCodeToHistoryStoreMap: Record<string, HistoryStoreFactoryType> 
     PAVEMENT_MARKING: usePavementMarkingHistoryStore,
 }
 
-const useHistoryInit = () => {
+const useHistoryInit = (reloadFlag:boolean) => {
     useEffect(() => {
         const menuCodes = Object.keys(propertyFormSchema as Record<string, PropertyFormSchemaProps>);
         const selectedScenario = useScenarioStore.getState().selectedScenario;
@@ -43,7 +43,7 @@ const useHistoryInit = () => {
         };
 
         initMenuCodesHistroy();
-    }, []);
+    }, [reloadFlag]);
 };
 
 export default useHistoryInit;

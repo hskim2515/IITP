@@ -2,7 +2,6 @@ package com.iitp.iitp_rest.service.pavementMarking;
 
 import com.iitp.iitp_rest.model.pavementMarking.PavementMarkingLogs;
 import com.iitp.iitp_rest.model.pavementMarking.PavementMarkingVersion;
-import com.iitp.iitp_rest.model.pavementMarking.UpdateLog;
 import com.iitp.iitp_rest.repository.PavementMarkingLogsRepository;
 import com.iitp.iitp_rest.repository.PavementMarkingVersionsRepository;
 import lombok.RequiredArgsConstructor;
@@ -11,8 +10,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
-
-import static org.hibernate.query.sqm.tree.SqmNode.log;
 
 @Service
 @RequiredArgsConstructor
@@ -31,26 +28,29 @@ public class PavementMarkingService {
     }
 
     @Transactional
-    public void savePavementMarking(String versionId, Map<String, Object> geojson, List<UpdateLog> logs) {
+    public void savePavementMarking(String versionId, Map<String, Object> geojson, Map<String, Object> logs) {
         PavementMarkingVersion entity = pavementMarkingVersionsRepository.findByVersionId(versionId)
                 .orElse(new PavementMarkingVersion());
         entity.setVersionId(versionId);
         entity.setData(geojson);
         pavementMarkingVersionsRepository.save(entity);
 
-        pavementMarkingLogsRepository.deleteByVersionId(versionId);
-        pavementMarkingLogsRepository.saveAll(convertToLogEntities(versionId, logs));
+        List<PavementMarkingLogs> existingLogs = pavementMarkingLogsRepository.findByVersionIdOrderByCreatedAtAsc(versionId);
+
+        int maxLogs = 20;
+        if (existingLogs.size() >= maxLogs) {
+            int removeCount = existingLogs.size() - maxLogs + 1;
+            List<PavementMarkingLogs> toDelete = existingLogs.subList(0, removeCount);
+            pavementMarkingLogsRepository.deleteAll(toDelete);
+        }
+
+        PavementMarkingLogs entityLog = PavementMarkingLogs.builder()
+                .versionId(versionId)
+                .data(logs)
+                .build();
+
+        pavementMarkingLogsRepository.save(entityLog);
     }
 
-    private List<PavementMarkingLogs> convertToLogEntities(String versionId, List<UpdateLog> logs) {
-        return logs.stream()
-                .map(log -> {
-                    PavementMarkingLogs entity = new PavementMarkingLogs();
-                    entity.setVersionId(versionId);
-                    entity.setCreatedAt(log.getTimestamp());
-                    entity.setData(log.getJson());
-                    return entity;
-                })
-                .toList();
-    }
+
 }

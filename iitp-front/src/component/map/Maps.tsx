@@ -41,7 +41,6 @@ const Maps = () => {
     }, [fetchLayerSchema]);
 
     useLayerInit();
-    useHistoryInit();
     useMapInit(openlayersMapRef, cesiumMapRef);
     useSimulation();
     useMapSync();

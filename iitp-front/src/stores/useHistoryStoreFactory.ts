@@ -1,25 +1,8 @@
 import {create} from 'zustand';
 import {combine, subscribeWithSelector} from 'zustand/middleware';
 import {createSelectors} from './createSelectors';
+import {UpdateLogEntry, UpdateLogItem} from "@type/HistoryTypes";
 
-export type UpdateType = 'added' | 'modified' | 'deleted';
-
-export interface FieldChange {
-    featureId: string | number;
-    field: string;
-    oldValue: any;
-    newValue: any;
-}
-
-interface UpdateLogItem {
-    versionId: string;
-    timestamp: string;
-    json: UpdateLogEntry;
-}
-
-export type UpdateLogEntry = {
-    [key in UpdateType]?: FieldChange[];
-};
 
 export interface HistoryStoreFactoryType {
     getState: () => State & Actions;
@@ -35,7 +18,6 @@ export interface FetchHistoryDataType {
 export interface State {
     originHistoryData: FetchHistoryDataType | undefined
     currentIndex: number;
-
     updateLogs: [],
 }
 
@@ -47,7 +29,7 @@ export interface Actions {
     undo: () => UpdateLogEntry | null;
     redo: () => UpdateLogEntry | null;
 
-    addFieldUpdate: (updateLogs: string, updateJson: JSON) => void;
+    addFieldUpdate: (updateJson: JSON) => void;
     resetAllUpdates: () => void;
 }
 
@@ -93,17 +75,7 @@ const createHistoryStore = () =>
                         return logs[logIndex];
                     },
 
-                    // addFieldUpdate: (versionId: string, updateJson: UpdateLogEntry ) => {
-                    //     const prev = get().updateLogs ?? [];
-                    //     const newLog: updateLogs = {
-                    //         versionId,
-                    //         timestamp: new Date().toISOString(),
-                    //         json: updateJson,
-                    //     };
-                    //     //set({ updateLogs: [...prev, newLog] });
-                    //     set({ updateLogs: [...prev, newLog] });
-                    // },
-                    addFieldUpdate: (versionId, updateJson) => {
+                    addFieldUpdate: (updateJson) => {
                         let prevLogs = get().updateLogs;
                         if (!Array.isArray(prevLogs)) prevLogs = [];
 
@@ -117,7 +89,6 @@ const createHistoryStore = () =>
                         }
 
                         const newLog: UpdateLogItem = {
-                            versionId,
                             timestamp: new Date().toISOString(),
                             json: updateJson,
                         };
