@@ -36,9 +36,9 @@ export const apiConfig:ApiConfig = {
         list: {url: '/network', method: 'GET', useFormData: false },
     },
     PAVEMENT_MARKING: {
-        list:    { url: '/pavement-marking/geojson',       method: 'GET', useFormData: false },
-        update:  { url: '/pavement-marking/geojson', method: 'POST', useFormData: false },
-        create:  { url: '/pavement-marking/geojson', method: 'POST', useFormData: false },
+        list:    { url: '/pavement-marking',       method: 'GET', useFormData: false },
+        update:  { url: '/pavement-marking', method: 'POST', useFormData: false },
+        create:  { url: '/pavement-marking', method: 'POST', useFormData: false },
         historyList: { url: '/pavement-marking/historys', method: 'GET', useFormData: false },
     },
 } as const;

@@ -27,7 +27,7 @@ SET default_table_access_method = heap;
 
 CREATE TABLE public.pavement_marking_logs (
     id bigint NOT NULL,
-    created_at character varying(255) DEFAULT now(),
+    created_at timestamp without time zone DEFAULT now(),
     data jsonb NOT NULL,
     version_id character varying(255) NOT NULL
 );

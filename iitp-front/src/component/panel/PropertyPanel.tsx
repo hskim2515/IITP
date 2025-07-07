@@ -24,14 +24,15 @@ import axiosInstance from "../../api/axiosInstance";
 import JsonGrid from "../util/JsonGrid";
 import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
-import {menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
-import {mergeGeojsonWithLog} from "@utils/mergeJsonWithLog";
+import useHistoryInit, {menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
+import {mergeJsonWithLog, mergeUpdateLogs} from "@utils/history";
 import {interpolateByOffset} from "@utils/interpolateByOffset";
 import HistoryController from "../modal/HistoryController";
 import {menuDrawRequirements} from "../../config/menuDrawConfig";
 import TypeSelectionModal from "../modal/TypeSelectionModal";
 import HistoryModal from "../modal/HistoryModal";
 import {getLinkLaneCellInfo} from "@utils/getPavementMarkingInfo";
+import {useScenarioStore} from "@stores/useScenarioStore";
 
 export interface BottomTableProps {
     activeSubmenu: MenuTree
@@ -49,7 +50,6 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         item: propertyFormSchema[activeSubmenu.menuCode],
         title: activeSubmenu.nameKor
     }
-
     const gridRef = useRef<GridHandle>(null)
     const [ rowData, setRowData ] = useState<Record<string, unknown>[]>([])
     const [ colDefs, setColDefs ] = useState<ColDef[] | undefined>(undefined)
@@ -74,6 +74,8 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const [ selectedType, setSelectedType ] = useState<String>()
 
+    const selectedScenario = useScenarioStore.getState().selectedScenario;
+
     const map = useOpenLayersStore.state.map()
 
     const layer = useMemo(() => {
@@ -90,6 +92,10 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         return map?.getLayers().getArray()
             .filter((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layerGroup"] === "facility");
     }, [ map, submenu.menuCode ]);
+
+    const [reloadFlag, setReloadFlag] = useState(false);
+
+    useHistoryInit(reloadFlag);
 
     const {
         addRow,
@@ -354,25 +360,31 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
         const api = apiConfig[submenu.menuCode as ApiMenuKey].update;
         const geojson = store.getState().currentGeojson;
         const logJson = historyStore.getState().updateLogs;
+        if(!logJson){
+            alert('변경사항이 없습니다.');
+            return
+        }
+        const mergedLog = mergeUpdateLogs(logJson);
+
         const payload = {
-            versionId : 1,
             geojson,
-            logJson
+            logJson: mergedLog,
         };
         try {
             await axiosInstance({
                 method: api.method,
-                url: api.url,
+                url: api.url+ '/' + selectedScenario.key,
                 data: payload,
             });
 
+            historyStore.getState().resetAllUpdates();
+            setReloadFlag(prev => !prev);
             console.log("저장 완료:",);
             alert("저장 완료")
         } catch (error) {
             console.error("저장 실패:", error);
             alert("저장 실패")
         }
-        historyStore.getState().resetAllUpdates();
     }
 
     const handleEditableBtn = () => {
@@ -404,10 +416,20 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
             return;
         }
 
-        const mergeGeojson = mergeGeojsonWithLog(store, updateHistory, isUndo);
+        const currentGeojson = store.getState().currentGeojson;
+        const featuresMap = new Map<string | number, Feature>();
+
+        currentGeojson.features.forEach((feature) => {
+            const id = feature.properties?.id;
+            if (id != null) {
+                featuresMap.set(id, { ...feature });
+            }
+        });
+
+        const mergeJson = mergeJsonWithLog(featuresMap, updateHistory.json, isUndo);
 
         const format = new GeoJSON();
-        const features = format.readFeatures(mergeGeojson, {
+        const features = format.readFeatures(mergeJson, {
             featureProjection: "EPSG:4326",
             dataProjection: "EPSG:3857",
         });
@@ -464,9 +486,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: BottomTableProps) => {
                             <HistoryModal
                                 onClose={() => setIsHistoryOpen(false)}
                                 open={isHistoryOpen}
-                                //onApply={handleApplyHistory}
-                                //historySteps={fakeHistorySteps}
-                                //originFeatures={originFeatures}
+                                setRowData={setRowData}
                                 menuCode={activeSubmenu.menuCode}
                             />
                         )}

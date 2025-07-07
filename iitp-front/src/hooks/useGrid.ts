@@ -6,7 +6,7 @@ import { GridHandle } from "@type/GirdOptions";
 import { Feature } from "ol";
 import { GeoJSON } from "ol/format";
 import {HistoryStoreFactoryType} from "@stores/useHistoryStoreFactory";
-import {featureUpdateLogs} from "@utils/featureUpdateLogs";
+import {featureUpdateLogs} from "@utils/history";
 import {interpolateByOffset} from "@utils/interpolateByOffset";
 
 export interface AddOptions {
@@ -77,7 +77,6 @@ const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType,
         store.getState().setFlatRow(updatedRows);
         gridRef.current?.addRow(newRow);
         featureUpdateLogs(historyStore,{
-            versionId : 1,
             featureId: id,
             updateType: "added",
             properties
@@ -102,7 +101,6 @@ const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType,
 
         selectedRows.forEach(row => {
             featureUpdateLogs(historyStore,{
-                versionId : 1,
                 featureId: row.id,
                 updateType: "deleted",
                 properties: row
@@ -202,7 +200,6 @@ const useGrid = (gridRef: RefObject<GridHandle>, store: FeatureStoreFactoryType,
         });
 
         featureUpdateLogs(historyStore,{
-            versionId : 1,
             featureId: row.id,
             updateType: "modified",
             field: e.colDef.field,
