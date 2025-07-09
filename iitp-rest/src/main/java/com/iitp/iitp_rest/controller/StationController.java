@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.controller;
 
+import com.iitp.iitp_rest.model.pavementMarking.JsonSaveRequest;
 import com.iitp.iitp_rest.model.publicTransit.station.BusStationData;
 import com.iitp.iitp_rest.model.publicTransit.station.BusStationLogs;
 import com.iitp.iitp_rest.model.publicTransit.station.PublicTransitData;
@@ -22,6 +23,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 
 @RestController
@@ -44,12 +46,12 @@ public class StationController {
 //        return ResponseEntity.ok(stationService.getStation(2L));
 //    }
 
-    @GetMapping("/bus/json/{key}")
-    public ResponseEntity<PublicTransitData> getBusStation(@PathVariable String key) {
+    @GetMapping("/bus/{versionId}")
+    public ResponseEntity<PublicTransitData> getBusStation(@PathVariable String versionId) {
         PublicTransitData result = new PublicTransitData();
         List<BusStationData> stations = new ArrayList<>();
 
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream(key + "/publicTransit.xml")) {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream(versionId + "/publicTransit.xml")) {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document doc = builder.parse(is);
@@ -88,11 +90,15 @@ public class StationController {
         return ResponseEntity.ok(versions);
     }
 
-    @PostMapping("/bus")
-    public ResponseEntity<Void> saveBusStation(@RequestBody StationEntity entity) {
-        logger.info("[saveBusStation] entity: {}", entity);
-        stationService.saveStation(entity, 2L);
-        return ResponseEntity.ok().build();
+    @PostMapping("/bus/{versionId}")
+    public ResponseEntity<Void> saveBusStation (@RequestBody JsonSaveRequest request, @PathVariable String versionId) {
+        logger.info("[saveBusStation] request: {}", request);
+        try {
+            busStationService.saveBusStation(request, versionId);
+            return ResponseEntity.ok().build();
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 
 }

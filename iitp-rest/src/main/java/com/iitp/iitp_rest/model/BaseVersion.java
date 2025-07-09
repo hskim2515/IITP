@@ -3,11 +3,12 @@ package com.iitp.iitp_rest.model;
 import com.vladmihalcea.hibernate.type.json.JsonType;
 import jakarta.persistence.*;
 import lombok.*;
+import lombok.experimental.SuperBuilder;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.Type;
 import org.hibernate.annotations.UpdateTimestamp;
 
-import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Map;
 
 @Getter
@@ -15,6 +16,7 @@ import java.util.Map;
 @MappedSuperclass
 @NoArgsConstructor
 @AllArgsConstructor
+@SuperBuilder
 public abstract class BaseVersion {
 
     @Column(name = "version_id", nullable = false)
@@ -22,11 +24,11 @@ public abstract class BaseVersion {
 
     @Column(name = "created_at", nullable = false, updatable = false)
     @CreationTimestamp
-    private Instant createdAt;
+    private LocalDateTime createdAt;
 
     @Column(name = "updated_at", nullable = false, updatable = false)
     @UpdateTimestamp
-    private Instant updatedAt;
+    private LocalDateTime updatedAt;
 
     @Type(JsonType.class)
     @Column(columnDefinition = "jsonb")

@@ -3,14 +3,11 @@ package com.iitp.iitp_rest.model;
 import com.vladmihalcea.hibernate.type.json.JsonType;
 import jakarta.persistence.*;
 import lombok.*;
+import lombok.experimental.SuperBuilder;
+import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.Type;
-import org.springframework.data.annotation.CreatedBy;
-import org.springframework.data.annotation.CreatedDate;
-import org.springframework.data.annotation.LastModifiedBy;
-import org.springframework.data.annotation.LastModifiedDate;
-import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
-import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.Map;
 
 
@@ -19,13 +16,15 @@ import java.util.Map;
 @MappedSuperclass
 @NoArgsConstructor
 @AllArgsConstructor
+@SuperBuilder
 public abstract class BaseLogs {
 
     @Column(name = "version_id", nullable = false)
     private String versionId;
 
     @Column(name = "created_at", nullable = false, updatable = false)
-    private String createdAt;
+    @CreationTimestamp
+    private LocalDateTime createdAt;
 
     @Type(JsonType.class)
     @Column(columnDefinition = "jsonb")

@@ -16,11 +16,11 @@ export const menuCodeToHistoryStoreMap: Record<string, HistoryStoreFactoryType> 
     PAVEMENT_MARKING: usePavementMarkingHistoryStore,
 }
 
-const useHistoryInit = () => {
+const useHistoryInit = (reloadFlag:boolean) => {
     useEffect(() => {
         const menuCodes = Object.keys(propertyFormSchema as Record<string, PropertyFormSchemaProps>);
         const selectedScenario = useScenarioStore.getState().selectedScenario;
-        const initMenuCodesHistory = async () => {
+        const initMenuCodesHistroy = async () => {
             for (const menuCode of menuCodes) {
                 const store = menuCodeToHistoryStoreMap[menuCode];
                 if (!store) continue;
@@ -31,7 +31,7 @@ const useHistoryInit = () => {
                         method: api.method,
                         url: api.url + '/' + selectedScenario.key,
                     });
-                    console.log("[useHistoryInit] response:::", response)
+
                     // store를 동적으로 선언하기 때문에, store 메서드를 동적으로 호출
                     store.getState().setOriginHistoryData(response.data);
                     //store.getState().initCurrentData()
@@ -44,8 +44,8 @@ const useHistoryInit = () => {
             }
         };
 
-        initMenuCodesHistory();
-    }, []);
+        initMenuCodesHistroy();
+    }, [reloadFlag]);
 };
 
 export default useHistoryInit;

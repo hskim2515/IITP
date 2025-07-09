@@ -1,5 +1,9 @@
 package com.iitp.iitp_rest.service.publicTransit.station;
 
+import com.iitp.iitp_rest.model.BaseEntity;
+import com.iitp.iitp_rest.model.pavementMarking.JsonSaveRequest;
+import com.iitp.iitp_rest.model.pavementMarking.PavementMarkingLogs;
+import com.iitp.iitp_rest.model.pavementMarking.PavementMarkingVersion;
 import com.iitp.iitp_rest.model.pavementMarking.UpdateLog;
 import com.iitp.iitp_rest.model.publicTransit.station.BusStationLogs;
 import com.iitp.iitp_rest.model.publicTransit.station.BusStationVersion;
@@ -30,26 +34,26 @@ public class BusStationService {
     }
 
     @Transactional
-    public void saveBusStation(String versionId, Map<String, Object> geojson, List<UpdateLog> logs) {
+    public void saveBusStation(JsonSaveRequest request, String versionId) {
         BusStationVersion entity = busStationVersionsRepository.findByVersionId(versionId)
                 .orElse(new BusStationVersion());
         entity.setVersionId(versionId);
-        entity.setData(geojson);
+        entity.setData(request.getGeojson());;
         busStationVersionsRepository.save(entity);
+        List<BusStationLogs> existingLogs = busStationLogsRepository.findByVersionIdOrderByCreatedAtAsc(versionId);
 
-        busStationLogsRepository.deleteByVersionId(versionId);
-        busStationLogsRepository.saveAll(convertToLogEntities(versionId, logs));
-    }
+        int maxLogs = 20;
+        if (existingLogs.size() >= maxLogs) {
+            int removeCount = existingLogs.size() - maxLogs + 1;
+            List<BusStationLogs> toDelete = existingLogs.subList(0, removeCount);
+            busStationLogsRepository.deleteAll(toDelete);
+        }
 
-    private List<BusStationLogs> convertToLogEntities(String versionId, List<UpdateLog> logs) {
-        return logs.stream()
-                .map(log -> {
-                    BusStationLogs entity = new BusStationLogs();
-                    entity.setVersionId(versionId);
-                    entity.setCreatedAt(log.getTimestamp());
-                    entity.setData(log.getJson());
-                    return entity;
-                })
-                .toList();
+        BusStationLogs entityLog = BusStationLogs.builder()
+                .versionId(versionId)
+                .data(request.getLogJson())
+                .build();
+
+        busStationLogsRepository.save(entityLog);
     }
 }

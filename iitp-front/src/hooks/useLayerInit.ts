@@ -1,5 +1,4 @@
-import {useEffect, useState} from "react";
-import { useBusStationStore } from "@stores/useBusStationStore";
+import {useEffect} from "react";
 import { propertyFormSchema, PropertyFormSchemaProps } from "../component/form/propertyFormSchema";
 import { apiConfig, ApiMenuKey } from "../config/apiConfig";
 import axiosInstance from "../api/axiosInstance";
@@ -19,6 +18,7 @@ import LayerManager from "@managers/LayerManager";
 import {useLayerSchemaStore} from "@stores/useLayerSchemaStore";
 import { assignFeatureTypeToResponseData, assignGUIDsToResponseData } from "@utils/guid";
 import {usePavementMarkingStore} from "@stores/usePavementMarkingStore";
+import { useBusStationStore } from "@stores/useBusStationStore";
 
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToStoreMap: Record<string, FeatureStoreFactoryType> = {
@@ -63,7 +63,7 @@ const useLayerInit = (): void => {
                 assignFeatureTypeToResponseData(response.data)
                 store.getState().initCurrentData();
 
-                console.log("response guid:::",store.getState().originData)
+                console.log(store.getState().originData)
                 console.log(`${menuCode} 데이터 초기화 완료`);
             } catch (err) {
                 console.error(`[${menuCode}] 데이터 불러오기 실패`, err);

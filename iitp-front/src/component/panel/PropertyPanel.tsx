@@ -1,13 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import "/static/css/styles.css";
 import { MenuTree } from "@stores/useMenuStore";
 import { propertyFormSchema } from "../form/propertyFormSchema";
+import { buildColumnDefs, featureCollectionToFlatRow, } from "@utils/grid";
+import { ColDef } from "ag-grid-community";
+import { GridHandle } from "@type/GirdOptions";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 import { useEventStore } from "@stores/useEventStore";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
-
+import useGrid, { AddOptions } from "@hooks/useGrid";
 import GeometryType from "@type/FeatureOptions";
-
+import { SelectEvent } from "ol/interaction/Select";
 import { Feature } from "ol";
 import VectorLayer from "ol/layer/Vector";
 import BaseLayer from "ol/layer/Base";
@@ -20,25 +23,20 @@ import axiosInstance from "../../api/axiosInstance";
 import JsonGrid from "../util/JsonGrid";
 import { faChevronDown, faChevronUp } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { menuCodeToHistoryStoreMap } from "@hooks/useHistoryInit";
-import { mergeGeojsonWithLog } from "@utils/mergeJsonWithLog";
+import useHistoryInit, { menuCodeToHistoryStoreMap } from "@hooks/useHistoryInit";
+import { mergeJsonWithLog, mergeUpdateLogs } from "@utils/history";
 import { interpolateByOffset } from "@utils/interpolateByOffset";
 import HistoryController from "../modal/HistoryController";
 import { menuDrawRequirements } from "../../config/menuDrawConfig";
 import TypeSelectionModal from "../modal/TypeSelectionModal";
 import HistoryModal from "../modal/HistoryModal";
+import { useScenarioStore } from "@stores/useScenarioStore";
 import { useSelectionStore } from "@stores/useSelectionStore";
-
-import { useBusStationStore } from "@stores/useBusStationStore";
 import { Select } from "ol/interaction";
-
-import Collection from "ol/Collection";
 import { filterFeaturesByKey, getFromToCoordinates, getValuesFromFeatures } from "@utils/feature";
 import { generateGUIDWithType } from "@utils/guid";
 import { getSnapFeature } from "@utils/interaction";
-import { SelectEvent } from "ol/interaction/Select";
-import { featureCollectionToFlatRow } from "@utils/grid";
-
+import Collection from "ol/Collection";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTree
@@ -56,6 +54,9 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         item: propertyFormSchema[activeSubmenu.menuCode],
         title: activeSubmenu.nameKor
     }
+    const gridRef = useRef<GridHandle>(null)
+    const [ rowData, setRowData ] = useState<Record<string, unknown>[]>([])
+    const [ colDefs, setColDefs ] = useState<ColDef[] | undefined>(undefined)
 
     // 동적 스토어
     const store = menuCodeToStoreMap[submenu.menuCode];
@@ -74,8 +75,10 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     const [ drawGeometryType, setDrawGeometryType ] = useState<GeometryType>(GeometryType.POINT)
 
     const selectInteractionRef = useRef<Select | undefined>(undefined);
-    const selectedFeatureIdRef = useRef()
+    const selectedFeatureIdRef = useRef<[]>([]);
     const snappedPropertiesRef = useRef<Record<string, string | number | undefined>>(undefined);
+
+    const [ addedData, setAddedData ] = useState<AddOptions>({})
 
     const [ isEditable, setIsEditable ] = useState<boolean>(false)
     const [ isDrawing, setIsDrawing ] = useState<boolean>(false)
@@ -86,6 +89,8 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
 
     const [ isHistoryOpen, setIsHistoryOpen ] = useState(false);
     const [ selectedType, setSelectedType ] = useState<String>()
+
+    const selectedScenario = useScenarioStore.getState().selectedScenario;
 
     const olMap = useOpenLayersStore.state.map()
 
@@ -102,7 +107,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
 
     const layer = useMemo(() => {
         return olMap?.getLayers().getArray()
-            .find((targetLayer: VectorLayer | BaseLayer | WebGLVectorLayer) => targetLayer["layer"] === submenu.item?.layer);
+            .find((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layer"] === submenu.item?.layer);
     }, [ olMap, submenu.menuCode ]);
 
     useEffect(() => {
@@ -141,8 +146,8 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     const snapLayer = useMemo(() => {
         return olMap?.getLayers().getArray()
             .find((targetLayer: VectorLayer | BaseLayer | WebGLVectorLayer) => {
-                return targetLayer["layer"] === "network"
-                // return targetLayer["layer"] === layer.getSnapLayerKey()
+                    return targetLayer["layer"] === "network"
+                    // return targetLayer["layer"] === layer.getSnapLayerKey()
                 }
             );
     }, [ olMap, submenu.menuCode, layer ]);
@@ -159,6 +164,36 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     useEffect(() => {
         clearSelected()
     }, [ activeSubmenu ]);
+
+    const [ reloadFlag, setReloadFlag ] = useState(false);
+
+    useHistoryInit(reloadFlag);
+
+    const {
+        addRow,
+        deleteSelected,
+        saveModifiedFeatures,
+        updateFeatureByRow,
+        switchEditable
+    } = useGrid(gridRef, store, historyStore, colDefs)
+
+    // const onDrawEnd = (e: DrawEvent) => {
+    //     const feature: Feature = e.feature;
+    //     const selected = 1;
+    //     feature.set("id", Date.now());
+    //     feature.set("selected", selected);
+    //     feature.changed();
+    //     const format = new GeoJSON({ featureProjection: 'EPSG:3857', dataProjection: 'EPSG:4326' });
+    //     const geojsonFeature = format.writeFeatureObject(feature);
+    //
+    //     const defaultGeometry = geojsonFeature.geometry;
+    //
+    //     saveModifiedFeatures([ feature ]);
+    //
+    //     const baseData = addedData?.baseData ?? {};
+    //     addRow({ baseData, defaultGeometry })
+    //     setIsDrawing(false)
+    // };
 
     useEffect(() => {
         if (!olEventManager || !submenu.menuCode || !olMap || !layer) return;
@@ -212,6 +247,19 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         };
     }, [ isDrawing, layer ]);
 
+    // const onModifyEnd = useCallback((e: ModifyEvent) => {
+    //
+    //     const features: Feature[] = e.features.getArray();
+    //     saveModifiedFeatures(features);
+    //
+    //     const selected = 1;
+    //
+    //     features.forEach(feature => {
+    //         feature.set("selected", selected);
+    //         feature.changed();
+    //     });
+    //
+    // }, []);
     useEffect(() => {
         if (!olEventManager || !layer) return;
 
@@ -294,9 +342,13 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     }, [ isDrawing, isEditable, snapLayer, selectedGuid ]);
 
     const handleCheck = () => {
+        console.log("체크한 row:", gridRef.current?.getSelectedRow());
+        console.log("그리드 업데이트 확인:", gridRef.current?.isGridChanged());
+        console.log("changed?", gridRef.current?.getChangedValue())
         console.log("currentGeojson:", store.getState().currentGeojson) // 디버깅용
-        console.log("current originData:", useBusStationStore.getState().originData) // 디버깅용
-        console.log("current currentJsonData:", useBusStationStore.getState().currentJsonData) // 디버깅용
+        console.log("currentGeojson:", store.getState().currentGeojson) // 디버깅용
+        console.log("current originData:", store.getState().originData) // 디버깅용
+        console.log("current currentJsonData:", store.getState().currentJsonData) // 디버깅용
         console.log("current layer:", layer) // 디버깅용
         console.log("current source:", layer.getSource().getFeatures()) // 디버깅용
         console.log("current selectId:", useSelectionStore.getState().selectedGuid) // 디버깅용
@@ -304,22 +356,22 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     };
 
     // currentGeojson 기반으로 Grid용 데이터 가공
-    // useEffect(() => {
-    //     if (!submenu.menuCode || !submenu.item?.fields) return;
-    //     if (!store) {
-    //         setRowData([])
-    //         return;
-    //     }
-    //     const currentGeojson = store.getState().currentGeojson
-    //     if (currentGeojson == undefined) return;
-    //     const flatRow = featureCollectionToFlatRow(currentGeojson);
-    //
-    //     store.getState().setFlatRow(flatRow)
-    //     setRowData(flatRow);
-    //     const defs = buildColumnDefs(submenu.item.fields);
-    //     setColDefs(defs);
-    //
-    // }, [ submenu.menuCode ]);
+    useEffect(() => {
+        if (!submenu.menuCode || !submenu.item?.fields) return;
+        if (!store) {
+            setRowData([])
+            return;
+        }
+        const currentGeojson = store.getState().currentGeojson
+        if (currentGeojson == undefined) return;
+        const flatRow = featureCollectionToFlatRow(currentGeojson);
+
+        store.getState().setFlatRow(flatRow)
+        setRowData(flatRow);
+        const defs = buildColumnDefs(submenu.item.fields);
+        setColDefs(defs);
+
+    }, [ submenu.menuCode ]);
 
 
     const handleGridSelectionChanged = () => {
@@ -352,6 +404,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         }
 
     }
+
     const handleDrawBtn = () => {
         setIsDrawing(true);
         const menuMeta = menuDrawRequirements[submenu.menuCode];
@@ -372,33 +425,39 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     };
 
     const handleDeleteBtn = () => {
-        useBusStationStore.getState().removeRecordsByGuid(selectedGuid);
-        // deleteSelected()
+        store.getState().removeRecordsByGuid(selectedGuid)
+        deleteSelected()
     }
 
     const handleSaveBtn = async () => {
         const api = apiConfig[submenu.menuCode as ApiMenuKey].update;
         const geojson = store.getState().currentGeojson;
         const logJson = historyStore.getState().updateLogs;
+        if (!logJson) {
+            alert('변경사항이 없습니다.');
+            return
+        }
+        const mergedLog = mergeUpdateLogs(logJson);
+
         const payload = {
-            versionId: 1,
             geojson,
-            logJson
+            logJson: mergedLog,
         };
         try {
             await axiosInstance({
                 method: api.method,
-                url: api.url,
+                url: api.url + '/' + selectedScenario.key,
                 data: payload,
             });
 
+            historyStore.getState().resetAllUpdates();
+            setReloadFlag(prev => !prev);
             console.log("저장 완료:",);
             alert("저장 완료")
         } catch (error) {
             console.error("저장 실패:", error);
             alert("저장 실패")
         }
-        historyStore.getState().resetAllUpdates();
     }
 
     const handleEditableBtn = () => {
@@ -413,7 +472,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         const restoredFlatRow = featureCollectionToFlatRow(restoredGeojson);
 
         store.getState().setFlatRow(restoredFlatRow);
-        // setRowData(restoredFlatRow);
+        setRowData(restoredFlatRow);
     }
 
     const handleShowHistory = () => {
@@ -430,10 +489,20 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
             return;
         }
 
-        const mergeGeojson = mergeGeojsonWithLog(store, updateHistory, isUndo);
+        const currentGeojson = store.getState().currentGeojson;
+        const featuresMap = new Map<string | number, Feature>();
+
+        currentGeojson.features.forEach((feature) => {
+            const id = feature.properties?.id;
+            if (id != null) {
+                featuresMap.set(id, { ...feature });
+            }
+        });
+
+        const mergeJson = mergeJsonWithLog(featuresMap, updateHistory.json, isUndo);
 
         const format = new GeoJSON();
-        const features = format.readFeatures(mergeGeojson, {
+        const features = format.readFeatures(mergeJson, {
             featureProjection: "EPSG:4326",
             dataProjection: "EPSG:3857",
         });
@@ -450,7 +519,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
 
         const restoredFlatRow = featureCollectionToFlatRow(geojsonObj);
         store.getState().setFlatRow(restoredFlatRow);
-        // setRowData(restoredFlatRow);
+        setRowData(restoredFlatRow);
 
         alert(isUndo ? "Undo 성공" : "Redo 성공");
     };
@@ -471,14 +540,12 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                                 )) }
                             </select>
                             <button className="add-btn" onClick={ () => handleAddBtn() }>추가</button>
-                            <button className="add-btn"
-                                    onClick={ () => handleDrawBtn() }>{ isDrawing ? "그리기 취소" : "그리기" }</button>
+                            <button className="add-btn" onClick={ () => handleDrawBtn() }>그리기</button>
                             <button className="delete-btn" onClick={ () => handleDeleteBtn() }>삭제</button>
                             <button className="save-btn" onClick={ () => handleSaveBtn() }>저장</button>
                             <button className="save-btn" onClick={ () => handleInitBtn() }>되돌리기</button>
                             <HistoryController onHistoryAply={ handleHistoryApply }></HistoryController>
-                            <button className="edit-btn"
-                                    onClick={ () => handleEditableBtn() }>{ isEditable ? "편집 중지" : "편집 활성화" }</button>
+                            <button className="edit-btn" onClick={ () => handleEditableBtn() }>그리드 편집활성화</button>
                             <button onClick={ () => handleCheck() }>Interaction 객체 목록 디버깅</button>
                             <button className="btn" onClick={ () => handleShowHistory() }>변경 이력 보기</button>
                         </div>
@@ -495,9 +562,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                             <HistoryModal
                                 onClose={ () => setIsHistoryOpen(false) }
                                 open={ isHistoryOpen }
-                                //onApply={handleApplyHistory}
-                                //historySteps={fakeHistorySteps}
-                                //originFeatures={originFeatures}
+                                setRowData={ setRowData }
                                 menuCode={ activeSubmenu.menuCode }
                             />
                         ) }
@@ -515,13 +580,13 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                                     Array.isArray(value) && value.length > 0 && (
                                         <div key={ key } className="grid-container">
                                             <div className="grid-header">
-                                                <h4>
+                                                <h4 style={ { margin: 12 } }>
                                                     { key.charAt(0).toUpperCase() + key.slice(1) }
                                                 </h4>
                                                 <FontAwesomeIcon onClick={ () => toggleGrid(key) }
                                                                  icon={ expandedKey === key ? faChevronUp : faChevronDown }/>
                                             </div>
-                                            { expandedKey === key && submenu.item.layer && (
+                                            { expandedKey === key && (
                                                 <JsonGrid rowData={ value } levelName={ key }
                                                           layerName={ submenu.item.layer }
                                                           layerGroupName={ "facility" }
