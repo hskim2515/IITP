@@ -1,6 +1,6 @@
 export const SNAP_LAYER = "network" as const
 export const SNAP_FEATURE_TYPE = "lane-edit" as const
-export const BUS_STATION_SNAP_FIELDS = [ 'linkRef', 'laneRef', 'offset', 'lng', 'lat'] as const;
+export const BUS_STATION_SNAP_FIELDS = [ 'linkRef', 'laneRef', 'offset', 'coordinates'] as const;
 export type BusStationSnapFields = typeof BUS_STATION_SNAP_FIELDS[number];
 export const TRANSIT_MODE = {
     BUS: 'bus',
@@ -23,8 +23,11 @@ export interface BusStationData {
     offset: number | null;
     type: string | null;
     address: string | null;
-    lng: number | null;
-    lat: number | null;
+    coordinates: [{
+        lng: number | null,
+        lat: number | null,
+    }],
+    parkingLots: number | null;
 }
 
 export type BusStationSnapProperties = Pick<BusStationData, BusStationSnapFields>;

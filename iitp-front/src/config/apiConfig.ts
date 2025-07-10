@@ -28,7 +28,7 @@ export const apiConfig:ApiConfig = {
         delete:  { url: '/vehicle-models/delete',  method: 'POST', useFormData: false },
     },
     BUS_STATION: {
-        list: {url: '/public-transit/station/bus/json', method: 'GET', useFormData: false },
+        list: {url: '/public-transit/station/bus', method: 'GET', useFormData: false },
         update: {url: '/public-transit/station/bus', method: 'POST', useFormData: false },
         create: {url: '/public-transit/station/bus', method: 'POST', useFormData: false },
         historyList: {url: '/public-transit/station/bus/history', method: 'GET', useFormData: false },
@@ -40,7 +40,7 @@ export const apiConfig:ApiConfig = {
         list:    { url: '/pavement-marking',       method: 'GET', useFormData: false },
         update:  { url: '/pavement-marking', method: 'POST', useFormData: false },
         create:  { url: '/pavement-marking', method: 'POST', useFormData: false },
-        historyList: { url: '/pavement-marking/historys', method: 'GET', useFormData: false },
+        historyList: { url: '/pavement-marking/histories', method: 'GET', useFormData: false },
     },
 } as const;
 

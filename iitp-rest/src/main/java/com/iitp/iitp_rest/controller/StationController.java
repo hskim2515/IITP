@@ -1,10 +1,10 @@
 package com.iitp.iitp_rest.controller;
 
-import com.iitp.iitp_rest.model.pavementMarking.JsonSaveRequest;
+import com.iitp.iitp_rest.model.pavementMarking.PavementMarkingSaveRequest;
 import com.iitp.iitp_rest.model.publicTransit.station.BusStationData;
 import com.iitp.iitp_rest.model.publicTransit.station.BusStationLogs;
+import com.iitp.iitp_rest.model.publicTransit.station.BusStationSaveRequest;
 import com.iitp.iitp_rest.model.publicTransit.station.PublicTransitData;
-import com.iitp.iitp_rest.model.publicTransit.station.StationEntity;
 import com.iitp.iitp_rest.service.publicTransit.station.BusStationService;
 import com.iitp.iitp_rest.service.publicTransit.station.StationService;
 import lombok.RequiredArgsConstructor;
@@ -23,7 +23,6 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 
 @RestController
@@ -60,7 +59,11 @@ public class StationController {
             NodeList nodeList = doc.getElementsByTagName("station");
             for (int i = 0; i < nodeList.getLength(); i++) {
                 Element nodeElement = (Element) nodeList.item(i);
-                // double lat, lng; -> 추후 join 결과를 입력
+
+                BusStationData.Coordinates coord = new BusStationData.Coordinates();
+                coord.setLat(Double.valueOf(nodeElement.getAttribute("lat")));
+                coord.setLng(Double.valueOf(nodeElement.getAttribute("lng")));
+
                 BusStationData station = BusStationData.builder()
                         .id(nodeElement.getAttribute("id"))
                         .transitMode(nodeElement.getAttribute("transitMode"))
@@ -69,8 +72,7 @@ public class StationController {
                         .offset(Double.valueOf(nodeElement.getAttribute("offset")))
                         .type(nodeElement.getAttribute("type"))
                         .address(nodeElement.getAttribute("address"))
-                        .lng(Double.valueOf(nodeElement.getAttribute("lng")))
-                        .lat(Double.valueOf(nodeElement.getAttribute("lat")))
+                        .coordinates(List.of(coord))
                         .build();
 
                 stations.add(station);
@@ -86,12 +88,18 @@ public class StationController {
 
     @GetMapping("/bus/history/{versionId}")
     public ResponseEntity<List<BusStationLogs>> getLogsByVersion(@PathVariable String versionId) {
-        List<BusStationLogs> versions = busStationService.getLogsByVersion(versionId);
-        return ResponseEntity.ok(versions);
+        logger.info("[getLogsByVersion] versionId: {}", versionId);
+        try{
+            List<BusStationLogs> logs = busStationService.getLogsByVersion(versionId);
+            logger.info("[getLogsByVersion] getLogsByVersion: {}", logs);
+            return ResponseEntity.ok(logs);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 
     @PostMapping("/bus/{versionId}")
-    public ResponseEntity<Void> saveBusStation (@RequestBody JsonSaveRequest request, @PathVariable String versionId) {
+    public ResponseEntity<Void> saveBusStation (@RequestBody BusStationSaveRequest request, @PathVariable String versionId) {
         logger.info("[saveBusStation] request: {}", request);
         try {
             busStationService.saveBusStation(request, versionId);

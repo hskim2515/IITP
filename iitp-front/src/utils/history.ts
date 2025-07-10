@@ -1,7 +1,6 @@
-import { FeatureCollection, Feature } from "geojson";
-import useHistoryStoreFactory, { UpdateLogEntry} from "@stores/useHistoryStoreFactory";
-import {FeatureStoreFactoryType} from "@stores/useFeatureStoreFactory";
-import useFeatureStoreFactory, {UpdateLogEntry, UpdateType} from "@stores/useFeatureStoreFactory";
+import { Feature, FeatureCollection } from "geojson";
+import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
+import { UpdateLogEntry, UpdateType } from "@type/HistoryTypes";
 
 interface FeatureUpdateHistoryOptions {
     featureId: string | number;

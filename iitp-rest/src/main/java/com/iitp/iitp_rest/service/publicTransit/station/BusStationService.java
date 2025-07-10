@@ -1,11 +1,8 @@
 package com.iitp.iitp_rest.service.publicTransit.station;
 
-import com.iitp.iitp_rest.model.BaseEntity;
-import com.iitp.iitp_rest.model.pavementMarking.JsonSaveRequest;
-import com.iitp.iitp_rest.model.pavementMarking.PavementMarkingLogs;
-import com.iitp.iitp_rest.model.pavementMarking.PavementMarkingVersion;
-import com.iitp.iitp_rest.model.pavementMarking.UpdateLog;
+import com.iitp.iitp_rest.model.pavementMarking.PavementMarkingSaveRequest;
 import com.iitp.iitp_rest.model.publicTransit.station.BusStationLogs;
+import com.iitp.iitp_rest.model.publicTransit.station.BusStationSaveRequest;
 import com.iitp.iitp_rest.model.publicTransit.station.BusStationVersion;
 import com.iitp.iitp_rest.repository.BusStationLogsRepository;
 import com.iitp.iitp_rest.repository.BusStationVersionsRepository;
@@ -14,7 +11,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -34,11 +30,11 @@ public class BusStationService {
     }
 
     @Transactional
-    public void saveBusStation(JsonSaveRequest request, String versionId) {
+    public void saveBusStation(BusStationSaveRequest request, String versionId) {
         BusStationVersion entity = busStationVersionsRepository.findByVersionId(versionId)
                 .orElse(new BusStationVersion());
         entity.setVersionId(versionId);
-        entity.setData(request.getGeojson());;
+        entity.setData(request.getData());
         busStationVersionsRepository.save(entity);
         List<BusStationLogs> existingLogs = busStationLogsRepository.findByVersionIdOrderByCreatedAtAsc(versionId);
 
@@ -51,7 +47,7 @@ public class BusStationService {
 
         BusStationLogs entityLog = BusStationLogs.builder()
                 .versionId(versionId)
-                .data(request.getLogJson())
+                .data(request.getLogs())
                 .build();
 
         busStationLogsRepository.save(entityLog);

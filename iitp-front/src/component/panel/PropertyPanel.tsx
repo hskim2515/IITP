@@ -406,6 +406,10 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     }
 
     const handleDrawBtn = () => {
+        if(isDrawing) {
+            setIsDrawing(false)
+            return;
+        }
         setIsDrawing(true);
         const menuMeta = menuDrawRequirements[submenu.menuCode];
         if (!menuMeta?.requiresType) {
@@ -556,7 +560,10 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                             <TypeSelectionModal typeKey={ submenu.menuCode } onConfirm={ (selectedType) => {
                                 onConfirm?.(selectedType);
                                 setIsTypeSelect(false);
-                            } } onCancel={ () => setIsTypeSelect(false) }/>
+                            }} onCancel={ () => {
+                                setIsTypeSelect(false)
+                                setIsDrawing(false)
+                            }}/>
                         ) }
                         { isHistoryOpen && (
                             <HistoryModal

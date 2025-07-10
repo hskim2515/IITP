@@ -5,14 +5,14 @@ import axiosInstance from "../api/axiosInstance";
 import {usePavementMarkingHistoryStore} from "@stores/usePavementMarkingStore";
 import {HistoryStoreFactoryType} from "@stores/useHistoryStoreFactory";
 import {useScenarioStore} from "@stores/useScenarioStore";
-import { useNetworkStore } from "@stores/useNetworkStore";
-import { useBusStationStore } from "@stores/useBusStationStore";
+import { useNetworkHistoryStore } from "@stores/useNetworkStore";
+import { useBusStationHistoryStore } from "@stores/useBusStationStore";
 
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToHistoryStoreMap: Record<string, HistoryStoreFactoryType> = {
     // menuCode: store
-    NETWORK: useNetworkStore,
-    BUS_STATION: useBusStationStore,
+    NETWORK: useNetworkHistoryStore,
+    BUS_STATION: useBusStationHistoryStore,
     PAVEMENT_MARKING: usePavementMarkingHistoryStore,
 }
 
@@ -20,7 +20,7 @@ const useHistoryInit = (reloadFlag:boolean) => {
     useEffect(() => {
         const menuCodes = Object.keys(propertyFormSchema as Record<string, PropertyFormSchemaProps>);
         const selectedScenario = useScenarioStore.getState().selectedScenario;
-        const initMenuCodesHistroy = async () => {
+        const initMenuCodesHistory = async () => {
             for (const menuCode of menuCodes) {
                 const store = menuCodeToHistoryStoreMap[menuCode];
                 if (!store) continue;
@@ -36,6 +36,7 @@ const useHistoryInit = (reloadFlag:boolean) => {
                     store.getState().setOriginHistoryData(response.data);
                     //store.getState().initCurrentData()
                     console.log(`${menuCode} 데이터 초기화 완료`);
+                    console.log(`${menuCode} response data:::`, response.data);
                 } catch (err) {
                     console.error(`[${menuCode}] 데이터 불러오기 실패`, err);
                 } finally {
@@ -44,7 +45,7 @@ const useHistoryInit = (reloadFlag:boolean) => {
             }
         };
 
-        initMenuCodesHistroy();
+        initMenuCodesHistory();
     }, [reloadFlag]);
 };
 

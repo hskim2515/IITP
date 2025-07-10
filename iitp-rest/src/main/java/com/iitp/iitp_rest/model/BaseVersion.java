@@ -29,8 +29,4 @@ public abstract class BaseVersion {
     @Column(name = "updated_at", nullable = false, updatable = false)
     @UpdateTimestamp
     private LocalDateTime updatedAt;
-
-    @Type(JsonType.class)
-    @Column(columnDefinition = "jsonb")
-    private Map<String, Object> data;
 }
