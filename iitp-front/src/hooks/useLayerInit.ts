@@ -28,6 +28,13 @@ export const menuCodeToStoreMap: Record<string, FeatureStoreFactoryType> = {
     PAVEMENT_MARKING: usePavementMarkingStore,
 }
 
+export const layerNameToStoreMap: Record<string, FeatureStoreFactoryType> = {
+    // layerName: store
+    network: useNetworkStore,
+    busStation: useBusStationStore,
+    pavementMarking: usePavementMarkingStore,
+}
+
 const useLayerInit = (): void => {
 
     const olMap = useOpenLayersStore.state.map();
@@ -63,7 +70,7 @@ const useLayerInit = (): void => {
                 assignFeatureTypeToResponseData(response.data)
                 store.getState().initCurrentData();
 
-                console.log(store.getState().originData)
+                console.log(`${menuCode} :::`,store.getState().originData)
                 console.log(`${menuCode} 데이터 초기화 완료`);
             } catch (err) {
                 console.error(`[${menuCode}] 데이터 불러오기 실패`, err);

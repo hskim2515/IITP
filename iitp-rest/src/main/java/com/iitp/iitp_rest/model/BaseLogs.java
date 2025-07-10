@@ -25,9 +25,4 @@ public abstract class BaseLogs {
     @Column(name = "created_at", nullable = false, updatable = false)
     @CreationTimestamp
     private LocalDateTime createdAt;
-
-    @Type(JsonType.class)
-    @Column(columnDefinition = "jsonb")
-    private Map<String, Object> data;
-
 }

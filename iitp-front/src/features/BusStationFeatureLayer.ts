@@ -50,6 +50,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
         this.source = source
 
         const store = menuCodeToStoreMap[this.LAYER_NAME];
+        console.log(store.getState().currentJsonData);
         const listener = (
             updated: Record<string, Array<Record<string, unknown>>>,
             origin: Record<string, Array<Record<string, unknown>>>
@@ -118,8 +119,8 @@ export default class BusStationFeatureLayer extends VectorLayer {
                         if (coord) {
                             const [ lng, lat ] = toLonLat(coord)
                             // 계산한 값을 json에 적용
-                            item.lng = lng
-                            item.lat = lat
+                            item.coordinates.lng = lng
+                            item.coordinates.lat = lat
                             feature.setGeometry(new Point(fromLonLat([lng, lat])));
                         }
 
@@ -214,6 +215,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
     public async load(): Promise<void> {
         console.log("load busStation")
         const store = menuCodeToStoreMap[this.LAYER_NAME];
+        console.log("store.getState().currentJsonData:::", store.getState().currentJsonData)
         const { busStations } = store.getState().currentJsonData;
 
         const source = this.source;
@@ -233,10 +235,10 @@ export default class BusStationFeatureLayer extends VectorLayer {
             transitMode: data.transitMode ?? TRANSIT_MODE.BUS,
             featureType: data.featureType ?? FEATURE_TYPE.BUS_STATION,
         };
+        const coord = data.coordinates[0];
+        const hasValidCoordinate = typeof coord.lng === 'number' && typeof coord.lat === 'number';
 
-
-        const hasValidCoordinate = typeof data.lng === 'number' && typeof data.lat === 'number';
-        const geom = hasValidCoordinate ? new Point(fromLonLat([data.lng!, data.lat!])) : undefined;
+        const geom = hasValidCoordinate ? new Point(fromLonLat([coord.lng!, coord.lat!])) : undefined;
 
         const feature = new Feature<Point>(geom);
         feature.setProperties(props);
@@ -255,10 +257,13 @@ export default class BusStationFeatureLayer extends VectorLayer {
             linkRef: null,
             laneRef: null,
             offset: null,
-            lng: null,
-            lat: null,
+            coordinates: [{
+                lng: null,
+                lat: null,
+            }],
             type: null,
             address: '',
+            parkingLots: null,
         };
 
         return dto;
@@ -365,10 +370,8 @@ export default class BusStationFeatureLayer extends VectorLayer {
         BUS_STATION_SNAP_FIELDS.forEach((key) => {
             if (key === "offset") {
                 computeProperties[key] = offset ?? null;
-            } else if (key === "lng") {
-                computeProperties[key] = lng ?? null;
-            } else if (key === "lat") {
-                computeProperties[key] = lat ?? null;
+            } else if (key === "coordinates") {
+                computeProperties[key] = lng != null && lat != null ? [{ lat, lng }] : [];
             } else {
                 computeProperties[key] = basedProperties?.[key] ?? null;
             }

@@ -32,6 +32,7 @@ export function assignGUIDsToResponseData(data: any) {
     if (data.signals) addIdRecursively(data.signals, 'signal');
 
     if (data.busStations) addIdRecursively(data.busStations, 'busStations');
+    if (data.pavementMarkings) addIdRecursively(data.pavementMarkings, 'pavementMarkings');
     return data;
 }
 
@@ -59,5 +60,6 @@ export function assignFeatureTypeToResponseData(data: any) {
     if (data.connections) addFeatureTypeRecursively(data.connections, 'connection');
     if (data.signals) addFeatureTypeRecursively(data.signals, 'signal');
     if (data.busStations) addFeatureTypeRecursively(data.busStations, 'busStations');
+    if (data.pavementMarkings) addFeatureTypeRecursively(data.pavementMarkings, 'pavementMarkings');
     return data;
 }

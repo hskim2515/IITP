@@ -2,13 +2,16 @@ import React, { useEffect, useState } from "react";
 import { Table } from "antd";
 import { useSelectionStore } from "@stores/useSelectionStore";
 import { Input, InputNumber } from "antd/lib";
-import { useBusStationStore } from "@stores/useBusStationStore";
+import { layerNameToStoreMap } from "@hooks/useLayerInit";
+
+// 중첩 배열로 생성하지 않을 필드 지정
+const EXCLUDED_NESTED_FIELDS = [ "coordinates" ];
 
 // 컬럼 자동 추출
 function generateColumnsFromData(data: any[]) {
     if (!data?.length) return [];
 
-    const excludedFields = [ 'shape', '__guid', 'lat', 'lng', 'featureType' ];
+    const excludedFields = [ 'shape', '__guid', 'coordinate', 'lat', 'lng', 'featureType' ];
 
     return Object.keys(data[0])
         .filter((key) => !Array.isArray(data[0][key]) && !excludedFields.includes(key))
@@ -39,13 +42,21 @@ function generateColumnsFromData(data: any[]) {
 // 중첩 배열 필드 감지
 function getNestedArrayField(row: any): string | null {
     if (!row) return null;
+
     for (const key in row) {
-        if (Array.isArray(row[key])) {
+        const value = row[key];
+        if (
+            Array.isArray(value) &&
+            value.length > 0 &&
+            typeof value[0] === "object" &&
+            !EXCLUDED_NESTED_FIELDS.includes(key)
+        ) {
             return key;
         }
     }
     return null;
 }
+
 
 // JsonGrid 컴포넌트 with 들여쓰기 depth
 const JsonGrid = ({
@@ -112,7 +123,7 @@ const JsonGrid = ({
                 };
                 // 변경점 병합
                 console.log("layerName:::", layerName)
-                const store = useBusStationStore
+                const store = layerNameToStoreMap[layerName]
                 store.getState().updateCurrentJsonData(merged);
             };
 
