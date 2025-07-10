@@ -546,3 +546,15 @@ body {
     background-color: #218838;
 }
 
+.grid-container {
+    margin-bottom: 24px
+}
+.grid-header {
+    display: flex;
+    align-items: center;
+    color: #eaeaea;
+    fill: #eaeaea;
+}
+.grid-header h4 {
+    margin: 12px;
+}

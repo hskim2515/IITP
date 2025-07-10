@@ -1,5 +1,4 @@
-import {useEffect, useState} from "react";
-import { usePTBusStationStore } from "@stores/usePTBusStationStore";
+import {useEffect} from "react";
 import { propertyFormSchema, PropertyFormSchemaProps } from "../component/form/propertyFormSchema";
 import { apiConfig, ApiMenuKey } from "../config/apiConfig";
 import axiosInstance from "../api/axiosInstance";
@@ -17,14 +16,15 @@ import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import {useCesiumStore} from "@stores/useCesiumStore";
 import LayerManager from "@managers/LayerManager";
 import {useLayerSchemaStore} from "@stores/useLayerSchemaStore";
-import {assignGUIDsToTrafficData} from "@utils/guid";
+import { assignFeatureTypeToResponseData, assignGUIDsToResponseData } from "@utils/guid";
 import {usePavementMarkingStore} from "@stores/usePavementMarkingStore";
+import { useBusStationStore } from "@stores/useBusStationStore";
 
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToStoreMap: Record<string, FeatureStoreFactoryType> = {
     // menuCode: store
     NETWORK: useNetworkStore,
-    PT_BUS_STATION: usePTBusStationStore,
+    BUS_STATION: useBusStationStore,
     PAVEMENT_MARKING: usePavementMarkingStore,
 }
 
@@ -50,14 +50,17 @@ const useLayerInit = (): void => {
         for (const menuCode of menuCodes) {
             const store = menuCodeToStoreMap[menuCode];
             if (!store) continue;
+
             try {
                 const api = apiConfig[menuCode as ApiMenuKey].list;
                 const response = await axiosInstance({
                     method: api.method,
                     url: api.url + '/' + selectedScenario.key,
                 });
+
                 store.getState().setOriginData(response.data);
-                assignGUIDsToTrafficData(response.data)
+                assignGUIDsToResponseData(response.data)
+                assignFeatureTypeToResponseData(response.data)
                 store.getState().initCurrentData();
 
                 console.log(store.getState().originData)

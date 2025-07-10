@@ -1,119 +1,386 @@
-import WebGLVectorLayer from "ol/layer/WebGLVector";
-import VectorSource from "ol/source/Vector";
-import { GeoJSON } from "ol/format";
-import { useLayerStore } from "@stores/useLayerStore";
-import { menuCodeToStoreMap } from "@hooks/useLayerInit";
-import { Feature } from "ol";
-import { Icon, Style } from "ol/style";
 import VectorLayer from "ol/layer/Vector";
+import VectorSource from "ol/source/Vector";
+import { Feature } from "ol";
+import { Point } from "ol/geom";
+import { Circle as CircleStyle, Fill, Stroke, Style } from "ol/style";
+import { fromLonLat, toLonLat } from "ol/proj";
+import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 
-// export default class BusStationDataSourceLayer extends VectorLayer {
-export default class BusStationFeatureLayer extends WebGLVectorLayer {
+import {
+    BUS_STATION_SNAP_FIELDS,
+    BusStationData,
+    BusStationSnapProperties,
+    FEATURE_TYPE,
+    SNAP_FEATURE_TYPE,
+    SNAP_LAYER,
+    TRANSIT_MODE
+} from "@type/Station";
+import { generateGUIDWithType } from "@utils/guid";
+import { deepEqual } from "@utils/json";
+import {
+    findFeatureByProperties,
+    getCoordinateByOffset,
+    getFeaturesByProperties,
+    getOffsetByCoordinate
+} from "@utils/feature";
+import { useLayerStore } from "@stores/useLayerStore";
+import WebGLVectorLayer from "ol/layer/WebGLVector";
+import BaseLayer from "ol/layer/Base";
+import { Coordinate } from "ol/coordinate";
+
+export default class BusStationFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
-    private readonly LAYER_NAME = "PT_BUS_STATION"
-    private readonly TRANSIT_MODE = "bus"
+    private readonly LAYER_NAME = "BUS_STATION";
     private unsubscribe: () => void;
 
+    private readonly defaultStyle: Style;
+    private readonly selectStyle: Style;
+    private readonly modifyStyle: Style;
+
     constructor() {
-        const layerStore = useLayerStore.getState();
-        const activeLayerName = layerStore.activeLayerName;
-        // const isVisible = activeLayerName?.includes("busStation") ?? false;
-
         const source = new VectorSource();
-
-
+        const layerManager = useLayerStore.getState().layerManager
         super({
             source,
-            visible: true,
-            style: {
-                // selected === 1이면 radius 8, 아니면 radius 6
-                "circle-radius":
-                    [                "case",
-                        ["==", ["get", "selected"], 1],
-                        8, // selected 1
-                        6 // selected 0
-                    ]
-                ,
-                "circle-fill-color":
-
-                    [                "case",
-                        ["==", ["get", "selected"], 1],
-                        "rgba(0,255,0,1)", // selected 1
-                        "rgba(255,0,0,1)"
-                    ]
-                ,
-                "circle-stroke-width":
-                    [ "case",
-                        [ "==", [ "get", "selected" ], 1 ],
-                        1, // selected 1
-                        1,
-                    ]
-                ,
-                "circle-stroke-color":
-                    [ "case",
-                        [ "==", [ "get", "selected" ], 1 ],
-                        "rgb(255,0,0)", // selected 1
-                        "rgba(0,0,0,0)",
-                    ]
-                ,
-            },
+            visible: false,
             zIndex: 410,
+            style: (feature, resolution) => this.styleFunction(feature, resolution),
         });
-// VectorLayer 일 때, 적용 가능한 동적 style
-// super({
-//     source,
-//     visible: true,
-//     style: (feature: Feature, resolution: number) => {
-//         const baseResolution = 1.2;
-//         const scale = 0.05 * (baseResolution/resolution);
-//
-//         return new Style({
-//             image: new Icon({
-//                 src: "/public/bus_stop.png",
-//                 scale: scale,
-//                 rotateWithView: true,
-//             }),
-//         });
-//     },
-//     updateWhileAnimating: true,
-//     updateWhileInteracting: true,
-//     zIndex: 410,
-// });
-        const store = menuCodeToStoreMap["PT_BUS_STATION"];
+
+        this.source = source
+
+        const store = menuCodeToStoreMap[this.LAYER_NAME];
+        const listener = (
+            updated: Record<string, Array<Record<string, unknown>>>,
+            origin: Record<string, Array<Record<string, unknown>>>
+        ) => {
+            Object.keys(updated).forEach((objectName) => {
+                const updatedList = updated[objectName] ?? [];
+                const originList = origin[objectName] ?? [];
+
+                const updatedMap = new Map<string, Record<string, unknown>>();
+                const originMap = new Map<string, Record<string, unknown>>();
+
+                updatedList.forEach((item) => {
+                    const guid = item?.__guid as string;
+                    if (guid) updatedMap.set(guid, item);
+                });
+
+                originList.forEach((item) => {
+                    const guid = item?.__guid as string;
+                    if (guid) originMap.set(guid, item);
+                });
+
+                const added: Record<string, unknown>[] = [];
+                const removed: Record<string, unknown>[] = [];
+                const changed: Record<string, unknown>[] = [];
+
+                originMap.forEach((originItem, guid) => {
+                    const updatedItem = updatedMap.get(guid);
+                    if (!updatedItem) {
+                        removed.push(originItem);
+                    } else if (!deepEqual(originItem, updatedItem)) {
+                        changed.push(updatedItem);
+                    }
+                });
+
+                updatedMap.forEach((updatedItem, guid) => {
+                    if (!originMap.has(guid)) {
+                        added.push(updatedItem);
+                    }
+                });
+
+                const src = this.source;
+                const existing = src.getFeatures();
+
+                removed.forEach((item) => {
+                    const guid = item.__guid;
+                    const feature = existing.find(f => f.get("__guid") === guid);
+                    if (feature) {
+                        src.removeFeature(feature);
+                    }
+                });
+
+                changed.forEach((item) => {
+                    const dto = this.recordToDto(item);
+
+                    const feature = existing.find(f => f.get("__guid") === dto.__guid);
+                    if (feature) {
+                        const baseLayer = layerManager?.getLayerByName(this.getSnapLayerKey())
+                        const baseFeature = findFeatureByProperties(baseLayer,{
+                            featureType: this.getSnapFeatureType(),
+                            linkRef: item.linkRef,
+                            laneRef: item.laneRef ?? 0,
+                        })
+
+                        const offset = item.offset ?? 0
+                        const coord = getCoordinateByOffset(baseFeature, offset)
+                        if (coord) {
+                            const [ lng, lat ] = toLonLat(coord)
+                            // 계산한 값을 json에 적용
+                            item.lng = lng
+                            item.lat = lat
+                            feature.setGeometry(new Point(fromLonLat([lng, lat])));
+                        }
+
+                        feature.setProperties(dto);
+                    }
+                });
+
+                added.forEach((item) => {
+                    console.log("add btn item:::", item)
+                    const dto = this.recordToDto(item);
+                    console.log("add btn dto:::", dto)
+                    const feature = this.createFeature(dto);
+                    console.log("add btn feature:::", feature)
+                    src.addFeature(feature);
+                    console.log(`[추가] __guid: ${dto.__guid}`);
+                });
+            });
+        };
+
         this.unsubscribe = store.subscribe(
-            (state) => state.currentGeojson,
-            (geojson) => {
-                if (!geojson) return;
-                const format = new GeoJSON({ featureProjection: "EPSG:3857" });
-                const features = format.readFeatures(geojson);
-                features.forEach(f => f.set("selected", 0));
-                source.clear(true);
-                source.addFeatures(features);
-            },
+            // 구독할 값: currentJsonData 배열
+            state => state.currentJsonData,
+            listener,
             { fireImmediately: true }
         );
-        this.source = source;
+
+        this.defaultStyle = new Style({
+            image: new CircleStyle({
+                radius: 6,
+                fill: new Fill({ color: "rgba(255, 0, 0, 1)" }), // 빨간색
+                stroke: new Stroke({ color: "rgba(0,0,0,0)", width: 1 }),
+            }),
+        });
+
+        this.selectStyle = new Style({
+            image: new CircleStyle({
+                radius: 8,
+                fill: new Fill({ color: "rgba(0, 255, 0, 1)" }), // 초록색
+                stroke: new Stroke({ color: "rgba(255, 0, 0, 1)", width: 2 }),
+            }),
+        });
+
+        this.modifyStyle = new Style({
+            image: new CircleStyle({
+                radius: 8,
+                fill: new Fill({ color: "rgba(255, 255, 0, 1)" }), // 노란색
+                stroke: new Stroke({ color: "rgba(0, 0, 0, 1)", width: 2 }),
+            }),
+        });
+
+
     }
 
-    public loadFromStore(): void {
-        const store = menuCodeToStoreMap[this.LAYER_NAME]
-        const geojson = store.getState().currentGeojson;
-        if (!store || !geojson) return;
-        try {
-            const format = new GeoJSON({ featureProjection: 'EPSG:3857' });
-            const features = format.readFeatures(geojson);
-
-            // WebGLVectorLayer Style 을 위해 selected 속성을 정의
-            features.forEach(f => f.set("selected", 0));
-            this.source.clear(true);
-            this.source.addFeatures(features);
-
-        } catch (error) {
-            console.error("[BusStationDataSourceLayer] store 기반 로딩 실패:", error);
+    public getSelectStyle() {
+        return this.selectStyle
+    }
+    public getDefaultStyle() {
+        return this.defaultStyle
+    }
+    public getInteractionStyle(type: "default" | "select" | "modify"): Style {
+        switch (type) {
+            case "select":
+                return this.selectStyle;
+            case "modify":
+                return this.modifyStyle;
+            case "default":
+            default:
+                return this.defaultStyle;
         }
     }
 
-    public destroy() {
-        this.unsubscribe();
+    private styleFunction(feature: Feature<Point>, resolution: number): Style[] {
+        const geom = feature.getGeometry();
+        const styles: Style[] = [];
+        if (geom instanceof Point) {
+            styles.push(
+                new Style({
+                    image: new CircleStyle({
+                        radius: 6,
+                        fill: new Fill({ color: "rgba(255,0,0,1)" }),
+                        stroke: new Stroke({ color: "rgba(0,0,0,0)", width: 1 }),
+                    }),
+                })
+            );
+        }
+        return styles;
     }
+
+    /**
+     * 스토어의 DTO 배열로부터 피처 생성 후 source에 추가
+     */
+    public async load(): Promise<void> {
+        console.log("load busStation")
+        const store = menuCodeToStoreMap[this.LAYER_NAME];
+        const { busStations } = store.getState().currentJsonData;
+
+        const source = this.source;
+        source.clear();
+
+        const features = busStations.map((data) => this.createFeature(data));
+
+        source.addFeatures(features);
+    }
+
+    /**
+     * DTO로부터 Point Feature와 속성을 생성
+     */
+    public createFeature(data: BusStationData): Feature<Point> | undefined {
+        const props: BusStationData = {
+            ...data,
+            transitMode: data.transitMode ?? TRANSIT_MODE.BUS,
+            featureType: data.featureType ?? FEATURE_TYPE.BUS_STATION,
+        };
+
+
+        const hasValidCoordinate = typeof data.lng === 'number' && typeof data.lat === 'number';
+        const geom = hasValidCoordinate ? new Point(fromLonLat([data.lng!, data.lat!])) : undefined;
+
+        const feature = new Feature<Point>(geom);
+        feature.setProperties(props);
+
+        return feature;
+    }
+
+    public createDto(): BusStationData {
+        const guid = generateGUIDWithType(this.getFeatureType());
+
+        const dto: BusStationData = {
+            id: undefined,
+            __guid: guid,
+            featureType: FEATURE_TYPE.BUS_STATION,
+            transitMode: TRANSIT_MODE.BUS,
+            linkRef: null,
+            laneRef: null,
+            offset: null,
+            lng: null,
+            lat: null,
+            type: null,
+            address: '',
+        };
+
+        return dto;
+    }
+
+    /**
+     * 일반 객체를 DTO 로 변환
+     */
+    public recordToDto(record: Record<string, unknown>): BusStationData {
+        const { geometry, ...cleaned } = record;
+        const guid = cleaned.__guid ?? generateGUIDWithType(this.getFeatureType())
+        const dto = {
+            ...(cleaned as Omit<BusStationData, "transitMode" | "featureType" | "__guid">),
+            transitMode: TRANSIT_MODE.BUS,
+            featureType: FEATURE_TYPE.BUS_STATION,
+            __guid: guid
+        } as BusStationData;
+        return dto
+    }
+
+    /**
+     * Snap 된 일반 객체 Property 추출
+     */
+    public recordToSnapProperties(record: Record<string, unknown>): BusStationSnapProperties | undefined {
+        if (record["featureType"] !== this.getSnapFeatureType()) return;
+
+        const properties: Partial<BusStationSnapProperties> = {};
+
+        BUS_STATION_SNAP_FIELDS.forEach(field => {
+            const v = record[field];
+            if (v != null) {
+                if (field === '__guid' || field === 'id') {
+                    properties[field] = String(v); // string 유지
+                } else {
+                    properties[field] = Number(v); // 나머지는 number로 변환
+                }
+            }
+        });
+
+        // 아무 필드도 채워지지 않았다면 undefined 반환
+        if (Object.keys(properties).length === 0) {
+            return undefined;
+        }
+
+        return properties as BusStationSnapProperties;
+    }
+
+
+    /**
+     * Snap 속성을 기존 BusStationData에 병합
+     */
+    public snapPropertiesToDto(
+        snapProperties: BusStationSnapProperties,
+        baseDto: BusStationData
+    ): BusStationData {
+        const { id: ignored, ...props } = snapProperties
+        return {
+            ...baseDto,
+            ...props
+        };
+    }
+
+
+    public getBusStationTransitMode(): string {
+        return TRANSIT_MODE.BUS;
+    }
+
+    /**
+     * Snap 대상 레이어 키
+     */
+    public getSnapLayerKey(): string {
+        return SNAP_LAYER;
+    }
+
+    /**
+     * Snap 대상 featureType
+     */
+    public getSnapFeatureType(): string {
+        return SNAP_FEATURE_TYPE;
+    }
+
+    public getFeatureType(): string {
+        return FEATURE_TYPE.BUS_STATION;
+    }
+
+    /**
+     * offset 계산 로직
+     */
+    public computeMetadata(
+        baseLayer: VectorLayer | WebGLVectorLayer | BaseLayer,
+        basedProperties: Record<string, unknown> | undefined,
+        fromCoord: Coordinate
+    ): Record<string, unknown> {
+        const filter = { featureType: this.getSnapFeatureType() };
+        const features = getFeaturesByProperties(baseLayer, filter);
+        const feature = findFeatureByProperties(features, basedProperties);
+        const offset = getOffsetByCoordinate(feature, fromCoord);
+
+        console.log("before snappedProperties compute:::", basedProperties);
+
+        const computeProperties: Record<string, unknown> = {};
+        const [ lng, lat ] = toLonLat(fromCoord)
+
+        BUS_STATION_SNAP_FIELDS.forEach((key) => {
+            if (key === "offset") {
+                computeProperties[key] = offset ?? null;
+            } else if (key === "lng") {
+                computeProperties[key] = lng ?? null;
+            } else if (key === "lat") {
+                computeProperties[key] = lat ?? null;
+            } else {
+                computeProperties[key] = basedProperties?.[key] ?? null;
+            }
+        });
+
+        console.log("after snappedProperties compute:::", computeProperties);
+        return computeProperties;
+    }
+
+    public dispose(): void {
+        this.unsubscribe();
+        super.dispose();
+    }
+
 }

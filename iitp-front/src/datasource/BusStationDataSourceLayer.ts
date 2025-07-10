@@ -1,9 +1,9 @@
-import { GeoJsonDataSource, Viewer, Color } from "cesium";
+import { Viewer, GeoJsonDataSource, Cartesian3, Entity, Color } from "cesium";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
-
+import { useScenarioStore } from "@stores/useScenarioStore";
 
 export default class BusStationDataSourceLayer {
-    private readonly LAYER_NAME = "PT_BUS_STATION";
+    private readonly LAYER_NAME = "BUS_STATION";
     private dataSource: GeoJsonDataSource;
     private unsubscribe: () => void;
 
@@ -12,44 +12,47 @@ export default class BusStationDataSourceLayer {
 
         const store = menuCodeToStoreMap[this.LAYER_NAME];
         this.unsubscribe = store.subscribe(
-            (state) => state.currentGeojson,
-            async (geojson) => {
-                if (!geojson) return;
+            (state) => state.currentJsonData,
+            async (currentJsonData) => {
+                if (!currentJsonData?.busStations) return;
                 try {
-                    await this.load(geojson);
+                    await this.load(currentJsonData.busStations);
                 } catch (error) {
-                    console.error("[BusStationDataSourceLayer] GeoJSON 로드 실패:", error);
+                    console.error("[BusStationDataSourceLayer] busStations 로드 실패:", error);
                 }
             },
             { fireImmediately: true }
         );
     }
 
-    private async load(geojson: any): Promise<GeoJsonDataSource> {
-        // 기존 데이터 제거
+    private async load(busStations: Record<string, any>[]): Promise<void> {
+        // 기존 데이터 제거 후 초기화
         this.viewer.dataSources.remove(this.dataSource, true);
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
 
-        const loaded = await this.dataSource.load(geojson, {
-            clampToGround: true,
-        });
+        for (const station of busStations) {
+            const { lng, lat, id, selected = 0 } = station;
+            if (!lng || !lat) continue;
 
-        // "selected" 값에 따라 스타일 설정
-        loaded.entities.values.forEach(entity => {
-            const selected = entity.properties?.selected?.getValue() ?? 0;
-            entity.billboard = undefined
+            const position = Cartesian3.fromDegrees(lng, lat);
 
-            entity.point = {
-                pixelSize: selected === 1 ? 8 : 6,
-                color: selected === 1 ? Color.GREEN : Color.RED,
-                outlineWidth: 1,
-                outlineColor: selected === 1 ? Color.RED : Color.TRANSPARENT,
-            };
-        });
+            this.dataSource.entities.add(
+                new Entity({
+                    id: `station-${id}`,
+                    position,
+                    point: {
+                        pixelSize: selected === 1 ? 8 : 6,
+                        color: selected === 1 ? Color.GREEN : Color.RED,
+                        outlineWidth: 1,
+                        outlineColor: selected === 1 ? Color.RED : Color.TRANSPARENT,
+                    },
+                    properties: station,
+                })
+            );
+        }
 
         this.viewer.dataSources.add(this.dataSource);
-
-        return this.dataSource;
+        console.log("[BusStationDataSourceLayer] 로드 완료: ", this.dataSource.entities.values.length);
     }
 
     public destroy(): void {

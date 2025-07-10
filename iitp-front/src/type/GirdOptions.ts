@@ -11,9 +11,10 @@ export interface GridHandle {
     addRow: (rowData: Record<string, unknown>) => void;
     removeSelectedRow: () => void;
     getSelectedRow: () => [];
-    setSelectRowsWithField: (field: string, value: unknown) => void;
+    setSelectRowsWithField: (field: string, value: unknown, isSelect?: boolean) => void;
     switchEditable: (active: boolean) => void;
     setRowDataByField:(primaryField: { field: string, value: unknown }, data: Record<string, unknown>) => void
     isGridChanged: () => boolean
     getChangedValue: () => Record<string, unknown>
+    ensureIndexVisible: (index: number, position?: string) => void;
 }

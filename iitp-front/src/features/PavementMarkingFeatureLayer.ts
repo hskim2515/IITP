@@ -5,16 +5,7 @@ import { Icon, Style} from "ol/style";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 import {Feature} from "ol";
 import {interpolateByOffset} from "@utils/interpolateByOffset";
-
-export const PavementMarkingType = {
-    Diamond: 'Diamond.png',
-    LeftTurn: 'LeftTurn.png',
-    RightTurn: 'RightTurn.png',
-    Straight: 'Straight.png',
-    StraightLeft: 'StraightLeft.png',
-    StraightRight: 'StraightRight.png',
-    UTurn: 'UTurn.png',
-} as const;
+import { FEATURE_TYPE, SNAP_FEATURE_TYPE, SNAP_LAYER, PavementMarkingType } from "@type/PavementMarking";
 
 export class PavementMarkingFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -92,6 +83,24 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
         });
 
         this.source.addFeatures(mergeFeature);
+    }
+
+    /**
+     * Snap 대상 레이어 키
+     */
+    public getSnapLayerKey(): string {
+        return SNAP_LAYER;
+    }
+
+    /**
+     * Snap 대상 featureType
+     */
+    public getSnapFeatureType(): string {
+        return SNAP_FEATURE_TYPE;
+    }
+
+    public getFeatureType(): string {
+        return FEATURE_TYPE.PAVEMENT_MARKING;
     }
 
     public destroy() {

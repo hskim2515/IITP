@@ -111,7 +111,7 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         inputFields: [],
         rowFields: []
     },
-    PT_BUS_STATION: {
+    BUS_STATION: {
         type:"table",
         layer: "busStation",
         fields: [

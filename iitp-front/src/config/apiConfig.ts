@@ -27,10 +27,11 @@ export const apiConfig:ApiConfig = {
         //delete:  { url: '/vehicle-models/{id}',  method: 'DELETE' },
         delete:  { url: '/vehicle-models/delete',  method: 'POST', useFormData: false },
     },
-    PT_BUS_STATION: {
-        list: {url: '/public-transit/station/bus', method: 'GET', useFormData: false },
-        update: {url: '/public-transit/station/bus/2', method: 'POST', useFormData: false },
-        create: {url: '/public-transit/station/bus/2', method: 'POST', useFormData: false },
+    BUS_STATION: {
+        list: {url: '/public-transit/station/bus/json', method: 'GET', useFormData: false },
+        update: {url: '/public-transit/station/bus', method: 'POST', useFormData: false },
+        create: {url: '/public-transit/station/bus', method: 'POST', useFormData: false },
+        historyList: {url: '/public-transit/station/bus/history', method: 'GET', useFormData: false },
     },
     NETWORK: {
         list: {url: '/network', method: 'GET', useFormData: false },
