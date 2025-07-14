@@ -1,7 +1,7 @@
 import VectorSource from "ol/source/Vector";
 import VectorLayer from "ol/layer/Vector";
 import { Icon, Style } from "ol/style";
-import { menuCodeToStoreMap } from "@hooks/useLayerInit";
+import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
 import { Feature } from "ol";
 import {
     FEATURE_TYPE,
@@ -27,7 +27,7 @@ import { generateGUIDWithType } from "@utils/guid";
 
 export class PavementMarkingFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
-    private readonly LAYER_NAME = "PAVEMENT_MARKING";
+    private readonly LAYER_NAME = "pavementMarking";
     private unsubscribe: () => void;
 
     constructor() {
@@ -64,8 +64,7 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
 
         this.source = source;
 
-        const store = menuCodeToStoreMap[this.LAYER_NAME];
-        console.log(store.getState().currentJsonData);
+        const store = layerNameToStoreMap[this.LAYER_NAME];
 
         const listener = (
             updated: Record<string, Array<Record<string, unknown>>>,
@@ -167,7 +166,7 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
 
     public async load(): Promise<void> {
         console.log("load pavementMarking")
-        const store = menuCodeToStoreMap[this.LAYER_NAME];
+        const store = layerNameToStoreMap[this.LAYER_NAME];
         console.log("store.getState().currentJsonData:::", store.getState().currentJsonData)
         const { pavementMarkings } = store.getState().currentJsonData;
 

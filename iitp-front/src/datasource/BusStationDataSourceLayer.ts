@@ -1,16 +1,16 @@
 import { Viewer, GeoJsonDataSource, Cartesian3, Entity, Color } from "cesium";
-import { menuCodeToStoreMap } from "@hooks/useLayerInit";
+import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
 import { useScenarioStore } from "@stores/useScenarioStore";
 
 export default class BusStationDataSourceLayer {
-    private readonly LAYER_NAME = "BUS_STATION";
+    private readonly LAYER_NAME = "busStation";
     private dataSource: GeoJsonDataSource;
     private unsubscribe: () => void;
 
     constructor(private viewer: Viewer) {
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
 
-        const store = menuCodeToStoreMap[this.LAYER_NAME];
+        const store = layerNameToStoreMap[this.LAYER_NAME];
         this.unsubscribe = store.subscribe(
             (state) => state.currentJsonData,
             async (currentJsonData) => {

@@ -5,14 +5,14 @@ import { Feature } from "ol";
 import { Fill, Stroke, Style, } from "ol/style";
 import { LineString, Point, Polygon } from "ol/geom";
 import { fromLonLat } from "ol/proj";
-import { menuCodeToStoreMap } from "@hooks/useLayerInit";
+import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
 import { useScenarioStore } from "@stores/useScenarioStore";
 import { Coordinate } from "ol/coordinate";
 import { SNAP_FEATURE_TYPE } from "@type/Station";
 
 export default class NetworkFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
-    private readonly LAYER_NAME = "NETWORK"
+    private readonly LAYER_NAME = "network"
 
     private unsubscribe: () => void;
     private zIndexMap: Record<string, number> = {
@@ -37,7 +37,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
         const activeLayerName = layerStore.activeLayerName;
 
-        const store = menuCodeToStoreMap[this.LAYER_NAME];
+        const store = layerNameToStoreMap[this.LAYER_NAME];
         this.unsubscribe = store.subscribe(
             (state) => state.currentJsonData,
             (jsonData) => {
@@ -199,7 +199,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
     public async load(): Promise<void> {
 
-        const store = menuCodeToStoreMap[this.LAYER_NAME]
+        const store = layerNameToStoreMap[this.LAYER_NAME]
 
         try {
             const { nodes, links, lanes, cells, segments } = store.getState().originData;
