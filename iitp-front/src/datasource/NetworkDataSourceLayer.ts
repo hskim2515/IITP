@@ -1,10 +1,10 @@
 import { GeoJsonDataSource, Viewer } from "cesium";
 import * as Cesium from "cesium";
-import {menuCodeToStoreMap} from "@hooks/useLayerInit";
+import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
 import {useScenarioStore} from "@stores/useScenarioStore";
 
 export default class NetworkDataSourceLayer {
-    private readonly LAYER_NAME = "NETWORK";
+    private readonly LAYER_NAME = "network";
     private dataSource: GeoJsonDataSource;
 
     constructor(private viewer: Viewer) {
@@ -13,7 +13,7 @@ export default class NetworkDataSourceLayer {
 
     public async load(): Promise<GeoJsonDataSource> {
 
-        const store = menuCodeToStoreMap[this.LAYER_NAME]
+        const store = layerNameToStoreMap[this.LAYER_NAME]
         const selectedScenario = useScenarioStore.getState().selectedScenario;
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
 

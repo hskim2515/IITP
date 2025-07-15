@@ -1,16 +1,16 @@
 import { GeoJsonDataSource, Viewer, Color } from "cesium";
-import { menuCodeToStoreMap } from "@hooks/useLayerInit";
+import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
 
 
 export default class PavementMarkingDataSourceLayer {
-    private readonly LAYER_NAME = "PAVEMENT_MARKING";
+    private readonly LAYER_NAME = "pavementMarking";
     private dataSource: GeoJsonDataSource;
     private unsubscribe: () => void;
 
     constructor(private viewer: Viewer) {
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
 
-        const store = menuCodeToStoreMap[this.LAYER_NAME];
+        const store = layerNameToStoreMap[this.LAYER_NAME];
         this.unsubscribe = store.subscribe(
             (state) => state.currentGeojson,
             async (geojson) => {

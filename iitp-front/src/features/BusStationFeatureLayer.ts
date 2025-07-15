@@ -4,7 +4,7 @@ import { Feature } from "ol";
 import { Point } from "ol/geom";
 import { Circle as CircleStyle, Fill, Stroke, Style } from "ol/style";
 import { fromLonLat, toLonLat } from "ol/proj";
-import { menuCodeToStoreMap } from "@hooks/useLayerInit";
+import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
 
 import {
     BUS_STATION_SNAP_FIELDS,
@@ -30,7 +30,7 @@ import { Coordinate } from "ol/coordinate";
 
 export default class BusStationFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
-    private readonly LAYER_NAME = "BUS_STATION";
+    private readonly LAYER_NAME = "busStation";
     private unsubscribe: () => void;
 
     private readonly defaultStyle: Style;
@@ -49,8 +49,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
 
         this.source = source
 
-        const store = menuCodeToStoreMap[this.LAYER_NAME];
-        console.log(store.getState().currentJsonData);
+        const store = layerNameToStoreMap[this.LAYER_NAME];
         const listener = (
             updated: Record<string, Array<Record<string, unknown>>>,
             origin: Record<string, Array<Record<string, unknown>>>
@@ -214,7 +213,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
      */
     public async load(): Promise<void> {
         console.log("load busStation")
-        const store = menuCodeToStoreMap[this.LAYER_NAME];
+        const store = layerNameToStoreMap[this.LAYER_NAME];
         console.log("store.getState().currentJsonData:::", store.getState().currentJsonData)
         const { busStations } = store.getState().currentJsonData;
 

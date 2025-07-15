@@ -12,7 +12,7 @@ const EXCLUDED_NESTED_FIELDS = [ "coordinates" ];
 function generateColumnsFromData(data: any[]) {
     if (!data?.length) return [];
 
-    const excludedFields = [ 'shape', '__guid', 'coordinate', 'lat', 'lng', 'featureType' ];
+    const excludedFields = [ 'shape', '__guid', 'coordinate', 'lat', 'lng', 'featureType', 'from', 'to', 'laneSource', 'laneTarget' ];
 
     return Object.keys(data[0])
         .filter((key) => !Array.isArray(data[0][key]) && !excludedFields.includes(key))
@@ -41,8 +41,10 @@ function generateColumnsFromData(data: any[]) {
 }
 
 // 중첩 배열 필드 감지
-function getNestedArrayField(row: any): string | null {
+function getNestedArrayField(row: any): any[] {
     if (!row) return null;
+
+    let nestedFieldList = []
 
     for (const key in row) {
         const value = row[key];
@@ -52,10 +54,11 @@ function getNestedArrayField(row: any): string | null {
             typeof value[0] === "object" &&
             !EXCLUDED_NESTED_FIELDS.includes(key)
         ) {
-            return key;
+            nestedFieldList.push(key)
         }
     }
-    return null;
+
+    return nestedFieldList;
 }
 
 
@@ -82,12 +85,15 @@ const JsonGrid = ({
     const handleSelect = (selectedRowKeys: React.Key[], selectedRows: any[]) => {
         if (selectedRows.length > 0) {
             if (selectedRowKeys) {
+
                 setSelectedGuid(selectedRowKeys);
             }
         } else {
             setSelectedGuid([]); // 선택 해제 시 초기화
         }
     };
+
+
     const [ rowEditValues, setRowEditValues ] = useState<Record<string, any>>({});
     useEffect(() => {
         setRowEditValues({}); // 외부 currentJsonData 변경 시 내부 수정 상태 초기화
@@ -125,7 +131,6 @@ const JsonGrid = ({
                 //const historyStore = menuCodeToHistoryStoreMap[layerName];
 
                 // 변경점 병합
-                console.log("layerName:::", layerName)
                 const store = layerNameToStoreMap[layerName]
                 const historyStore = layerNameToHistoryStoreMap[layerName];
                 store.getState().updateCurrentJsonData(merged,historyStore);
@@ -152,43 +157,54 @@ const JsonGrid = ({
             );
         },
     }));
-    const nestedField = getNestedArrayField(rowData?.[0]);
+    const nestedFields = getNestedArrayField(rowData?.[0]);
 
     return (
-        <div style={ { marginBottom: 16, paddingLeft: depth * 24 } }>
-            <h3 style={ { marginBottom: 8 } }>
-                { depth > 0 ? `${ levelName }` : "" }
-            </h3>
+        <div style={ { paddingLeft: depth * 24 } }>
+            {/*<h3 style={{ display: depth > 0 ? "block" : "none" }}>*/}
+            {/*</h3>*/}
             <Table
-                dataSource={ rowData }
-                columns={ enhancedColumns }
+                dataSource={rowData}
+                columns={enhancedColumns}
                 rowKey="__guid"
                 size="small"
-                pagination={ false }
-                scroll={ { y: 200 } }
-                rowSelection={ {
-                    type: "checkbox", // or "radio"
+                pagination={false}
+                scroll={{ y: 200 }}
+                rowSelection={{
+                    type: "checkbox",
                     onChange: handleSelect,
                     selectedRowKeys: selectedGuid,
-                } }
-
+                }}
                 expandable={
-                    nestedField
+                    nestedFields && nestedFields.length > 0
                         ? {
                             expandedRowRender: (record) => (
-                                <JsonGrid
-                                    rowData={ record[nestedField] || [] }
-                                    levelName={ nestedField.slice(0, -1) }
-                                    depth={ depth + 1 } // 들여쓰기 수준 증가
-                                />
+                                <>
+                                    {nestedFields.map((field) => (
+                                        Array.isArray(record[field]) && record[field].length > 0 ? (
+                                            <div key={field}>
+                                                <h4 style={{ marginBottom: 4 }}>{field}</h4>
+                                                <JsonGrid
+                                                    rowData={record[field]}
+                                                    levelName={field.slice(0, -1)}
+                                                    depth={depth + 1}
+                                                />
+                                            </div>
+                                        ) : null
+                                    ))}
+                                </>
                             ),
                             rowExpandable: (record) =>
-                                Array.isArray(record[nestedField]) &&
-                                record[nestedField].length > 0,
+                                nestedFields.some(
+                                    (field) =>
+                                        Array.isArray(record[field]) &&
+                                        record[field].length > 0
+                                ),
                         }
                         : undefined
                 }
             />
+
         </div>
     );
 };
