@@ -16,7 +16,7 @@ import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import {useCesiumStore} from "@stores/useCesiumStore";
 import LayerManager from "@managers/LayerManager";
 import {useLayerSchemaStore} from "@stores/useLayerSchemaStore";
-import { assignFeatureTypeToResponseData, assignGUIDsToResponseData } from "@utils/guid";
+import {assignFeatureTypeToResponseData, assignGUIDsToResponseData, assignPropertyToResponseData} from "@utils/guid";
 import {usePavementMarkingStore} from "@stores/usePavementMarkingStore";
 import { useBusStationStore } from "@stores/useBusStationStore";
 
@@ -66,8 +66,7 @@ const useLayerInit = (): void => {
                 });
 
                 store.getState().setOriginData(response.data);
-                assignGUIDsToResponseData(response.data)
-                assignFeatureTypeToResponseData(response.data)
+                assignPropertyToResponseData(response.data, menuCode)
                 store.getState().initCurrentData();
 
                 console.log(`${menuCode} :::`,store.getState().originData)

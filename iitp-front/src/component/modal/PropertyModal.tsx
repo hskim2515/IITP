@@ -1,87 +1,97 @@
-import React from 'react';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LabelList } from 'recharts';
+import React, { useEffect, useState } from "react";
+import { usePropertyStore } from "@stores/usePropertyStore"; // 경로에 맞게 수정
 
-interface PropertyModalProps {
-    properties: Record<string, any> | null;
-    onClose: () => void;
-}
+const PropertyModal = () => {
+    const selectedProps = usePropertyStore((state) => state.selectedProps);
+    const [showViewer, setShowViewer] = useState(false);
 
-const numericKeysToShow = [
-    'ffSpd', 'maxSpd', 'minSpd', 'waveSpd', 'width', 'length',
-    'qmax', 'maxVeh', 'numLane', 'stopLine'
-];
+    useEffect(() => {
+        const isValidProps =
+            selectedProps &&
+            typeof selectedProps === "object" &&
+            Object.keys(selectedProps).length > 0;
 
-const PropertyModal: React.FC<PropertyModalProps> = ({ properties, onClose }) => {
-    if (!properties) return null;
+        setShowViewer(isValidProps);
+    }, [selectedProps]);
 
-    const chartData = numericKeysToShow
-        .filter(key => typeof properties[key] === 'number')
-        .map(key => ({ name: key, value: properties[key] }));
+    if (!selectedProps || Object.keys(selectedProps).length === 0) return null;
+
+    function truncate(value: string, maxLength: number = 50): string {
+        if (value.length <= maxLength) return value;
+        return value.slice(0, maxLength) + '...';
+    }
 
     return (
-        <div style={modalStyle}>
-            <button style={closeButtonStyle} onClick={onClose}>✕</button>
+        <div style={styles.container}>
+            <table style={styles.table}>
+                <thead>
+                <tr>
+                    <th style={styles.th}>속성</th>
+                    <th style={styles.th}>값</th>
+                </tr>
+                </thead>
+                <tbody>
+                {Object.entries(selectedProps).map(([key, value]) => (
+                    <tr key={key}>
+                        <td style={styles.td}>{key}</td>
+                        <td style={styles.td} title={String(value)}>
+                            {typeof value === 'object'
+                                ? truncate(JSON.stringify(value), 60)
+                                : truncate(String(value), 60)}
+                        </td>
+                    </tr>
+                ))}
+                </tbody>
+            </table>
 
-            {/* 차트 표시 */}
-            {chartData.length > 0 && (
-                <div style={{ width: '100%', height: 200, marginBottom: '16px' }}>
-                    <ResponsiveContainer>
-                        <BarChart data={chartData} layout="vertical" margin={{ top: 10, bottom: 10, left: 30, right: 10 }}>
-                            <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis type="number" />
-                            <YAxis dataKey="name" type="category" width={80} />
-                            <Tooltip />
-                            <Bar dataKey="value" fill="#8884d8">
-                                <LabelList dataKey="value" position="right" />
-                            </Bar>
-                        </BarChart>
-                    </ResponsiveContainer>
-                </div>
-            )}
-
-            {/* 속성 목록 표시 */}
-            {Object.entries(properties).map(([key, value]) => {
-                const displayValue = Array.isArray(value)
-                    ? `[${value.length} items]`
-                    : typeof value === 'object' && value !== null
-                        ? JSON.stringify(value)
-                        : value?.toString();
-
-                return (
-                    <p key={key}>
-                        <strong>{key}</strong>: {displayValue}
-                    </p>
-                );
-            })}
         </div>
     );
 };
 
+const styles = {
+    container: {
+        position: "fixed",
+        bottom: "70px",
+        left: "1300px",
+        right: "20px",
+        backgroundColor: "rgba(20, 20, 30, 0.95)", // 더 어두운 배경
+        border: "1px solid rgba(255, 255, 255, 0.1)", // subtle 테두리
+        borderRadius: "8px",
+        padding: "16px",
+        maxHeight: "30vh",
+        overflowY: "auto",
+        overflowX: "auto",
+        zIndex: 1000,
+        boxShadow: "0 0 12px rgba(0, 255, 255, 0.1)", // 네온 느낌
+        color: "#e0e0e0", // 기본 텍스트 밝기
+        backdropFilter: "blur(6px)", // 유리 느낌
+    },
+    table: {
+        width: "100%",
+        borderCollapse: "collapse",
+        fontSize: "13px",
+        color: "#ccc",
+    },
+    th: {
+        textAlign: "center",
+        padding: "10px",
+        backgroundColor: "rgba(30, 30, 45, 0.9)",
+        borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
+        color: "#00ffff", // 시안 계열 포인트
+        fontWeight: "600",
+        fontSize: "12px",
+    },
+    td: {
+        textAlign: "center",
+        padding: "10px",
+        borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
+        verticalAlign: "top",
+        wordBreak: "break-word",
+        whiteSpace: "pre-wrap",
+        fontSize: "12px",
+        color: "#e0e0e0",
+    },
+} as const;
+
+
 export default PropertyModal;
-
-const modalStyle: React.CSSProperties = {
-    position: 'absolute',
-    top: '20px',
-    right: '20px',
-    background: 'rgba(0, 0, 0, 0.6)',
-    color: 'white',
-    padding: '16px',
-    borderRadius: '8px',
-    maxWidth: '400px',
-    maxHeight: '80vh',
-    overflowY: 'auto',
-    zIndex: 998,
-    backdropFilter: 'blur(5px)',
-    boxShadow: '0 0 12px rgba(0,0,0,0.3)',
-};
-
-const closeButtonStyle: React.CSSProperties = {
-    position: 'absolute',
-    top: '8px',
-    right: '12px',
-    background: 'transparent',
-    color: 'white',
-    border: 'none',
-    fontSize: '18px',
-    cursor: 'pointer',
-};

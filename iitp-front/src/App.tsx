@@ -6,6 +6,7 @@ import LeftPanel from "./component/panel/LeftPanel";
 import Tools from "./component/tool/Tools";
 import ToolsPanel from "./component/tool/ToolsPanel";
 import {useScenarioStore} from "@stores/useScenarioStore";
+import PropertyModal from "./component/modal/PropertyModal";
 
 function App() {
 
@@ -96,6 +97,7 @@ function App() {
           <Tools />
           <ToolsPanel />
           <Maps></Maps>
+          <PropertyModal />
       </div>
     </>
   )
