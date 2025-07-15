@@ -1,9 +1,18 @@
 import React, { useEffect, useState } from "react";
-import { usePropertyStore } from "@stores/usePropertyStore"; // 경로에 맞게 수정
+import { usePropertyStore } from "@stores/usePropertyStore";
+import PropertyPanel from "../panel/PropertyPanel";
+import {findMenuByCode, useMenuStore} from "@stores/useMenuStore"; // 경로에 맞게 수정
 
 const PropertyModal = () => {
     const selectedProps = usePropertyStore((state) => state.selectedProps);
     const [showViewer, setShowViewer] = useState(false);
+    const [subMenu, setSubMenu] = useState(false);
+
+    const {
+        activeSubmenu,
+        menu,
+        setActiveSubmenu,
+    } = useMenuStore();
 
     useEffect(() => {
         const isValidProps =
@@ -13,6 +22,18 @@ const PropertyModal = () => {
 
         setShowViewer(isValidProps);
     }, [selectedProps]);
+
+    useEffect(() => {
+        if(menu){
+            setSubMenu(findMenuByCode(menu, 'NETWORK'))
+        }
+    }, [menu]);
+
+    useEffect(() => {
+        if(activeSubmenu){
+            console.log(activeSubmenu)
+        }
+    }, [activeSubmenu]);
 
     if (!selectedProps || Object.keys(selectedProps).length === 0) return null;
 
@@ -26,8 +47,23 @@ const PropertyModal = () => {
             <table style={styles.table}>
                 <thead>
                 <tr>
-                    <th style={styles.th}>속성</th>
-                    <th style={styles.th}>값</th>
+                    <th colSpan={2} style={styles.th}>
+                        Property Viewer
+                        <button
+                            style={{ marginLeft: "10px", fontSize: "12px", color: "#aaa" }}
+                            onClick={() => {
+                                if (selectedProps?.menuCode) {
+                                    setActiveSubmenu(subMenu);
+                                }
+                            }}
+                        >
+                            Edit {selectedProps?.menuCode}
+                        </button>
+                    </th>
+                </tr>
+                <tr>
+                    <th style={styles.th}>Property</th>
+                    <th style={styles.th}>Value</th>
                 </tr>
                 </thead>
                 <tbody>

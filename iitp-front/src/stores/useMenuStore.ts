@@ -41,3 +41,17 @@ export const useMenuStore = createSelectors(create<State & Actions>(
         })
     )
 ));
+
+export function findMenuByCode(menuList: MenuTree[], code: string): MenuTree | null {
+    for (const menu of menuList) {
+        if (menu.menuCode === code) {
+            return menu;
+        }
+        if (menu.children) {
+            const found = findMenuByCode(menu.children, code);
+            if (found) return found;
+        }
+    }
+    return null;
+}
+

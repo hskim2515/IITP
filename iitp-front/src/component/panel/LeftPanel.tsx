@@ -18,12 +18,7 @@ const LeftPanel: React.FC = () => {
 
     // FACILITY인 경우: 사이드바 없이 PropertyPanel만 렌더링
     if (activeDropdownMenu.menuCode === "FACILITY" && activeSubmenu) {
-        return (
-            <PropertyPanel
-                activeSubmenu={activeSubmenu}
-                onClose={() => setActiveSubmenu(null)}
-            />
-        );
+        return;
     }
 
     // 일반 메뉴인 경우: 사이드바 + 팝업

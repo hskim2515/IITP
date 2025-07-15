@@ -7,6 +7,8 @@ import Tools from "./component/tool/Tools";
 import ToolsPanel from "./component/tool/ToolsPanel";
 import {useScenarioStore} from "@stores/useScenarioStore";
 import PropertyModal from "./component/modal/PropertyModal";
+import PropertyPanel from "./component/panel/PropertyPanel";
+import {useMenuStore} from "@stores/useMenuStore";
 
 function App() {
 
@@ -21,6 +23,12 @@ function App() {
     };
 
     const [scenarioList, setScenarioList] = useState([]);
+
+    const {
+        activeSubmenu,
+        menu,
+        setActiveSubmenu,
+    } = useMenuStore();
 
     useEffect(() => {
         fetch(process.env.VITE_API_URL + "/scenario", {
@@ -98,6 +106,12 @@ function App() {
           <ToolsPanel />
           <Maps></Maps>
           <PropertyModal />
+          {activeSubmenu && (
+              <PropertyPanel
+                  activeSubmenu={activeSubmenu}
+                  onClose={() => setActiveSubmenu(null)}
+              />
+          )}
       </div>
     </>
   )
