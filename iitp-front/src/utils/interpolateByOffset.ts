@@ -4,7 +4,7 @@ import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 export function interpolateByOffset(features: any[]): any[] {
     const olMap = useOpenLayersStore.getState().map;
     const layers = olMap.getLayers().getArray();
-    const networkLayer = layers.find(layer => layer.LAYER_NAME === "NETWORK");
+    const networkLayer = layers.find(layer => layer.LAYER_NAME === "network");
 
     const networkFeatures = networkLayer.getSource().getFeatures();
     const laneMap = new Map<string, any>();
