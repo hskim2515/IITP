@@ -24,6 +24,8 @@ import WebGLVectorLayer from "ol/layer/WebGLVector";
 import BaseLayer from "ol/layer/Base";
 import { Coordinate } from "ol/coordinate";
 import { generateGUIDWithType } from "@utils/guid";
+import {interpolateByOffset} from "@utils/interpolateByOffset";
+import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 
 export class PavementMarkingFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -40,13 +42,11 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
             style: (feature: Feature, resolution: number) => {
                 const baseResolution = 1.2;
                 const scale = 0.05 * (baseResolution / resolution);
-
                 const markingType = feature.get("markingType");
                 const iconFile = PavementMarkingType[markingType];
                 const url = `${ process.env.REACT_APP_FILE_BASE_URL }models/${ iconFile }`;
 
                 const angle = feature.get("angle") || 0;
-
                 return new Style({
                     image: new Icon({
                         src: url,
@@ -176,15 +176,16 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
         const features = pavementMarkings
             .map((data) => this.createFeature(data))
             .filter((f): f is Feature<Point> => !!f); // undefined 필터링
-
-        source.addFeatures(features);
+        const mergedFeatures = interpolateByOffset(features);
+        source.addFeatures(mergedFeatures);
     }
 
     /**
      * DTO로부터 Point Feature와 속성을 생성
      */
     public createFeature(data: PavementMarkingData): Feature<Point> | undefined {
-        console.log("createFeature data:::", data)
+        console.log("createFeature data:::", data);
+
         const props: PavementMarkingData = {
             ...data,
             featureType: data.featureType ?? FEATURE_TYPE.PAVEMENT_MARKING,

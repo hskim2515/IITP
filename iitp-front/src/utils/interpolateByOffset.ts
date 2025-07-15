@@ -1,15 +1,12 @@
-import  {menuCodeToStoreMap} from "@hooks/useLayerInit";
-import GeoJSON from "ol/format/GeoJSON";
 import {Point} from "ol/geom";
-
+import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 
 export function interpolateByOffset(features: any[]): any[] {
-    const storeNetwork = menuCodeToStoreMap['NETWORK'];
+    const olMap = useOpenLayersStore.getState().map;
+    const layers = olMap.getLayers().getArray();
+    const networkLayer = layers.find(layer => layer.LAYER_NAME === "NETWORK");
 
-    const networkData = storeNetwork.getState().originData;
-    const format = new GeoJSON();
-    const networkFeatures = format.readFeatures(networkData);
-
+    const networkFeatures = networkLayer.getSource().getFeatures();
     const laneMap = new Map<string, any>();
     networkFeatures.forEach(f => {
         const props = f.getProperties();

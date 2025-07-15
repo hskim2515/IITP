@@ -1,6 +1,10 @@
-import { Feature, FeatureCollection } from "geojson";
+import {FeatureCollection } from "geojson";
+import Feature from 'ol/Feature'
 import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
 import { UpdateLogEntry, UpdateType } from "@type/HistoryTypes";
+import { Feature as OLFeature } from "ol";
+import { Point } from "ol/geom";
+import {fromLonLat} from "ol/proj";
 
 interface FeatureUpdateHistoryOptions {
     featureId: string | number;
@@ -11,41 +15,46 @@ interface FeatureUpdateHistoryOptions {
     properties?: Record<string, unknown>;
 }
 
+
+
 export function mergeJsonWithLog(
-    featuresMap: Map<string | number, Feature>,
+    featuresMap: Map<string | number, OLFeature>,
     updateLog: UpdateLogEntry,
     isUndo: boolean
-): FeatureCollection {
+): OLFeature[] {
     const { added, modified, deleted } = updateLog;
     if (isUndo) {
         // Undo: 삭제 → 다시 추가
+        const deletedPropsMap = new Map<string | number, Record<string, any>>();
         deleted?.forEach((change) => {
-            const existing = featuresMap.get(change.featureId);
-            const newProps = {
-                ...(existing?.properties ?? {}),
-                id: change.featureId,
-                [change.field]: change.oldValue,
-            };
+            const fid = change.featureId;
+            if (!deletedPropsMap.has(fid)) {
+                deletedPropsMap.set(fid, {});
+            }
+            deletedPropsMap.get(fid)![change.field!] = change.oldValue;
+        });
 
-            featuresMap.set(change.featureId, {
-                type: "Feature",
-                geometry: existing?.geometry ?? { type: "Point", coordinates: [0, 0] },
-                properties: newProps,
+        deletedPropsMap.forEach((props, fid) => {
+            const coords = props.coordinates?.[0];
+            const geom = coords ? new Point(fromLonLat([coords.lng, coords.lat])) : new Point([0, 0]);
+            const feature = new Feature({ geometry: geom });
+            feature.setProperties({
+                ...props,
+                id: fid,
             });
+            feature.setId(fid);
+            featuresMap.set(fid, feature);
         });
 
         // Undo: 수정 → 원래 값으로 복원
         modified?.forEach((change) => {
             const feature = featuresMap.get(change.featureId);
             if (feature) {
-                feature.properties = {
-                    ...feature.properties,
-                    [change.field]: change.oldValue,
-                };
+                feature.set(change.field!, change.oldValue);
             }
         });
 
-        // Undo: 추가됐던 피처 → 제거
+        // Undo: 추가 → 제거
         added?.forEach((change) => {
             featuresMap.delete(change.featureId);
         });
@@ -56,40 +65,31 @@ export function mergeJsonWithLog(
             featuresMap.delete(change.featureId);
         });
 
-        // Redo: 수정 → 새로운 값으로 반영
+        // Redo: 수정 → 새로운 값 반영
         modified?.forEach((change) => {
             const feature = featuresMap.get(change.featureId);
             if (feature) {
-                feature.properties = {
-                    ...feature.properties,
-                    [change.field]: change.newValue,
-                };
+                feature.set(change.field!, change.newValue);
             }
         });
 
-        // Redo: 추가 → 다시 생성 또는 속성 누적
+        // Redo: 추가 → 다시 생성
         added?.forEach((change) => {
-            const existing = featuresMap.get(change.featureId);
-            const id = change.featureId;
-
-            const newProps = {
-                ...(existing?.properties ?? {}),
-                id,
-                [change.field]: change.newValue,
-            };
-
-            featuresMap.set(id, {
-                type: "Feature",
-                geometry: existing?.geometry ?? { type: "Point", coordinates: [0, 0] },
-                properties: newProps,
+            const feature = new OLFeature({
+                ...change.properties,
+                id: change.featureId,
             });
+
+            // geometry가 없다면 기본 geometry 설정
+            if (!feature.getGeometry()) {
+                feature.setGeometry(new Point([0, 0]));
+            }
+
+            featuresMap.set(change.featureId, feature);
         });
     }
 
-    return {
-        type: "FeatureCollection",
-        features: Array.from(featuresMap.values()),
-    };
+    return Array.from(featuresMap.values());
 }
 
 export function buildJsonFromLogs(
@@ -135,9 +135,9 @@ export const featureUpdateLogs = (
     store: ReturnType<typeof useHistoryStoreFactory>,
     options: FeatureUpdateHistoryOptions
 ) => {
+
     const { featureId, updateType, field, oldValue, newValue, properties } = options;
     let updates: UpdateLogEntry = {};
-
     const timestamp = new Date().toISOString();
 
     if (updateType === "modified" && field !== undefined) {
@@ -165,6 +165,7 @@ export const featureUpdateLogs = (
     if (Object.keys(updates).length > 0) {
         store.getState().addFieldUpdate(updates);
     }
+
     console.log("[updateLogs]", store.getState().updateLogs);
 };
 

@@ -7,6 +7,7 @@ import BaseLayer from "ol/layer/Base";
 import Geometry from "ol/geom/Geometry";
 import { LineString, Point, Polygon } from "ol/geom";
 import { Coordinate } from "ol/coordinate";
+import {fromLonLat} from "ol/proj";
 
 export interface PositionOnGeometry {
     coordinate: Coordinate; // 최적 위치 좌표
@@ -347,4 +348,41 @@ export function filterFeaturesByKey(
     });
 
     return new Collection<Feature>(matched);
+}
+
+export function createFeature (data: any): Feature<Point> | undefined {
+    const props: any = {
+        ...data,
+    };
+    const coord = data.coordinates[0];
+    const hasValidCoordinate = typeof coord.lng === 'number' && typeof coord.lat === 'number';
+
+    const geom = hasValidCoordinate ? new Point(fromLonLat([coord.lng!, coord.lat!])) : undefined;
+
+    const feature = new Feature<Point>(geom);
+    feature.setProperties(props);
+debugger;
+    return feature;
+}
+
+export function convertFeatureToRecord (feature: any): Record<string, unknown> {
+    const props = feature.getProperties();
+    const geom = feature.getGeometry();
+    const coords = (geom as any)?.getCoordinates?.();
+
+    const result: Record<string, unknown> = {
+        ...props,
+        geometryType: geom?.getType?.(),
+    };
+
+    if (geom?.getType?.() === "Point" && Array.isArray(coords)) {
+        result.lon = coords[0];
+        result.lat = coords[1];
+    } else {
+        result.coordinatesText = JSON.stringify(coords ?? []);
+    }
+
+    delete result.geometry;
+
+    return result;
 }

@@ -5,8 +5,8 @@ import axiosInstance from "../api/axiosInstance";
 import {usePavementMarkingHistoryStore} from "@stores/usePavementMarkingStore";
 import {HistoryStoreFactoryType} from "@stores/useHistoryStoreFactory";
 import {useScenarioStore} from "@stores/useScenarioStore";
-import { useNetworkHistoryStore } from "@stores/useNetworkStore";
-import { useBusStationHistoryStore } from "@stores/useBusStationStore";
+import {useNetworkHistoryStore} from "@stores/useNetworkStore";
+import {useBusStationHistoryStore} from "@stores/useBusStationStore";
 
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToHistoryStoreMap: Record<string, HistoryStoreFactoryType> = {
@@ -15,9 +15,16 @@ export const menuCodeToHistoryStoreMap: Record<string, HistoryStoreFactoryType> 
     BUS_STATION: useBusStationHistoryStore,
     PAVEMENT_MARKING: usePavementMarkingHistoryStore,
 }
+export const layerNameToHistoryStoreMap: Record<string, HistoryStoreFactoryType> = {
+    // layerName: store
+    network: useNetworkHistoryStore,
+    busStation: useBusStationHistoryStore,
+    pavementMarking: usePavementMarkingHistoryStore,
+}
 
 const useHistoryInit = (reloadFlag:boolean) => {
     useEffect(() => {
+
         const menuCodes = Object.keys(propertyFormSchema as Record<string, PropertyFormSchemaProps>);
         const selectedScenario = useScenarioStore.getState().selectedScenario;
         const initMenuCodesHistory = async () => {
