@@ -3,6 +3,7 @@ import { Table } from "antd";
 import { useSelectionStore } from "@stores/useSelectionStore";
 import { Input, InputNumber } from "antd/lib";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
+import {layerNameToHistoryStoreMap, menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
 
 // 중첩 배열로 생성하지 않을 필드 지정
 const EXCLUDED_NESTED_FIELDS = [ "coordinates" ];
@@ -74,7 +75,6 @@ const JsonGrid = ({
     layerGroupName: string;
     editable?: boolean;
 }) => {
-
     const setSelectedGuid = useSelectionStore((state) => state.setSelectedGuid);
     const selectedGuid = useSelectionStore((state) => state.selectedGuid);
     const clearSelected = useSelectionStore((state) => state.clearSelected);
@@ -121,10 +121,14 @@ const JsonGrid = ({
                     ...record,
                     ...rowEditValues[guid],
                 };
+
+                //const historyStore = menuCodeToHistoryStoreMap[layerName];
+
                 // 변경점 병합
                 console.log("layerName:::", layerName)
                 const store = layerNameToStoreMap[layerName]
-                store.getState().updateCurrentJsonData(merged);
+                const historyStore = layerNameToHistoryStoreMap[layerName];
+                store.getState().updateCurrentJsonData(merged,historyStore);
             };
 
             return inputType === 'number' ? (

@@ -38,7 +38,7 @@ export const featureUpdateLogs = (
     }
 
     if (Object.keys(updates).length > 0) {
-        store.getState().addFieldUpdate(versionId, updates);
+        store.getState().addFieldUpdate(updates);
     }
     console.log("[updateLogs]", store.getState().updateLogs);
 };
