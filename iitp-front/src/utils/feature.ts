@@ -361,7 +361,7 @@ export function createFeature (data: any): Feature<Point> | undefined {
 
     const feature = new Feature<Point>(geom);
     feature.setProperties(props);
-debugger;
+
     return feature;
 }
 
