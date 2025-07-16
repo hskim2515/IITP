@@ -42,6 +42,7 @@ import {
 import {generateGUIDWithType} from "@utils/guid";
 import {getSnapFeature} from "@utils/interaction";
 import Collection from "ol/Collection";
+import {faClose} from "@fortawesome/free-solid-svg-icons/faClose";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTree
@@ -98,6 +99,9 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const selectedScenario = useScenarioStore.getState().selectedScenario;
 
     const olMap = useOpenLayersStore.state.map()
+
+    const [isMinimized, setIsMinimized] = useState(false);
+
 
     useEffect(() => {
         const unsubscribe = store.subscribe(
@@ -504,6 +508,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         const featuresMap = new Map<string | number, Feature>();
         const featureData = currentJsonItem.map((data) => createFeature(data));
 
+
         featureData.forEach((feature) => {
             if (!feature) return;
             const id = feature.get('id');
@@ -523,7 +528,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             pavementMarkings: flatRows,
         });
 
-        //alert(isUndo ? "Undo 성공" : "Redo 성공");
+        alert(isUndo ? "Undo 성공" : "Redo 성공");
     };
 
     return (
@@ -551,58 +556,67 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                             <button onClick={() => handleCheck()}>Interaction 객체 목록 디버깅</button>
                             <button className="btn" onClick={() => handleShowHistory()}>변경 이력 보기</button>
                         </div>
-                        <button className="close-btn" onClick={onClose}>×</button>
+                        <FontAwesomeIcon className="minimize-btn"
+                                         icon={isMinimized ? faChevronUp : faChevronDown}
+                                         onClick={() => setIsMinimized(!isMinimized)}
+                        />
+                        <FontAwesomeIcon className="close-btn" icon={faClose} onClick={onClose}/>
                     </div>
-                    <div className="popup-body">
-                        {isTypeSelect && (
-                            <TypeSelectionModal typeKey={submenu.menuCode} onConfirm={(selectedType) => {
-                                onConfirm?.(selectedType);
-                                setIsTypeSelect(false);
-                            }} onCancel={() => {
-                                setIsTypeSelect(false)
-                                setIsDrawing(false)
-                            }}/>
-                        )}
-                        {isHistoryOpen && (
-                            <HistoryModal
-                                onClose={() => setIsHistoryOpen(false)}
-                                open={isHistoryOpen}
-                                menuCode={activeSubmenu.menuCode}
-                            />
-                        )}
-                        {submenu.item &&
-                            //{ submenu.item && colDefs &&
-                            // <Grid
-                            //     ref={ gridRef }
-                            //     colDefs={ colDefs }
-                            //     rowData={ rowData }
-                            //     onCellValueChanged={ updateFeatureByRow }
-                            //     onSelectionChanged={ handleGridSelectionChanged }
-                            // />
-                            <div>
-                                {Object.entries(currentJsonData).map(([key, value]) => (
-                                    Array.isArray(value) && value.length > 0 && (
-                                        <div key={key} className="grid-container">
-                                            <div className="grid-header">
-                                                <h4 style={{margin: 12}}>
-                                                    {key.charAt(0).toUpperCase() + key.slice(1)}
-                                                </h4>
-                                                <FontAwesomeIcon onClick={() => toggleGrid(key)}
-                                                                 icon={expandedKey === key ? faChevronUp : faChevronDown}/>
+                    {!isMinimized && (
+                        <div className="popup-body">
+                            {isTypeSelect && (
+                                <TypeSelectionModal typeKey={submenu.menuCode} onConfirm={(selectedType) => {
+                                    onConfirm?.(selectedType);
+                                    setIsTypeSelect(false);
+                                }} onCancel={() => {
+                                    setIsTypeSelect(false)
+                                    setIsDrawing(false)
+                                }}/>
+                            )}
+                            {isHistoryOpen && (
+                                <HistoryModal
+                                    onClose={() => setIsHistoryOpen(false)}
+                                    open={isHistoryOpen}
+                                    menuCode={activeSubmenu.menuCode}
+                                />
+                            )}
+                            {submenu.item &&
+                                //{ submenu.item && colDefs &&
+                                // <Grid
+                                //     ref={ gridRef }
+                                //     colDefs={ colDefs }
+                                //     rowData={ rowData }
+                                //     onCellValueChanged={ updateFeatureByRow }
+                                //     onSelectionChanged={ handleGridSelectionChanged }
+                                // />
+                                <div>
+                                    {Object.entries(currentJsonData).map(([key, value]) => (
+                                        Array.isArray(value) && value.length > 0 && (
+                                            <div key={key} className="grid-container">
+                                                <div className="grid-header">
+                                                    <h4 style={{margin: 12}}>
+                                                        {key.charAt(0).toUpperCase() + key.slice(1)}
+                                                    </h4>
+                                                    <FontAwesomeIcon onClick={() => toggleGrid(key)}
+                                                                     icon={expandedKey === key ? faChevronUp : faChevronDown}/>
+                                                </div>
+                                                {expandedKey === key && (
+                                                    <JsonGrid rowData={value} levelName={key}
+                                                              layerName={submenu.item.layer}
+                                                              layerGroupName={"facility"}
+                                                              editable={isEditable}
+                                                    />
+                                                )}
                                             </div>
-                                            {expandedKey === key && (
-                                                <JsonGrid rowData={value} levelName={key}
-                                                          layerName={submenu.item.layer}
-                                                          layerGroupName={"facility"}
-                                                          editable={isEditable}
-                                                />
-                                            )}
-                                        </div>
-                                    )
-                                ))}
-                            </div>
-                        }
-                    </div>
+                                        )
+                                    ))}
+                                </div>
+                            }
+                        </div>
+                    )}
+
+
+
                 </div>
             </div>
 

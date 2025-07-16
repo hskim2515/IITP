@@ -3,6 +3,8 @@ import {useCesiumStore} from "@stores/useCesiumStore";
 import {usePropertyStore} from "@stores/usePropertyStore";
 import * as Cesium from "cesium";
 import {useEventStore} from "@stores/useEventStore";
+import {getValuesFromFeatures} from "@utils/feature";
+import {useSelectionStore} from "@stores/useSelectionStore";
 
 const useDefaultSelect = () => {
 
@@ -10,6 +12,8 @@ const useDefaultSelect = () => {
 
     const selectedProps = usePropertyStore((state) => state.selectedProps);
     const setSelectedProps = usePropertyStore((state) => state.setSelectedProps);
+    const setSelectedGuid = useSelectionStore((state) => state.setSelectedGuid);
+
 
     const infoEntityRef = useRef(null);
 
@@ -35,6 +39,8 @@ const useDefaultSelect = () => {
                     props[key] = propBag[key].getValue(Cesium.JulianDate.now());
                 });
                 setSelectedProps(props);
+
+                setSelectedGuid([props.__guid])
 
             } else {
                 setSelectedProps(null);

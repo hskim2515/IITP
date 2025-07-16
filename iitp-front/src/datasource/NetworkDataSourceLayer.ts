@@ -152,6 +152,7 @@ export default class NetworkDataSourceLayer {
                                 ),
                                 clampToGround: true,
                             },
+                            properties: conn
                         });
 
                         conn.from = sourceCart

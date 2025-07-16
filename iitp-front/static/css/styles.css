@@ -67,6 +67,26 @@ body {
 }
 
 .close-btn {
+    /*margin-left: auto;*/
+    float: right;
+    background: transparent;
+    border: none;
+    font-size: 20px;
+    color: #fff;
+    cursor: pointer;
+    padding: 4px 8px;
+}
+.edit-btn {
+    /*margin-left: auto;*/
+    float: right;
+    background: transparent;
+    border: none;
+    font-size: 20px;
+    color: #fff;
+    cursor: pointer;
+    padding: 4px 8px;
+}
+.minimize-btn {
     margin-left: auto;
     background: transparent;
     border: none;
@@ -74,6 +94,15 @@ body {
     color: #fff;
     cursor: pointer;
     padding: 4px 8px;
+}
+.tool-btn {
+    padding: 0.6em 1.2em;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 20px;
+    display: flex;
+    align-items: center;
 }
 .popup-header-actions {
     margin-left: 30px;
