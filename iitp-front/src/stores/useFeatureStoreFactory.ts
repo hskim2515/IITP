@@ -5,6 +5,9 @@ import { FetchFeatureDataType } from "@type/FeatureOptions";
 import { applyDiffs, diffObjects } from "@utils/json";
 import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
 import {featureUpdateLogs} from "@utils/history";
+import {convertFeatureToRecord, createFeature} from "@utils/feature";
+import {interpolateByOffset} from "@utils/interpolateByOffset";
+import {Feature} from "ol";
 
 export interface FeatureStoreFactoryType {
     getState: () => State & Actions;
@@ -111,10 +114,14 @@ const createFeatureStore = () =>
                             console.log("updateCurrentJsonData newItems:::", newItems)
                             newItems[index] = updatedItem;
 
+                            const features = newItems.map(data => createFeature(data)).filter(f => f !== undefined) as Feature[];
+                            const interpolatedFeatures = interpolateByOffset(features);
+                            const interpolatedRecords = interpolatedFeatures.map(f => convertFeatureToRecord(f));
+
                             set({
                                 currentJsonData: {
                                     ...current,
-                                    [key]: newItems,
+                                    [key]: interpolatedRecords,
                                 },
                                 isChanged: true,
                             });

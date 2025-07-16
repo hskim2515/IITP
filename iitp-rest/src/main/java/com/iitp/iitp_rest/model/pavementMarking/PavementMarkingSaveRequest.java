@@ -9,7 +9,7 @@ import java.util.List;
 @Data
 // 1. 최상위 요청 DTO
 public class PavementMarkingSaveRequest {
-    private Timestamp timestamp;
+    //private Timestamp timestamp;
     private List<PavementMarkingData> data;
     private LogsData logs;
 }
