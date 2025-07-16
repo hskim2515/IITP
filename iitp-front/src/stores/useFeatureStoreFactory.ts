@@ -134,48 +134,59 @@ const createFeatureStore = () =>
                                 }
                             }
                         },
-                        removeRecordsByGuid: (guids: (string | number)[], historyStore) => {
-                            const current = get().currentJsonData as Record<string, any>;
-                            if (!current) return;
+                    removeRecordsByGuid: (guids: (string | number)[], historyStore) => {
+                        const current = get().currentJsonData as Record<string, any>;
+                        if (!current) return;
 
-                            const updated: Record<string, any[]> = {};
-                            let hasChanges = false;
+                        let hasChanges = false;
 
-                            for (const [ objectName, items ] of Object.entries(current)) {
-                                if (!Array.isArray(items)) continue;
+                        function deepRemove(obj: any): any {
+                            if (Array.isArray(obj)) {
+                                const result = [];
+                                for (const item of obj) {
+                                    if (typeof item === "object" && item !== null && "__guid" in item) {
+                                        if (guids.includes(item.__guid)) {
+                                            hasChanges = true;
 
-                                const toBeDeleted = items.filter(item => guids.includes(item.__guid));
-                                const filtered = items.filter(item => !guids.includes(item.__guid));
-
-                                if (filtered.length !== items.length) {
-                                    hasChanges = true;
-
-                                    // 삭제 이력 기록
-                                    if (historyStore) {
-                                        toBeDeleted.forEach(item => {
-                                            const featureId = item.id;
-                                            const properties = item;
-
-                                            if (featureId && properties) {
-                                                featureUpdateLogs(historyStore, {
-                                                    featureId,
-                                                    updateType: "deleted",
-                                                    properties,
-                                                });
+                                            // 삭제 이력 기록
+                                            if (historyStore) {
+                                                const featureId = item.id;
+                                                const properties = item;
+                                                if (featureId && properties) {
+                                                    featureUpdateLogs(historyStore, {
+                                                        featureId,
+                                                        updateType: "deleted",
+                                                        properties,
+                                                    });
+                                                }
                                             }
-                                        });
+                                            continue; // 삭제
+                                        }
                                     }
+                                    result.push(deepRemove(item));
                                 }
-                                updated[objectName] = filtered;
+                                return result;
+                            } else if (typeof obj === "object" && obj !== null) {
+                                const newObj: Record<string, any> = {};
+                                for (const [key, value] of Object.entries(obj)) {
+                                    newObj[key] = deepRemove(value);
+                                }
+                                return newObj;
+                            } else {
+                                return obj; // primitive
                             }
+                        }
 
-                            if (hasChanges) {
-                                set({
-                                    currentJsonData: updated,
-                                    isChanged: true,
-                                });
-                            }
-                        },
+                        const updated = deepRemove(current);
+
+                        if (hasChanges) {
+                            set({
+                                currentJsonData: updated,
+                                isChanged: true,
+                            });
+                        }
+                    },
+
 
                         setFlatRow: (flatRow: Record<string, unknown>[]) => set({ flatRow: flatRow }),
                         setChange: (changed: boolean) => set({ isChanged: changed }),

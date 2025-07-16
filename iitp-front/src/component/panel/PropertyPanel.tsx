@@ -1,37 +1,37 @@
-import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import "/static/css/styles.css";
-import {MenuTree} from "@stores/useMenuStore";
-import {propertyFormSchema} from "../form/propertyFormSchema";
-import {buildColumnDefs, featureCollectionToFlatRow,} from "@utils/grid";
-import {ColDef} from "ag-grid-community";
-import {GridHandle} from "@type/GirdOptions";
-import {menuCodeToStoreMap} from "@hooks/useLayerInit";
-import {useEventStore} from "@stores/useEventStore";
-import {useOpenLayersStore} from "@stores/useOpenLayersStore";
-import useGrid, {AddOptions} from "@hooks/useGrid";
+import { MenuTree } from "@stores/useMenuStore";
+import { propertyFormSchema } from "../form/propertyFormSchema";
+import { buildColumnDefs, featureCollectionToFlatRow, } from "@utils/grid";
+import { ColDef } from "ag-grid-community";
+import { GridHandle } from "@type/GirdOptions";
+import { menuCodeToStoreMap } from "@hooks/useLayerInit";
+import { useEventStore } from "@stores/useEventStore";
+import { useOpenLayersStore } from "@stores/useOpenLayersStore";
+import useGrid, { AddOptions } from "@hooks/useGrid";
 import GeometryType from "@type/FeatureOptions";
-import {SelectEvent} from "ol/interaction/Select";
-import {Feature} from "ol";
+import { SelectEvent } from "ol/interaction/Select";
+import { Feature } from "ol";
 import VectorLayer from "ol/layer/Vector";
 import BaseLayer from "ol/layer/Base";
 import WebGLVectorLayer from "ol/layer/WebGLVector";
-import {ModifyEvent} from "ol/interaction/Modify";
-import {DrawEvent} from "ol/interaction/Draw";
-import {apiConfig, ApiMenuKey} from "../../config/apiConfig";
+import { ModifyEvent } from "ol/interaction/Modify";
+import { DrawEvent } from "ol/interaction/Draw";
+import { apiConfig, ApiMenuKey } from "../../config/apiConfig";
 import axiosInstance from "../../api/axiosInstance";
 import JsonGrid from "../util/JsonGrid";
-import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
-import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
-import useHistoryInit, {menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
-import {mergeJsonWithLog, mergeUpdateLogs} from "@utils/history";
-import {interpolateByOffset} from "@utils/interpolateByOffset";
+import { faChevronDown, faChevronUp } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import useHistoryInit, { menuCodeToHistoryStoreMap } from "@hooks/useHistoryInit";
+import { mergeJsonWithLog, mergeUpdateLogs } from "@utils/history";
+import { interpolateByOffset } from "@utils/interpolateByOffset";
 import HistoryController from "../modal/HistoryController";
-import {menuDrawRequirements} from "../../config/menuDrawConfig";
+import { menuDrawRequirements } from "../../config/menuDrawConfig";
 import TypeSelectionModal from "../modal/TypeSelectionModal";
 import HistoryModal from "../modal/HistoryModal";
-import {useScenarioStore} from "@stores/useScenarioStore";
-import {useSelectionStore} from "@stores/useSelectionStore";
-import {Select} from "ol/interaction";
+import { useScenarioStore } from "@stores/useScenarioStore";
+import { useSelectionStore } from "@stores/useSelectionStore";
+import { Select } from "ol/interaction";
 import {
     convertFeatureToRecord,
     createFeature,
@@ -39,8 +39,8 @@ import {
     getFromToCoordinates,
     getValuesFromFeatures
 } from "@utils/feature";
-import {generateGUIDWithType} from "@utils/guid";
-import {getSnapFeature} from "@utils/interaction";
+import { generateGUIDWithType } from "@utils/guid";
+import { getSnapFeature } from "@utils/interaction";
 import Collection from "ol/Collection";
 
 export interface PropertyPanelProps {
@@ -48,11 +48,6 @@ export interface PropertyPanelProps {
     onClose: () => void;
 }
 
-const geometryTypeOptions: GeometryType[] = [
-    GeometryType.POINT,
-    GeometryType.LINE_STRING,
-    GeometryType.POLYGON,
-];
 const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const submenu = {
         menuCode: activeSubmenu.menuCode,
@@ -241,8 +236,8 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
             const dto = layer.snapPropertiesToDto(metadata, layer.recordToDto(drewProperties));
             store.getState().updateCurrentJsonData(dto, historyStore);
+            setDrawGeometryType(layer.getGeometryType(dto.featureType))
         };
-
         const options = {drawGeometryType};
         if (isDrawing) {
             olEventManager.bind("drawend", onDrawEnd, options);
@@ -394,22 +389,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         });
     };
 
-    const handleAddBtn = () => {
-        // const baseData = addedData?.baseData ?? {};
-        // addRow({ baseData });
-        let dto;
-        if (typeof layer.createDto === "function") {
-            dto = layer.createDto()
-            dto.id = Date.now()
-
-            console.log("dto::::", dto)
-            store.getState().updateCurrentJsonData(dto, historyStore);
-        } else {
-            console.error("createDto 메서드 필요")
-        }
-
-    }
-
     const handleDrawBtn = () => {
         if (isDrawing) {
             setIsDrawing(false)
@@ -530,17 +509,8 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                     <div className="popup-header">
                         <span>{submenu.title}</span>
                         <div className="popup-header-actions">
-                            <select
-                                value={drawGeometryType ?? ''}
-                                onChange={(e) => setDrawGeometryType(e.target.value as GeometryType)}
-                            >
-                                {geometryTypeOptions.map(type => (
-                                    <option key={type} value={type}>{type}</option>
-                                ))}
-                            </select>
-                            <button className="add-btn" onClick={() => handleAddBtn()}>추가</button>
                             <button className="add-btn" onClick={() => handleDrawBtn()}>그리기</button>
-                            <button className="delete-btn" onClick={() => handleDeleteBtn()}>삭제</button>
+                            <button className="delete-btn" onClick={() => handleDeleteBtn()}>지우기</button>
                             <button className="save-btn" onClick={() => handleSaveBtn()}>저장</button>
                             <button className="save-btn" onClick={() => handleInitBtn()}>되돌리기</button>
                             <HistoryController onHistoryAply={handleHistoryApply}></HistoryController>
@@ -552,13 +522,18 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                     </div>
                     <div className="popup-body">
                         {isTypeSelect && (
-                            <TypeSelectionModal typeKey={submenu.menuCode} onConfirm={(selectedType) => {
-                                onConfirm?.(selectedType);
-                                setIsTypeSelect(false);
-                            }} onCancel={() => {
-                                setIsTypeSelect(false)
-                                setIsDrawing(false)
-                            }}/>
+                            <TypeSelectionModal
+                                typeKey={submenu.menuCode}
+                                onConfirm={(selectedType) => {
+                                    onConfirm?.(selectedType);
+                                    setIsTypeSelect(false);
+                                }}
+                                onCancel={() => {
+                                    setIsTypeSelect(false)
+                                    setIsDrawing(false)
+                                }}
+
+                            />
                         )}
                         {isHistoryOpen && (
                             <HistoryModal

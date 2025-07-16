@@ -27,6 +27,7 @@ import { useLayerStore } from "@stores/useLayerStore";
 import WebGLVectorLayer from "ol/layer/WebGLVector";
 import BaseLayer from "ol/layer/Base";
 import { Coordinate } from "ol/coordinate";
+import GeometryType from "@type/FeatureOptions";
 
 export default class BusStationFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -346,6 +347,15 @@ export default class BusStationFeatureLayer extends VectorLayer {
 
     public getFeatureType(): string {
         return FEATURE_TYPE.BUS_STATION;
+    }
+
+    public getGeometryType(featureType: string): GeometryType {
+        switch (featureType){
+            case "busStations" :
+                return GeometryType.POINT
+            default:
+                return GeometryType.POINT
+        }
     }
 
     /**

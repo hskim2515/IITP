@@ -16,7 +16,7 @@ import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import {useCesiumStore} from "@stores/useCesiumStore";
 import LayerManager from "@managers/LayerManager";
 import {useLayerSchemaStore} from "@stores/useLayerSchemaStore";
-import {assignFeatureTypeToResponseData, assignGUIDsToResponseData, assignPropertyToResponseData} from "@utils/guid";
+import {assignPropertyToResponseData} from "@utils/guid";
 import {usePavementMarkingStore} from "@stores/usePavementMarkingStore";
 import { useBusStationStore } from "@stores/useBusStationStore";
 
