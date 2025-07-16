@@ -128,8 +128,6 @@ const JsonGrid = ({
                     ...rowEditValues[guid],
                 };
 
-                //const historyStore = menuCodeToHistoryStoreMap[layerName];
-
                 // 변경점 병합
                 const store = layerNameToStoreMap[layerName]
                 const historyStore = layerNameToHistoryStoreMap[layerName];

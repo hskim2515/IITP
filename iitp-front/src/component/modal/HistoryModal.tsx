@@ -4,19 +4,16 @@ import {
     VerticalTimelineElement,
 } from 'react-vertical-timeline-component';
 import 'react-vertical-timeline-component/style.min.css';
-import useHistoryInit, { menuCodeToHistoryStoreMap } from '@hooks/useHistoryInit';
-import { GeoJSON } from 'ol/format';
-import { interpolateByOffset } from '@utils/interpolateByOffset';
-import { featureCollectionToFlatRow } from '@utils/grid';
-import {buildJsonFromLogs, mergeJsonWithLog} from "@utils/history";
+import { menuCodeToHistoryStoreMap } from '@hooks/useHistoryInit';
+import { buildMergedDataFromLogs} from "@utils/history";
 import {menuCodeToStoreMap} from "@hooks/useLayerInit";
-import {FeatureCollection} from "geojson";
+import {interpolateByOffset} from "@utils/interpolateByOffset";
+import {convertFeatureToRecord} from "@utils/feature";
 
 interface Props {
     historySteps: HistoryStep[];
     onClose: () => void;
     menuCode: string;
-    setRowData: (rowData:Record<string, any>) => void;
 }
 
 interface HistoryStep {
@@ -28,28 +25,30 @@ interface HistoryStep {
     isCurrent?: boolean;
 }
 
-const HistoryModal: React.FC<Props> = ({ onClose, menuCode,setRowData }) => {
+const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
     const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
     const [historySteps, setHistorySteps] = useState<HistoryStep[]>([]);
 
     const historyStore = menuCodeToHistoryStoreMap[menuCode];
     const featureStore = menuCodeToStoreMap[menuCode];
 
-    const originFeatureData = featureStore.getState().originData?.geojson;
+    const originData = featureStore.getState().originData;
+    const firstKey = Object.keys(originData)[0] as keyof typeof originData;
+    const originItem = originData[firstKey];
+
     const originHistoryData = historyStore.getState().originHistoryData;
 
-    const [currentFeatureData, setCurrentFeatureData] = useState<FeatureCollection>(originFeatureData);
+    const [currentData, setCurrentData] = useState<Record<string,any>>(originItem);
 
     useEffect(() => {
         if (!originHistoryData) return;
-
         const steps: HistoryStep[] = originHistoryData
             .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
             .map((item) => ({
                 id: item.id,
                 versionId: item.versionId,
                 createdAt: item.createdAt,
-                json: item.json,
+                data: item.data,
                 message: `변경사항 #${item.id}`,
                 isCurrent: item.isCurrent,
             }));
@@ -76,30 +75,20 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode,setRowData }) => {
             const from = Math.min(prevIndex, idx);
             const to = Math.max(prevIndex, idx);
 
-            const slicedLogs = historySteps.slice(from, to).map(step => step.json);
+            const slicedLogs = historySteps.slice(from, to).map(step => step);
             const orderedLogs = isUndo ? slicedLogs.reverse() : slicedLogs;
+            const mergeFeature = buildMergedDataFromLogs(currentData, orderedLogs, isUndo);
 
-            const reconstructed = buildJsonFromLogs(currentFeatureData, orderedLogs, isUndo);
-            setCurrentFeatureData(reconstructed);
-            const format = new GeoJSON();
-            const features = format.readFeatures(reconstructed, {
-                featureProjection: "EPSG:4326",
-                dataProjection: "EPSG:3857",
+            const interpolated = interpolateByOffset(mergeFeature);
+            const flatRows = interpolated
+                .map(f => convertFeatureToRecord(f))
+                .filter(r => r.id !== undefined && !isNaN(Number(r.id)))
+                .sort((a, b) => Number(a.id) - Number(b.id));
+
+            featureStore.getState().setCurrentJsonData({
+                pavementMarkings: flatRows,
             });
-
-            const interpolated = interpolateByOffset(features);
-
-            const geojsonStr = format.writeFeatures(interpolated, {
-                featureProjection: "EPSG:3857",
-                dataProjection: "EPSG:4326",
-            });
-
-            const geojsonObj = JSON.parse(geojsonStr);
-            featureStore.getState().setCurrentGeojson(geojsonObj);
-
-            const restoredFlatRow = featureCollectionToFlatRow(geojsonObj);
-            featureStore.getState().setFlatRow(restoredFlatRow);
-            setRowData(restoredFlatRow);
+            setCurrentData(flatRows);
         }
     };
 

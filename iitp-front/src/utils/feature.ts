@@ -367,20 +367,10 @@ export function createFeature (data: any): Feature<Point> | undefined {
 
 export function convertFeatureToRecord (feature: any): Record<string, unknown> {
     const props = feature.getProperties();
-    const geom = feature.getGeometry();
-    const coords = (geom as any)?.getCoordinates?.();
 
     const result: Record<string, unknown> = {
         ...props,
-        geometryType: geom?.getType?.(),
     };
-
-    if (geom?.getType?.() === "Point" && Array.isArray(coords)) {
-        result.lon = coords[0];
-        result.lat = coords[1];
-    } else {
-        result.coordinatesText = JSON.stringify(coords ?? []);
-    }
 
     delete result.geometry;
 

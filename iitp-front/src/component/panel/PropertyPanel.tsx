@@ -440,17 +440,18 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     const handleSaveBtn = async () => {
         const api = apiConfig[submenu.menuCode as ApiMenuKey].update;
-        const geojson = store.getState().currentGeojson;
+        const currentJson = store.getState().currentJsonData;
         const logJson = historyStore.getState().updateLogs;
         if (!logJson) {
             alert('변경사항이 없습니다.');
             return
         }
         const mergedLog = mergeUpdateLogs(logJson);
-
+        const extractedArray = Object.values(currentJson)[0];
         const payload = {
-            geojson,
-            logJson: mergedLog,
+            //timestamp: new Date().toISOString(),
+            data:extractedArray,
+            logs: mergedLog,
         };
         try {
             await axiosInstance({
@@ -514,7 +515,10 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
         const mergeFeature = mergeJsonWithLog(featuresMap, updateHistory.json, isUndo);
         const interpolated = interpolateByOffset(mergeFeature);
-        const flatRows = interpolated.map((f) => convertFeatureToRecord(f));
+        const flatRows = interpolated
+            .map(f => convertFeatureToRecord(f))
+            .filter(r => r.id !== undefined && !isNaN(Number(r.id)))
+            .sort((a, b) => Number(a.id) - Number(b.id));
 
         store.getState().setCurrentJsonData({
             pavementMarkings: flatRows,
@@ -564,7 +568,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                             <HistoryModal
                                 onClose={() => setIsHistoryOpen(false)}
                                 open={isHistoryOpen}
-                                setRowData={setRowData}
                                 menuCode={activeSubmenu.menuCode}
                             />
                         )}
