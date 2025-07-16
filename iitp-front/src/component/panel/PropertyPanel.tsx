@@ -498,12 +498,11 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             return;
         }
 
-        const featureType = "pavementMarkings";  // 예시로 사용
-
-        const currentJsonData = store.getState().currentJsonData[featureType];
+        const currentJsonData = store.getState().currentJsonData;
+        const firstKey = Object.keys(currentJsonData)[0] as keyof typeof currentJsonData;
+        const currentJsonItem = currentJsonData[firstKey];
         const featuresMap = new Map<string | number, Feature>();
-
-        const featureData = currentJsonData.map((data) => createFeature(data));
+        const featureData = currentJsonItem.map((data) => createFeature(data));
 
         featureData.forEach((feature) => {
             if (!feature) return;
@@ -524,7 +523,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             pavementMarkings: flatRows,
         });
 
-        alert(isUndo ? "Undo 성공" : "Redo 성공");
+        //alert(isUndo ? "Undo 성공" : "Redo 성공");
     };
 
     return (
