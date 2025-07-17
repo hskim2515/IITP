@@ -30,6 +30,7 @@ const PropertyModal = () => {
         if(menu){
             setSubMenu(findMenuByCode(menu, 'NETWORK'))
         }
+        console.log(subMenu)
     }, [menu]);
 
     useEffect(() => {
@@ -46,7 +47,7 @@ const PropertyModal = () => {
     }
 
     return (
-        showViewer && (
+        showViewer && !activeSubmenu && (
             <div style={styles.container}>
                 <table style={styles.table}>
                     <thead>
