@@ -134,6 +134,33 @@ export function getValuesFromFeatures<T = unknown>(
     return Array.from(new Set(values));
 }
 
+function extractFeaturesFromInput(input: Feature[]): Feature[] | null;
+function extractFeaturesFromInput(input: Collection<Feature>): Feature[] | null;
+function extractFeaturesFromInput(input: VectorSource | VectorLayer | WebGLVectorLayer | BaseLayer): Feature[] | null;
+function extractFeaturesFromInput(
+    input: Feature[] | Collection<Feature> | VectorSource | VectorLayer | WebGLVectorLayer | BaseLayer | undefined
+): Feature[] | null {
+    if (!input) return null;
+
+    if (Array.isArray(input)) {
+        return input;
+    } else if (input instanceof Collection) {
+        return input.getArray();
+    } else if (input instanceof VectorSource) {
+        return input.getFeatures();
+    } else if (
+        input instanceof VectorLayer ||
+        input instanceof WebGLVectorLayer ||
+        input instanceof BaseLayer
+    ) {
+        const source = input.getSource?.();
+        if (!source || !(source instanceof VectorSource)) return null;
+        return source.getFeatures();
+    }
+
+    return null;
+}
+
 export function getPositionByCoordinate(input: Feature, coordinate: Coordinate): PositionOnGeometry | null;
 export function getPositionByCoordinate(input: Geometry, coordinate: Coordinate): PositionOnGeometry | null;
 export function getPositionByCoordinate(
@@ -375,4 +402,23 @@ export function convertFeatureToRecord (feature: any): Record<string, unknown> {
     delete result.geometry;
 
     return result;
+}
+
+export function getFeaturesByGuidPrefix(input: Feature[], prefix: string): Collection<Feature> | null;
+export function getFeaturesByGuidPrefix(input: VectorSource, prefix: string): Collection<Feature> | null;
+export function getFeaturesByGuidPrefix(input: VectorLayer | WebGLVectorLayer | BaseLayer, prefix: string): Collection<Feature> | null;
+export function getFeaturesByGuidPrefix(
+    input: Feature[] | VectorSource | VectorLayer | WebGLVectorLayer | BaseLayer | undefined,
+    prefix: string
+): Collection<Feature> | null {
+    if (!input || !prefix) return null;
+
+    const features = extractFeaturesFromInput(input)
+    if (!features) return new Collection<Feature>([]);
+    const matchedArray = features.filter((feature: Feature) => {
+        const guid = feature.get('__guid');
+        return typeof guid === 'string' && guid.startsWith(prefix);
+    });
+
+    return new Collection<Feature>(matchedArray)
 }

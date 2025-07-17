@@ -1,6 +1,6 @@
-export interface FetchFeatureDataType {
+export interface FetchFeatureDataType<T = Record<string, unknown>> {
     id: string | number;
-    geojson: Record<string, unknown>
+    json: T
     name: string;
 }
 

@@ -398,22 +398,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         });
     };
 
-    const handleAddBtn = () => {
-        // const baseData = addedData?.baseData ?? {};
-        // addRow({ baseData });
-        let dto;
-        if (typeof layer.createDto === "function") {
-            dto = layer.createDto()
-            dto.id = Date.now()
-
-            console.log("dto::::", dto)
-            store.getState().updateCurrentJsonData(dto, historyStore);
-        } else {
-            console.error("createDto 메서드 필요")
-        }
-
-    }
-
     const handleDrawBtn = () => {
         if (isDrawing) {
             setIsDrawing(false)
@@ -508,7 +492,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         const featuresMap = new Map<string | number, Feature>();
         const featureData = currentJsonItem.map((data) => createFeature(data));
 
-
         featureData.forEach((feature) => {
             if (!feature) return;
             const id = feature.get('id');
@@ -538,17 +521,8 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                     <div className="popup-header">
                         <span>{submenu.title}</span>
                         <div className="popup-header-actions">
-                            <select
-                                value={drawGeometryType ?? ''}
-                                onChange={(e) => setDrawGeometryType(e.target.value as GeometryType)}
-                            >
-                                {geometryTypeOptions.map(type => (
-                                    <option key={type} value={type}>{type}</option>
-                                ))}
-                            </select>
-                            <button className="add-btn" onClick={() => handleAddBtn()}>추가</button>
                             <button className="add-btn" onClick={() => handleDrawBtn()}>그리기</button>
-                            <button className="delete-btn" onClick={() => handleDeleteBtn()}>삭제</button>
+                            <button className="delete-btn" onClick={() => handleDeleteBtn()}>지우기</button>
                             <button className="save-btn" onClick={() => handleSaveBtn()}>저장</button>
                             <button className="save-btn" onClick={() => handleInitBtn()}>되돌리기</button>
                             <HistoryController onHistoryAply={handleHistoryApply}></HistoryController>

@@ -1,10 +1,13 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Table } from "antd";
 import { useSelectionStore } from "@stores/useSelectionStore";
 import { Input, InputNumber } from "antd/lib";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import {layerNameToHistoryStoreMap, menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
-
+import { useOpenLayersStore } from "@stores/useOpenLayersStore";
+import VectorLayer from "ol/layer/Vector";
+import BaseLayer from "ol/layer/Base";
+import WebGLVectorLayer from "ol/layer/WebGLVector";
 // 중첩 배열로 생성하지 않을 필드 지정
 const EXCLUDED_NESTED_FIELDS = [ "coordinates" ];
 
@@ -84,7 +87,15 @@ const JsonGrid = ({
     const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
     const [ rowEditValues, setRowEditValues ] = useState<Record<string, any>>({});
 
+    const store = layerNameToStoreMap[layerName]
+    const historyStore = layerNameToHistoryStoreMap[layerName];
 
+    const olMap = useOpenLayersStore.state.map()
+
+    const layer = useMemo(() => {
+        return olMap?.getLayers().getArray()
+            .find((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layer"] === layerName);
+    }, [olMap, layerName]);
 
     const handleSelect = (selectedRowKeys: React.Key[], selectedRows: any[]) => {
         if (selectedRows.length > 0) {
@@ -96,6 +107,9 @@ const JsonGrid = ({
             setSelectedGuid([]); // 선택 해제 시 초기화
         }
     };
+
+
+
     useEffect(() => {
         setRowEditValues({}); // 외부 currentJsonData 변경 시 내부 수정 상태 초기화
     }, [ rowData ]);
@@ -165,6 +179,8 @@ const JsonGrid = ({
                     ...rowEditValues[guid],
                 };
 
+                //const historyStore = menuCodeToHistoryStoreMap[layerName];
+
                 // 변경점 병합
                 const store = layerNameToStoreMap[layerName]
                 const historyStore = layerNameToHistoryStoreMap[layerName];
@@ -193,11 +209,29 @@ const JsonGrid = ({
         },
     }));
     const nestedFields = getNestedArrayField(rowData?.[0]);
+    const handleAddBtn = () => {
+        let dto;
+        if (typeof layer.createDto === "function") {
+            dto = layer.createDto()
+            dto.id = Date.now()
+
+            console.log("dto::::", dto)
+            store.getState().updateCurrentJsonData(dto, historyStore);
+        } else {
+            console.error("createDto 메서드 필요")
+        }
+
+    }
+    const handleDeleteBtn = () => {
+        store.getState().removeRecordsByGuid(selectedGuid, historyStore)
+    }
 
     return (
         <div style={ { paddingLeft: depth * 24 } }>
             {/*<h3 style={{ display: depth > 0 ? "block" : "none" }}>*/}
             {/*</h3>*/}
+            <button className="grid-btn add-btn" onClick={() => handleAddBtn()}>+</button>
+            <button className="grid-btn delete-btn" onClick={() => handleDeleteBtn()}>-</button>
             <Table
                 dataSource={rowData}
                 columns={enhancedColumns}
@@ -250,7 +284,6 @@ const JsonGrid = ({
                         }
                         : undefined
                 }
-
             />
 
         </div>

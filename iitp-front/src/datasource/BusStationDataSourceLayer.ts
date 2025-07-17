@@ -1,6 +1,6 @@
 import { Viewer, GeoJsonDataSource, Cartesian3, Entity, Color } from "cesium";
 import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
-import { useScenarioStore } from "@stores/useScenarioStore";
+import { BusStationData, FEATURE_TYPE, TRANSIT_MODE } from "@type/Station";
 
 export default class BusStationDataSourceLayer {
     private readonly LAYER_NAME = "busStation";
@@ -29,29 +29,38 @@ export default class BusStationDataSourceLayer {
         // 기존 데이터 제거 후 초기화
         this.viewer.dataSources.remove(this.dataSource, true);
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
+        console.log("busStations:::", busStations)
 
-        for (const station of busStations) {
-            const { lng, lat, id, selected = 0 } = station;
-            if (!lng || !lat) continue;
 
-            const position = Cartesian3.fromDegrees(lng, lat);
+        const store = layerNameToStoreMap[this.LAYER_NAME];
+        console.log("store.getState().currentJsonData:::", store.getState().currentJsonData)
+
+
+        busStations.map((data) => {
+            const props: BusStationData = {
+                ...data,
+                transitMode: data.transitMode ?? TRANSIT_MODE.BUS,
+                featureType: data.featureType ?? FEATURE_TYPE.BUS_STATION,
+            };
+            const coord = data.coordinates[0];
+            const position = Cartesian3.fromDegrees(coord.lng, coord.lat);
 
             this.dataSource.entities.add(
                 new Entity({
-                    id: `station-${id}`,
                     position,
                     point: {
-                        pixelSize: selected === 1 ? 8 : 6,
-                        color: selected === 1 ? Color.GREEN : Color.RED,
+                        pixelSize: 6,
+                        color: Color.RED,
                         outlineWidth: 1,
-                        outlineColor: selected === 1 ? Color.RED : Color.TRANSPARENT,
+                        outlineColor:  Color.TRANSPARENT,
                     },
-                    properties: station,
+                    properties: props,
                 })
             );
-        }
 
-        this.viewer.dataSources.add(this.dataSource);
+        })
+
+        await this.viewer.dataSources.add(this.dataSource);
         console.log("[BusStationDataSourceLayer] 로드 완료: ", this.dataSource.entities.values.length);
     }
 

@@ -15,10 +15,10 @@ export interface FeatureStoreFactoryType {
 }
 
 
-export interface State {
+export interface State<T = unknown> {
     // fetch 한 data
-    originData: FetchFeatureDataType | undefined
-    currentJsonData: unknown
+    originData: FetchFeatureDataType<T> | undefined
+    currentJsonData: T
     currentGeojson: unknown
 
     // fetch data 기반, flatRow로 변환한 데이터
@@ -27,11 +27,11 @@ export interface State {
     isChanged: boolean
 }
 
-export interface Actions {
-    setOriginData: (data: FetchFeatureDataType) => void;
-    setCurrentJsonData: (data: unknown) => void;
+export interface Actions<T = unknown> {
+    setOriginData: (data: FetchFeatureDataType<T>) => void;
+    setCurrentJsonData: (data: FetchFeatureDataType<T>) => void;
     setCurrentGeojson: (data: unknown) => void;
-    updateCurrentJsonData: (data: Record<string, unknown>, historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
+    updateCurrentJsonData: (data: FetchFeatureDataType<T>, historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
     removeRecordsByGuid: (guids: (string | number)[], historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
     setFlatRow: (flatRow: Record<string, unknown>[]) => void;
     setChange: () => boolean;
@@ -49,20 +49,20 @@ function getValueAtPath(obj: any, path: string[]) {
     return path.reduce((acc, key) => (acc && acc[key] !== undefined) ? acc[key] : undefined, obj);
 }
 
-const createFeatureStore = () =>
+const createFeatureStore = <T>() =>
     createSelectors(
-        create<State & Actions>(
+        create<State<T> & Actions<T>>(
             subscribeWithSelector(
                 combine(initialState, (set, get) => ({
-                        setOriginData: (data: FetchFeatureDataType) => set({ originData: data }),
-                        setCurrentJsonData: (data: unknown) => {
+                        setOriginData: (data: FetchFeatureDataType<T>) => set({ originData: data }),
+                        setCurrentJsonData: (data: FetchFeatureDataType<T>) => {
                             set({ currentJsonData: structuredClone(data) });
                         },
                         setCurrentGeojson: (geojson: Record<string, unknown>) => {
                             set({ currentGeojson: { ...geojson } })
                         },
                         updateCurrentJsonData: (record, historyStore) => {
-                            const current = get().currentJsonData as Record<string, any>;
+                            const current = get().currentJsonData;
                             const key = record.featureType;
 
                             if (!key || typeof key !== "string") {
@@ -141,48 +141,59 @@ const createFeatureStore = () =>
                                 }
                             }
                         },
-                        removeRecordsByGuid: (guids: (string | number)[], historyStore) => {
-                            const current = get().currentJsonData as Record<string, any>;
-                            if (!current) return;
+                    removeRecordsByGuid: (guids: (string | number)[], historyStore) => {
+                        const current = get().currentJsonData as Record<string, any>;
+                        if (!current) return;
 
-                            const updated: Record<string, any[]> = {};
-                            let hasChanges = false;
+                        let hasChanges = false;
 
-                            for (const [ objectName, items ] of Object.entries(current)) {
-                                if (!Array.isArray(items)) continue;
+                        function deepRemove(obj: any): any {
+                            if (Array.isArray(obj)) {
+                                const result = [];
+                                for (const item of obj) {
+                                    if (typeof item === "object" && item !== null && "__guid" in item) {
+                                        if (guids.includes(item.__guid)) {
+                                            hasChanges = true;
 
-                                const toBeDeleted = items.filter(item => guids.includes(item.__guid));
-                                const filtered = items.filter(item => !guids.includes(item.__guid));
-
-                                if (filtered.length !== items.length) {
-                                    hasChanges = true;
-
-                                    // 삭제 이력 기록
-                                    if (historyStore) {
-                                        toBeDeleted.forEach(item => {
-                                            const featureId = item.id;
-                                            const properties = item;
-
-                                            if (featureId && properties) {
-                                                featureUpdateLogs(historyStore, {
-                                                    featureId,
-                                                    updateType: "deleted",
-                                                    properties,
-                                                });
+                                            // 삭제 이력 기록
+                                            if (historyStore) {
+                                                const featureId = item.id;
+                                                const properties = item;
+                                                if (featureId && properties) {
+                                                    featureUpdateLogs(historyStore, {
+                                                        featureId,
+                                                        updateType: "deleted",
+                                                        properties,
+                                                    });
+                                                }
                                             }
-                                        });
+                                            continue; // 삭제
+                                        }
                                     }
+                                    result.push(deepRemove(item));
                                 }
-                                updated[objectName] = filtered;
+                                return result;
+                            } else if (typeof obj === "object" && obj !== null) {
+                                const newObj: Record<string, any> = {};
+                                for (const [key, value] of Object.entries(obj)) {
+                                    newObj[key] = deepRemove(value);
+                                }
+                                return newObj;
+                            } else {
+                                return obj; // primitive
                             }
+                        }
 
-                            if (hasChanges) {
-                                set({
-                                    currentJsonData: updated,
-                                    isChanged: true,
-                                });
-                            }
-                        },
+                        const updated = deepRemove(current);
+
+                        if (hasChanges) {
+                            set({
+                                currentJsonData: updated,
+                                isChanged: true,
+                            });
+                        }
+                    },
+
 
                         setFlatRow: (flatRow: Record<string, unknown>[]) => set({ flatRow: flatRow }),
                         setChange: (changed: boolean) => set({ isChanged: changed }),
