@@ -89,9 +89,9 @@ const PropertyModal = () => {
 const styles = {
     container: {
         position: "fixed",
-        bottom: "70px",
+        bottom: "120px",
         left: "1300px",
-        right: "20px",
+        right: "5px",
         backgroundColor: "rgba(20, 20, 30, 0.95)", // 더 어두운 배경
         border: "1px solid rgba(255, 255, 255, 0.1)", // subtle 테두리
         borderRadius: "8px",

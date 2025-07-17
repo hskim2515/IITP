@@ -614,9 +614,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                             }
                         </div>
                     )}
-
-
-
                 </div>
             </div>
 

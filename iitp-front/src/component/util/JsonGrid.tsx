@@ -81,6 +81,10 @@ const JsonGrid = ({
     const setSelectedGuid = useSelectionStore((state) => state.setSelectedGuid);
     const selectedGuid = useSelectionStore((state) => state.selectedGuid);
     const clearSelected = useSelectionStore((state) => state.clearSelected);
+    const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
+    const [ rowEditValues, setRowEditValues ] = useState<Record<string, any>>({});
+
+
 
     const handleSelect = (selectedRowKeys: React.Key[], selectedRows: any[]) => {
         if (selectedRows.length > 0) {
@@ -92,12 +96,45 @@ const JsonGrid = ({
             setSelectedGuid([]); // 선택 해제 시 초기화
         }
     };
-
-
-    const [ rowEditValues, setRowEditValues ] = useState<Record<string, any>>({});
     useEffect(() => {
         setRowEditValues({}); // 외부 currentJsonData 변경 시 내부 수정 상태 초기화
     }, [ rowData ]);
+
+    useEffect(() => {
+        console.log("selectedGuid",selectedGuid)
+        scrollToGuid(selectedGuid[0])
+    }, [selectedGuid]);
+
+    function scrollToGuid(targetGuid: string) {
+        const path = findGuidPath(rowData, targetGuid);
+        if (!path) return;
+
+        setExpandedRowKeys(path); // 부모들을 펼침
+
+        setTimeout(() => {
+            const rowElement = document.querySelector(`tr[data-row-key="${targetGuid}"]`);
+            if (rowElement) {
+                rowElement.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+        }, 300); // DOM 렌더링 이후 실행
+    }
+
+    function findGuidPath(data: any[], targetGuid: string, path: string[] = []): string[] | null {
+        for (const row of data) {
+            if (row.__guid === targetGuid) return [...path, row.__guid];
+
+            const nestedFields = getNestedArrayField(row);
+            for (const field of nestedFields) {
+                const children = row[field];
+                if (Array.isArray(children)) {
+                    const result = findGuidPath(children, targetGuid, [...path, row.__guid]);
+                    if (result) return result;
+                }
+            }
+        }
+        return null;
+    }
+
     const handleInputChange = (key: string, field: string, value: any) => {
         setRowEditValues((prev) => ({
             ...prev,
@@ -186,6 +223,9 @@ const JsonGrid = ({
                                                     rowData={record[field]}
                                                     levelName={field.slice(0, -1)}
                                                     depth={depth + 1}
+                                                    layerName={layerName}
+                                                    layerGroupName={layerGroupName}
+                                                    editable={editable}
                                                 />
                                             </div>
                                         ) : null
@@ -198,9 +238,19 @@ const JsonGrid = ({
                                         Array.isArray(record[field]) &&
                                         record[field].length > 0
                                 ),
+                            expandedRowKeys: expandedRowKeys,  // 👈 추가
+                            onExpand: (expanded, record) => {
+                                const key = record.__guid;
+                                setExpandedRowKeys(prev =>
+                                    expanded
+                                        ? Array.from(new Set([...prev, key]))
+                                        : prev.filter(k => k !== key)
+                                );
+                            },
                         }
                         : undefined
                 }
+
             />
 
         </div>

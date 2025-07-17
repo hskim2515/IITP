@@ -57,6 +57,25 @@ const useDefaultMoveMouse = () => {
             if (entity.polygon && original.extrudedHeight !== undefined) {
                 entity.polygon.extrudedHeight = new Cesium.ConstantProperty(original.extrudedHeight);
             }
+            if (entity.ellipse) {
+                if (original.semiMajorAxis !== undefined) {
+                    entity.ellipse.semiMajorAxis = new Cesium.ConstantProperty(original.semiMajorAxis);
+                }
+                if (original.semiMinorAxis !== undefined) {
+                    entity.ellipse.semiMinorAxis = new Cesium.ConstantProperty(original.semiMinorAxis);
+                }
+            }
+            if (entity.cylinder) {
+                if (original.length !== undefined) {
+                    entity.cylinder.length = new Cesium.ConstantProperty(original.length);
+                }
+                if (original.topRadius !== undefined) {
+                    entity.cylinder.topRadius = new Cesium.ConstantProperty(original.topRadius);
+                }
+                if (original.bottomRadius !== undefined) {
+                    entity.cylinder.bottomRadius = new Cesium.ConstantProperty(original.bottomRadius);
+                }
+            }
 
             highlightedEntityRef.current = null;
         };
@@ -71,30 +90,41 @@ const useDefaultMoveMouse = () => {
                 original.pixelSize = entity.point.pixelSize?.getValue(now) ?? 10;
                 entity.point.pixelSize = new Cesium.ConstantProperty(original.pixelSize * HIGHLIGHT_SCALE);
             }
-
             if (entity.model) {
                 original.scale = entity.model.scale?.getValue(now) ?? 1.0;
                 entity.model.scale = new Cesium.ConstantProperty(original.scale * HIGHLIGHT_SCALE);
             }
-
             if (entity.polyline) {
                 original.width = entity.polyline.width?.getValue(now) ?? 3.0;
                 entity.polyline.width = new Cesium.ConstantProperty(original.width * HIGHLIGHT_SCALE);
             }
-
             if (entity.corridor) {
                 original.width = entity.corridor.width?.getValue(now) ?? 3.0;
-                entity.corridor.width = new Cesium.ConstantProperty(original.width * HIGHLIGHT_SCALE);
+                entity.corridor.width = new Cesium.ConstantProperty(original.width * HIGHLIGHT_SCALE * 0.5);
             }
-
             if (entity.polygon) {
                 original.extrudedHeight = entity.polygon.extrudedHeight?.getValue(now) ?? 0;
                 entity.polygon.extrudedHeight = new Cesium.ConstantProperty(original.extrudedHeight * HIGHLIGHT_SCALE);
+            }
+            if (entity.ellipse) {
+                original.semiMajorAxis = entity.ellipse.semiMajorAxis?.getValue(now) ?? 1.0;
+                original.semiMinorAxis = entity.ellipse.semiMinorAxis?.getValue(now) ?? 1.0;
+                entity.ellipse.semiMajorAxis = new Cesium.ConstantProperty(original.semiMajorAxis * HIGHLIGHT_SCALE * 0.5);
+                entity.ellipse.semiMinorAxis = new Cesium.ConstantProperty(original.semiMinorAxis * HIGHLIGHT_SCALE * 0.5);
+            }
+            if (entity.cylinder) {
+                original.length = entity.cylinder.length?.getValue(now) ?? 1.0;
+                original.topRadius = entity.cylinder.topRadius?.getValue(now) ?? 0.5;
+                original.bottomRadius = entity.cylinder.bottomRadius?.getValue(now) ?? 0.5;
+                entity.cylinder.length = new Cesium.ConstantProperty(original.length * HIGHLIGHT_SCALE * 0.5);
+                entity.cylinder.topRadius = new Cesium.ConstantProperty(original.topRadius * HIGHLIGHT_SCALE * 0.5);
+                entity.cylinder.bottomRadius = new Cesium.ConstantProperty(original.bottomRadius * HIGHLIGHT_SCALE * 0.5);
             }
 
             originalSizeMap.current.set(entity, original);
             highlightedEntityRef.current = entity;
         };
+
 
         manager.bind("move", handler);
         return () => {

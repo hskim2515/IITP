@@ -13,6 +13,7 @@ const useDefaultSelect = () => {
     const selectedProps = usePropertyStore((state) => state.selectedProps);
     const setSelectedProps = usePropertyStore((state) => state.setSelectedProps);
     const setSelectedGuid = useSelectionStore((state) => state.setSelectedGuid);
+    const selectedGuid = useSelectionStore((state) => state.selectedGuid);
 
 
     const infoEntityRef = useRef(null);
@@ -41,6 +42,9 @@ const useDefaultSelect = () => {
                 setSelectedProps(props);
 
                 setSelectedGuid([props.__guid])
+
+                console.log(props.__guid)
+                console.log(selectedGuid)
 
             } else {
                 setSelectedProps(null);

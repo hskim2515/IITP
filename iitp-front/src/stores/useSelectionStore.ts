@@ -72,14 +72,13 @@ export const useSelectionStore = create<SelectionStore>((set, get) => ({
 
 
                         // 카메라 이동
-                        if (entity.position) {
+                        if (entity.point && entity.position) {
                             viewer.camera.flyTo({
                                 destination: entity.position.getValue(Cesium.JulianDate.now()),
                                 duration: 2.0,
                             });
                         } else if (entity.polyline && entity.polyline.positions) {
                             const positions = entity.polyline.positions.getValue(Cesium.JulianDate.now());
-
                             const boundingSphere = Cesium.BoundingSphere.fromPoints(positions);
                             viewer.camera.flyToBoundingSphere(boundingSphere, {
                                 duration: 2.0,
@@ -87,13 +86,37 @@ export const useSelectionStore = create<SelectionStore>((set, get) => ({
                             });
                         } else if (entity.corridor && entity.corridor.positions) {
                             const positions = entity.corridor.positions.getValue(Cesium.JulianDate.now());
-
                             const boundingSphere = Cesium.BoundingSphere.fromPoints(positions);
                             viewer.camera.flyToBoundingSphere(boundingSphere, {
                                 duration: 2.0,
                                 offset: new Cesium.HeadingPitchRange(0, -0.7, boundingSphere.radius * 2.0),
                             });
+                        } else if (entity.ellipse && entity.position) {
+                            const position = entity.position.getValue(Cesium.JulianDate.now());
+                            const semiMajor = entity.ellipse.semiMajorAxis?.getValue(Cesium.JulianDate.now()) ?? 10;
+                            const semiMinor = entity.ellipse.semiMinorAxis?.getValue(Cesium.JulianDate.now()) ?? 10;
+
+                            const radius = Math.max(semiMajor, semiMinor);
+                            const boundingSphere = new Cesium.BoundingSphere(position, radius);
+                            viewer.camera.flyToBoundingSphere(boundingSphere, {
+                                duration: 2.0,
+                                offset: new Cesium.HeadingPitchRange(0, -0.7, radius * 2.0),
+                            });
+                        } else if (entity.cylinder && entity.position) {
+                            const position = entity.position.getValue(Cesium.JulianDate.now());
+                            const topRadius = entity.cylinder.topRadius?.getValue(Cesium.JulianDate.now()) ?? 1.0;
+                            const bottomRadius = entity.cylinder.bottomRadius?.getValue(Cesium.JulianDate.now()) ?? 1.0;
+                            const length = entity.cylinder.length?.getValue(Cesium.JulianDate.now()) ?? 10;
+
+                            // 반지름과 길이를 고려한 대략적인 반경 계산
+                            const radius = Math.sqrt(Math.max(topRadius, bottomRadius) ** 2 + (length / 2) ** 2);
+                            const boundingSphere = new Cesium.BoundingSphere(position, radius);
+                            viewer.camera.flyToBoundingSphere(boundingSphere, {
+                                duration: 2.0,
+                                offset: new Cesium.HeadingPitchRange(0, -0.7, radius * 2.0),
+                            });
                         }
+
                     }
                 })
             })

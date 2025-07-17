@@ -17,11 +17,50 @@ export default class NetworkDataSourceLayer {
         const selectedScenario = useScenarioStore.getState().selectedScenario;
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
 
+        const createCorridorAlongLane = ({
+                                             id,
+                                             source,
+                                             target,
+                                             offset = 0,
+                                             length = 5,
+                                             width = 1,
+                                             material,
+                                             properties,
+                                         }) => {
+            // 1. 방향 벡터 계산
+            const direction = Cesium.Cartesian3.subtract(target, source, new Cesium.Cartesian3());
+            Cesium.Cartesian3.normalize(direction, direction);
+
+            // 2. offset 지점 계산 (source에서 direction으로 offset만큼 이동)
+            const offsetVec = Cesium.Cartesian3.multiplyByScalar(direction, offset, new Cesium.Cartesian3());
+            const start = Cesium.Cartesian3.add(source, offsetVec, new Cesium.Cartesian3());
+
+            // 3. length 지점 계산 (offset 지점에서 direction으로 length만큼 이동)
+            const lengthVec = Cesium.Cartesian3.multiplyByScalar(direction, length, new Cesium.Cartesian3());
+            const end = Cesium.Cartesian3.add(start, lengthVec, new Cesium.Cartesian3());
+
+            // 4. Corridor 생성
+            return new Cesium.Entity({
+                id,
+                corridor: {
+                    positions: [start, end],
+                    width,
+                    height: 0.05,
+                    material,
+                    cornerType: Cesium.CornerType.MITERED,
+                },
+                properties,
+            });
+        };
+
+
         try {
 
-            const { nodes, links, lanes, cells, segments } = store.getState().originData;
+            const { nodes, links} = store.getState().originData;
             const baseLng = selectedScenario.longitude;
             const baseLat = selectedScenario.latitude;
+
+            console.log(store.getState().originData)
 
             nodes.forEach(node => {
                 const [xCoord, yCoord] = node.center.split(" ");
@@ -92,10 +131,97 @@ export default class NetworkDataSourceLayer {
                         },
                         properties: link.lanes[i]
                     });
+
+                    if (lane.cells?.length > 0) {
+                        for (const cell of lane.cells) {
+                            const corridor = createCorridorAlongLane({
+                                id: cell.__guid,
+                                source: lane.laneSource,
+                                target: lane.laneTarget,
+                                offset: cell.offset ?? 0,
+                                length: cell.length ?? 5,
+                                width: 0.8, // 임의의 cell 폭
+                                material: Cesium.Color.RED.withAlpha(0.6),
+                                properties: cell,
+                            });
+                            this.dataSource.entities.add(corridor);
+                        }
+                    }
+
+
+
+                    if (lane.segments?.length > 0) {
+                        for (const segment of lane.segments) {
+                            const corridor = createCorridorAlongLane({
+                                id: segment.__guid,
+                                source: lane.laneSource,
+                                target: lane.laneTarget,
+                                offset: segment.initPoint ?? 0,
+                                length: (segment.endPoint ?? 0) - (segment.initPoint ?? 0),
+                                width: 1.5,
+                                material: segment.block
+                                    ? Cesium.Color.YELLOW.withAlpha(0.8)
+                                    : Cesium.Color.BLUE.withAlpha(0.5),
+                                properties: segment,
+                            });
+                            this.dataSource.entities.add(corridor);
+                        }
+                    }
+
+
+
                 }
             }
 
             for (const node of nodes) {
+
+                const position = Cesium.Cartesian3.fromDegrees(node.lng, node.lat);
+
+                const nodeEntity = new Cesium.Entity({
+                    id: node.__guid,
+                    position,
+                    cylinder: {
+                        length: 5.0, // 높이
+                        topRadius: 0.5,
+                        bottomRadius: 0.5,
+                        material: Cesium.Color.ORANGE,
+                        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                    },
+
+                    properties: node,
+                });
+
+                this.dataSource.entities.add(nodeEntity);
+
+                for (const port of node.ports) {
+                    const link = links.find((l) => l.id === port.linkId);
+                    if (!link) continue;
+
+                    const sourceNode = nodes.find((n) => n.id === link.fromNode);
+                    const targetNode = nodes.find((n) => n.id === link.toNode);
+                    if (!sourceNode || !targetNode) continue;
+
+                    // 링크 중심 위치 (혹은 시작에서 offset 위치도 가능)
+                    const source = Cesium.Cartesian3.fromDegrees(sourceNode.lng, sourceNode.lat);
+                    const target = Cesium.Cartesian3.fromDegrees(targetNode.lng, targetNode.lat);
+
+                    const portEntity = new Cesium.Entity({
+                        id: port.__guid,
+                        position:  port.type === 'in' ? source : target,
+                        cylinder: {
+                            length: port.type === 'in' ? 2 : 3, // 높이
+                            topRadius: port.type === 'in' ? 1.5 : 1,
+                            bottomRadius: port.type === 'in' ? 1.5 : 1,
+                            material: port.type === 'in' ? Cesium.Color.CYAN : Cesium.Color.MAGENTA,
+                            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                        },
+                        properties: port,
+                    });
+
+                    this.dataSource.entities.add(portEntity);
+                }
+
+
 
                 const connections = node.connections
 
@@ -189,6 +315,9 @@ export default class NetworkDataSourceLayer {
         } catch (error) {
             console.error("NetworkDataSourceLayer.load() 중 에러 발생:", error);
         }
+
+
+
     }
 
     private findConnectionById = (node, connId) => {
