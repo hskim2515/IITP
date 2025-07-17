@@ -60,13 +60,13 @@ export default class NetworkDataSourceLayer {
             const baseLng = selectedScenario.longitude;
             const baseLat = selectedScenario.latitude;
 
-            console.log(store.getState().originData)
-
             nodes.forEach(node => {
                 const [xCoord, yCoord] = node.center.split(" ");
                 node.lng = baseLng + (xCoord/ 88000);
                 node.lat = baseLat + (yCoord/ 111000);
             });
+
+            let lanes = links.lanes;
 
             // 링크 그리기
             for (const link of links) {
@@ -167,9 +167,6 @@ export default class NetworkDataSourceLayer {
                             this.dataSource.entities.add(corridor);
                         }
                     }
-
-
-
                 }
             }
 
@@ -234,8 +231,17 @@ export default class NetworkDataSourceLayer {
                         const sourceCart = Cesium.Cartesian3.fromDegrees(baseLng + x1/ 88000, baseLat + y1/ 111000);
                         const targetCart = Cesium.Cartesian3.fromDegrees(baseLng + x2/ 88000, baseLat + y2/ 111000);
 
-                        const position = [sourceCart]
+                        const fromLink = links.find((l) => l.id === conn.fromLink);
+                        const toLink = links.find((l) => l.id === conn.toLink);
 
+                        if (!fromLink && !toLink) continue;
+
+                        const fromLane = fromLink.lanes[conn.fromLane];
+                        const toLane = toLink.lanes[conn.toLane];
+
+                        if (!fromLane || !toLane) continue;
+
+                        const position = [fromLane.laneTarget]
 
                         if(conn.turning != 'S'){
 
@@ -244,7 +250,7 @@ export default class NetworkDataSourceLayer {
                             const nodeHeight = 0;
                             const nodePos = Cesium.Cartesian3.fromDegrees(nodeLon, nodeLat, nodeHeight);
 
-                            const midpoint = Cesium.Cartesian3.midpoint(sourceCart, targetCart, new Cesium.Cartesian3());
+                            const midpoint = Cesium.Cartesian3.midpoint(fromLane.laneTarget, toLane.laneSource, new Cesium.Cartesian3());
 
                             const direction = Cesium.Cartesian3.subtract(nodePos, midpoint, new Cesium.Cartesian3());
 
@@ -253,7 +259,7 @@ export default class NetworkDataSourceLayer {
                             const adjustedMid = Cesium.Cartesian3.add(midpoint, direction, new Cesium.Cartesian3());
 
                             //position.push(adjustedMid)
-                            const points = [sourceCart, adjustedMid, targetCart]
+                            const points = [fromLane.laneTarget, adjustedMid, toLane.laneSource]
 
                             const spline = new Cesium.CatmullRomSpline({
                                 times: [0.0, 0.5, 1.0],
@@ -265,7 +271,7 @@ export default class NetworkDataSourceLayer {
                             }
                         }
 
-                        position.push(targetCart)
+                        position.push(toLane.laneSource)
 
                         this.dataSource.entities.add({
                             id: conn.__guid,
