@@ -1,37 +1,37 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import "/static/css/styles.css";
-import { MenuTree } from "@stores/useMenuStore";
-import { propertyFormSchema } from "../form/propertyFormSchema";
-import { buildColumnDefs, featureCollectionToFlatRow, } from "@utils/grid";
-import { ColDef } from "ag-grid-community";
-import { GridHandle } from "@type/GirdOptions";
-import { menuCodeToStoreMap } from "@hooks/useLayerInit";
-import { useEventStore } from "@stores/useEventStore";
-import { useOpenLayersStore } from "@stores/useOpenLayersStore";
-import useGrid, { AddOptions } from "@hooks/useGrid";
+import {MenuTree} from "@stores/useMenuStore";
+import {propertyFormSchema} from "../form/propertyFormSchema";
+import {buildColumnDefs, featureCollectionToFlatRow,} from "@utils/grid";
+import {ColDef} from "ag-grid-community";
+import {GridHandle} from "@type/GirdOptions";
+import {menuCodeToStoreMap} from "@hooks/useLayerInit";
+import {useEventStore} from "@stores/useEventStore";
+import {useOpenLayersStore} from "@stores/useOpenLayersStore";
+import useGrid, {AddOptions} from "@hooks/useGrid";
 import GeometryType from "@type/FeatureOptions";
-import { SelectEvent } from "ol/interaction/Select";
-import { Feature } from "ol";
+import {SelectEvent} from "ol/interaction/Select";
+import {Feature} from "ol";
 import VectorLayer from "ol/layer/Vector";
 import BaseLayer from "ol/layer/Base";
 import WebGLVectorLayer from "ol/layer/WebGLVector";
-import { ModifyEvent } from "ol/interaction/Modify";
-import { DrawEvent } from "ol/interaction/Draw";
-import { apiConfig, ApiMenuKey } from "../../config/apiConfig";
+import {ModifyEvent} from "ol/interaction/Modify";
+import {DrawEvent} from "ol/interaction/Draw";
+import {apiConfig, ApiMenuKey} from "../../config/apiConfig";
 import axiosInstance from "../../api/axiosInstance";
 import JsonGrid from "../util/JsonGrid";
-import { faChevronDown, faChevronUp } from "@fortawesome/free-solid-svg-icons";
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import useHistoryInit, { menuCodeToHistoryStoreMap } from "@hooks/useHistoryInit";
-import { mergeJsonWithLog, mergeUpdateLogs } from "@utils/history";
-import { interpolateByOffset } from "@utils/interpolateByOffset";
+import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
+import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
+import useHistoryInit, {menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
+import {mergeJsonWithLog, mergeUpdateLogs} from "@utils/history";
+import {interpolateByOffset} from "@utils/interpolateByOffset";
 import HistoryController from "../modal/HistoryController";
-import { menuDrawRequirements } from "../../config/menuDrawConfig";
+import {menuDrawRequirements} from "../../config/menuDrawConfig";
 import TypeSelectionModal from "../modal/TypeSelectionModal";
 import HistoryModal from "../modal/HistoryModal";
-import { useScenarioStore } from "@stores/useScenarioStore";
-import { useSelectionStore } from "@stores/useSelectionStore";
-import { Select } from "ol/interaction";
+import {useScenarioStore} from "@stores/useScenarioStore";
+import {useSelectionStore} from "@stores/useSelectionStore";
+import {Select} from "ol/interaction";
 import {
     convertFeatureToRecord,
     createFeature,
@@ -39,15 +39,21 @@ import {
     getFromToCoordinates,
     getValuesFromFeatures
 } from "@utils/feature";
-import { generateGUIDWithType } from "@utils/guid";
-import { getSnapFeature } from "@utils/interaction";
+import {generateGUIDWithType} from "@utils/guid";
+import {getSnapFeature} from "@utils/interaction";
 import Collection from "ol/Collection";
+import {faClose} from "@fortawesome/free-solid-svg-icons/faClose";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTree
     onClose: () => void;
 }
 
+const geometryTypeOptions: GeometryType[] = [
+    GeometryType.POINT,
+    GeometryType.LINE_STRING,
+    GeometryType.POLYGON,
+];
 const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const submenu = {
         menuCode: activeSubmenu.menuCode,
@@ -93,6 +99,9 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const selectedScenario = useScenarioStore.getState().selectedScenario;
 
     const olMap = useOpenLayersStore.state.map()
+
+    const [isMinimized, setIsMinimized] = useState(false);
+
 
     useEffect(() => {
         const unsubscribe = store.subscribe(
@@ -236,8 +245,8 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
             const dto = layer.snapPropertiesToDto(metadata, layer.recordToDto(drewProperties));
             store.getState().updateCurrentJsonData(dto, historyStore);
-            setDrawGeometryType(layer.getGeometryType(dto.featureType))
         };
+
         const options = {drawGeometryType};
         if (isDrawing) {
             olEventManager.bind("drawend", onDrawEnd, options);
@@ -419,17 +428,18 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     const handleSaveBtn = async () => {
         const api = apiConfig[submenu.menuCode as ApiMenuKey].update;
-        const geojson = store.getState().currentGeojson;
+        const currentJson = store.getState().currentJsonData;
         const logJson = historyStore.getState().updateLogs;
         if (!logJson) {
             alert('변경사항이 없습니다.');
             return
         }
         const mergedLog = mergeUpdateLogs(logJson);
-
+        const extractedArray = Object.values(currentJson)[0];
         const payload = {
-            geojson,
-            logJson: mergedLog,
+            //timestamp: new Date().toISOString(),
+            data:extractedArray,
+            logs: mergedLog,
         };
         try {
             await axiosInstance({
@@ -476,12 +486,11 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             return;
         }
 
-        const featureType = "pavementMarkings";  // 예시로 사용
-
-        const currentJsonData = store.getState().currentJsonData[featureType];
+        const currentJsonData = store.getState().currentJsonData;
+        const firstKey = Object.keys(currentJsonData)[0] as keyof typeof currentJsonData;
+        const currentJsonItem = currentJsonData[firstKey];
         const featuresMap = new Map<string | number, Feature>();
-
-        const featureData = currentJsonData.map((data) => createFeature(data));
+        const featureData = currentJsonItem.map((data) => createFeature(data));
 
         featureData.forEach((feature) => {
             if (!feature) return;
@@ -493,7 +502,10 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
         const mergeFeature = mergeJsonWithLog(featuresMap, updateHistory.json, isUndo);
         const interpolated = interpolateByOffset(mergeFeature);
-        const flatRows = interpolated.map((f) => convertFeatureToRecord(f));
+        const flatRows = interpolated
+            .map(f => convertFeatureToRecord(f))
+            .filter(r => r.id !== undefined && !isNaN(Number(r.id)))
+            .sort((a, b) => Number(a.id) - Number(b.id));
 
         store.getState().setCurrentJsonData({
             pavementMarkings: flatRows,
@@ -518,64 +530,64 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                             <button onClick={() => handleCheck()}>Interaction 객체 목록 디버깅</button>
                             <button className="btn" onClick={() => handleShowHistory()}>변경 이력 보기</button>
                         </div>
-                        <button className="close-btn" onClick={onClose}>×</button>
+                        <FontAwesomeIcon className="minimize-btn"
+                                         icon={isMinimized ? faChevronUp : faChevronDown}
+                                         onClick={() => setIsMinimized(!isMinimized)}
+                        />
+                        <FontAwesomeIcon className="close-btn" icon={faClose} onClick={onClose}/>
                     </div>
-                    <div className="popup-body">
-                        {isTypeSelect && (
-                            <TypeSelectionModal
-                                typeKey={submenu.menuCode}
-                                onConfirm={(selectedType) => {
+                    {!isMinimized && (
+                        <div className="popup-body">
+                            {isTypeSelect && (
+                                <TypeSelectionModal typeKey={submenu.menuCode} onConfirm={(selectedType) => {
                                     onConfirm?.(selectedType);
                                     setIsTypeSelect(false);
-                                }}
-                                onCancel={() => {
+                                }} onCancel={() => {
                                     setIsTypeSelect(false)
                                     setIsDrawing(false)
-                                }}
-
-                            />
-                        )}
-                        {isHistoryOpen && (
-                            <HistoryModal
-                                onClose={() => setIsHistoryOpen(false)}
-                                open={isHistoryOpen}
-                                setRowData={setRowData}
-                                menuCode={activeSubmenu.menuCode}
-                            />
-                        )}
-                        {submenu.item &&
-                            //{ submenu.item && colDefs &&
-                            // <Grid
-                            //     ref={ gridRef }
-                            //     colDefs={ colDefs }
-                            //     rowData={ rowData }
-                            //     onCellValueChanged={ updateFeatureByRow }
-                            //     onSelectionChanged={ handleGridSelectionChanged }
-                            // />
-                            <div>
-                                {Object.entries(currentJsonData).map(([key, value]) => (
-                                    Array.isArray(value) && value.length > 0 && (
-                                        <div key={key} className="grid-container">
-                                            <div className="grid-header">
-                                                <h4 style={{margin: 12}}>
-                                                    {key.charAt(0).toUpperCase() + key.slice(1)}
-                                                </h4>
-                                                <FontAwesomeIcon onClick={() => toggleGrid(key)}
-                                                                 icon={expandedKey === key ? faChevronUp : faChevronDown}/>
+                                }}/>
+                            )}
+                            {isHistoryOpen && (
+                                <HistoryModal
+                                    onClose={() => setIsHistoryOpen(false)}
+                                    open={isHistoryOpen}
+                                    menuCode={activeSubmenu.menuCode}
+                                />
+                            )}
+                            {submenu.item &&
+                                //{ submenu.item && colDefs &&
+                                // <Grid
+                                //     ref={ gridRef }
+                                //     colDefs={ colDefs }
+                                //     rowData={ rowData }
+                                //     onCellValueChanged={ updateFeatureByRow }
+                                //     onSelectionChanged={ handleGridSelectionChanged }
+                                // />
+                                <div>
+                                    {Object.entries(currentJsonData).map(([key, value]) => (
+                                        Array.isArray(value) && value.length > 0 && (
+                                            <div key={key} className="grid-container">
+                                                <div className="grid-header">
+                                                    <h4 style={{margin: 12}}>
+                                                        {key.charAt(0).toUpperCase() + key.slice(1)}
+                                                    </h4>
+                                                    <FontAwesomeIcon onClick={() => toggleGrid(key)}
+                                                                     icon={expandedKey === key ? faChevronUp : faChevronDown}/>
+                                                </div>
+                                                {expandedKey === key && (
+                                                    <JsonGrid rowData={value} levelName={key}
+                                                              layerName={submenu.item.layer}
+                                                              layerGroupName={"facility"}
+                                                              editable={isEditable}
+                                                    />
+                                                )}
                                             </div>
-                                            {expandedKey === key && (
-                                                <JsonGrid rowData={value} levelName={key}
-                                                          layerName={submenu.item.layer}
-                                                          layerGroupName={"facility"}
-                                                          editable={isEditable}
-                                                />
-                                            )}
-                                        </div>
-                                    )
-                                ))}
-                            </div>
-                        }
-                    </div>
+                                        )
+                                    ))}
+                                </div>
+                            }
+                        </div>
+                    )}
                 </div>
             </div>
 

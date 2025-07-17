@@ -30,41 +30,17 @@ const ToolsPanel = () => {
             }}
         >
             {/* 레이어 */}
-            <button
-                style={{
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '20px',
-                    display: 'flex',
-                    alignItems: 'center'
-                }}
-                onClick={() => togglePopup(0)}
+            <button className="tool-btn"
+                    onClick={() => togglePopup(0)}
             >
                 <FontAwesomeIcon icon={faLayerGroup} />
             </button>
-            <button
-                style={{
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '20px',
-                    display: 'flex',
-                    alignItems: 'center',
-                }}
+            <button className="tool-btn"
                 onClick={() => togglePopup(1)}
             >
                 <FontAwesomeIcon icon={faRuler} />
             </button>
-            <button
-                style={{
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontSize: '20px',
-                    display: 'flex',
-                    alignItems: 'center',
-                }}
+            <button className="tool-btn"
                 onClick={() => togglePopup(2)}
             >
                 <FontAwesomeIcon icon={faCog} />

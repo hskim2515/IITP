@@ -1,10 +1,10 @@
-import {FeatureCollection } from "geojson";
 import Feature from 'ol/Feature'
 import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
 import { UpdateLogEntry, UpdateType } from "@type/HistoryTypes";
 import { Feature as OLFeature } from "ol";
 import { Point } from "ol/geom";
 import {fromLonLat} from "ol/proj";
+import {createFeature} from "@utils/feature";
 
 interface FeatureUpdateHistoryOptions {
     featureId: string | number;
@@ -92,12 +92,11 @@ export function mergeJsonWithLog(
     return Array.from(featuresMap.values());
 }
 
-export function buildJsonFromLogs(
-    baseGeojson: FeatureCollection,
+export function buildMergedDataFromLogs(
+    baseData: Record<string,any>,
     logs: UpdateLogEntry[],
     isUndo : boolean
-): FeatureCollection {
-
+): Record<string,any> {
     const sortedLogs = [...logs].sort((a, b) => {
         const aTime = getLogMinTimestamp(a);
         const bTime = getLogMinTimestamp(b);
@@ -107,21 +106,23 @@ export function buildJsonFromLogs(
     });
 
     const featuresMap = new Map<string | number, Feature>();
-    baseGeojson.features.forEach(feature => {
-        const id = feature.properties?.id;
+    const features = baseData
+        .map((data) => createFeature(data))
+        .filter((f): f is Feature<Point> => !!f);
+
+    features.forEach((feature) => {
+        if (!feature) return;
+        const id = feature.get('id');
         if (id != null) {
-            featuresMap.set(id, { ...feature });
+            featuresMap.set(id, feature);
         }
     });
 
     sortedLogs.forEach(log => {
-        mergeJsonWithLog(featuresMap, log, isUndo);
+        mergeJsonWithLog(featuresMap, log.data, isUndo);
     });
 
-    return {
-        type: "FeatureCollection",
-        features: Array.from(featuresMap.values()),
-    };
+    return Array.from(featuresMap.values());
 }
 
 function getLogMinTimestamp(log: UpdateLogEntry): number {

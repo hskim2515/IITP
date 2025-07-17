@@ -29,5 +29,6 @@ export interface BusStationData {
     }],
     parkingLots: number | null;
 }
+export type BusStationFeature  = BusStationData;
 
 export type BusStationSnapProperties = Pick<BusStationData, BusStationSnapFields>;

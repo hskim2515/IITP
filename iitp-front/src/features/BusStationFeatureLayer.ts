@@ -8,7 +8,7 @@ import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
 
 import {
     BUS_STATION_SNAP_FIELDS,
-    BusStationData,
+    BusStationData, BusStationFeature,
     BusStationSnapProperties,
     FEATURE_TYPE,
     SNAP_FEATURE_TYPE,
@@ -52,8 +52,8 @@ export default class BusStationFeatureLayer extends VectorLayer {
 
         const store = layerNameToStoreMap[this.LAYER_NAME];
         const listener = (
-            updated: Record<string, Array<Record<string, unknown>>>,
-            origin: Record<string, Array<Record<string, unknown>>>
+            updated: Record<string, Array<BusStationData>>,
+            origin: Record<string, Array<BusStationData>>
         ) => {
             Object.keys(updated).forEach((objectName) => {
                 const updatedList = updated[objectName] ?? [];
@@ -230,7 +230,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
      * DTO로부터 Point Feature와 속성을 생성
      */
     public createFeature(data: BusStationData): Feature<Point> | undefined {
-        const props: BusStationData = {
+        const props: BusStationFeature = {
             ...data,
             transitMode: data.transitMode ?? TRANSIT_MODE.BUS,
             featureType: data.featureType ?? FEATURE_TYPE.BUS_STATION,
@@ -272,7 +272,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
     /**
      * 일반 객체를 DTO 로 변환
      */
-    public recordToDto(record: Record<string, unknown>): BusStationData {
+    public recordToDto(record: BusStationFeature): BusStationData {
         const { geometry, ...cleaned } = record;
         const guid = cleaned.__guid ?? generateGUIDWithType(this.getFeatureType())
         const dto = {

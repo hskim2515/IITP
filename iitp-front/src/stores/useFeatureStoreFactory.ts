@@ -5,6 +5,9 @@ import { FetchFeatureDataType } from "@type/FeatureOptions";
 import { applyDiffs, diffObjects } from "@utils/json";
 import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
 import {featureUpdateLogs} from "@utils/history";
+import {convertFeatureToRecord, createFeature} from "@utils/feature";
+import {interpolateByOffset} from "@utils/interpolateByOffset";
+import {Feature} from "ol";
 
 export interface FeatureStoreFactoryType {
     getState: () => State & Actions;
@@ -12,10 +15,10 @@ export interface FeatureStoreFactoryType {
 }
 
 
-export interface State {
+export interface State<T = unknown> {
     // fetch 한 data
-    originData: FetchFeatureDataType | undefined
-    currentJsonData: unknown
+    originData: FetchFeatureDataType<T> | undefined
+    currentJsonData: T
     currentGeojson: unknown
 
     // fetch data 기반, flatRow로 변환한 데이터
@@ -24,11 +27,11 @@ export interface State {
     isChanged: boolean
 }
 
-export interface Actions {
-    setOriginData: (data: FetchFeatureDataType) => void;
-    setCurrentJsonData: (data: unknown) => void;
+export interface Actions<T = unknown> {
+    setOriginData: (data: FetchFeatureDataType<T>) => void;
+    setCurrentJsonData: (data: FetchFeatureDataType<T>) => void;
     setCurrentGeojson: (data: unknown) => void;
-    updateCurrentJsonData: (data: Record<string, unknown>, historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
+    updateCurrentJsonData: (data: FetchFeatureDataType<T>, historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
     removeRecordsByGuid: (guids: (string | number)[], historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
     setFlatRow: (flatRow: Record<string, unknown>[]) => void;
     setChange: () => boolean;
@@ -46,20 +49,20 @@ function getValueAtPath(obj: any, path: string[]) {
     return path.reduce((acc, key) => (acc && acc[key] !== undefined) ? acc[key] : undefined, obj);
 }
 
-const createFeatureStore = () =>
+const createFeatureStore = <T>() =>
     createSelectors(
-        create<State & Actions>(
+        create<State<T> & Actions<T>>(
             subscribeWithSelector(
                 combine(initialState, (set, get) => ({
-                        setOriginData: (data: FetchFeatureDataType) => set({ originData: data }),
-                        setCurrentJsonData: (data: unknown) => {
+                        setOriginData: (data: FetchFeatureDataType<T>) => set({ originData: data }),
+                        setCurrentJsonData: (data: FetchFeatureDataType<T>) => {
                             set({ currentJsonData: structuredClone(data) });
                         },
                         setCurrentGeojson: (geojson: Record<string, unknown>) => {
                             set({ currentGeojson: { ...geojson } })
                         },
                         updateCurrentJsonData: (record, historyStore) => {
-                            const current = get().currentJsonData as Record<string, any>;
+                            const current = get().currentJsonData;
                             const key = record.featureType;
 
                             if (!key || typeof key !== "string") {
@@ -111,10 +114,14 @@ const createFeatureStore = () =>
                             console.log("updateCurrentJsonData newItems:::", newItems)
                             newItems[index] = updatedItem;
 
+                            const features = newItems.map(data => createFeature(data)).filter(f => f !== undefined) as Feature[];
+                            const interpolatedFeatures = interpolateByOffset(features);
+                            const interpolatedRecords = interpolatedFeatures.map(f => convertFeatureToRecord(f));
+
                             set({
                                 currentJsonData: {
                                     ...current,
-                                    [key]: newItems,
+                                    [key]: interpolatedRecords,
                                 },
                                 isChanged: true,
                             });

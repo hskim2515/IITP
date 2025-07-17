@@ -13,8 +13,8 @@ public class LogsData {
     @Data
     private static class Detail {
         private String field;
-        private String newValue;
-        private String oldValue;
+        private Object newValue;
+        private Object oldValue;
         private String featureId;
         private String timestamp;
     }

@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { usePropertyStore } from "@stores/usePropertyStore";
 import PropertyPanel from "../panel/PropertyPanel";
-import {findMenuByCode, useMenuStore} from "@stores/useMenuStore"; // 경로에 맞게 수정
+import {findMenuByCode, useMenuStore} from "@stores/useMenuStore";
+import {faClose} from "@fortawesome/free-solid-svg-icons/faClose";
+import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
+import {faEdit} from "@fortawesome/free-solid-svg-icons"; // 경로에 맞게 수정
 
 const PropertyModal = () => {
     const selectedProps = usePropertyStore((state) => state.selectedProps);
@@ -27,6 +30,7 @@ const PropertyModal = () => {
         if(menu){
             setSubMenu(findMenuByCode(menu, 'NETWORK'))
         }
+        console.log(subMenu)
     }, [menu]);
 
     useEffect(() => {
@@ -43,53 +47,52 @@ const PropertyModal = () => {
     }
 
     return (
-        <div style={styles.container}>
-            <table style={styles.table}>
-                <thead>
-                <tr>
-                    <th colSpan={2} style={styles.th}>
-                        Property Viewer
-                        <button
-                            style={{ marginLeft: "10px", fontSize: "12px", color: "#aaa" }}
-                            onClick={() => {
+        showViewer && !activeSubmenu && (
+            <div style={styles.container}>
+                <table style={styles.table}>
+                    <thead>
+                    <tr>
+                        <th colSpan={2} style={styles.th}>
+                            Property Viewer
+                            <FontAwesomeIcon className="close-btn" icon={faClose} onClick={() => setShowViewer(false)}/>
+                            <FontAwesomeIcon className="edit-btn" icon={faEdit} onClick={() => {
                                 if (selectedProps?.menuCode) {
                                     setActiveSubmenu(subMenu);
                                 }
-                            }}
-                        >
-                            Edit {selectedProps?.menuCode}
-                        </button>
-                    </th>
-                </tr>
-                <tr>
-                    <th style={styles.th}>Property</th>
-                    <th style={styles.th}>Value</th>
-                </tr>
-                </thead>
-                <tbody>
-                {Object.entries(selectedProps).map(([key, value]) => (
-                    <tr key={key}>
-                        <td style={styles.td}>{key}</td>
-                        <td style={styles.td} title={String(value)}>
-                            {typeof value === 'object'
-                                ? truncate(JSON.stringify(value), 60)
-                                : truncate(String(value), 60)}
-                        </td>
+                            }}/>
+                        </th>
                     </tr>
-                ))}
-                </tbody>
-            </table>
+                    <tr>
+                        <th style={styles.th}>Property</th>
+                        <th style={styles.th}>Value</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {Object.entries(selectedProps).map(([key, value]) => (
+                        <tr key={key}>
+                            <td style={styles.td}>{key}</td>
+                            <td style={styles.td} title={String(value)}>
+                                {typeof value === 'object'
+                                    ? truncate(JSON.stringify(value), 60)
+                                    : truncate(String(value), 60)}
+                            </td>
+                        </tr>
+                    ))}
+                    </tbody>
+                </table>
 
-        </div>
+            </div>
+        )
+
     );
 };
 
 const styles = {
     container: {
         position: "fixed",
-        bottom: "70px",
+        bottom: "120px",
         left: "1300px",
-        right: "20px",
+        right: "5px",
         backgroundColor: "rgba(20, 20, 30, 0.95)", // 더 어두운 배경
         border: "1px solid rgba(255, 255, 255, 0.1)", // subtle 테두리
         borderRadius: "8px",
@@ -97,7 +100,7 @@ const styles = {
         maxHeight: "30vh",
         overflowY: "auto",
         overflowX: "auto",
-        zIndex: 1000,
+        zIndex: 2000,
         boxShadow: "0 0 12px rgba(0, 255, 255, 0.1)", // 네온 느낌
         color: "#e0e0e0", // 기본 텍스트 밝기
         backdropFilter: "blur(6px)", // 유리 느낌

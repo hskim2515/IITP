@@ -15,6 +15,7 @@ import '../../App.css'
 import {useCesiumStore} from "@stores/useCesiumStore";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import useHistoryInit from "@hooks/useHistoryInit";
+import useDefaultMoveMouse from "@hooks/sync/move/useDefaultMoveMouse";
 
 const Maps = () => {
 
@@ -46,6 +47,7 @@ const Maps = () => {
     useMapSync();
     useLayer();
     useDefaultSelect();
+    useDefaultMoveMouse();
 
     // useEffect(() => {
     //     if (olMap) {

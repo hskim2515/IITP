@@ -1,7 +1,7 @@
 import { EventAdapter } from "@adaptor/EventAdapter";
 import { EventOptions } from "@type/EventOptions";
 
-export type EventType = 'select' | 'modify' | 'delete' | 'add';
+export type EventType = 'select' | 'modify' | 'delete' | 'add' | 'move' | 'click' | 'hover' | 'drag' | 'drop' | 'zoom' | 'pan' | 'rotate';
 
 type EventCallback = (event: any) => void;
 
