@@ -7,7 +7,7 @@ import BaseLayer from "ol/layer/Base";
 import Geometry from "ol/geom/Geometry";
 import { LineString, Point, Polygon } from "ol/geom";
 import { Coordinate } from "ol/coordinate";
-import {fromLonLat} from "ol/proj";
+import {fromLonLat, toLonLat} from "ol/proj";
 
 export interface PositionOnGeometry {
     coordinate: Coordinate; // 최적 위치 좌표
@@ -391,17 +391,15 @@ export function createFeature (data: any): Feature<Point> | undefined {
 
     return feature;
 }
+export function convertFeatureToRecord(f: Feature): any {
+    const geometry = f.getGeometry();
+    const coordinates = geometry?.getCoordinates();
+    const [lng, lat] = toLonLat(coordinates);
 
-export function convertFeatureToRecord (feature: any): Record<string, unknown> {
-    const props = feature.getProperties();
-
-    const result: Record<string, unknown> = {
-        ...props,
+    return {
+        ...f.getProperties(),
+        coordinates: [{ lng, lat }],
     };
-
-    delete result.geometry;
-
-    return result;
 }
 
 export function getFeaturesByGuidPrefix(input: Feature[], prefix: string): Collection<Feature> | null;

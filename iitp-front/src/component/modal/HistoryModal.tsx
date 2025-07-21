@@ -83,7 +83,8 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
             const flatRows = interpolated
                 .map(f => convertFeatureToRecord(f))
                 .filter(r => r.id !== undefined && !isNaN(Number(r.id)))
-                .sort((a, b) => Number(a.id) - Number(b.id));
+                .sort((a, b) => Number(a.id) - Number(b.id))
+                .map(({ geometry, ...rest }) => rest);
 
             featureStore.getState().setCurrentJsonData({
                 pavementMarkings: flatRows,
