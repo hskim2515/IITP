@@ -4,9 +4,9 @@ import { createSelectors } from './createSelectors';
 import { FetchFeatureDataType } from "@type/FeatureOptions";
 import { applyDiffs, diffObjects } from "@utils/json";
 import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
-import {featureUpdateLogs} from "@utils/history";
+import {featureUpdateLogs, getValueAtPath} from "@utils/history";
 import {convertFeatureToRecord, createFeature} from "@utils/feature";
-import {interpolateByOffset} from "@utils/interpolateByOffset";
+import {interpolateAndConvertToRecords, interpolateByOffset} from "@utils/interpolateByOffset";
 import {Feature} from "ol";
 
 export interface FeatureStoreFactoryType {
@@ -45,10 +45,6 @@ const initialState: State = {
     isChanged: false
 };
 
-function getValueAtPath(obj: any, path: string[]) {
-    return path.reduce((acc, key) => (acc && acc[key] !== undefined) ? acc[key] : undefined, obj);
-}
-
 const createFeatureStore = <T>() =>
     createSelectors(
         create<State<T> & Actions<T>>(
@@ -79,10 +75,12 @@ const createFeatureStore = <T>() =>
                             // 신규 추가
                             if (index === -1) {
                                 const newItems = [ ...items, record ];
+                                const interpolatedRecords = interpolateAndConvertToRecords(newItems);
+
                                 set({
                                     currentJsonData: {
                                         ...current,
-                                        [key]: newItems,
+                                        [key]: interpolatedRecords,
                                     },
                                     isChanged: true,
                                 });
@@ -114,9 +112,7 @@ const createFeatureStore = <T>() =>
                             console.log("updateCurrentJsonData newItems:::", newItems)
                             newItems[index] = updatedItem;
 
-                            const features = newItems.map(data => createFeature(data)).filter(f => f !== undefined) as Feature[];
-                            const interpolatedFeatures = interpolateByOffset(features);
-                            const interpolatedRecords = interpolatedFeatures.map(f => convertFeatureToRecord(f));
+                            const interpolatedRecords = interpolateAndConvertToRecords(newItems);
 
                             set({
                                 currentJsonData: {
@@ -155,15 +151,25 @@ const createFeatureStore = <T>() =>
                                         if (guids.includes(item.__guid)) {
                                             hasChanges = true;
 
-                                            // 삭제 이력 기록
-                                            if (historyStore) {
-                                                const featureId = item.id;
-                                                const properties = item;
-                                                if (featureId && properties) {
-                                                    featureUpdateLogs(historyStore, {
-                                                        featureId,
-                                                        updateType: "deleted",
-                                                        properties,
+                                            const toBeDeleted = obj.filter(item => guids.includes(item.__guid));
+                                            const filtered = obj.filter(item => !guids.includes(item.__guid));
+
+                                            if (filtered.length !== obj.length) {
+                                                hasChanges = true;
+
+                                                // 삭제 이력 기록
+                                                if (historyStore) {
+                                                    toBeDeleted.forEach(item => {
+                                                        const featureId = item.id;
+                                                        const properties = item;
+
+                                                        if (featureId && properties) {
+                                                            featureUpdateLogs(historyStore, {
+                                                                featureId,
+                                                                updateType: "deleted",
+                                                                properties,
+                                                            });
+                                                        }
                                                     });
                                                 }
                                             }

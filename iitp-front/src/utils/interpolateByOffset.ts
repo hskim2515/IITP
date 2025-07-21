@@ -1,5 +1,7 @@
 import {Point} from "ol/geom";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
+import {convertFeatureToRecord, createFeature} from "@utils/feature";
+import {Feature} from "ol";
 
 export function interpolateByOffset(features: any[]): any[] {
     const olMap = useOpenLayersStore.getState().map;
@@ -64,3 +66,11 @@ function interpolateAlongLine(coords: number[][], offset: number): { point: [num
     return null;
 }
 
+export function interpolateAndConvertToRecords(dataList: any[]): any[] {
+    const features = dataList
+        .map(data => createFeature(data))
+        .filter((f): f is Feature => f !== undefined);
+
+    const interpolated = interpolateByOffset(features);
+    return interpolated.map(convertFeatureToRecord);
+}

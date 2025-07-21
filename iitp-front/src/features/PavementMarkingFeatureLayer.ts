@@ -161,7 +161,6 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
             listener,
             { fireImmediately: true }
         );
-
     }
 
     public async load(): Promise<void> {
@@ -305,7 +304,8 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
     public computeMetadata(
         baseLayer: VectorLayer | WebGLVectorLayer | BaseLayer,
         basedProperties: Record<string, unknown> | undefined,
-        fromCoord: Coordinate
+        fromCoord: Coordinate,
+        drawType?: String,
     ): Record<string, unknown> {
         const filter = { featureType: this.getSnapFeatureType() };
         const features = getFeaturesByProperties(baseLayer, filter);
@@ -322,6 +322,8 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
                 computeProperties[key] = offset ?? null;
             } else if (key === "coordinates") {
                 computeProperties[key] = lng != null && lat != null ? [ { lat, lng } ] : [];
+            } else if (key === "markingType") {
+                computeProperties[key] = drawType;
             } else {
                 computeProperties[key] = basedProperties?.[key] ?? null;
             }

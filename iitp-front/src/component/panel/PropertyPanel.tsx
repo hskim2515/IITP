@@ -94,7 +94,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-    const [selectedType, setSelectedType] = useState<String>()
+    const selectedDrawTypeRef = useRef<string | undefined>();
 
     const selectedScenario = useScenarioStore.getState().selectedScenario;
 
@@ -241,7 +241,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                 : undefined;
 
             // metadata 생성 (offset 포함)
-            const metadata = layer.computeMetadata(snapLayer, snapProperties, fromCoord);
+            const metadata = layer.computeMetadata(snapLayer, snapProperties, fromCoord, selectedDrawTypeRef.current);
 
             const dto = layer.snapPropertiesToDto(metadata, layer.recordToDto(drewProperties));
             store.getState().updateCurrentJsonData(dto, historyStore);
@@ -410,7 +410,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             return;
         } else {
             openTypeSelectionModal(menuMeta.typeKey!, (type: string) => {
-                setSelectedType(type);
+                selectedDrawTypeRef.current = type;
                 setIsDrawing(true);
             });
         }
@@ -505,7 +505,8 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         const flatRows = interpolated
             .map(f => convertFeatureToRecord(f))
             .filter(r => r.id !== undefined && !isNaN(Number(r.id)))
-            .sort((a, b) => Number(a.id) - Number(b.id));
+            .sort((a, b) => Number(a.id) - Number(b.id))
+            .map(({ geometry, ...rest }) => rest);
 
         store.getState().setCurrentJsonData({
             pavementMarkings: flatRows,
