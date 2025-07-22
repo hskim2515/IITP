@@ -7,8 +7,8 @@ import BaseLayer from "ol/layer/Base";
 import Geometry from "ol/geom/Geometry";
 import { LineString, Point, Polygon } from "ol/geom";
 import { Coordinate } from "ol/coordinate";
-import {fromLonLat} from "ol/proj";
 import { getDistance } from "ol/sphere";
+import {fromLonLat, toLonLat} from "ol/proj";
 
 export interface PositionOnGeometry {
     coordinate: Coordinate; // 최적 위치 좌표
@@ -271,9 +271,8 @@ export function getOffsetByCoordinate(
         console.log("getOffsetByCoordinate typeof input:::", typeof input)
     }
     if (!geometry) return null;
-    console.log("getOffsetByCoordinate geometry:::", geometry)
+
     const pos = getPositionByCoordinate(geometry, coordinate);
-    console.log("getOffsetByCoordinate pos:::", pos)
     return (pos && typeof pos.offset === 'number') ? pos.offset : null;
 }
 
@@ -315,6 +314,7 @@ export function getFeaturesByProperties(
     return new Collection<Feature>(matchedArray)
 }
 
+
 export function filterFeaturesByKey(input: Feature[], ids: Array<string | number>, key?: string): Collection<Feature>;
 export function filterFeaturesByKey(input: Collection<Feature>, ids: Array<string | number>, key?: string): Collection<Feature>;
 export function filterFeaturesByKey(input: VectorSource, ids: Array<string | number>, key?: string): Collection<Feature>;
@@ -354,17 +354,15 @@ export function createFeature (data: any): Feature<Point> | undefined {
 
     return feature;
 }
+export function convertFeatureToRecord(f: Feature): any {
+    const geometry = f.getGeometry();
+    const coordinates = geometry?.getCoordinates();
+    const [lng, lat] = toLonLat(coordinates);
 
-export function convertFeatureToRecord (feature: any): Record<string, unknown> {
-    const props = feature.getProperties();
-
-    const result: Record<string, unknown> = {
-        ...props,
+    return {
+        ...f.getProperties(),
+        coordinates: [{ lng, lat }],
     };
-
-    delete result.geometry;
-
-    return result;
 }
 
 export function getFeaturesByGuidPrefix(input: Feature[], prefix: string): Collection<Feature> | null;

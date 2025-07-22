@@ -3,9 +3,9 @@ import { combine, subscribeWithSelector } from 'zustand/middleware';
 import { createSelectors } from './createSelectors';
 import { FetchFeatureDataType } from "@type/FeatureOptions";
 import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
-import { featureUpdateLogs } from "@utils/history";
+import { featureUpdateLogs, getValueAtPath } from "@utils/history";
 import { convertFeatureToRecord, createFeature } from "@utils/feature";
-import { interpolateByOffset } from "@utils/interpolateByOffset";
+import { interpolateAndConvertToRecords, interpolateByOffset } from "@utils/interpolateByOffset";
 import { Feature } from "ol";
 import { applyDiffs, diffObjects, findParentRecordByFeatureType, findParentObjectOfGuid } from "@utils/json";
 
@@ -137,6 +137,31 @@ const createFeatureStore = <T>() =>
 
                                 return;
                             }
+                            // const items = current[key] ?? [];
+                            // const index = items.findIndex((item: any) => item.id === record.id);
+                            // const featureId = record.id;
+                            // // 신규 추가
+                            // if (index === -1) {
+                            //     const newItems = [ ...items, record ];
+                            //     const interpolatedRecords = interpolateAndConvertToRecords(newItems);
+                            //
+                            //     set({
+                            //         currentJsonData: {
+                            //             ...current,
+                            //             [key]: interpolatedRecords,
+                            //         },
+                            //         isChanged: true,
+                            //     });
+                            //
+                            //     if (historyStore) {
+                            //         featureUpdateLogs(historyStore, {
+                            //             featureId,
+                            //             updateType: "added",
+                            //             properties: record,
+                            //         });
+                            //     }
+                            //     return;
+                            // }
 
                             // fallback: 루트 삽입
                             const key = record.featureType;
@@ -151,11 +176,14 @@ const createFeatureStore = <T>() =>
                                 console.warn("이미 같은 guid가 존재함. 삽입 생략:", record.__guid);
                                 return;
                             }
-
+                            // // 변경 적용
+                            // const updatedItem = applyDiffs(existing, diffs);
+                            // console.log("updateCurrentJsonData updatedItem:::", updatedItem)
                             const newItems = [...items, record];
-                            const features = newItems.map(data => createFeature(data)).filter(f => f !== undefined) as Feature[];
-                            const interpolatedFeatures = interpolateByOffset(features);
-                            const interpolatedRecords = interpolatedFeatures.map(f => convertFeatureToRecord(f));
+                            // const newItems = [ ...items ];
+                            const interpolatedRecords = interpolateAndConvertToRecords(newItems);
+
+
 
                             set({
                                 currentJsonData: {
@@ -188,15 +216,25 @@ const createFeatureStore = <T>() =>
                                             if (guids.includes(item.__guid)) {
                                                 hasChanges = true;
 
-                                                // 삭제 이력 기록
-                                                if (historyStore) {
-                                                    const featureId = item.__guid;
-                                                    const properties = item;
-                                                    if (featureId && properties) {
-                                                        featureUpdateLogs(historyStore, {
-                                                            featureId,
-                                                            updateType: "deleted",
-                                                            properties,
+                                                const toBeDeleted = obj.filter(item => guids.includes(item.__guid));
+                                                const filtered = obj.filter(item => !guids.includes(item.__guid));
+
+                                                if (filtered.length !== obj.length) {
+                                                    hasChanges = true;
+
+                                                    // 삭제 이력 기록
+                                                    if (historyStore) {
+                                                        toBeDeleted.forEach(item => {
+                                                            const featureId = item.id;
+                                                            const properties = item;
+
+                                                            if (featureId && properties) {
+                                                                featureUpdateLogs(historyStore, {
+                                                                    featureId,
+                                                                    updateType: "deleted",
+                                                                    properties,
+                                                                });
+                                                            }
                                                         });
                                                     }
                                                 }

@@ -75,10 +75,18 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const historyStore = menuCodeToHistoryStoreMap[submenu.menuCode];
 
     const [currentJsonData, setCurrentJsonData] = useState(store.getState().currentJsonData);
+    const initCurrentData = store.getState().initCurrentData;
 
     const olEventManager = useEventStore.getState().olEventManager;
     const [drawGeometryType, setDrawGeometryType] = useState<GeometryType>(GeometryType.POINT)
 
+    const selectInteractionRef = useRef<Select | undefined>(undefined);
+    const selectedFeatureIdRef = useRef<[]>([]);
+    const snappedPropertiesRef = useRef<Record<string, string | number | undefined>>(undefined);
+
+    const [addedData, setAddedData] = useState<AddOptions>({})
+
+    const [isEditable, setIsEditable] = useState<boolean>(false)
     const [isDrawing, setIsDrawing] = useState<boolean>(false)
     const [isTypeSelect, setIsTypeSelect] = useState(false);
     const [onConfirm, setOnConfirm] = useState<((selected: string) => void) | null>(null);
@@ -86,14 +94,13 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-    const [selectedType, setSelectedType] = useState<string|undefined>(undefined)
+    const selectedDrawTypeRef = useRef<string | undefined>();
 
     const selectedScenario = useScenarioStore.getState().selectedScenario;
 
     const olMap = useOpenLayersStore.state.map()
 
     const [isMinimized, setIsMinimized] = useState(false);
-
 
 
     useEffect(() => {
@@ -163,11 +170,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         return olMap?.getLayers().getArray()
             .filter((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layerGroup"] === "facility");
     }, [olMap, submenu.menuCode]);
-    const selectedTypeRef = useRef<string | undefined>(undefined);
 
-    useEffect(() => {
-        selectedTypeRef.current = selectedType;
-    }, [selectedType]);
     useEffect(() => {
         clearSelected()
     }, [activeSubmenu]);
@@ -194,11 +197,11 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             const requiresType = menuDrawRequirements[submenu.menuCode]?.requiresType ?? false;
 
             const featureType = requiresType
-                ? selectedTypeRef.current ?? ''
+                ? selectedDrawTypeRef.current ?? ''
                 : (typeof layer.getFeatureType === 'function' ? layer.getFeatureType() ?? '' : '');
 
             if (!featureType) {
-                console.warn('featureType이 비어 있습니다. selectedType과 getFeatureType 모두 undefined');
+                console.warn('featureType이 비어 있습니다. selectedDrawTypeRef getFeatureType 모두 undefined');
             }
             const guid = generateGUIDWithType(featureType);
             e.feature.setProperties({
@@ -219,12 +222,12 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             if (typeof layer.recordToSnapProperties !== "function") {
                 console.warn("레이어 내부에 공통 메서드 recordToSnapProperties 작성 필요 ")
             }
-
             const snapProperties = snapFeature
-                ? layer.recordToSnapProperties(snapFeature.getProperties(), featureType)
+                ? layer.recordToSnapProperties(snapFeature.getProperties())
                 : undefined;
+
             // metadata 생성 (offset 포함)
-            const metadata = layer.computeMetadata(snapFeature, snapProperties, fromCoord);
+            const metadata = layer.computeMetadata(snapFeature, snapProperties, fromCoord, selectedDrawTypeRef.current);
 
             const dto = layer.snapPropertiesToDto(metadata, layer.recordToDto(drewProperties, featureType));
             store.getState().updateCurrentJsonData(dto, historyStore);
@@ -243,11 +246,11 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         if (!olEventManager || !layer) return;
 
         const onModifyEnd = (e: ModifyEvent) => {
-
             const features: Collection<Feature> = e.features;
             const modifiedIds = getValuesFromFeatures(features, "__guid")
-            const modifiedFeature = e.features.getArray()[0]
             setSelectedGuid(modifiedIds)
+
+            const modifiedFeature = e.features.getArray()[0]
             const {fromCoord} = getFromToCoordinates(modifiedFeature)
             if (typeof layer.recordToSnapProperties !== "function") {
                 console.error("레이어 내부에 공통 메서드 recordToSnapProperties 작성 필요 ")
@@ -271,6 +274,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
             const modifiedRecord = layer.recordToDto(modifiedFeature.getProperties(), featureType)
             const dto = layer.snapPropertiesToDto(metadata, modifiedRecord)
+            console.log("modify snappedProperties dto:::", dto)
             store.getState().updateCurrentJsonData(dto, historyStore);
         }
 
@@ -285,7 +289,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         return () => {
             olEventManager.unbind("modifyend", onModifyEnd);
         };
-    }, [layer, selectedGuid, selectedTypeRef.current]);
+    }, [layer, selectedGuid, selectedDrawTypeRef.current]);
 
     //select
     useEffect(() => {
@@ -397,7 +401,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             return;
         } else {
             openTypeSelectionModal(menuMeta.typeKey!, (type: string) => {
-                setSelectedType(type);
+                selectedDrawTypeRef.current = type;
                 setIsDrawing(true);
             });
         }
@@ -437,6 +441,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
             historyStore.getState().resetAllUpdates();
             setReloadFlag(prev => !prev);
+            console.log("저장 완료:",);
             alert("저장 완료")
         } catch (error) {
             console.error("저장 실패:", error);
@@ -444,7 +449,10 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         }
     }
 
-
+    const handleEditableBtn = () => {
+        setIsEditable(!isEditable);
+        // switchEditable(!isEditable);
+    }
 
     const handleInitBtn = () => {
         store.getState().initCurrentData()
@@ -488,11 +496,12 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         const flatRows = interpolated
             .map(f => convertFeatureToRecord(f))
             .filter(r => r.id !== undefined && !isNaN(Number(r.id)))
-            .sort((a, b) => Number(a.id) - Number(b.id));
+            .sort((a, b) => Number(a.id) - Number(b.id))
+            .map(({ geometry, ...rest }) => rest);
 
-        // store.getState().setCurrentJsonData({
-        //     pavementMarkings: flatRows,
-        // });
+        store.getState().setCurrentJsonData({
+            pavementMarkings: flatRows,
+        });
 
         alert(isUndo ? "Undo 성공" : "Redo 성공");
     };
