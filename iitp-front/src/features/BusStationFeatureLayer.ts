@@ -28,6 +28,7 @@ import WebGLVectorLayer from "ol/layer/WebGLVector";
 import BaseLayer from "ol/layer/Base";
 import { Coordinate } from "ol/coordinate";
 import GeometryType from "@type/FeatureOptions";
+import Geometry from "ol/geom/Geometry";
 
 export default class BusStationFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -129,13 +130,9 @@ export default class BusStationFeatureLayer extends VectorLayer {
                 });
 
                 added.forEach((item) => {
-                    console.log("add btn item:::", item)
                     const dto = this.recordToDto(item);
-                    console.log("add btn dto:::", dto)
                     const feature = this.createFeature(dto);
-                    console.log("add btn feature:::", feature)
                     src.addFeature(feature);
-                    console.log(`[추가] __guid: ${dto.__guid}`);
                 });
             });
         };
@@ -213,9 +210,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
      * 스토어의 DTO 배열로부터 피처 생성 후 source에 추가
      */
     public async load(): Promise<void> {
-        console.log("load busStation")
         const store = layerNameToStoreMap[this.LAYER_NAME];
-        console.log("store.getState().currentJsonData:::", store.getState().currentJsonData)
         const { busStations } = store.getState().currentJsonData;
 
         const source = this.source;
@@ -264,6 +259,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
             type: null,
             address: '',
             parkingLots: null,
+            menuCode: "BUS_STATION",
         };
 
         return dto;
@@ -362,31 +358,19 @@ export default class BusStationFeatureLayer extends VectorLayer {
      * offset 계산 로직
      */
     public computeMetadata(
-        baseLayer: VectorLayer | WebGLVectorLayer | BaseLayer,
+        targetFeature: Feature<Geometry>,
         basedProperties: Record<string, unknown> | undefined,
         fromCoord: Coordinate
     ): Record<string, unknown> {
-        const filter = { featureType: this.getSnapFeatureType() };
-        const features = getFeaturesByProperties(baseLayer, filter);
-        const feature = findFeatureByProperties(features, basedProperties);
-        const offset = getOffsetByCoordinate(feature, fromCoord);
+        const offset = getOffsetByCoordinate(targetFeature, fromCoord);
+        const [lng, lat] = toLonLat(fromCoord);
 
-        console.log("before snappedProperties compute:::", basedProperties);
+        const computeProperties: Record<string, unknown> = {
+            ...(basedProperties ?? {}),
+            offset: offset ?? null,
+            coordinates: lng != null && lat != null ? [{ lat, lng }] : [],
+        };
 
-        const computeProperties: Record<string, unknown> = {};
-        const [ lng, lat ] = toLonLat(fromCoord)
-
-        BUS_STATION_SNAP_FIELDS.forEach((key) => {
-            if (key === "offset") {
-                computeProperties[key] = offset ?? null;
-            } else if (key === "coordinates") {
-                computeProperties[key] = lng != null && lat != null ? [{ lat, lng }] : [];
-            } else {
-                computeProperties[key] = basedProperties?.[key] ?? null;
-            }
-        });
-
-        console.log("after snappedProperties compute:::", computeProperties);
         return computeProperties;
     }
 

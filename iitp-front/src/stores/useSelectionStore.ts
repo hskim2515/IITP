@@ -24,7 +24,7 @@ export const useSelectionStore = create<SelectionStore>((set, get) => ({
             const layerName = propertyFormSchema[activeSubmenu.menuCode].layer
             const viewer = useCesiumStore.getState().viewer;
             guids.forEach( guid =>{
-                viewer?.dataSources.getByName(layerName)[0].entities.values.forEach(entity => {
+                viewer?.dataSources?.getByName(layerName)[0]?.entities.values.forEach(entity => {
                     if(entity.id === guid) {
 
                         const blinkingColor = new Cesium.CallbackProperty((time) => {

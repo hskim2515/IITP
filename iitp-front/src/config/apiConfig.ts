@@ -33,6 +33,12 @@ export const apiConfig:ApiConfig = {
         create: {url: '/public-transit/station/bus', method: 'POST', useFormData: false },
         historyList: {url: '/public-transit/station/bus/history', method: 'GET', useFormData: false },
     },
+    RAIL_STATION: {
+        list: {url: '/public-transit/station/rail', method: 'GET', useFormData: false },
+        update: {url: '/public-transit/station/rail', method: 'POST', useFormData: false },
+        create: {url: '/public-transit/station/rail', method: 'POST', useFormData: false },
+        historyList: {url: '/public-transit/station/rail/history', method: 'GET', useFormData: false },
+    },
     NETWORK: {
         list: {url: '/network', method: 'GET', useFormData: false },
     },

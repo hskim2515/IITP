@@ -26,6 +26,7 @@ import { Coordinate } from "ol/coordinate";
 import { generateGUIDWithType } from "@utils/guid";
 import {interpolateByOffset} from "@utils/interpolateByOffset";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
+import Geometry from "ol/geom/Geometry";
 
 export class PavementMarkingFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -144,13 +145,9 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
                 });
 
                 added.forEach((item) => {
-                    console.log("add btn item:::", item)
                     const dto = this.recordToDto(item);
-                    console.log("add btn dto:::", dto)
                     const feature = this.createFeature(dto);
-                    console.log("add btn feature:::", feature)
                     src.addFeature(feature);
-                    console.log(`[추가] __guid: ${ dto.__guid }`);
                 });
             });
         };
@@ -164,9 +161,7 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
     }
 
     public async load(): Promise<void> {
-        console.log("load pavementMarking")
         const store = layerNameToStoreMap[this.LAYER_NAME];
-        console.log("store.getState().currentJsonData:::", store.getState().currentJsonData)
         const { pavementMarkings } = store.getState().currentJsonData;
 
         const source = this.source;
@@ -183,7 +178,6 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
      * DTO로부터 Point Feature와 속성을 생성
      */
     public createFeature(data: PavementMarkingData): Feature<Point> | undefined {
-        console.log("createFeature data:::", data);
 
         const props: PavementMarkingData = {
             ...data,
@@ -302,17 +296,12 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
     }
 
     public computeMetadata(
-        baseLayer: VectorLayer | WebGLVectorLayer | BaseLayer,
+        targetFeature: Feature<Geometry>,
         basedProperties: Record<string, unknown> | undefined,
         fromCoord: Coordinate,
         drawType?: String,
     ): Record<string, unknown> {
-        const filter = { featureType: this.getSnapFeatureType() };
-        const features = getFeaturesByProperties(baseLayer, filter);
-        const feature = findFeatureByProperties(features, basedProperties);
-        const offset = getOffsetByCoordinate(feature, fromCoord);
-
-        console.log("before snappedProperties compute:::", basedProperties);
+        const offset = getOffsetByCoordinate(targetFeature, fromCoord);
 
         const computeProperties: Record<string, unknown> = {};
         const [ lng, lat ] = toLonLat(fromCoord)
@@ -329,7 +318,6 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
             }
         });
 
-        console.log("after snappedProperties compute:::", computeProperties);
         return computeProperties;
     }
 

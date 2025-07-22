@@ -35,14 +35,14 @@ import {Select} from "ol/interaction";
 import {
     convertFeatureToRecord,
     createFeature,
-    filterFeaturesByKey,
-    getFromToCoordinates,
+    filterFeaturesByKey, getFeaturesByProperties,
+    getFromToCoordinates, getSnapFeature,
     getValuesFromFeatures
 } from "@utils/feature";
 import {generateGUIDWithType} from "@utils/guid";
-import {getSnapFeature} from "@utils/interaction";
 import Collection from "ol/Collection";
 import {faClose} from "@fortawesome/free-solid-svg-icons/faClose";
+import VectorSource from "ol/source/Vector";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTree
@@ -107,7 +107,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         const unsubscribe = store.subscribe(
             (state) => state.currentJsonData,
             (newJsonData) => {
-                console.log("currentJsonData 변경됨::", newJsonData);
                 setCurrentJsonData(newJsonData); // 갱신 트리거
             }
         );
@@ -155,8 +154,10 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const snapLayer = useMemo(() => {
         return olMap?.getLayers().getArray()
             .find((targetLayer: VectorLayer | BaseLayer | WebGLVectorLayer) => {
+                if(typeof layer.getSnapLayerKey!=="function") {
                     return targetLayer["layer"] === "network"
-                    // return targetLayer["layer"] === layer.getSnapLayerKey()
+                } else
+                    return targetLayer["layer"] === layer.getSnapLayerKey()
                 }
             );
     }, [olMap, submenu.menuCode, layer]);
@@ -186,38 +187,23 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         switchEditable
     } = useGrid(gridRef, store, historyStore, colDefs)
 
-    // const onDrawEnd = (e: DrawEvent) => {
-    //     const feature: Feature = e.feature;
-    //     const selected = 1;
-    //     feature.set("id", Date.now());
-    //     feature.set("selected", selected);
-    //     feature.changed();
-    //     const format = new GeoJSON({ featureProjection: 'EPSG:3857', dataProjection: 'EPSG:4326' });
-    //     const geojsonFeature = format.writeFeatureObject(feature);
-    //
-    //     const defaultGeometry = geojsonFeature.geometry;
-    //
-    //     saveModifiedFeatures([ feature ]);
-    //
-    //     const baseData = addedData?.baseData ?? {};
-    //     addRow({ baseData, defaultGeometry })
-    //     setIsDrawing(false)
-    // };
-
     useEffect(() => {
-        if (!olEventManager || !submenu.menuCode || !olMap || !layer) return;
+        if (!olEventManager || !submenu.menuCode || !olMap || !layer ) return;
 
         const onDrawEnd = (e: DrawEvent) => {
             setIsDrawing(false);
 
             const id = Date.now();
-            if (typeof layer.getFeatureType !== "function") {
-                console.error("레이어 내부에 공통 메서드 getFeatureType 작성 필요 ")
-                return
-            }
-            const featureType = layer.getFeatureType() || '';
-            const guid = generateGUIDWithType(featureType);
+            const requiresType = menuDrawRequirements[submenu.menuCode]?.requiresType ?? false;
 
+            const featureType = requiresType
+                ? selectedDrawTypeRef.current ?? ''
+                : (typeof layer.getFeatureType === 'function' ? layer.getFeatureType() ?? '' : '');
+
+            if (!featureType) {
+                console.warn('featureType이 비어 있습니다. selectedDrawTypeRef getFeatureType 모두 undefined');
+            }
+            const guid = generateGUIDWithType(featureType);
             e.feature.setProperties({
                 id,
                 __guid: guid
@@ -231,19 +217,19 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
             // snap
             const maxDistance = 10
-            const snapFeature = getSnapFeature(snapLayer, fromCoord, maxDistance)
+            const snapTargetFeatures = getFeaturesByProperties(snapLayer, {featureType: layer.getSnapFeatureType()})
+            const snapFeature = getSnapFeature(snapTargetFeatures, fromCoord, maxDistance)
             if (typeof layer.recordToSnapProperties !== "function") {
-                console.error("레이어 내부에 공통 메서드 recordToSnapProperties 작성 필요 ")
-                return
+                console.warn("레이어 내부에 공통 메서드 recordToSnapProperties 작성 필요 ")
             }
             const snapProperties = snapFeature
                 ? layer.recordToSnapProperties(snapFeature.getProperties())
                 : undefined;
 
             // metadata 생성 (offset 포함)
-            const metadata = layer.computeMetadata(snapLayer, snapProperties, fromCoord, selectedDrawTypeRef.current);
+            const metadata = layer.computeMetadata(snapFeature, snapProperties, fromCoord, selectedDrawTypeRef.current);
 
-            const dto = layer.snapPropertiesToDto(metadata, layer.recordToDto(drewProperties));
+            const dto = layer.snapPropertiesToDto(metadata, layer.recordToDto(drewProperties, featureType));
             store.getState().updateCurrentJsonData(dto, historyStore);
         };
 
@@ -256,19 +242,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         };
     }, [isDrawing, layer]);
 
-    // const onModifyEnd = useCallback((e: ModifyEvent) => {
-    //
-    //     const features: Feature[] = e.features.getArray();
-    //     saveModifiedFeatures(features);
-    //
-    //     const selected = 1;
-    //
-    //     features.forEach(feature => {
-    //         feature.set("selected", selected);
-    //         feature.changed();
-    //     });
-    //
-    // }, []);
     useEffect(() => {
         if (!olEventManager || !layer) return;
 
@@ -285,15 +258,21 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             }
             // snap
             const maxDistance = 10
-            const snapFeature = getSnapFeature(snapLayer, fromCoord, maxDistance)
+            const snapTargetFeatures = getFeaturesByProperties(snapLayer, {featureType: layer.getSnapFeatureType()})
+            const snapFeature = getSnapFeature(snapTargetFeatures, fromCoord, maxDistance)
+
+            const featureType = modifiedFeature.get("featureType")
+
+            if (!featureType) {
+                console.warn('featureType이 비어 있습니다.');
+            }
             const snapProperties = snapFeature
-                ? layer.recordToSnapProperties(snapFeature.getProperties())
+                ? layer.recordToSnapProperties(snapFeature.getProperties(), featureType)
                 : undefined;
 
-            const metadata = layer.computeMetadata(snapLayer, snapProperties, fromCoord)
+            const metadata = layer.computeMetadata(snapFeature, snapProperties, fromCoord)
 
-            console.log("modify snappedProperties mergedSnapProps:::", metadata)
-            const modifiedRecord = layer.recordToDto(modifiedFeature.getProperties())
+            const modifiedRecord = layer.recordToDto(modifiedFeature.getProperties(), featureType)
             const dto = layer.snapPropertiesToDto(metadata, modifiedRecord)
             console.log("modify snappedProperties dto:::", dto)
             store.getState().updateCurrentJsonData(dto, historyStore);
@@ -304,20 +283,19 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             features: selectedFeatures,
         };
 
-        if (isEditable) {
+
             olEventManager.bind("modifyend", onModifyEnd, options);
-        }
+
         return () => {
             olEventManager.unbind("modifyend", onModifyEnd);
         };
-    }, [isEditable, layer, selectedGuid]);
+    }, [layer, selectedGuid, selectedDrawTypeRef.current]);
 
     //select
     useEffect(() => {
         if (!olEventManager || !layer) return;
         const onSelect = (e: SelectEvent) => {
             const features: Collection<Feature> = e.target.getFeatures()
-            console.log("selected features:::", features)
             const selectedIds = getValuesFromFeatures(features, "__guid")
             setSelectedGuid(selectedIds)
         };
@@ -333,22 +311,35 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     //snap
     useEffect(() => {
-        if (!olEventManager || !snapLayer) return
+        if (!olEventManager || !snapLayer || !layer) return
         const onSnap = (e: any) => {
         };
 
-        const features = new Collection<Feature>(snapLayer.getSource().getFeatures())
+        const features:Feature[] = snapLayer.getSource().getFeatures()
 
-        const options = {
-            features
-        };
+        if(typeof layer.getSnapFeatureType !== "function") {
+            const featureCollection = new Collection<Feature>(features)
+            console.error("getSnapFeatureType 이 없음")
+            const options = {
+                features: featureCollection
+            };
 
-        olEventManager.bind("snap", onSnap, options);
+            olEventManager.bind("snap", onSnap, options);
+        } else {
+            const featureCollection = getFeaturesByProperties(features, {featureType: layer.getSnapFeatureType()})
+
+            const options = {
+                features: featureCollection
+            };
+
+            olEventManager.bind("snap", onSnap, options);
+        }
+
 
         return () => {
             olEventManager.unbind("snap", onSnap);
         };
-    }, [isDrawing, isEditable, snapLayer, selectedGuid]);
+    }, [isDrawing, snapLayer, selectedGuid, layer]);
 
     const handleCheck = () => {
         console.log("체크한 row:", gridRef.current?.getSelectedRow());
@@ -527,7 +518,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                             <button className="save-btn" onClick={() => handleSaveBtn()}>저장</button>
                             <button className="save-btn" onClick={() => handleInitBtn()}>되돌리기</button>
                             <HistoryController onHistoryAply={handleHistoryApply}></HistoryController>
-                            <button className="edit-btn" onClick={() => handleEditableBtn()}>그리드 편집활성화</button>
                             <button onClick={() => handleCheck()}>Interaction 객체 목록 디버깅</button>
                             <button className="btn" onClick={() => handleShowHistory()}>변경 이력 보기</button>
                         </div>
@@ -579,7 +569,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                                                     <JsonGrid rowData={value} levelName={key}
                                                               layerName={submenu.item.layer}
                                                               layerGroupName={"facility"}
-                                                              editable={isEditable}
                                                     />
                                                 )}
                                             </div>

@@ -2,12 +2,12 @@ import { create } from 'zustand';
 import { combine, subscribeWithSelector } from 'zustand/middleware';
 import { createSelectors } from './createSelectors';
 import { FetchFeatureDataType } from "@type/FeatureOptions";
-import { applyDiffs, diffObjects } from "@utils/json";
 import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
-import {featureUpdateLogs, getValueAtPath} from "@utils/history";
-import {convertFeatureToRecord, createFeature} from "@utils/feature";
-import {interpolateAndConvertToRecords, interpolateByOffset} from "@utils/interpolateByOffset";
-import {Feature} from "ol";
+import { featureUpdateLogs, getValueAtPath } from "@utils/history";
+import { convertFeatureToRecord, createFeature } from "@utils/feature";
+import { interpolateAndConvertToRecords, interpolateByOffset } from "@utils/interpolateByOffset";
+import { Feature } from "ol";
+import { applyDiffs, diffObjects, findParentRecordByFeatureType, findParentObjectOfGuid } from "@utils/json";
 
 export interface FeatureStoreFactoryType {
     getState: () => State & Actions;
@@ -50,38 +50,80 @@ const createFeatureStore = <T>() =>
         create<State<T> & Actions<T>>(
             subscribeWithSelector(
                 combine(initialState, (set, get) => ({
-                        setOriginData: (data: FetchFeatureDataType<T>) => set({ originData: data }),
+                        setOriginData: (data: FetchFeatureDataType<T>) => set({originData: data}),
                         setCurrentJsonData: (data: FetchFeatureDataType<T>) => {
-                            set({ currentJsonData: structuredClone(data) });
+                            set({currentJsonData: structuredClone(data)});
                         },
                         setCurrentGeojson: (geojson: Record<string, unknown>) => {
-                            set({ currentGeojson: { ...geojson } })
+                            set({currentGeojson: {...geojson}})
                         },
                         updateCurrentJsonData: (record, historyStore) => {
-                            const current = get().currentJsonData;
-                            const key = record.featureType;
+                            function getValueAtPath(obj: any, path: string[]) {
+                                return path.reduce((acc, key) => (acc && acc[key] !== undefined) ? acc[key] : undefined, obj);
+                            }
 
-                            if (!key || typeof key !== "string") {
-                                console.warn("featureType이 유효하지 않습니다.");
-                                console.warn(record)
-                                console.warn(key)
+                            const current = get().currentJsonData;
+                            if (!record || typeof record !== "object" || !record.__guid) return;
+
+                            const featureId = record.__guid;
+                            const updatedFlag = {updated: false};
+
+                            function deepUpdateByGuid(obj: any, record: any): any {
+                                if (Array.isArray(obj)) {
+                                    return obj.map(item => deepUpdateByGuid(item, record));
+                                } else if (typeof obj === "object" && obj !== null) {
+                                    if (obj.__guid === record.__guid) {
+                                        const diffs = diffObjects(obj, record);
+                                        if (diffs.length === 0) return obj;
+
+                                        const updatedItem = applyDiffs(obj, diffs);
+                                        updatedFlag.updated = true;
+
+                                        if (historyStore) {
+                                            for (const diff of diffs) {
+                                                const field = diff.path.join(".");
+                                                const oldValue = getValueAtPath(obj, diff.path);
+                                                const newValue = diff.value;
+
+                                                featureUpdateLogs(historyStore, {
+                                                    featureId: record.__guid,
+                                                    updateType: "modified",
+                                                    field,
+                                                    oldValue,
+                                                    newValue,
+                                                });
+                                            }
+                                        }
+
+                                        return updatedItem;
+                                    }
+
+                                    const newObj: Record<string, any> = {};
+                                    for (const [key, value] of Object.entries(obj)) {
+                                        newObj[key] = deepUpdateByGuid(value, record);
+                                    }
+                                    return newObj;
+                                }
+
+                                return obj;
+                            }
+
+                            const cloned = structuredClone(current);
+                            let updatedJson = deepUpdateByGuid(cloned, record);
+
+                            if (updatedFlag.updated) {
+                                set({currentJsonData: updatedJson, isChanged: true});
                                 return;
                             }
 
-                            const items = current[key] ?? [];
-                            const index = items.findIndex((item: any) => item.id === record.id);
-                            const featureId = record.id;
-
-                            // 신규 추가
-                            if (index === -1) {
-                                const newItems = [ ...items, record ];
-                                const interpolatedRecords = interpolateAndConvertToRecords(newItems);
+                            // 구조 기반 부모 찾기
+                            const container = findParentRecordByFeatureType(updatedJson, record);
+                            if (container) {
+                                const {parent, key} = container;
+                                parent[key].push(record);
 
                                 set({
-                                    currentJsonData: {
-                                        ...current,
-                                        [key]: interpolatedRecords,
-                                    },
+                                    currentJsonData: updatedJson,
                                     isChanged: true,
                                 });
 
@@ -92,27 +134,56 @@ const createFeatureStore = <T>() =>
                                         properties: record,
                                     });
                                 }
+
+                                return;
+                            }
+                            // const items = current[key] ?? [];
+                            // const index = items.findIndex((item: any) => item.id === record.id);
+                            // const featureId = record.id;
+                            // // 신규 추가
+                            // if (index === -1) {
+                            //     const newItems = [ ...items, record ];
+                            //     const interpolatedRecords = interpolateAndConvertToRecords(newItems);
+                            //
+                            //     set({
+                            //         currentJsonData: {
+                            //             ...current,
+                            //             [key]: interpolatedRecords,
+                            //         },
+                            //         isChanged: true,
+                            //     });
+                            //
+                            //     if (historyStore) {
+                            //         featureUpdateLogs(historyStore, {
+                            //             featureId,
+                            //             updateType: "added",
+                            //             properties: record,
+                            //         });
+                            //     }
+                            //     return;
+                            // }
+
+                            // fallback: 루트 삽입
+                            const key = record.featureType;
+                            if (!key || typeof key !== "string") {
+                                console.warn("featureType이 유효하지 않음", record);
                                 return;
                             }
 
-                            const existing = items[index];
-                            console.log("updateCurrentJsonData existing:::", existing)
-                            // 변경된 속성 추출
-                            const diffs = diffObjects(existing, record);
-                            console.log("updateCurrentJsonData diffs:::", diffs)
-                            if (diffs.length === 0) {
-                                console.log("변경된 속성이 없음. 상태 업데이트 생략");
+                            const items = current[key] ?? [];
+
+                            if (items.some(item => item?.__guid === record.__guid)) {
+                                console.warn("이미 같은 guid가 존재함. 삽입 생략:", record.__guid);
                                 return;
                             }
-
-                            // 변경 적용
-                            const updatedItem = applyDiffs(existing, diffs);
-                            console.log("updateCurrentJsonData updatedItem:::", updatedItem)
-                            const newItems = [ ...items ];
-                            console.log("updateCurrentJsonData newItems:::", newItems)
-                            newItems[index] = updatedItem;
-
+                            // // 변경 적용
+                            // const updatedItem = applyDiffs(existing, diffs);
+                            // console.log("updateCurrentJsonData updatedItem:::", updatedItem)
+                            const newItems = [...items, record];
+                            // const newItems = [ ...items ];
                             const interpolatedRecords = interpolateAndConvertToRecords(newItems);
+
+
 
                             set({
                                 currentJsonData: {
@@ -121,88 +192,81 @@ const createFeatureStore = <T>() =>
                                 },
                                 isChanged: true,
                             });
-                            if (historyStore) {
-                                for (const diff of diffs) {
-                                    const field = diff.path.join(".");
-                                    const oldValue = getValueAtPath(existing, diff.path);
-                                    const newValue = diff.value;
 
-                                    featureUpdateLogs(historyStore, {
-                                        featureId,
-                                        updateType: "modified",
-                                        field,
-                                        oldValue,
-                                        newValue,
-                                    });
-                                }
+                            if (historyStore) {
+                                featureUpdateLogs(historyStore, {
+                                    featureId,
+                                    updateType: "added",
+                                    properties: record,
+                                });
                             }
                         },
-                    removeRecordsByGuid: (guids: (string | number)[], historyStore) => {
-                        const current = get().currentJsonData as Record<string, any>;
-                        if (!current) return;
 
-                        let hasChanges = false;
+                        removeRecordsByGuid: (guids: (string | number)[], historyStore) => {
+                            const current = get().currentJsonData as Record<string, any>;
+                            if (!current) return;
 
-                        function deepRemove(obj: any): any {
-                            if (Array.isArray(obj)) {
-                                const result = [];
-                                for (const item of obj) {
-                                    if (typeof item === "object" && item !== null && "__guid" in item) {
-                                        if (guids.includes(item.__guid)) {
-                                            hasChanges = true;
+                            let hasChanges = false;
 
-                                            const toBeDeleted = obj.filter(item => guids.includes(item.__guid));
-                                            const filtered = obj.filter(item => !guids.includes(item.__guid));
-
-                                            if (filtered.length !== obj.length) {
+                            function deepRemove(obj: any): any {
+                                if (Array.isArray(obj)) {
+                                    const result = [];
+                                    for (const item of obj) {
+                                        if (typeof item === "object" && item !== null && "__guid" in item) {
+                                            if (guids.includes(item.__guid)) {
                                                 hasChanges = true;
 
-                                                // 삭제 이력 기록
-                                                if (historyStore) {
-                                                    toBeDeleted.forEach(item => {
-                                                        const featureId = item.id;
-                                                        const properties = item;
+                                                const toBeDeleted = obj.filter(item => guids.includes(item.__guid));
+                                                const filtered = obj.filter(item => !guids.includes(item.__guid));
 
-                                                        if (featureId && properties) {
-                                                            featureUpdateLogs(historyStore, {
-                                                                featureId,
-                                                                updateType: "deleted",
-                                                                properties,
-                                                            });
-                                                        }
-                                                    });
+                                                if (filtered.length !== obj.length) {
+                                                    hasChanges = true;
+
+                                                    // 삭제 이력 기록
+                                                    if (historyStore) {
+                                                        toBeDeleted.forEach(item => {
+                                                            const featureId = item.id;
+                                                            const properties = item;
+
+                                                            if (featureId && properties) {
+                                                                featureUpdateLogs(historyStore, {
+                                                                    featureId,
+                                                                    updateType: "deleted",
+                                                                    properties,
+                                                                });
+                                                            }
+                                                        });
+                                                    }
                                                 }
+                                                continue; // 삭제
                                             }
-                                            continue; // 삭제
                                         }
+                                        result.push(deepRemove(item));
                                     }
-                                    result.push(deepRemove(item));
+                                    return result;
+                                } else if (typeof obj === "object" && obj !== null) {
+                                    const newObj: Record<string, any> = {};
+                                    for (const [key, value] of Object.entries(obj)) {
+                                        newObj[key] = deepRemove(value);
+                                    }
+                                    return newObj;
+                                } else {
+                                    return obj; // primitive
                                 }
-                                return result;
-                            } else if (typeof obj === "object" && obj !== null) {
-                                const newObj: Record<string, any> = {};
-                                for (const [key, value] of Object.entries(obj)) {
-                                    newObj[key] = deepRemove(value);
-                                }
-                                return newObj;
-                            } else {
-                                return obj; // primitive
                             }
-                        }
 
-                        const updated = deepRemove(current);
+                            const updated = deepRemove(current);
 
-                        if (hasChanges) {
-                            set({
-                                currentJsonData: updated,
-                                isChanged: true,
-                            });
-                        }
-                    },
+                            if (hasChanges) {
+                                set({
+                                    currentJsonData: updated,
+                                    isChanged: true,
+                                });
+                            }
+                        },
 
-
-                        setFlatRow: (flatRow: Record<string, unknown>[]) => set({ flatRow: flatRow }),
-                        setChange: (changed: boolean) => set({ isChanged: changed }),
+                        setFlatRow: (flatRow: Record<string, unknown>[]) => set({flatRow: flatRow}),
+                        setChange: (changed: boolean) => set({isChanged: changed}),
                         initCurrentData: () => {
                             if (origin) set({
                                 currentJsonData: get().originData,

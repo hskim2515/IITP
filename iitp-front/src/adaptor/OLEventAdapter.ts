@@ -42,12 +42,9 @@ export class OLEventAdapter implements EventAdapter {
         this.interactionMap.set(interactionType, interaction);
         const key = interaction.on(eventType, (e) => callback(e));
         this.interactionHandlers.set(eventType, key);
-
-        console.log('[register] interaction:', interactionType, 'eventType:', eventType, 'key:', key);
     }
 
     unregister(eventType: string): void {
-        console.log("[register] interaction [unregister]")
         const interactionType = this.getInteractionType(eventType);
 
         if (!interactionType) {
@@ -124,8 +121,6 @@ export class OLEventAdapter implements EventAdapter {
                 break;
             }
         }
-
-        console.log("interaction:::", interaction)
         return interaction;
     }
     // 추후 redo&undo 에 활용

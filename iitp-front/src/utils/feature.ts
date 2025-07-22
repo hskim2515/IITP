@@ -7,6 +7,7 @@ import BaseLayer from "ol/layer/Base";
 import Geometry from "ol/geom/Geometry";
 import { LineString, Point, Polygon } from "ol/geom";
 import { Coordinate } from "ol/coordinate";
+import { getDistance } from "ol/sphere";
 import {fromLonLat, toLonLat} from "ol/proj";
 
 export interface PositionOnGeometry {
@@ -136,10 +137,9 @@ export function getValuesFromFeatures<T = unknown>(
 
 function extractFeaturesFromInput(input: Feature[]): Feature[] | null;
 function extractFeaturesFromInput(input: Collection<Feature>): Feature[] | null;
-function extractFeaturesFromInput(input: VectorSource | VectorLayer | WebGLVectorLayer | BaseLayer): Feature[] | null;
-function extractFeaturesFromInput(
-    input: Feature[] | Collection<Feature> | VectorSource | VectorLayer | WebGLVectorLayer | BaseLayer | undefined
-): Feature[] | null {
+function extractFeaturesFromInput(input: VectorSource): Feature[] | null;
+function extractFeaturesFromInput(input: VectorLayer | WebGLVectorLayer | BaseLayer): Feature[] | null;
+function extractFeaturesFromInput(input: Feature[] | Collection<Feature> | VectorSource | VectorLayer | WebGLVectorLayer | BaseLayer | undefined): Feature[] | null {
     if (!input) return null;
 
     if (Array.isArray(input)) {
@@ -260,10 +260,16 @@ export function getOffsetByCoordinate(
     input: Geometry | Feature | undefined,
     coordinate: Coordinate
 ): number | null {
-    console.log("snapFeature:::", input)
     if (!input || !coordinate) return null;
 
-    const geometry = input instanceof Feature ? input.getGeometry() : input;
+    let geometry;
+    if(input instanceof Feature) {
+        geometry = input.getGeometry()
+    } else if (input instanceof Geometry) {
+        geometry = input
+    } else {
+        console.log("getOffsetByCoordinate typeof input:::", typeof input)
+    }
     if (!geometry) return null;
 
     const pos = getPositionByCoordinate(geometry, coordinate);
@@ -279,21 +285,8 @@ export function findFeatureByProperties(
 ): Feature | null {
     if (!input || !properties) return null;
 
-    let features: Feature[] = [];
-
-    if (input instanceof Collection) {
-        features = input.getArray();
-    } else if (input instanceof VectorSource) {
-        features = input.getFeatures();
-    } else if (
-        input instanceof VectorLayer ||
-        input instanceof WebGLVectorLayer ||
-        input instanceof BaseLayer
-    ) {
-        const source = input.getSource?.();
-        if (!source || !(source instanceof VectorSource)) return null;
-        features = source.getFeatures();
-    }
+    const features = extractFeaturesFromInput(input)
+    if (!features) return null;
 
     return features.find((feature) =>
         Object.entries(properties).every(([ key, value ]) => feature.get(key) == value)
@@ -309,23 +302,8 @@ export function getFeaturesByProperties(
 ): Collection<Feature> | null {
     if (!input || !properties) return null;
 
-    let features: Feature[] = [];
-
-    if (Array.isArray(input)) {
-        features = input;
-    } else if (input instanceof VectorSource) {
-        features = input.getFeatures();
-    } else if (
-        input instanceof VectorLayer ||
-        input instanceof WebGLVectorLayer ||
-        input instanceof BaseLayer
-    ) {
-        const source = input.getSource?.();
-        if (!source || !(source instanceof VectorSource)) return null;
-        features = source.getFeatures();
-    } else {
-        return null;
-    }
+    const features = extractFeaturesFromInput(input)
+    if (!features) return null;
 
     const matchedArray = features.filter((feature: Feature) =>
         Object.entries(properties).every(
@@ -350,23 +328,8 @@ export function filterFeaturesByKey(
         return new Collection<Feature>([]);
     }
 
-    let features: Feature[] = [];
-
-    if (Array.isArray(input)) {
-        features = input;
-    } else if (input instanceof Collection) {
-        features = input.getArray();
-    } else if (input instanceof VectorSource) {
-        features = input.getFeatures();
-    } else if (
-        input instanceof VectorLayer ||
-        input instanceof WebGLVectorLayer ||
-        input instanceof BaseLayer
-    ) {
-        const source = input.getSource?.();
-        if (!source || !(source instanceof VectorSource)) return new Collection<Feature>([]);
-        features = source.getFeatures();
-    }
+    const features = extractFeaturesFromInput(input)
+    if (!features) return new Collection<Feature>([]);
 
     const matched = features.filter((feature) => {
         const raw = feature.getProperties() as any;
@@ -419,4 +382,40 @@ export function getFeaturesByGuidPrefix(
     });
 
     return new Collection<Feature>(matchedArray)
+}
+
+
+// snap
+export function findNearestFeature(
+    features: Feature[],
+    targetCoord: Coordinate,
+    maxDistance: number = 10
+): Feature | null {
+    if(!features) return null;
+    let closest: Feature | null = null;
+    let minDistance = Infinity;
+    for (const feature of features) {
+        const geom = feature.getGeometry();
+        if (!geom) continue;
+
+        const closestCoord = geom.getClosestPoint(targetCoord);
+        const distance = getDistance(closestCoord, targetCoord);
+
+        if (distance < minDistance && distance <= maxDistance) {
+            closest = feature;
+            minDistance = distance;
+        }
+    }
+
+    return closest;
+}
+
+export function getSnapFeature(input: Feature[],  targetCoord: Coordinate | null,maxDistance: number):Feature<Geometry> | null;
+export function getSnapFeature(input: Feature<Geometry>,  targetCoord: Coordinate | null,maxDistance: number):Feature<Geometry> | null;
+export function getSnapFeature(input: VectorSource, targetCoord: Coordinate | null,maxDistance: number):Feature<Geometry> | null;
+export function getSnapFeature(input: VectorLayer | WebGLVectorLayer | BaseLayer, targetCoord: Coordinate | null, maxDistance: number):Feature<Geometry> | null;
+export function getSnapFeature(input: VectorSource | VectorLayer | WebGLVectorLayer | BaseLayer | undefined , targetCoord: Coordinate | null,maxDistance: number):Feature<Geometry> | null{
+    if(!targetCoord) return null;
+    const features = extractFeaturesFromInput(input)
+    return findNearestFeature(features, targetCoord, maxDistance);
 }
