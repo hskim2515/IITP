@@ -277,9 +277,7 @@ export class LayerManager {
 
             const CesiumLayerClass = classRegistry[`${ pascalKey }DataSourceLayer`];
             const OLFeatureLayerClass = classRegistry[`${ pascalKey }FeatureLayer`];
-            console.log("add facilityGroup layerName:::", layerName)
-            console.log("add facilityGroup pascalKey:::", pascalKey)
-            console.log("add facilityGroup OLFeatureLayerClass:::", OLFeatureLayerClass)
+
 
             const layerGroup = this.layerGroups.get(groupName) || {};
             if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
@@ -287,10 +285,7 @@ export class LayerManager {
             if (OLFeatureLayerClass) {
                 // OpenLayers 처리
                 const olLayer = new OLFeatureLayerClass();
-                console.log("add OLFeatureLayerClass:::", OLFeatureLayerClass)
                 const layers = this.vectorLayerManager.add(olLayer, groupName, layerName, basic);
-                console.log("add layers:::", layers)
-                console.log("add layerName:::", layerName)
                 const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
                 layers.forEach((layer: BaseLayer) => {
                     if (!vectorLayers.includes(layer)) {

@@ -7,18 +7,21 @@ import {HistoryStoreFactoryType} from "@stores/useHistoryStoreFactory";
 import {useScenarioStore} from "@stores/useScenarioStore";
 import {useNetworkHistoryStore} from "@stores/useNetworkStore";
 import {useBusStationHistoryStore} from "@stores/useBusStationStore";
+import { useRailStationHistoryStore } from "@stores/useRailStationStore";
 
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToHistoryStoreMap: Record<string, HistoryStoreFactoryType> = {
     // menuCode: store
     NETWORK: useNetworkHistoryStore,
     BUS_STATION: useBusStationHistoryStore,
+    RAIL_STATION: useRailStationHistoryStore,
     PAVEMENT_MARKING: usePavementMarkingHistoryStore,
 }
 export const layerNameToHistoryStoreMap: Record<string, HistoryStoreFactoryType> = {
     // layerName: store
     network: useNetworkHistoryStore,
     busStation: useBusStationHistoryStore,
+    railStation: useRailStationHistoryStore,
     pavementMarking: usePavementMarkingHistoryStore,
 }
 

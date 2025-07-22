@@ -144,8 +144,9 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         ],
         rowFields: []
     },
-    PT_RAIL_STATION: {
+    RAIL_STATION: {
         type:"table",
+        layer: "railStation",
         fields: [
             { name: "id", label: "id", type: "number" },
             { name: "transitMode", label: "대중교통 수단", type: "text" },

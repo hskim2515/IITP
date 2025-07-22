@@ -19,12 +19,14 @@ import {useLayerSchemaStore} from "@stores/useLayerSchemaStore";
 import {assignPropertyToResponseData} from "@utils/guid";
 import {usePavementMarkingStore} from "@stores/usePavementMarkingStore";
 import { useBusStationStore } from "@stores/useBusStationStore";
+import { useRailStationStore } from "@stores/useRailStationStore";
 
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToStoreMap: Record<string, FeatureStoreFactoryType> = {
     // menuCode: store
     NETWORK: useNetworkStore,
     BUS_STATION: useBusStationStore,
+    RAIL_STATION: useRailStationStore,
     PAVEMENT_MARKING: usePavementMarkingStore,
 }
 
@@ -32,6 +34,7 @@ export const layerNameToStoreMap: Record<string, FeatureStoreFactoryType> = {
     // layerName: store
     network: useNetworkStore,
     busStation: useBusStationStore,
+    railStation: useRailStationStore,
     pavementMarking: usePavementMarkingStore,
 }
 
