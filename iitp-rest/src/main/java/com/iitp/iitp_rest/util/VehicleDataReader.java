@@ -1,6 +1,7 @@
 package com.iitp.iitp_rest.util;
 
-import com.iitp.iitp_rest.model.VehicleState;
+import com.iitp.iitp_rest.model.VehicleEvent;
+import com.iitp.iitp_rest.model.VehicleInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -12,6 +13,7 @@ import java.sql.*;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+
 
 @Component
 public class VehicleDataReader {
@@ -39,9 +41,9 @@ public class VehicleDataReader {
         return tempDbFile;
     }
 
-
-    public List<VehicleState> readLimited(int numVehicles) {
-        List<VehicleState> vehicleList = new ArrayList<>();
+    // vehicle_event
+    public List<VehicleEvent> readLimitedByVehicleEvent(int numVehicles) {
+        List<VehicleEvent> vehicleEventList = new ArrayList<>();
 
         try {
             File tempDbFile = prepareDbFile();
@@ -55,7 +57,7 @@ public class VehicleDataReader {
                 stmt.execute(attachSQL);
 
                 List<String> limitedIds = new ArrayList<>();
-                String idQuery = "SELECT DISTINCT id FROM vehicle_sim_db.vehicle_sim LIMIT ?";
+                String idQuery = "SELECT DISTINCT id FROM vehicle_sim_db.vehicle_event LIMIT ?";
                 try (PreparedStatement pstmt = conn.prepareStatement(idQuery)) {
                     pstmt.setInt(1, numVehicles);
                     try (ResultSet rs = pstmt.executeQuery()) {
@@ -65,11 +67,13 @@ public class VehicleDataReader {
                     }
                 }
 
-                if (limitedIds.isEmpty()) return vehicleList;
+                if (limitedIds.isEmpty()) return vehicleEventList;
 
                 String inClause = String.join(",", Collections.nCopies(limitedIds.size(), "?"));
-                String dataQuery = "SELECT id, timestep, link_id, lane_id, pos_x, pos_y " +
-                        "FROM vehicle_sim_db.vehicle_sim WHERE id IN (" + inClause + ")";
+                String dataQuery = """
+                SELECT id, timestep, link_id, lane_id, pos_x, pos_y, speed, acc, spacing, driveMode, leaderId, targetlaneId
+                FROM vehicle_sim_db.vehicle_event
+                WHERE id IN (""" + inClause + ")";
                 try (PreparedStatement pstmt = conn.prepareStatement(dataQuery)) {
                     for (int i = 0; i < limitedIds.size(); i++) {
                         pstmt.setString(i + 1, limitedIds.get(i));
@@ -77,14 +81,20 @@ public class VehicleDataReader {
 
                     try (ResultSet rs = pstmt.executeQuery()) {
                         while (rs.next()) {
-                            VehicleState v = new VehicleState();
+                            VehicleEvent v = new VehicleEvent();
                             v.setId(rs.getString("id"));
-                            v.setTimestep(rs.getFloat("timestep"));
+                            v.setTimestep(rs.getDouble("timestep"));
                             v.setLinkId(rs.getString("link_id"));
                             v.setLaneId(rs.getString("lane_id"));
                             v.setPosX(rs.getFloat("pos_x"));
                             v.setPosY(rs.getFloat("pos_y"));
-                            vehicleList.add(v);
+                            v.setSpeed(rs.getFloat("speed"));
+                            v.setAcc(rs.getFloat("acc"));
+                            v.setSpacing(rs.getString("spacing"));
+                            v.setDriveMode(rs.getString("driveMode"));
+                            v.setLeaderId(rs.getString("leaderId"));
+                            v.setTargetlaneId(rs.getString("targetlaneId"));
+                            vehicleEventList.add(v);
                         }
                     }
                 }
@@ -93,6 +103,72 @@ public class VehicleDataReader {
             logger.error("Error while reading limited vehicle data", e);
         }
 
-        return vehicleList;
+        return vehicleEventList;
     }
+
+    // vehicle_info
+    public List<VehicleInfo> readLimitedByVehicleInfo(int numVehicles) {
+        List<VehicleInfo> vehicleInfoList = new ArrayList<>();
+
+        try {
+            File tempDbFile = prepareDbFile();
+            tempDbFile.deleteOnExit();
+
+            String memoryUrl = "jdbc:sqlite::memory:";
+            try (Connection conn = DriverManager.getConnection(memoryUrl);
+                 Statement stmt = conn.createStatement()) {
+
+                String attachSQL = "ATTACH DATABASE '" + tempDbFile.getAbsolutePath() + "' AS vehicle_sim_db";
+                stmt.execute(attachSQL);
+
+                List<String> limitedIds = new ArrayList<>();
+                String idQuery = "SELECT DISTINCT id FROM vehicle_sim_db.vehicle_info LIMIT ?";
+                try (PreparedStatement pstmt = conn.prepareStatement(idQuery)) {
+                    pstmt.setInt(1, numVehicles);
+                    try (ResultSet rs = pstmt.executeQuery()) {
+                        while (rs.next()) {
+                            limitedIds.add(rs.getString("id"));
+                        }
+                    }
+                }
+
+                if (limitedIds.isEmpty()) return vehicleInfoList;
+
+                String inClause = String.join(",", Collections.nCopies(limitedIds.size(), "?"));
+                String dataQuery = """
+            SELECT id, type, origin, destination, length, width, maxSpeed, maxAcc, maxDec, jamGap, reactionTime
+            FROM vehicle_sim_db.vehicle_info
+            WHERE id IN (""" + inClause + ")";
+
+                try (PreparedStatement pstmt = conn.prepareStatement(dataQuery)) {
+                    for (int i = 0; i < limitedIds.size(); i++) {
+                        pstmt.setString(i + 1, limitedIds.get(i));
+                    }
+
+                    try (ResultSet rs = pstmt.executeQuery()) {
+                        while (rs.next()) {
+                            VehicleInfo v = new VehicleInfo();
+                            v.setId(rs.getInt("id"));
+                            v.setType(rs.getString("type"));
+                            v.setOrigin(rs.getString("origin"));
+                            v.setDestination(rs.getString("destination"));
+                            v.setLength(rs.getDouble("length"));
+                            v.setWidth(rs.getDouble("width"));
+                            v.setMaxSpeed(rs.getDouble("maxSpeed"));
+                            v.setMaxAcc(rs.getDouble("maxAcc"));
+                            v.setMaxDec(rs.getDouble("maxDec"));
+                            v.setJamGap(rs.getDouble("jamGap"));
+                            v.setReactionTime(rs.getDouble("reactionTime"));
+                            vehicleInfoList.add(v);
+                        }
+                    }
+                }
+            }
+        } catch (SQLException | IOException e) {
+            logger.error("Error while reading limited vehicle info data", e);
+        }
+
+        return vehicleInfoList;
+    }
+
 }

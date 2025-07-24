@@ -3,23 +3,23 @@ package com.iitp.iitp_rest.controller;
 import com.iitp.iitp_rest.model.Network;
 import com.iitp.iitp_rest.model.Road;
 import com.iitp.iitp_rest.model.Vehicle;
-import com.iitp.iitp_rest.model.VehicleState;
+import com.iitp.iitp_rest.model.VehicleEvent;
 import com.iitp.iitp_rest.model.geometry.Cartesian3;
 import com.iitp.iitp_rest.model.request.VehicleRequest;
+import com.iitp.iitp_rest.model.scenario.Scenario;
 import com.iitp.iitp_rest.repository.NetworkRepository;
+import com.iitp.iitp_rest.service.scenario.ScenarioService;
 import com.iitp.iitp_rest.util.CoordinateConverter;
 import com.iitp.iitp_rest.util.GeoJsonUtils;
 import com.iitp.iitp_rest.util.VehicleDataReader;
 import lombok.AllArgsConstructor;
 import org.locationtech.proj4j.ProjCoordinate;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.cors.CorsConfigurationSource;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
@@ -35,6 +35,7 @@ public class VehicleController {
 
     private final NetworkRepository networkRepository;
     private final VehicleDataReader vehicleDataReader;
+    private final ScenarioService scenarioService;
     private final CorsConfigurationSource corsConfigurationSource;
 
     @PostMapping("/generate-czml")
@@ -252,16 +253,23 @@ public class VehicleController {
      *  Cesium용 "czml" OpenLayers용 "features" 통합
      *  공통 "positions", "newVehicleData"를 한 번에 생성해 반환.
      */
-    @PostMapping("/generate-vehicle-route")
-    public ResponseEntity<Map<String, Object>> generateVehicleRoute(@RequestBody VehicleRequest request) throws IOException {
+    @PostMapping("/generate-vehicle-route/{versionId}")
+    public ResponseEntity<Map<String, Object>> generateVehicleRoute(@RequestBody VehicleRequest request, @PathVariable String versionId) throws IOException {
 
-        // 네트워크 및 도로 데이터 로드
-        Network network = networkRepository.findById(1L).orElse(null);
-        if (network == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Network data not found"));
+        Scenario scenario = scenarioService.getScenarioByKey(versionId);
+        if (scenario == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Scenario not found"));
         }
+        // 네트워크 및 도로 데이터 로드
+        //Network network = networkRepository.findById(1L).orElse(null);
+        //if (network == null) {
+        //    return ResponseEntity.badRequest().body(Map.of("error", "Network data not found"));
+        //}
 
-        List<Road> roadEntities = GeoJsonUtils.parseGeoJsonToRoads(network.getGeojson());
+        InputStream is = getClass().getClassLoader().getResourceAsStream(versionId + "/network.xml");
+        //List<Road> roadEntities = GeoJsonUtils.parseGeoJsonToRoads(network.getGeojson());
+        List<Road> roadEntities = GeoJsonUtils.parseXmlToRoads(is);
+
         Map<String, Road> roadMap = roadEntities.stream().collect(Collectors.toMap(
                 road -> road.getLinkId() + "|" + road.getLaneId(),
                 Function.identity(),
@@ -272,8 +280,8 @@ public class VehicleController {
         //Map<String, List<VehicleState>> grouped = allVehicles.stream()
         //        .collect(Collectors.groupingBy(VehicleState::getId));
 
-        Map<String, List<VehicleState>> grouped = vehicleDataReader.readLimited(request.getNumVehicle()).stream()
-                .collect(Collectors.groupingBy(VehicleState::getId));
+        Map<String, List<VehicleEvent>> grouped = vehicleDataReader.readLimitedByVehicleEvent(request.getNumVehicle()).stream()
+                .collect(Collectors.groupingBy(VehicleEvent::getId));
 
         List<Map<String, Object>> czml = new ArrayList<>();
         List<Map<String, Object>> featureList = new ArrayList<>();
@@ -288,7 +296,7 @@ public class VehicleController {
 
         grouped.entrySet().parallelStream().forEach(entry -> {
             String vehicleId = entry.getKey();
-            List<VehicleState> vehicles = entry.getValue();
+            List<VehicleEvent> vehicles = entry.getValue();
 
             if (vehicles.isEmpty()) return;
 
@@ -317,9 +325,10 @@ public class VehicleController {
                 if (baseRoad == null) return;
 
                 CoordinateConverter converter = converterCache.computeIfAbsent(key, k -> {
-                    CoordinateConverter c = new CoordinateConverter();
-                    c.setBasePoint(baseRoad.getBaseLon(), baseRoad.getBaseLat());
-                    return c;
+                    CoordinateConverter newConverter = new CoordinateConverter();
+                    newConverter.setBasePoint(scenario.getLongitude(), scenario.getLatitude());
+                    newConverter.setRoadPoint(baseRoad.getBaseEasting(), baseRoad.getBaseNorthing());
+                    return newConverter;
                 });
 
                 ProjCoordinate actualCoord = converter.toAbsolute(vehicle.getPosX(), vehicle.getPosY());

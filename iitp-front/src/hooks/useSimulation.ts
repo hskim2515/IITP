@@ -11,9 +11,12 @@ import { parseRawODInputFromFlatArray } from "@utils/transform";
 import LayerManager from "../managers/LayerManager";
 import HeatBarLayer from "@primitives/HeatBarLayer";
 import {JulianDate} from "cesium";
+import {useScenarioStore} from "@stores/useScenarioStore";
 
 const useSimulation = () => {
     const { isRunning, isStop, speed } = useSimulationStore();
+
+    const selectedScenario = useScenarioStore.getState().selectedScenario;
 
     const numVehicle = useVehicleStore((state) => state.numVehicle);
     const speedFactor = useVehicleStore((state) => state.speedFactor);
@@ -134,7 +137,7 @@ const useSimulation = () => {
     }, [ heatmapSetting.colors, heatmapSetting.blur, heatmapSetting.exaggeration ]);
 
     useEffect(() => {
-        fetch(process.env.VITE_API_URL + "/vehicle/generate-vehicle-route", { // generate-czml
+        fetch(process.env.VITE_API_URL + "/vehicle/generate-vehicle-route/" + selectedScenario.key, { // generate-czml
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ numVehicle, speedFactor, czml }),

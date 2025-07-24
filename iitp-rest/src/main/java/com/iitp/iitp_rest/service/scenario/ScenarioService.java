@@ -9,5 +9,6 @@ public interface ScenarioService {
     List<Scenario> getAllScenarios();
     Scenario getScenarioById(Long id);
     List<ScenarioVersion> getVersionsByScenarioId(Long scenarioId);
+    Scenario getScenarioByKey(String key);
 }
 
