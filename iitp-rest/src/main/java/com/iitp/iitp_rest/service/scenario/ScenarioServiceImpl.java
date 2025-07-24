@@ -31,5 +31,11 @@ public class ScenarioServiceImpl implements ScenarioService {
     public List<ScenarioVersion> getVersionsByScenarioId(Long scenarioId) {
         return versionRepository.findByScenarioId(scenarioId);
     }
+
+    @Override
+    public Scenario getScenarioByKey(String key) {
+        return scenarioRepository.findByKey(key)
+                .orElseThrow(() -> new RuntimeException("Scenario not found key: " + key));
+    }
 }
 

@@ -10,8 +10,8 @@ public class CoordinateConverter {
 
     private double baseLon;
     private double baseLat;
-    private double baseEasting;
-    private double baseNorthing;
+    private double roadEasting;
+    private double roadNorthing;
 
     private final CoordinateTransform wgsToMercator;
     private final CoordinateTransform mercatorToWgs;
@@ -29,24 +29,31 @@ public class CoordinateConverter {
     public void setBasePoint(double lon, double lat) {
         this.baseLon = lon;
         this.baseLat = lat;
-
-        // 위경도 -> WebMercator로 변환
-        ProjCoordinate geoCoord = new ProjCoordinate(lon, lat);
-        ProjCoordinate mercatorCoord = new ProjCoordinate();
-        wgsToMercator.transform(geoCoord, mercatorCoord);
-
-        this.baseEasting = mercatorCoord.x;
-        this.baseNorthing = mercatorCoord.y;
     }
 
+    public void setRoadPoint(double easting, double northing) {
+        this.roadEasting = easting;
+        this.roadNorthing = northing;
+    }
+
+
     public ProjCoordinate toAbsolute(double relX, double relY) {
-        double absoluteEasting = baseEasting + relX;
-        double absoluteNorthing = baseNorthing + relY;
+        ProjCoordinate baseGeo = new ProjCoordinate(baseLon, baseLat);
+        ProjCoordinate baseMerc = new ProjCoordinate();
+        wgsToMercator.transform(baseGeo, baseMerc);
+
+        double absX = roadEasting + relX;
+        double absY = roadNorthing + relY;
+
+        double absoluteEasting = baseMerc.x + absX;
+        double absoluteNorthing = baseMerc.y + absY;
 
         ProjCoordinate mercatorCoord = new ProjCoordinate(absoluteEasting, absoluteNorthing);
         ProjCoordinate geoCoord = new ProjCoordinate();
-
         mercatorToWgs.transform(mercatorCoord, geoCoord);
+
+        geoCoord.z = 0;
         return geoCoord;
     }
+
 }

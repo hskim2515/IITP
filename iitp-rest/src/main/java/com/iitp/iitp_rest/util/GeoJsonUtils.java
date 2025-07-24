@@ -4,6 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iitp.iitp_rest.model.Road;
 import com.iitp.iitp_rest.model.geometry.Cartesian3;
 import com.iitp.iitp_rest.model.geometry.Polyline;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
+
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -60,6 +67,68 @@ public class GeoJsonUtils {
                 }
             }
         }
+        return roads;
+    }
+    public static List<Road> parseXmlToRoads(InputStream xmlInputStream) {
+        List<Road> roads = new ArrayList<>();
+
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            Document doc = builder.parse(xmlInputStream);
+            doc.getDocumentElement().normalize();
+
+            NodeList linkList = doc.getElementsByTagName("link");
+
+            for (int i = 0; i < linkList.getLength(); i++) {
+                Element linkElement = (Element) linkList.item(i);
+                String linkId = linkElement.getAttribute("id");
+
+                NodeList laneList = linkElement.getElementsByTagName("lane");
+
+                for (int j = 0; j < laneList.getLength(); j++) {
+                    Element laneElement = (Element) laneList.item(j);
+                    String laneId = laneElement.getAttribute("id");
+
+                    List<Cartesian3> positions = new ArrayList<>();
+
+                    String shapeStr = laneElement.getAttribute("shape");
+                    Double baseEasting = null;
+                    Double baseNorthing = null;
+
+                    if (shapeStr != null && !shapeStr.isEmpty()) {
+                        String[] coords = shapeStr.trim().split(" ");
+                        if (coords.length > 0) {
+                            String[] firstCoord = coords[0].split(",");
+                            if (firstCoord.length >= 2) {
+                                baseEasting = Double.parseDouble(firstCoord[0]);
+                                baseNorthing = Double.parseDouble(firstCoord[1]);
+                            }
+
+                            for (String coordPair : coords) {
+                                String[] xy = coordPair.split(",");
+                                if (xy.length >= 2) {
+                                    double x = Double.parseDouble(xy[0]);
+                                    double y = Double.parseDouble(xy[1]);
+                                    positions.add(new Cartesian3(x, y, 0));
+                                }
+                            }
+                        }
+                    }
+
+
+                    if (!positions.isEmpty()) {
+                        Polyline polyline = new Polyline(positions);
+                        Road road = new Road(linkId, laneId, polyline, baseEasting, baseNorthing);
+                        roads.add(road);
+                    }
+                }
+            }
+
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
         return roads;
     }
 

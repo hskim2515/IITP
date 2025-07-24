@@ -11,7 +11,7 @@ public class Road {
     private String laneId;
     private Polyline polyline;
 
-    private Double baseLon;
-    private Double baseLat;
+    private Double baseEasting;
+    private Double baseNorthing;
 
 }
