@@ -218,7 +218,7 @@ const JsonGrid = ({
     const handleAddBtn = () => {
         console.log("grid addBtn rowData:::", rowData)
         let newRecord;
-        const targetFeatureType = levelName;
+        let targetFeatureType = levelName;
         console.log("handleAddBtn targetFeatureType:::", targetFeatureType)
         if (!targetFeatureType) {
             if (rowData.length > 0 && rowData[0].featureType) {

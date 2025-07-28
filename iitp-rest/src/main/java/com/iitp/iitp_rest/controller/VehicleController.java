@@ -1,19 +1,20 @@
 package com.iitp.iitp_rest.controller;
 
-import com.iitp.iitp_rest.model.Network;
-import com.iitp.iitp_rest.model.Road;
-import com.iitp.iitp_rest.model.Vehicle;
-import com.iitp.iitp_rest.model.VehicleEvent;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.iitp.iitp_rest.model.*;
 import com.iitp.iitp_rest.model.geometry.Cartesian3;
 import com.iitp.iitp_rest.model.request.VehicleRequest;
 import com.iitp.iitp_rest.model.scenario.Scenario;
 import com.iitp.iitp_rest.repository.NetworkRepository;
 import com.iitp.iitp_rest.service.scenario.ScenarioService;
+import com.iitp.iitp_rest.service.vehicle.VehicleRouteService;
 import com.iitp.iitp_rest.util.CoordinateConverter;
 import com.iitp.iitp_rest.util.GeoJsonUtils;
 import com.iitp.iitp_rest.util.VehicleDataReader;
 import lombok.AllArgsConstructor;
 import org.locationtech.proj4j.ProjCoordinate;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -37,6 +38,7 @@ public class VehicleController {
     private final VehicleDataReader vehicleDataReader;
     private final ScenarioService scenarioService;
     private final CorsConfigurationSource corsConfigurationSource;
+    private final VehicleRouteService vehicleRouteService;
 
     @PostMapping("/generate-czml")
     public ResponseEntity<Map<String, Object>> generateCzml(@RequestBody VehicleRequest request) {
@@ -100,7 +102,6 @@ public class VehicleController {
 
                     prevPosition = currentPosition; // 이전 좌표 업데이트
                 }
-
 
                 String vehicleId = "vehicle" + i;
                 czml.add(Map.of(
@@ -179,7 +180,7 @@ public class VehicleController {
         featureCollection.put("type", "FeatureCollection");
         List<Map<String, Object>> featureList = new ArrayList<>();
 
-        Network network = networkRepository.findById(1L).orElse(null);
+        Network network = networkRepository.findById(4L).orElse(null);
         if (network == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "Network data not found"));
         }
@@ -249,25 +250,17 @@ public class VehicleController {
         return ResponseEntity.ok(response);
     }
 
-    /**
-     *  Cesium용 "czml" OpenLayers용 "features" 통합
-     *  공통 "positions", "newVehicleData"를 한 번에 생성해 반환.
-     */
     @PostMapping("/generate-vehicle-route/{versionId}")
-    public ResponseEntity<Map<String, Object>> generateVehicleRoute(@RequestBody VehicleRequest request, @PathVariable String versionId) throws IOException {
+    public ResponseEntity<Map<String, Object>> generateVehicleRoute(
+            @RequestBody VehicleRequest request,
+            @PathVariable String versionId) throws IOException {
 
         Scenario scenario = scenarioService.getScenarioByKey(versionId);
         if (scenario == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "Scenario not found"));
         }
-        // 네트워크 및 도로 데이터 로드
-        //Network network = networkRepository.findById(1L).orElse(null);
-        //if (network == null) {
-        //    return ResponseEntity.badRequest().body(Map.of("error", "Network data not found"));
-        //}
 
         InputStream is = getClass().getClassLoader().getResourceAsStream(versionId + "/network.xml");
-        //List<Road> roadEntities = GeoJsonUtils.parseGeoJsonToRoads(network.getGeojson());
         List<Road> roadEntities = GeoJsonUtils.parseXmlToRoads(is);
 
         Map<String, Road> roadMap = roadEntities.stream().collect(Collectors.toMap(
@@ -276,20 +269,24 @@ public class VehicleController {
                 (r1, r2) -> r1
         ));
 
-        //List<VehicleState> allVehicles = vehicleDataReader.readLimited(request.getNumVehicle());
-        //Map<String, List<VehicleState>> grouped = allVehicles.stream()
-        //        .collect(Collectors.groupingBy(VehicleState::getId));
+        // CoordinateConverter 사전 생성
+        Map<String, CoordinateConverter> converterCache = new ConcurrentHashMap<>();
+        roadMap.forEach((key, road) -> {
+            CoordinateConverter converter = new CoordinateConverter();
+            converter.setBasePoint(scenario.getLongitude(), scenario.getLatitude());
+            converter.setRoadPoint(road.getBaseEasting(), road.getBaseNorthing());
+            converterCache.put(key, converter);
+        });
 
-        Map<String, List<VehicleEvent>> grouped = vehicleDataReader.readLimitedByVehicleEvent(request.getNumVehicle()).stream()
+        Map<String, List<VehicleEvent>> grouped = vehicleDataReader.readVehicleEvent().stream()
                 .collect(Collectors.groupingBy(VehicleEvent::getId));
 
-        List<Map<String, Object>> czml = new ArrayList<>();
-        List<Map<String, Object>> featureList = new ArrayList<>();
-        List<Vehicle> vehicleDataList = new ArrayList<>();
-        List<List<Double>> vehiclePathList = new ArrayList<>();
+        List<Map<String, Object>> czml = Collections.synchronizedList(new ArrayList<>());
+        List<Map<String, Object>> featureList = Collections.synchronizedList(new ArrayList<>());
+        List<List<Double>> vehiclePathList = Collections.synchronizedList(new ArrayList<>());
 
         Instant startTime = Instant.now();
-        ConcurrentHashMap<String, CoordinateConverter> converterCache = new ConcurrentHashMap<>();
+        long baseEpoch = startTime.getEpochSecond();
 
         AtomicReference<Instant> earliestStartRef = new AtomicReference<>(null);
         AtomicReference<Instant> latestStopRef = new AtomicReference<>(null);
@@ -297,106 +294,84 @@ public class VehicleController {
         grouped.entrySet().parallelStream().forEach(entry -> {
             String vehicleId = entry.getKey();
             List<VehicleEvent> vehicles = entry.getValue();
-
             if (vehicles.isEmpty()) return;
 
-            double firstTimeStep = vehicles.get(0).getTimestep();
-            double lastTimeStep = vehicles.get(vehicles.size() - 1).getTimestep();
+            double firstTimestep = vehicles.get(0).getTimestep();
+            double lastTimestep = vehicles.get(vehicles.size() - 1).getTimestep();
 
-            Instant vehicleStartTime = startTime.plusSeconds((long) firstTimeStep);
-            Instant vehicleStopTime = startTime.plusSeconds((long) lastTimeStep);
+            long startEpoch = baseEpoch + (long) firstTimestep;
+            long stopEpoch = baseEpoch + (long) lastTimestep;
 
-            if (earliestStartRef.get() == null || vehicleStartTime.isBefore(earliestStartRef.get())) {
-                earliestStartRef.set(vehicleStartTime);
-            }
-            if (latestStopRef.get() == null || vehicleStopTime.isAfter(latestStopRef.get())) {
-                latestStopRef.set(vehicleStopTime);
-            }
+            Instant vehicleStart = Instant.ofEpochSecond(startEpoch);
+            Instant vehicleStop = Instant.ofEpochSecond(stopEpoch);
+
+            earliestStartRef.updateAndGet(current ->
+                    (current == null || vehicleStart.isBefore(current)) ? vehicleStart : current);
+            latestStopRef.updateAndGet(current ->
+                    (current == null || vehicleStop.isAfter(current)) ? vehicleStop : current);
 
             List<Map.Entry<Double, Cartesian3>> path = new ArrayList<>();
             List<Cartesian3> path2d = new ArrayList<>();
 
-            vehicles.forEach(vehicle -> {
-                String linkId = vehicle.getLinkId();
-                String laneId = vehicle.getLaneId();
-                String key = linkId + "|" + laneId;
-
+            for (VehicleEvent vehicle : vehicles) {
+                String key = vehicle.getLinkId() + "|" + vehicle.getLaneId();
                 Road baseRoad = roadMap.get(key);
-                if (baseRoad == null) return;
+                if (baseRoad == null) continue;
 
-                CoordinateConverter converter = converterCache.computeIfAbsent(key, k -> {
-                    CoordinateConverter newConverter = new CoordinateConverter();
-                    newConverter.setBasePoint(scenario.getLongitude(), scenario.getLatitude());
-                    newConverter.setRoadPoint(baseRoad.getBaseEasting(), baseRoad.getBaseNorthing());
-                    return newConverter;
-                });
-
+                CoordinateConverter converter = converterCache.get(key);
                 ProjCoordinate actualCoord = converter.toAbsolute(vehicle.getPosX(), vehicle.getPosY());
-                Cartesian3 position = Cartesian3.fromDegrees(actualCoord.x, actualCoord.y, 0);
+                Cartesian3 pos = Cartesian3.fromDegrees(actualCoord.x, actualCoord.y, 0);
 
-                synchronized (this) {
-                    path.add(Map.entry(vehicle.getTimestep(), position));
-                    path2d.add(new Cartesian3(actualCoord.x, actualCoord.y, 0.0));
-                }
-            });
+                path.add(Map.entry(vehicle.getTimestep(), pos));
+                path2d.add(pos);  // 재사용
+
+            }
 
             if (path2d.isEmpty()) return;
 
-            synchronized (this) {
-                //vehiclePathList.add(path2d);
-
-                Cartesian3 startPos = path2d.get(0);
-                vehicleDataList.add(new Vehicle(vehicleId, Cartesian3.fromDegrees(startPos.getX(), startPos.getY(), 0), false));
-
-                List<Double> cartesianArray = new ArrayList<>();
-                path.forEach(entryPoint -> {
-                    cartesianArray.add(entryPoint.getKey());
-                    Cartesian3 pos = entryPoint.getValue();
-                    cartesianArray.add(pos.getX());
-                    cartesianArray.add(pos.getY());
-                    cartesianArray.add(pos.getZ());
-                });
-
-                double firstTime = path.get(0).getKey();
-                double lastTime = path.get(path.size() - 1).getKey();
-
-                Instant vehicleStart = startTime.plusSeconds((long) firstTime);
-                Instant vehicleStop = startTime.plusSeconds((long) lastTime);
-
-                czml.add(Map.of(
-                        "id", vehicleId,
-                        "availability", vehicleStart.toString() + "/" + vehicleStop.toString(),
-                        "position", Map.of(
-                                "epoch", startTime.toString(),
-                                "interpolationAlgorithm", "HERMITE",
-                                "interpolationDegree", 2,
-                                "cartesian", cartesianArray
-                        ),
-                        "orientation", Map.of("velocityReference", "#position")
-                ));
-
-                vehiclePathList.add(cartesianArray);
-
-                List<List<Double>> lineCoordinates = path2d.stream()
-                        .map(p -> Arrays.asList(p.getX(), p.getY(), p.getZ()))
-                        .collect(Collectors.toList());
-
-                List<List<Double>> positionsInterval = path.stream()
-                        .map(p -> List.of(p.getKey()))
-                        .collect(Collectors.toList());
-
-                featureList.add(Map.of(
-                        "geometry", Map.of(
-                                "type", "LineString",
-                                "coordinates", lineCoordinates
-                        ),
-                        "properties", Map.of(
-                                "id", vehicleId,
-                                "availability", vehicleStart.toString() + "/" + vehicleStop.toString(),
-                                "positionsInterval", positionsInterval
-                        )
-                ));
+            List<Double> cartesianArray = new ArrayList<>(path.size() * 4);
+            for (Map.Entry<Double, Cartesian3> p : path) {
+                cartesianArray.add(p.getKey());
+                cartesianArray.add(p.getValue().getX());
+                cartesianArray.add(p.getValue().getY());
+                cartesianArray.add(p.getValue().getZ());
             }
+
+            List<List<Double>> lineCoordinates = path2d.stream()
+                    .map(p -> List.of(p.getX(), p.getY(), p.getZ()))
+                    .collect(Collectors.toList());
+
+            List<List<Double>> positionsInterval = path.stream()
+                    .map(p -> List.of(p.getKey()))
+                    .collect(Collectors.toList());
+
+            Map<String, Object> czmlPacket = Map.of(
+                    "id", vehicleId,
+                    "availability", vehicleStart + "/" + vehicleStop,
+                    "position", Map.of(
+                            "epoch", startTime.toString(),
+                            "interpolationAlgorithm", "LINEAR",
+                            "interpolationDegree", 1,
+                            "cartesian", cartesianArray
+                    ),
+                    "orientation", Map.of("velocityReference", "#position")
+            );
+
+            Map<String, Object> feature = Map.of(
+                    "geometry", Map.of(
+                            "type", "LineString",
+                            "coordinates", lineCoordinates
+                    ),
+                    "properties", Map.of(
+                            "id", vehicleId,
+                            "availability", vehicleStart + "/" + vehicleStop,
+                            "positionsInterval", positionsInterval
+                    )
+            );
+
+            czml.add(czmlPacket);
+            featureList.add(feature);
+            vehiclePathList.add(cartesianArray);
         });
 
         Instant globalStart = earliestStartRef.get();
@@ -407,24 +382,50 @@ public class VehicleController {
                 "name", "Vehicle Movement",
                 "version", "1.0",
                 "clock", Map.of(
-                        "interval", globalStart.toString() + "/" + globalStop.toString(),
+                        "interval", globalStart + "/" + globalStop,
                         "currentTime", globalStart.toString(),
                         "multiplier", 1,
                         "range", "CLAMPED",
                         "step", "SYSTEM_CLOCK_MULTIPLIER"
                 )
         );
-
         czml.add(0, documentPacket);
+
+        vehicleRouteService.saveRoute(versionId, czml, featureList, vehiclePathList);
+
 
         Map<String, Object> response = new HashMap<>();
         response.put("czml", czml);
         response.put("features", featureList);
         response.put("positions", vehiclePathList);
-        response.put("newVehicleData", vehicleDataList);
 
         return ResponseEntity.ok(response);
     }
+
+    @PostMapping("/vehicle-route/{versionId}")
+    public ResponseEntity<Map<String, Object>> getVehicleRoute(@PathVariable String versionId) {
+        Optional<VehicleRoute> optional = vehicleRouteService.getByVersionId(versionId);
+
+        if (optional.isEmpty()) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Vehicle route not found"));
+        }
+
+        VehicleRoute route = optional.get();
+        ObjectMapper mapper = new ObjectMapper();
+
+        try {
+            Map<String, Object> response = new HashMap<>();
+            response.put("czml", mapper.readValue(route.getCzml(), Object.class));
+            response.put("features", mapper.readValue(route.getFeatures(), Object.class));
+            response.put("positions", mapper.readValue(route.getPositions(), Object.class));
+            return ResponseEntity.ok(response);
+        } catch (JsonProcessingException e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Failed to parse JSON"));
+        }
+    }
+
+
 
     @PostMapping("/generate-vehicle")
     public ResponseEntity<Map<String, Object>> generateVehicle(@RequestBody VehicleRequest request) {
@@ -439,7 +440,6 @@ public class VehicleController {
 
         // GeoJSON을 Road 리스트로 변환
         List<Road> roadEntities = GeoJsonUtils.parseGeoJsonToRoads(network.getGeojson());
-
 
         Random random = new Random();
         for (int i = 0; i < request.getNumVehicle(); i++) {

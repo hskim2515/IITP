@@ -181,7 +181,7 @@ export default class NetworkDataSourceLayer {
                         length: 5.0, // 높이
                         topRadius: 0.5,
                         bottomRadius: 0.5,
-                        material: Cesium.Color.ORANGE,
+                        material: Cesium.Color.YELLOW,
                         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
                     },
 
@@ -206,10 +206,10 @@ export default class NetworkDataSourceLayer {
                         id: port.__guid,
                         position:  port.type === 'in' ? source : target,
                         cylinder: {
-                            length: port.type === 'in' ? 2 : 3, // 높이
-                            topRadius: port.type === 'in' ? 1.5 : 1,
-                            bottomRadius: port.type === 'in' ? 1.5 : 1,
-                            material: port.type === 'in' ? Cesium.Color.CYAN : Cesium.Color.MAGENTA,
+                            length: port.type === 'in' ? 2 : 2, // 높이
+                            topRadius: port.type === 'in' ? 1.5 : 0.1,
+                            bottomRadius: port.type === 'in' ? 0.1 : 1.5,
+                            material: port.type === 'in' ? Cesium.Color.CYAN.withAlpha(0.8) : Cesium.Color.MAGENTA.withAlpha(0.8),
                             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
                         },
                         properties: port,

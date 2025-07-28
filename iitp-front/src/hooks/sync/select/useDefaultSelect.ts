@@ -22,6 +22,7 @@ const useDefaultSelect = () => {
 
         useEventStore.getState().cesiumEventManager?.bind('select', (e) => {
             const picked = viewer.scene.pick(e.position);
+            console.log(picked)
             if (Cesium.defined(picked) && picked.id?.properties) {
                 const props: Record<string, any> = {};
                 const cartesian = viewer.scene.camera.pickEllipsoid(e.position, viewer.scene.globe.ellipsoid);
@@ -42,9 +43,6 @@ const useDefaultSelect = () => {
                 setSelectedProps(props);
 
                 setSelectedGuid([props.__guid])
-
-                console.log(props.__guid)
-                console.log(selectedGuid)
 
             } else {
                 setSelectedProps(null);

@@ -137,16 +137,15 @@ const useSimulation = () => {
     }, [ heatmapSetting.colors, heatmapSetting.blur, heatmapSetting.exaggeration ]);
 
     useEffect(() => {
-        fetch(process.env.VITE_API_URL + "/vehicle/generate-vehicle-route/" + selectedScenario.key, { // generate-czml
+        fetch(process.env.VITE_API_URL + "/vehicle/vehicle-route/" + selectedScenario.key, { // generate-czml
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ numVehicle, speedFactor, czml }),
         })
             .then((response) => response.json())
-            .then(({ czml, newVehicleData, positions, features }) => {
+            .then(({ czml, positions, features }) => {
                 setVehicleRoute(positions);
                 setCzml(czml);
-                setVehicleData(newVehicleData);
                 setFeatures(features);
 
                 const clock = czml[0].clock;
@@ -199,17 +198,15 @@ const useSimulation = () => {
             makeOdDataWorkerRef.current?.postMessage({ lastPositions, newVehicleRoute })
         }
 
-        czmlPositionWorkerRef.current.postMessage({ type: 'tick', currentTime: simTime });
-
+        if(isRunningRef.current){
+            czmlPositionWorkerRef.current.postMessage({ type: 'tick', currentTime: simTime });
+        }
     };
 
     const setSimulation = () => {
-        if (!viewer || !czml || !vehicleData || vehicleRoute.length === 0 || !layerManager) return;
+        //if (!viewer || !czml || !vehicleData || vehicleRoute.length === 0 || !layerManager) return;
+        if (!viewer || !czml || vehicleRoute.length === 0 || !layerManager) return;
 
-        const newVehicleData = vehicleDataRef.current = vehicleData
-
-        const type = 'init';
-        changeModelWorkerRef.current.postMessage({ type, newVehicleData })
         const sampleModel = new Cesium.ModelGraphics({
             uri: "CesiumMilkTruck.glb",
             scale: 0.8,
@@ -228,9 +225,22 @@ const useSimulation = () => {
             layerManager.addHeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, heatmapSetting)
             layerManager.addODArrows(vehicleRoute, speedFactor, isRunningRef.current)
             layerManager.addTripLayer(vehicleRoute, speedFactor, isRunningRef.current)
+
+            const VehicleModelData: { id: any; position: any; visible: boolean; }[] = [];
+
+            czmlSource.entities.values.forEach(entity => {
+                const times = entity.position?._property._times;
+                const firstTime = times[0];
+
+                const firstPosition = entity.position?.getValue(firstTime);
+                VehicleModelData.push({id: entity.id, position: firstPosition, visible:false});
+            })
+
+            vehicleDataRef.current = VehicleModelData
+
+            changeModelWorkerRef.current.postMessage({ type:'init', newVehicleData: VehicleModelData})
+
         });
-
-
 
         // Worker 메시지 처리
         changeModelWorkerRef.current.onmessage = (e) => {

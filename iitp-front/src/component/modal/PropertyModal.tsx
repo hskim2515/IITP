@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { usePropertyStore } from "@stores/usePropertyStore";
-import PropertyPanel from "../panel/PropertyPanel";
 import {findMenuByCode, useMenuStore} from "@stores/useMenuStore";
 import {faClose} from "@fortawesome/free-solid-svg-icons/faClose";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
@@ -30,14 +29,7 @@ const PropertyModal = () => {
         if(menu){
             setSubMenu(findMenuByCode(menu, 'NETWORK'))
         }
-        console.log(subMenu)
     }, [menu]);
-
-    useEffect(() => {
-        if(activeSubmenu){
-            console.log(activeSubmenu)
-        }
-    }, [activeSubmenu]);
 
     if (!selectedProps || Object.keys(selectedProps).length === 0) return null;
 
@@ -52,8 +44,8 @@ const PropertyModal = () => {
                 <table style={styles.table}>
                     <thead>
                     <tr>
-                        <th colSpan={2} style={styles.th}>
-                            Property Viewer
+                        <th colSpan={2}>
+                            <h2 style={{display:"contents"}}>{selectedProps?.featureType}</h2>
                             <FontAwesomeIcon className="close-btn" icon={faClose} onClick={() => setShowViewer(false)}/>
                             <FontAwesomeIcon className="edit-btn" icon={faEdit} onClick={() => {
                                 if (selectedProps?.menuCode) {
@@ -72,10 +64,13 @@ const PropertyModal = () => {
                         <tr key={key}>
                             <td style={styles.td}>{key}</td>
                             <td style={styles.td} title={String(value)}>
-                                {typeof value === 'object'
-                                    ? truncate(JSON.stringify(value), 60)
-                                    : truncate(String(value), 60)}
+                                {Array.isArray(value)
+                                    ? `${value.length} (count)`
+                                    : typeof value === 'object'
+                                        ? truncate(JSON.stringify(value), 60)
+                                        : truncate(String(value), 60)}
                             </td>
+
                         </tr>
                     ))}
                     </tbody>
