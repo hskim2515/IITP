@@ -153,6 +153,9 @@ body {
 
 .popup-body {
     /*margin-bottom: 10px;*/
+    height: 250px;
+    overflow-y: auto;
+    width: 99%;
 }
 
 .popup-footer {

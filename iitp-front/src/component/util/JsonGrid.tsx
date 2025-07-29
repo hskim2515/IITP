@@ -250,8 +250,11 @@ const JsonGrid = ({
         <div style={{paddingLeft: depth * 24}}>
             {/*<h3 style={{ display: depth > 0 ? "block" : "none" }}>*/}
             {/*</h3>*/}
-            <button className="grid-btn add-btn" onClick={() => handleAddBtn()}>+</button>
-            <button className="grid-btn delete-btn" onClick={() => handleDeleteBtn()}>-</button>
+            <div style={{ display: "flex", alignItems: "center" }}>
+                <h4>{levelName}</h4>
+                <button className="grid-btn add-btn" onClick={() => handleAddBtn()}>+</button>
+                <button className="grid-btn delete-btn" onClick={() => handleDeleteBtn()}>-</button>
+            </div>
             <Table
                 dataSource={rowData}
                 columns={enhancedColumns}
@@ -281,7 +284,7 @@ const JsonGrid = ({
                                         return (
                                             Array.isArray(record[field]) && record[field].length > 0 ? (
                                                 <div key={field}>
-                                                    <h4 style={{marginBottom: 4}}>{field}</h4>
+
                                                     <JsonGrid
                                                         rowData={record[field]}
                                                         levelName={field}

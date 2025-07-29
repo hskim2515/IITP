@@ -559,18 +559,16 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                                         Array.isArray(value) && value.length > 0 && (
                                             <div key={key} className="grid-container">
                                                 <div className="grid-header">
-                                                    <h4 style={{margin: 12}}>
-                                                        {key.charAt(0).toUpperCase() + key.slice(1)}
-                                                    </h4>
-                                                    <FontAwesomeIcon onClick={() => toggleGrid(key)}
-                                                                     icon={expandedKey === key ? faChevronUp : faChevronDown}/>
+                                                    {/*<h4 style={{margin: 12}}>*/}
+                                                    {/*    {key.charAt(0).toUpperCase() + key.slice(1)}*/}
+                                                    {/*</h4>*/}
+                                                    {/*<FontAwesomeIcon onClick={() => toggleGrid(key)}*/}
+                                                    {/*                 icon={expandedKey === key ? faChevronUp : faChevronDown}/>*/}
                                                 </div>
-                                                {expandedKey === key && (
-                                                    <JsonGrid rowData={value} levelName={key}
-                                                              layerName={submenu.item.layer}
-                                                              layerGroupName={"facility"}
-                                                    />
-                                                )}
+                                                <JsonGrid rowData={value} levelName={key}
+                                                          layerName={submenu.item.layer}
+                                                          layerGroupName={"facility"}
+                                                />
                                             </div>
                                         )
                                     ))}
