@@ -42,7 +42,7 @@ public class VehicleDataReader {
     }
 
     // vehicle_event
-    public List<VehicleEvent> readLimitedByVehicleEvent(int numVehicles) {
+    public List<VehicleEvent> readVehicleEvent() {
         List<VehicleEvent> vehicleEventList = new ArrayList<>();
 
         try {
@@ -57,9 +57,8 @@ public class VehicleDataReader {
                 stmt.execute(attachSQL);
 
                 List<String> limitedIds = new ArrayList<>();
-                String idQuery = "SELECT DISTINCT id FROM vehicle_sim_db.vehicle_event LIMIT ?";
+                String idQuery = "SELECT DISTINCT id FROM vehicle_sim_db.vehicle_event";
                 try (PreparedStatement pstmt = conn.prepareStatement(idQuery)) {
-                    pstmt.setInt(1, numVehicles);
                     try (ResultSet rs = pstmt.executeQuery()) {
                         while (rs.next()) {
                             limitedIds.add(rs.getString("id"));

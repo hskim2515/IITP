@@ -41,6 +41,10 @@ export const apiConfig:ApiConfig = {
     },
     NETWORK: {
         list: {url: '/network', method: 'GET', useFormData: false },
+        update: {url: '/network/{id}', method: 'PUT', useFormData: true },
+        create: {url: '/network', method: 'POST', useFormData: true },
+        delete: {url: '/network/{id}', method: 'DELETE', useFormData: false },
+        historyList: {url: '/network/history', method: 'GET', useFormData: false },
     },
     PAVEMENT_MARKING: {
         list:    { url: '/pavement-marking',       method: 'GET', useFormData: false },
