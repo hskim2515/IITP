@@ -16,9 +16,9 @@ export default function TimelineTrack() {
     const { startTime, endTime } = useSimulationStore();
 
 
-    const blockWidth = 1; // 1프레임 = 2px
     const minFrame = 0;
     const maxFrame = endTime?.secondsOfDay - startTime?.secondsOfDay;
+    const blockWidth = 600/maxFrame; // 1프레임 = 2px
 
     const [active, setActive] = useState({ start: 0, end: endTime?.secondsOfDay - startTime?.secondsOfDay });
 

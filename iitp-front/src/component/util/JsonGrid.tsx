@@ -256,6 +256,7 @@ const JsonGrid = ({
                 <button className="grid-btn delete-btn" onClick={() => handleDeleteBtn()}>-</button>
             </div>
             <Table
+                className="transparent-table"
                 dataSource={rowData}
                 columns={enhancedColumns}
                 rowKey={(record) => {

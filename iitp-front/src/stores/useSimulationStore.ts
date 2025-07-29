@@ -53,7 +53,6 @@ export const useSimulationStore = createSelectors(
                         set((state) => {
                             state.isRunning = false;
                             state.isStop = true;
-                            state.speed = 1;
                         }),
                     setSpeed: (speed) =>
                         set((state) => {
