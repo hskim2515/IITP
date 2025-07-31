@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import React, { useEffect, useMemo, useRef, useState} from 'react';
 import "/static/css/styles.css";
 import {MenuTree} from "@stores/useMenuStore";
 import {propertyFormSchema} from "../form/propertyFormSchema";
@@ -8,7 +8,7 @@ import {GridHandle} from "@type/GirdOptions";
 import {menuCodeToStoreMap} from "@hooks/useLayerInit";
 import {useEventStore} from "@stores/useEventStore";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
-import useGrid, {AddOptions} from "@hooks/useGrid";
+import useGrid from "@hooks/useGrid";
 import GeometryType from "@type/FeatureOptions";
 import {SelectEvent} from "ol/interaction/Select";
 import {Feature} from "ol";
@@ -31,7 +31,6 @@ import TypeSelectionModal from "../modal/TypeSelectionModal";
 import HistoryModal from "../modal/HistoryModal";
 import {useScenarioStore} from "@stores/useScenarioStore";
 import {useSelectionStore} from "@stores/useSelectionStore";
-import {Select} from "ol/interaction";
 import {
     convertFeatureToRecord,
     createFeature,
@@ -42,18 +41,12 @@ import {
 import {generateGUIDWithType} from "@utils/guid";
 import Collection from "ol/Collection";
 import {faClose} from "@fortawesome/free-solid-svg-icons/faClose";
-import VectorSource from "ol/source/Vector";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTree
     onClose: () => void;
 }
 
-const geometryTypeOptions: GeometryType[] = [
-    GeometryType.POINT,
-    GeometryType.LINE_STRING,
-    GeometryType.POLYGON,
-];
 const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const submenu = {
         menuCode: activeSubmenu.menuCode,
@@ -70,23 +63,14 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const setSelectedGuid = useSelectionStore((state) => state.setSelectedGuid)
     const addSelectionId = useSelectionStore((state) => state.addSelectionId)
     const clearSelected = useSelectionStore((state) => state.clearSelected)
-    const removeSelectionId = useSelectionStore((state) => state.removeSelectionId)
     const selectedGuidRef = useRef<[]>([])
     const historyStore = menuCodeToHistoryStoreMap[submenu.menuCode];
 
     const [currentJsonData, setCurrentJsonData] = useState(store.getState().currentJsonData);
-    const initCurrentData = store.getState().initCurrentData;
 
     const olEventManager = useEventStore.getState().olEventManager;
     const [drawGeometryType, setDrawGeometryType] = useState<GeometryType>(GeometryType.POINT)
 
-    const selectInteractionRef = useRef<Select | undefined>(undefined);
-    const selectedFeatureIdRef = useRef<[]>([]);
-    const snappedPropertiesRef = useRef<Record<string, string | number | undefined>>(undefined);
-
-    const [addedData, setAddedData] = useState<AddOptions>({})
-
-    const [isEditable, setIsEditable] = useState<boolean>(false)
     const [isDrawing, setIsDrawing] = useState<boolean>(false)
     const [isTypeSelect, setIsTypeSelect] = useState(false);
     const [onConfirm, setOnConfirm] = useState<((selected: string) => void) | null>(null);
@@ -136,15 +120,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         const deselectedFeatures = filterFeaturesByKey(allFeatures, deselected);
 
         deselectedFeatures.forEach((f) => {
-            if (typeof layer.getDefaultStyle !== "function") return;
-            f.setStyle(layer.getDefaultStyle())
-        });
-
-        const newlySelected = nextGuids.filter((id) => !prevGuids.includes(id));
-        const selectedFeatures = filterFeaturesByKey(allFeatures, newlySelected);
-        selectedFeatures.forEach((f) => {
-            if (typeof layer.getSelectStyle !== "function") return;
-            f.setStyle(layer.getSelectStyle())
+            f.setStyle((feature, resolution) => layer.styleFunction(feature, resolution));
         });
 
         // 상태 갱신
@@ -180,11 +156,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     useHistoryInit(reloadFlag);
 
     const {
-        addRow,
         deleteSelected,
-        saveModifiedFeatures,
-        updateFeatureByRow,
-        switchEditable
     } = useGrid(gridRef, store, historyStore, colDefs)
 
     useEffect(() => {
@@ -373,22 +345,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     }, [submenu.menuCode]);
 
-
-    const handleGridSelectionChanged = () => {
-        const selectedRows = gridRef.current?.getSelectedRow() ?? [];
-        const selectedIds = selectedRows.map((row: Record<string, unknown>) => row.id);
-
-        const source = layer.getSource();
-        const features = source?.getFeatures() ?? [];
-
-        features.forEach((feature: Feature) => {
-            const fid = feature.get("id");
-            const selected = selectedIds.includes(fid) ? 1 : 0;
-            feature.set("selected", selected);
-            feature.changed();
-        });
-    };
-
     const handleDrawBtn = () => {
         if (isDrawing) {
             setIsDrawing(false)
@@ -447,11 +403,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             console.error("저장 실패:", error);
             alert("저장 실패")
         }
-    }
-
-    const handleEditableBtn = () => {
-        setIsEditable(!isEditable);
-        // switchEditable(!isEditable);
     }
 
     const handleInitBtn = () => {
@@ -546,29 +497,23 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                                 />
                             )}
                             {submenu.item &&
-                                //{ submenu.item && colDefs &&
-                                // <Grid
-                                //     ref={ gridRef }
-                                //     colDefs={ colDefs }
-                                //     rowData={ rowData }
-                                //     onCellValueChanged={ updateFeatureByRow }
-                                //     onSelectionChanged={ handleGridSelectionChanged }
-                                // />
                                 <div>
                                     {Object.entries(currentJsonData).map(([key, value]) => (
                                         Array.isArray(value) && value.length > 0 && (
                                             <div key={key} className="grid-container">
                                                 <div className="grid-header">
-                                                    {/*<h4 style={{margin: 12}}>*/}
-                                                    {/*    {key.charAt(0).toUpperCase() + key.slice(1)}*/}
-                                                    {/*</h4>*/}
-                                                    {/*<FontAwesomeIcon onClick={() => toggleGrid(key)}*/}
-                                                    {/*                 icon={expandedKey === key ? faChevronUp : faChevronDown}/>*/}
+                                                    <h4 style={{margin: 12}}>
+                                                        {key.charAt(0).toUpperCase() + key.slice(1)}
+                                                    </h4>
+                                                    <FontAwesomeIcon onClick={() => toggleGrid(key)}
+                                                                     icon={expandedKey === key ? faChevronUp : faChevronDown}/>
                                                 </div>
-                                                <JsonGrid rowData={value} levelName={key}
-                                                          layerName={submenu.item.layer}
-                                                          layerGroupName={"facility"}
-                                                />
+                                                {expandedKey === key && (
+                                                    <JsonGrid rowData={value} levelName={key}
+                                                              layerName={submenu.item.layer}
+                                                              layerGroupName={"facility"}
+                                                    />
+                                                )}
                                             </div>
                                         )
                                     ))}

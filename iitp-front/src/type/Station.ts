@@ -1,10 +1,12 @@
+import { generateGUIDWithType } from "@utils/guid";
+
 export const SNAP_LAYER = "network" as const
 export const SNAP_FEATURE_TYPE = "lane-edit" as const
 export const RAIL_SNAP_FEATURE_TYPE = "link-edit" as const
 
-export const BUS_STATION_SNAP_FIELDS = [ 'linkRef', 'laneRef', 'offset', 'coordinates'] as const;
-export const RAIL_STATION_SNAP_FIELDS = [ 'linkRef', 'address', 'coordinates'] as const;
-export const RAIL_STATION_EXIT_SNAP_FIELDS = [ 'linkRef', 'exitRef', 'offset', 'accessTime', 'coordinates'] as const;
+export const BUS_STATION_SNAP_FIELDS = ['linkRef', 'laneRef', 'offset', 'coordinates'] as const;
+export const RAIL_STATION_SNAP_FIELDS = ['linkRef', 'address', 'coordinates'] as const;
+export const RAIL_STATION_EXIT_SNAP_FIELDS = ['linkRef', 'exitRef', 'offset', 'accessTime', 'coordinates'] as const;
 
 export type BusStationSnapFields = typeof BUS_STATION_SNAP_FIELDS[number];
 export type RailStationSnapFields = typeof RAIL_STATION_SNAP_FIELDS[number];
@@ -29,10 +31,8 @@ export const FEATURE_TYPE = {
 export type TransitMode = typeof TRANSIT_MODE[keyof typeof TRANSIT_MODE];
 
 export interface Coordinates {
-    coordinates: [{
-        lng: number | null,
-        lat: number | null,
-    }],
+    lng: number | null,
+    lat: number | null,
 }
 
 export interface BusStationData {
@@ -45,14 +45,12 @@ export interface BusStationData {
     offset: number | null;
     type: string | null;
     address: string | null;
-    coordinates: [{
-        lng: number | null,
-        lat: number | null,
-    }],
+    coordinates: Coordinates[],
     parkingLots: number | null;
     menuCode: string
 }
-export type BusStationFeature  = BusStationData;
+
+export type BusStationFeature = BusStationData;
 
 export interface RailStationData {
     __guid: string;
@@ -61,13 +59,11 @@ export interface RailStationData {
     transitMode: TransitMode;
     linkRef: string | undefined;
     address: string | null;
-    coordinates: [{
-        lng: number | null;
-        lat: number | null;
-    }];
+    coordinates: Coordinates[];
     exits: RailStationExitData | null
     menuCode: string
 }
+
 export type RailStationFeature = Omit<RailStationData, 'exits'>
 
 export interface RailStationExitData {
@@ -77,14 +73,41 @@ export interface RailStationExitData {
     linkRef: string | null;
     exitRef: number | undefined;
     offset: number | null;
+    coordinates: Coordinates[];
     accessTime: number | null;
-    coordinates: [{
-        lng: number | null;
-        lat: number | null;
-    }];
     menuCode: string
 }
-export type RailStationExitFeature  = RailStationExitData;
+
+export const defaultRailStationExitData = {
+    __guid: null,
+    featureType: FEATURE_TYPE.RAIL_STATION_EXIT,
+    id: undefined,
+    linkRef: null,
+    exitRef: undefined,
+    offset: null,
+    accessTime: null,
+    coordinates: [{
+        lng: null,
+        lat: null,
+    }],
+    menuCode: "RAIL_STATION",
+} as RailStationExitData
+
+export type RailStationExitFeature = RailStationExitData;
+export const defaultRailStationExitFeature = {
+    __guid: null,
+    featureType: FEATURE_TYPE.RAIL_STATION_EXIT,
+    id: undefined,
+    linkRef: null,
+    exitRef: undefined,
+    offset: null,
+    accessTime: null,
+    coordinates: [{
+        lng: null,
+        lat: null,
+    }],
+    menuCode: "RAIL_STATION",
+} as RailStationExitFeature
 
 export type BusStationSnapProperties = Pick<BusStationData, BusStationSnapFields>;
 export type RailStationSnapProperties = Pick<RailStationFeature, RailStationSnapFields>;

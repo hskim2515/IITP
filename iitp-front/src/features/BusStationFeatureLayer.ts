@@ -189,7 +189,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
         }
     }
 
-    private styleFunction(feature: Feature<Point>, resolution: number): Style[] {
+    public styleFunction(feature: Feature<Point>, resolution: number): Style[] {
         const geom = feature.getGeometry();
         const styles: Style[] = [];
         if (geom instanceof Point) {
@@ -197,7 +197,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
                 new Style({
                     image: new CircleStyle({
                         radius: 6,
-                        fill: new Fill({ color: "rgba(255,0,0,1)" }),
+                        fill: new Fill({ color: "rgb(255,0,0)" }),
                         stroke: new Stroke({ color: "rgba(0,0,0,0)", width: 1 }),
                     }),
                 })

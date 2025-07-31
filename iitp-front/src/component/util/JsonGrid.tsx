@@ -13,7 +13,7 @@ import { generateGUIDWithType } from "@utils/guid";
 const EXCLUDED_NESTED_FIELDS = ["coordinates"];
 
 // 컬럼 자동 추출
-function generateColumnsFromData(data: any[]) {
+function generateColumnsFromData(data: Record<string, unknown>[]) {
     if (!data?.length) return [];
 
     const excludedFields = ['shape', '__guid', 'coordinate', 'lat', 'lng', 'featureType', 'from', 'to', 'laneSource', 'laneTarget', 'menuCode'];
@@ -28,7 +28,7 @@ function generateColumnsFromData(data: any[]) {
                 title: key,
                 dataIndex: key,
                 key: key,
-                sorter: (a, b) => {
+                sorter: (a:Record<string, unknown>, b:Record<string, unknown>) => {
                     const va = a[key];
                     const vb = b[key];
                     return typeof va === 'number' && typeof vb === 'number'
@@ -39,7 +39,7 @@ function generateColumnsFromData(data: any[]) {
                     text: String(val),
                     value: val,
                 })),
-                onFilter: (value, record) => record[key] === value,
+                onFilter: (value:unknown, record:Record<string, unknown>) => record[key] === value,
             };
         });
 }
@@ -151,7 +151,7 @@ const JsonGrid = ({
         return null;
     }
 
-    const handleInputChange = (key: string, field: string, value: any) => {
+    const handleInputChange = (key: string, field: string, value: unknown) => {
         setRowEditValues((prev) => ({
             ...prev,
             [key]: {
@@ -165,7 +165,7 @@ const JsonGrid = ({
         selectedGuid?.includes(guid);
     const enhancedColumns = columns.map((col) => ({
         ...col,
-        render: (value, record) => {
+        render: (value:unknown, record:Record<string,any>) => {
             const guid = record.__guid;
             const currentValue = rowEditValues[guid]?.[col.dataIndex] ?? value;
 
@@ -194,7 +194,7 @@ const JsonGrid = ({
             return inputType === 'number' ? (
                 <InputNumber
                     value={currentValue}
-                    onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
+                    onChange={(val:unknown) => handleInputChange(guid, col.dataIndex, val)}
                     onBlur={handleCommit}
                     onPressEnter={handleCommit}
                     size="small"
@@ -233,7 +233,7 @@ const JsonGrid = ({
         if (typeof layer?.createDto === "function") {
             newRecord = layer.createDto(targetFeatureType);
             newRecord.id = Date.now(); // 임시 ID
-            newRecord.__guid = generateGUIDWithType(targetFeatureType); // __guid 생성
+            newRecord.__guid = generateGUIDWithType(targetFeatureType??""); // __guid 생성
 
             console.log("새로 추가될 DTO:::", newRecord);
             store.getState().updateCurrentJsonData(newRecord, historyStore);
@@ -250,11 +250,8 @@ const JsonGrid = ({
         <div style={{paddingLeft: depth * 24}}>
             {/*<h3 style={{ display: depth > 0 ? "block" : "none" }}>*/}
             {/*</h3>*/}
-            <div style={{ display: "flex", alignItems: "center" }}>
-                <h4>{levelName}</h4>
-                <button className="grid-btn add-btn" onClick={() => handleAddBtn()}>+</button>
-                <button className="grid-btn delete-btn" onClick={() => handleDeleteBtn()}>-</button>
-            </div>
+            <button className="grid-btn add-btn" onClick={() => handleAddBtn()}>+</button>
+            <button className="grid-btn delete-btn" onClick={() => handleDeleteBtn()}>-</button>
             <Table
                 className="transparent-table"
                 dataSource={rowData}
@@ -285,7 +282,7 @@ const JsonGrid = ({
                                         return (
                                             Array.isArray(record[field]) && record[field].length > 0 ? (
                                                 <div key={field}>
-
+                                                    <h4 style={{marginBottom: 4}}>{field}</h4>
                                                     <JsonGrid
                                                         rowData={record[field]}
                                                         levelName={field}

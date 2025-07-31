@@ -1,10 +1,12 @@
 import { create } from 'zustand';
 import * as Cesium from "cesium";
-import { CallbackProperty, Color, ColorMaterialProperty } from 'cesium';
-import {useOpenLayersStore} from "@stores/useOpenLayersStore";
-import {useCesiumStore} from "@stores/useCesiumStore";
-import {useMenuStore} from "@stores/useMenuStore";
-import {propertyFormSchema} from "../component/form/propertyFormSchema";
+import { useOpenLayersStore } from "@stores/useOpenLayersStore";
+import { useCesiumStore } from "@stores/useCesiumStore";
+import { useMenuStore } from "@stores/useMenuStore";
+import { propertyFormSchema } from "../component/form/propertyFormSchema";
+import { getFeaturesByGuidPrefix } from "@utils/feature";
+import { Fill, Stroke, Style } from "ol/style";
+import CircleStyle from "ol/style/Circle";
 
 type SelectionStore = {
     selectedGuid: (string | number) [];
@@ -17,15 +19,41 @@ type SelectionStore = {
 
 export const useSelectionStore = create<SelectionStore>((set, get) => ({
     selectedGuid: [],
-    setSelectedGuid: (guids:(string | number)[]) => {
-        set({ selectedGuid: guids })
+    setSelectedGuid: (guids: (string | number)[]) => {
+        set({selectedGuid: guids})
         const activeSubmenu = useMenuStore.getState().activeSubmenu;
-        if(activeSubmenu){
+        if (activeSubmenu) {
             const layerName = propertyFormSchema[activeSubmenu.menuCode].layer
             const viewer = useCesiumStore.getState().viewer;
-            guids.forEach( guid =>{
+            guids.forEach(guid => {
+                console.log("guid:::", guid)
+                const map = useOpenLayersStore.getState().map
+                const olLayer = map.getLayers().getArray().find((layer) => {
+                    if (layer["layer"] === layerName) return layer
+                })
+                const features = getFeaturesByGuidPrefix(olLayer, guid);
+                features?.getArray().forEach((feature) => {
+                    feature.setStyle(
+                        new Style({
+                            stroke: new Stroke({
+                                color: 'rgb(31,255,0)',
+
+                            }),
+                            zIndex: 200,
+                            fill: new Fill({
+                                color: 'rgb(31,255,0)',
+                            }),
+                            image: new CircleStyle({
+                                radius: 7,
+                                fill: new Fill({color: 'rgb(31,255,0)'}),
+                                stroke: new Stroke({color: 'white', width: 3}),
+                            }),
+                        }),
+                    );
+                });
+
                 viewer?.dataSources?.getByName(layerName)[0]?.entities.values.forEach(entity => {
-                    if(entity.id === guid) {
+                    if (entity.id === guid) {
 
                         const blinkingColor = new Cesium.CallbackProperty((time) => {
                             // 현재 시간(ms 기준)
@@ -126,9 +154,9 @@ export const useSelectionStore = create<SelectionStore>((set, get) => ({
 
     addSelectionId: (guid: string | number) => {
         const currentSelected = get().selectedGuid;
-        if(!currentSelected.includes(guid)) set({selectedGuid: [...currentSelected, guid]});
+        if (!currentSelected.includes(guid)) set({selectedGuid: [...currentSelected, guid]});
     },
-    removeSelectionId:(guid: string | number) => {
+    removeSelectionId: (guid: string | number) => {
         const currentSelected = get().selectedGuid;
         set({selectedGuid: currentSelected.filter((id: string | number) => id !== guid)});
     },
