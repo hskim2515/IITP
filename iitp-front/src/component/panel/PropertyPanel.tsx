@@ -22,7 +22,7 @@ import axiosInstance from "../../api/axiosInstance";
 import JsonGrid from "../util/JsonGrid";
 import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
-import useHistoryInit, {menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
+import useHistoryInit, {layerNameToHistoryStoreMap, menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
 import {mergeJsonWithLog, mergeUpdateLogs} from "@utils/history";
 import {interpolateByOffset} from "@utils/interpolateByOffset";
 import HistoryController from "../modal/HistoryController";
@@ -480,30 +480,21 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         const currentJsonData = store.getState().currentJsonData;
         const firstKey = Object.keys(currentJsonData)[0] as keyof typeof currentJsonData;
         const currentJsonItem = currentJsonData[firstKey];
-        const featuresMap = new Map<string | number, Feature>();
-        const featureData = currentJsonItem.map((data) => createFeature(data));
-
-        featureData.forEach((feature) => {
-            if (!feature) return;
-            const id = feature.get('id');
+        const featuresMap = new Map<string | number, any>();
+        currentJsonItem.forEach((data) => {
+            const id = data.__guid;
             if (id != null) {
-                featuresMap.set(id, feature);
+                featuresMap.set(id, JSON.parse(JSON.stringify(data)));
             }
         });
-
-        const mergeFeature = mergeJsonWithLog(featuresMap, updateHistory.json, isUndo);
-        const interpolated = interpolateByOffset(mergeFeature);
-        const flatRows = interpolated
-            .map(f => convertFeatureToRecord(f))
-            .filter(r => r.id !== undefined && !isNaN(Number(r.id)))
-            .sort((a, b) => Number(a.id) - Number(b.id))
-            .map(({ geometry, ...rest }) => rest);
-
+        const mergeJsonData = mergeJsonWithLog(featuresMap, updateHistory.json, isUndo);
         store.getState().setCurrentJsonData({
-            pavementMarkings: flatRows,
+            ...currentJsonData,
+            [firstKey]: mergeJsonData,
         });
 
         alert(isUndo ? "Undo 성공" : "Redo 성공");
+
     };
 
     return (

@@ -24,7 +24,7 @@ import WebGLVectorLayer from "ol/layer/WebGLVector";
 import BaseLayer from "ol/layer/Base";
 import { Coordinate } from "ol/coordinate";
 import { generateGUIDWithType } from "@utils/guid";
-import {interpolateByOffset} from "@utils/interpolateByOffset";
+import {interpolateByOffset, interpolateFeatureByOffset} from "@utils/interpolateByOffset";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import Geometry from "ol/geom/Geometry";
 
@@ -134,9 +134,8 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
                         const coord = getCoordinateByOffset(baseFeature, offset)
                         if (coord) {
                             const [ lng, lat ] = toLonLat(coord)
-                            // 계산한 값을 json에 적용
-                            item.coordinates.lng = lng
-                            item.coordinates.lat = lat
+                            dto.angle = feature.get('angle'); //angle
+
                             feature.setGeometry(new Point(fromLonLat([ lng, lat ])));
                         }
 
@@ -147,7 +146,8 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
                 added.forEach((item) => {
                     const dto = this.recordToDto(item);
                     const feature = this.createFeature(dto);
-                    src.addFeature(feature);
+                    const mergeFeature = interpolateFeatureByOffset(feature);
+                    src.addFeature(mergeFeature);
                 });
             });
         };
