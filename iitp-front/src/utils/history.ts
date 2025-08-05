@@ -7,27 +7,105 @@ import {fromLonLat} from "ol/proj";
 import {createFeature} from "@utils/feature";
 
 interface FeatureUpdateHistoryOptions {
-    featureId: string | number;
+    guid: string | number;
     updateType: UpdateType;
     field?: string;
     oldValue?: any;
     newValue?: any;
     properties?: Record<string, unknown>;
+    parentGuid?: string;
+    grandParentGuid?: string;
 }
 
-
+//
+// export function mergeJsonWithLog(
+//     //featuresMap: Map<string | number, OLFeature>,
+//     featuresMap: Map<string | number, any>,
+//     updateLog: UpdateLogEntry,
+//     isUndo: boolean
+// ): OLFeature[] {
+//     const { added, modified, deleted } = updateLog;
+//     if (isUndo) {
+//         // Undo: 삭제 → 다시 추가
+//         const deletedPropsMap = new Map<string | number, Record<string, any>>();
+//         deleted?.forEach((change) => {
+//             const fid = change.guid;
+//             if (!deletedPropsMap.has(fid)) {
+//                 deletedPropsMap.set(fid, {});
+//             }
+//             deletedPropsMap.get(fid)![change.field!] = change.oldValue;
+//         });
+//
+//         deletedPropsMap.forEach((props, fid) => {
+//             const coords = props.coordinates?.[0];
+//             const geom = coords ? new Point(fromLonLat([coords.lng, coords.lat])) : new Point([0, 0]);
+//             const feature = new Feature({ geometry: geom });
+//             feature.setProperties({
+//                 ...props,
+//                 //id: fid,
+//             });
+//             feature.setId(fid);
+//             featuresMap.set(fid, feature);
+//         });
+//
+//         // Undo: 수정 → 원래 값으로 복원
+//         modified?.forEach((change) => {
+//             const feature = featuresMap.get(change.guid);
+//             if (feature) {
+//                 feature.set(change.field!, change.oldValue);
+//             }
+//         });
+//
+//         // Undo: 추가 → 제거
+//         added?.forEach((change) => {
+//             featuresMap.delete(change.guid);
+//         });
+//
+//     } else {
+//         // Redo: 삭제 → 제거
+//         deleted?.forEach((change) => {
+//             featuresMap.delete(change.guid);
+//         });
+//
+//         // Redo: 수정 → 새로운 값 반영
+//         modified?.forEach((change) => {
+//             const feature = featuresMap.get(change.guid);
+//             if (feature) {
+//                 feature.set(change.field!, change.newValue);
+//             }
+//         });
+//
+//         // Redo: 추가 → 다시 생성
+//         added?.forEach((change) => {
+//             const feature = new OLFeature({
+//                 ...change.properties,
+//                 id: change.guid,
+//             });
+//
+//             // geometry가 없다면 기본 geometry 설정
+//             if (!feature.getGeometry()) {
+//                 feature.setGeometry(new Point([0, 0]));
+//             }
+//
+//             featuresMap.set(change.guid, feature);
+//         });
+//     }
+//
+//     return Array.from(featuresMap.values());
+// }
 
 export function mergeJsonWithLog(
-    featuresMap: Map<string | number, OLFeature>,
+    featuresMap: Map<string | number, any>,
     updateLog: UpdateLogEntry,
     isUndo: boolean
-): OLFeature[] {
+): any[] {
     const { added, modified, deleted } = updateLog;
+
     if (isUndo) {
         // Undo: 삭제 → 다시 추가
         const deletedPropsMap = new Map<string | number, Record<string, any>>();
         deleted?.forEach((change) => {
-            const fid = change.featureId;
+            const fid = change.guid;
             if (!deletedPropsMap.has(fid)) {
                 deletedPropsMap.set(fid, {});
             }
@@ -35,60 +113,47 @@ export function mergeJsonWithLog(
         });
 
         deletedPropsMap.forEach((props, fid) => {
-            const coords = props.coordinates?.[0];
-            const geom = coords ? new Point(fromLonLat([coords.lng, coords.lat])) : new Point([0, 0]);
-            const feature = new Feature({ geometry: geom });
-            feature.setProperties({
-                ...props,
+            featuresMap.set(fid, {
                 id: fid,
+                ...props
             });
-            feature.setId(fid);
-            featuresMap.set(fid, feature);
         });
 
         // Undo: 수정 → 원래 값으로 복원
         modified?.forEach((change) => {
-            const feature = featuresMap.get(change.featureId);
-            if (feature) {
-                feature.set(change.field!, change.oldValue);
+            const data = featuresMap.get(change.guid);
+            if (data) {
+                data[change.field!] = change.oldValue;
             }
         });
 
         // Undo: 추가 → 제거
         added?.forEach((change) => {
-            featuresMap.delete(change.featureId);
+            featuresMap.delete(change.guid);
         });
 
     } else {
         // Redo: 삭제 → 제거
         deleted?.forEach((change) => {
-            featuresMap.delete(change.featureId);
+            featuresMap.delete(change.guid);
         });
 
         // Redo: 수정 → 새로운 값 반영
         modified?.forEach((change) => {
-            const feature = featuresMap.get(change.featureId);
-            if (feature) {
-                feature.set(change.field!, change.newValue);
+            const data = featuresMap.get(change.guid);
+            if (data) {
+                data[change.field!] = change.newValue;
             }
         });
 
         // Redo: 추가 → 다시 생성
         added?.forEach((change) => {
-            const feature = new OLFeature({
-                ...change.properties,
-                id: change.featureId,
+            featuresMap.set(change.guid, {
+                id: change.guid,
+                ...change.properties
             });
-
-            // geometry가 없다면 기본 geometry 설정
-            if (!feature.getGeometry()) {
-                feature.setGeometry(new Point([0, 0]));
-            }
-
-            featuresMap.set(change.featureId, feature);
         });
     }
-
     return Array.from(featuresMap.values());
 }
 
@@ -136,15 +201,18 @@ export const featureUpdateLogs = (
     store: ReturnType<typeof useHistoryStoreFactory>,
     options: FeatureUpdateHistoryOptions
 ) => {
-
-    const { featureId, updateType, field, oldValue, newValue, properties } = options;
+    const { guid, updateType, field, oldValue, newValue, properties } = options;
     let updates: UpdateLogEntry = {};
     const timestamp = new Date().toISOString();
+
+    if (field === "geometry.coordinates" || field === "coordinates") {
+        return;
+    }
 
     if (updateType === "modified" && field !== undefined) {
         updates[updateType] = [
             {
-                featureId,
+                guid,
                 field,
                 oldValue,
                 newValue,
@@ -155,7 +223,7 @@ export const featureUpdateLogs = (
 
     if ((updateType === "added" || updateType === "deleted") && properties) {
         updates[updateType] = Object.entries(properties).map(([key, value]) => ({
-            featureId,
+            guid,
             field: key,
             oldValue: updateType === "deleted" ? value : null,
             newValue: updateType === "added" ? value : null,
@@ -186,3 +254,19 @@ export function mergeUpdateLogs(logs: any[]): UpdateLogEntry {
 export function getValueAtPath(obj: any, path: string[]) {
     return path.reduce((acc, key) => (acc && acc[key] !== undefined) ? acc[key] : undefined, obj);
 }
+
+// export function findPath(obj, guid, currentPath = ''): string | null {
+//     if (Array.isArray(obj)) {
+//         for (const [i, item] of obj.entries()) {
+//             const result = findPath(item, guid, `${currentPath}[${i}]`);
+//             if (result) return result;
+//         }
+//     } else if (typeof obj === 'object' && obj !== null) {
+//         if (obj.__guid === guid) return currentPath;
+//         for (const [key, value] of Object.entries(obj)) {
+//             const result = findPath(value, guid, currentPath ? `${currentPath}.${key}` : key);
+//             if (result) return result;
+//         }
+//     }
+//     return null;
+// }

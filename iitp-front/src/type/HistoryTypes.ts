@@ -1,7 +1,7 @@
 export type UpdateType = 'added' | 'modified' | 'deleted';
 
 export interface FieldChange {
-    featureId: string | number;
+    guid: string | number;
     field: string;
     oldValue: any;
     newValue: any;
