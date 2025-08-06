@@ -103,9 +103,11 @@ export function mergeJsonWithLog(
 
     if (isUndo) {
         // Undo: 삭제 → 다시 추가
-        const deletedPropsMap = new Map<string | number, Record<string, any>>();
+        const deletedPropsMap = new Map<string, Record<string, any>>();
+
         deleted?.forEach((change) => {
             const fid = change.guid;
+            if (!fid || !change.field) return;
             if (!deletedPropsMap.has(fid)) {
                 deletedPropsMap.set(fid, {});
             }
@@ -171,22 +173,16 @@ export function buildMergedDataFromLogs(
     });
 
     const featuresMap = new Map<string | number, Feature>();
-    const features = baseData
-        .map((data) => createFeature(data))
-        .filter((f): f is Feature<Point> => !!f);
-
-    features.forEach((feature) => {
-        if (!feature) return;
-        const id = feature.get('id');
+    baseData.forEach((item) => {
+        const id = item.__guid;
         if (id != null) {
-            featuresMap.set(id, feature);
+            featuresMap.set(id, item);
         }
     });
 
     sortedLogs.forEach(log => {
         mergeJsonWithLog(featuresMap, log.data, isUndo);
     });
-
     return Array.from(featuresMap.values());
 }
 
@@ -216,7 +212,7 @@ export const featureUpdateLogs = (
                 field,
                 oldValue,
                 newValue,
-                timestamp
+                timestamp,
             }
         ];
     }
@@ -227,7 +223,8 @@ export const featureUpdateLogs = (
             field: key,
             oldValue: updateType === "deleted" ? value : null,
             newValue: updateType === "added" ? value : null,
-            timestamp
+            timestamp,
+            properties,
         }));
     }
 
