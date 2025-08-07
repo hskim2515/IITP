@@ -1,4 +1,6 @@
-import { Map as OLMap } from 'ol';
+import { Map as OLMap, ol } from 'ol';
+import Style from 'ol/style/Style';
+
 import BaseLayer from 'ol/layer/Base';
 
 class VectorLayerManager {
@@ -113,6 +115,29 @@ class VectorLayerManager {
         const shouldShow = !items[0].getVisible();
         items.forEach(l => l.setVisible(shouldShow));
     }
+
+    toggleByFeatureType(groupName: string, layerName: string, featureType: string, visible: boolean) {
+        const group = this.layerGroups[groupName];
+        if (!group) return;
+
+        group.forEach(layer => {
+            if (layer["layer"] === layerName) {
+                const source = layer.getSource?.();
+                if (!source) return;
+                // featureType 별로 필터링
+                const features = source.getFeatures().filter(f => f.get('__guid')?.split('-')[0] === featureType);
+                features.forEach(feature => {
+                    if (visible) {
+                        feature.setStyle(null);
+                    } else {
+                        feature.setStyle(new Style({}));
+                    }
+                });
+            }
+        });
+    }
+
+
 
 
     remove(groupName, layerName) {

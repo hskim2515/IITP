@@ -267,7 +267,7 @@ const JsonGrid = ({
                 <h3 style={{ display: depth === 0 ? "block" : "none" }}>
                     <div className="grid-header">
                         <FontAwesomeIcon onClick={() => toggleGrid(levelName)}
-                                         icon={expandedKey === levelName ? faChevronUp : faChevronDown}/>
+                                         icon={expandedKey === levelName ? faChevronDown : faChevronUp}/>
                     </div>
                 </h3>
             </div>
