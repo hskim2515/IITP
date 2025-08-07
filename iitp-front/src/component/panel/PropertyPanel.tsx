@@ -293,24 +293,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         };
     }, [layer, selectedGuid, selectedDrawTypeRef.current]);
 
-    //select
-    useEffect(() => {
-        if (!olEventManager || !layer) return;
-        const onSelect = (e: SelectEvent) => {
-            const features: Collection<Feature> = e.target.getFeatures()
-            const selectedIds = getValuesFromFeatures(features, "__guid")
-            setSelectedGuid(selectedIds)
-        };
-        const options = {
-            olLayers: [layer],
-            // style: layer.getInteractionStyle("select")
-        }
-        if (layer) olEventManager.bind("select", onSelect, options)
-        return () => {
-            if (layer) olEventManager.unbind("select", onSelect)
-        };
-    }, [olEventManager, layer]);
-
     //snap
     useEffect(() => {
         if (!olEventManager || !snapLayer || !layer) return

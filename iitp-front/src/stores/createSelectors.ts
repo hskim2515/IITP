@@ -1,5 +1,6 @@
 import { StoreApi, UseBoundStore } from 'zustand';
 
+// 기존 createSelectors 함수를 그대로 사용
 type WithStateActions<S> = S extends UseBoundStore<StoreApi<infer T>>
     ? S & {
     state: { [K in keyof T as T[K] extends Function ? never : K]: () => T[K] };
@@ -7,18 +8,10 @@ type WithStateActions<S> = S extends UseBoundStore<StoreApi<infer T>>
 }
     : never;
 
-/**
- * 스토어 정의 내에서 .state 와 .actions 네임스페이스를 자동 생성
- * 
- * 적용예시
- * 
- * export const useOpenLayersStore = createSelectors(create<
- * 
- * 호출 예시
- * 
- * const olMap  = useOpenLayersStore.state.map();
- */
-export function createSelectors<S extends UseBoundStore<StoreApi<object>>>(
+export function createSelectors<
+    T extends object,
+    S extends UseBoundStore<StoreApi<T>>
+>(
     baseStore: S,
 ): WithStateActions<S> {
     const store = baseStore as WithStateActions<S>;
@@ -27,15 +20,38 @@ export function createSelectors<S extends UseBoundStore<StoreApi<object>>>(
 
     const initial = store.getState();
     for (const key of Object.keys(initial)) {
-        const value = initial[key]
+        const value = initial[key as keyof typeof initial]
         if (typeof value === 'function') {
-            // 함수면 actions 네임스페이스로
-            store.actions[key] = () => store((s) => s[key as keyof typeof s])
+            store.actions[key as keyof typeof store.actions] = () => store((s) => s[key as keyof typeof s]) as any;
         } else {
-            // 함수 아니면 state 네임스페이스로
-            store.state[key] = () => store((s) => s[key as keyof typeof s])
+            store.state[key as keyof typeof store.state] = () => store((s) => s[key as keyof typeof s]) as any;
         }
     }
 
     return store;
+}
+
+type ExtractedStore<S> = S extends UseBoundStore<StoreApi<infer T>> ? T : never;
+
+export function useStoreSelectors<S extends WithStateActions<UseBoundStore<StoreApi<any>>>>(useStore: S) {
+    const stateKeys = Object.keys(useStore.state);
+    const actionsKeys = Object.keys(useStore.actions);
+
+    const state = useStore((store) => {
+        const selectedState: Record<string, any> = {};
+        for (const key of stateKeys) {
+            selectedState[key] = (store as any)[key];
+        }
+        return selectedState as ExtractedStore<S>['state'];
+    });
+
+    const actions = useStore((store) => {
+        const selectedActions: Record<string, any> = {};
+        for (const key of actionsKeys) {
+            selectedActions[key] = (store as any)[key];
+        }
+        return selectedActions as ExtractedStore<S>['actions'];
+    });
+
+    return { state, actions };
 }
