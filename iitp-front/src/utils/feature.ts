@@ -293,6 +293,57 @@ export function findFeatureByProperties(
     ) ?? null;
 }
 
+export function getCellOffsetRelativeToCell(targetFeature: Feature, coordinate: Coordinate): { cellId: string | null; offset: number | null } {
+    if (!targetFeature || !coordinate) return { cellId: null, offset: null };
+
+    const offset = getOffsetByCoordinate(targetFeature, coordinate);
+    if (offset === null) return { cellId: null, offset: null };
+
+    const cells = targetFeature.get('cells') || targetFeature.cells;
+    if (!cells || !Array.isArray(cells)) return { cellId: null, offset: null };
+
+    for (const cell of cells) {
+        const cellOffset = cell.offset ?? 0;
+        const cellLength = cell.length ?? 0;
+
+        if (offset >= cellOffset && offset < (cellOffset + cellLength)) {
+            return {
+                cellId: cell.id,
+                offset: offset - cellOffset
+            };
+        }
+    }
+    return { cellId: null, offset: null };
+}
+export function getAngleByCoordinate(targetFeature: Feature, coordinate: Coordinate): number | null {
+    if (!targetFeature) return null;
+
+    const geometry = targetFeature.getGeometry();
+    if (!geometry) return null;
+
+    const pos = getPositionByCoordinate(geometry, coordinate);
+    if (!pos) return null;
+
+    const { segmentIndex } = pos;
+    if (segmentIndex === undefined || segmentIndex === null) return null;
+
+    // geometry의 좌표 배열 가져오기 (LineString 기준)
+    const coords = geometry.getCoordinates();
+    if (!Array.isArray(coords) || coords.length < 2) return null;
+
+    // segmentIndex가 coords 배열 범위 안에 있는지 체크
+    if (segmentIndex < 0 || segmentIndex >= coords.length - 1) return null;
+
+    const start = coords[segmentIndex];
+    const end = coords[segmentIndex + 1];
+
+    const dx = end[0] - start[0];
+    const dy = end[1] - start[1];
+
+    const angle = Math.atan2(dy, dx);
+    return angle;
+}
+
 export function getFeaturesByProperties(input: Feature[], properties: Record<string, unknown>): Collection<Feature> | null;
 export function getFeaturesByProperties(input: VectorSource, properties: Record<string, unknown>): Collection<Feature> | null;
 export function getFeaturesByProperties(input: VectorLayer | WebGLVectorLayer | BaseLayer, properties: Record<string, unknown>): Collection<Feature> | null;

@@ -7,8 +7,6 @@ import 'react-vertical-timeline-component/style.min.css';
 import { menuCodeToHistoryStoreMap } from '@hooks/useHistoryInit';
 import { buildMergedDataFromLogs} from "@utils/history";
 import {menuCodeToStoreMap} from "@hooks/useLayerInit";
-import {interpolateByOffset} from "@utils/interpolateByOffset";
-import {convertFeatureToRecord} from "@utils/feature";
 
 interface Props {
     historySteps: HistoryStep[];
@@ -35,7 +33,7 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
     const originData = featureStore.getState().originData;
     const firstKey = Object.keys(originData)[0] as keyof typeof originData;
     const originItem = originData[firstKey];
-
+    const currentJsonData = featureStore.getState().currentJsonData;
     const originHistoryData = historyStore.getState().originHistoryData;
 
     const [currentData, setCurrentData] = useState<Record<string,any>>(originItem);
@@ -67,29 +65,19 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
         const step = historySteps[idx];
         const confirmed = window.confirm(`${step.message} 시점으로 되돌리시겠습니까?`);
         if (confirmed) {
-            const prevIndex = selectedIndex;
             setSelectedIndex(idx);
 
-            const isUndo = idx >= prevIndex;
+            const logsToApply = historySteps.slice(0, idx + 1);
 
-            const from = Math.min(prevIndex, idx);
-            const to = Math.max(prevIndex, idx);
-
-            const slicedLogs = historySteps.slice(from, to).map(step => step);
-            const orderedLogs = isUndo ? slicedLogs.reverse() : slicedLogs;
-            const mergeFeature = buildMergedDataFromLogs(currentData, orderedLogs, isUndo);
-
-            const interpolated = interpolateByOffset(mergeFeature);
-            const flatRows = interpolated
-                .map(f => convertFeatureToRecord(f))
-                .filter(r => r.id !== undefined && !isNaN(Number(r.id)))
-                .sort((a, b) => Number(a.id) - Number(b.id))
-                .map(({ geometry, ...rest }) => rest);
-
+            if (logsToApply.length === 0) {
+                alert('변경할 데이터가 없습니다.');
+                return;
+            }
+            const mergeData = buildMergedDataFromLogs(originItem, logsToApply, /*isUndo=*/true);
             featureStore.getState().setCurrentJsonData({
-                pavementMarkings: flatRows,
+                //...currentData,
+                [firstKey]: mergeData,
             });
-            setCurrentData(flatRows);
         }
     };
 

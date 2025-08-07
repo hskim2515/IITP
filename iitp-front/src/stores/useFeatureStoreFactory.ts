@@ -177,18 +177,18 @@ const createFeatureStore = <T>() =>
                                 return;
                             }
                             // // 변경 적용
-                            // const updatedItem = applyDiffs(existing, diffs);
-                            // console.log("updateCurrentJsonData updatedItem:::", updatedItem)
-                            const newItems = [...items, record];
-                            // const newItems = [ ...items ];
-                            const interpolatedRecords = interpolateAndConvertToRecords(newItems);
+                             const updatedItem = applyDiffs(existing, diffs);
+                             console.log("updateCurrentJsonData updatedItem:::", updatedItem)
+                            //const newItems = [...items, record];
+                             const newItems = [ ...items ];
+                            //const interpolatedRecords = interpolateAndConvertToRecords(newItems);
 
 
 
                             set({
                                 currentJsonData: {
                                     ...current,
-                                    [key]: interpolatedRecords,
+                                    [key]: newItems,
                                 },
                                 isChanged: true,
                             });

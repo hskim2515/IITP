@@ -13,7 +13,7 @@ import {
 import { deepEqual } from "@utils/json";
 import { useLayerStore } from "@stores/useLayerStore";
 import {
-    findFeatureByProperties,
+    findFeatureByProperties, getAngleByCoordinate, getCellIdByCoordinate, getCellOffsetRelativeToCell,
     getCoordinateByOffset,
     getFeaturesByProperties,
     getOffsetByCoordinate
@@ -170,8 +170,10 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
         const features = pavementMarkings
             .map((data) => this.createFeature(data))
             .filter((f): f is Feature<Point> => !!f); // undefined 필터링
+
         const mergedFeatures = interpolateByOffset(features);
         source.addFeatures(mergedFeatures);
+
     }
 
     /**
@@ -301,8 +303,9 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
         fromCoord: Coordinate,
         drawType?: String,
     ): Record<string, unknown> {
-        const offset = getOffsetByCoordinate(targetFeature, fromCoord);
-
+        //const offset = getOffsetByCoordinate(targetFeature, fromCoord);
+        const {cellId, offset} = getCellOffsetRelativeToCell(targetFeature, fromCoord);
+        const angle = getAngleByCoordinate(targetFeature, fromCoord);
         const computeProperties: Record<string, unknown> = {};
         const [ lng, lat ] = toLonLat(fromCoord)
 
@@ -313,6 +316,10 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
                 computeProperties[key] = lng != null && lat != null ? [ { lat, lng } ] : [];
             } else if (key === "markingType") {
                 computeProperties[key] = drawType;
+            } else if (key === "cellId") {
+                computeProperties[key] = cellId;
+            } else if (key === "angle") {
+                computeProperties[key] = angle;
             } else {
                 computeProperties[key] = basedProperties?.[key] ?? null;
             }
