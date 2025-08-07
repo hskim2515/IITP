@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState} from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import "/static/css/styles.css";
 import {MenuTree} from "@stores/useMenuStore";
 import {propertyFormSchema} from "../form/propertyFormSchema";
@@ -8,7 +8,7 @@ import {GridHandle} from "@type/GirdOptions";
 import {menuCodeToStoreMap} from "@hooks/useLayerInit";
 import {useEventStore} from "@stores/useEventStore";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
-import useGrid from "@hooks/useGrid";
+import useGrid, {AddOptions} from "@hooks/useGrid";
 import GeometryType from "@type/FeatureOptions";
 import {SelectEvent} from "ol/interaction/Select";
 import {Feature} from "ol";
@@ -20,9 +20,14 @@ import {DrawEvent} from "ol/interaction/Draw";
 import {apiConfig, ApiMenuKey} from "../../config/apiConfig";
 import axiosInstance from "../../api/axiosInstance";
 import JsonGrid from "../util/JsonGrid";
-import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
+import {
+    faChevronDown,
+    faChevronUp,
+    faDownLeftAndUpRightToCenter,
+    faUpRightAndDownLeftFromCenter
+} from "@fortawesome/free-solid-svg-icons";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
-import useHistoryInit, {menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
+import useHistoryInit, {layerNameToHistoryStoreMap, menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
 import {mergeJsonWithLog, mergeUpdateLogs} from "@utils/history";
 import {interpolateByOffset} from "@utils/interpolateByOffset";
 import HistoryController from "../modal/HistoryController";
@@ -31,6 +36,7 @@ import TypeSelectionModal from "../modal/TypeSelectionModal";
 import HistoryModal from "../modal/HistoryModal";
 import {useScenarioStore} from "@stores/useScenarioStore";
 import {useSelectionStore} from "@stores/useSelectionStore";
+import {Select} from "ol/interaction";
 import {
     convertFeatureToRecord,
     createFeature,
@@ -41,12 +47,18 @@ import {
 import {generateGUIDWithType} from "@utils/guid";
 import Collection from "ol/Collection";
 import {faClose} from "@fortawesome/free-solid-svg-icons/faClose";
+import VectorSource from "ol/source/Vector";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTree
     onClose: () => void;
 }
 
+const geometryTypeOptions: GeometryType[] = [
+    GeometryType.POINT,
+    GeometryType.LINE_STRING,
+    GeometryType.POLYGON,
+];
 const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const submenu = {
         menuCode: activeSubmenu.menuCode,
@@ -63,19 +75,26 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const setSelectedGuid = useSelectionStore((state) => state.setSelectedGuid)
     const addSelectionId = useSelectionStore((state) => state.addSelectionId)
     const clearSelected = useSelectionStore((state) => state.clearSelected)
+    const removeSelectionId = useSelectionStore((state) => state.removeSelectionId)
     const selectedGuidRef = useRef<[]>([])
     const historyStore = menuCodeToHistoryStoreMap[submenu.menuCode];
 
     const [currentJsonData, setCurrentJsonData] = useState(store.getState().currentJsonData);
+    const initCurrentData = store.getState().initCurrentData;
 
     const olEventManager = useEventStore.getState().olEventManager;
     const [drawGeometryType, setDrawGeometryType] = useState<GeometryType>(GeometryType.POINT)
 
+    const selectInteractionRef = useRef<Select | undefined>(undefined);
+    const selectedFeatureIdRef = useRef<[]>([]);
+    const snappedPropertiesRef = useRef<Record<string, string | number | undefined>>(undefined);
+
+    const [addedData, setAddedData] = useState<AddOptions>({})
+
+    const [isEditable, setIsEditable] = useState<boolean>(false)
     const [isDrawing, setIsDrawing] = useState<boolean>(false)
     const [isTypeSelect, setIsTypeSelect] = useState(false);
     const [onConfirm, setOnConfirm] = useState<((selected: string) => void) | null>(null);
-
-    const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const selectedDrawTypeRef = useRef<string | undefined>();
@@ -84,7 +103,10 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     const olMap = useOpenLayersStore.state.map()
 
-    const [isMinimized, setIsMinimized] = useState(false);
+    type BodySize = "mini" | "default" | "full";
+    const [bodySize, setBodySize] = useState<BodySize>("default");
+
+
 
 
     useEffect(() => {
@@ -120,7 +142,15 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         const deselectedFeatures = filterFeaturesByKey(allFeatures, deselected);
 
         deselectedFeatures.forEach((f) => {
-            f.setStyle((feature, resolution) => layer.styleFunction(feature, resolution));
+            if (typeof layer.getDefaultStyle !== "function") return;
+            f.setStyle(layer.getDefaultStyle())
+        });
+
+        const newlySelected = nextGuids.filter((id) => !prevGuids.includes(id));
+        const selectedFeatures = filterFeaturesByKey(allFeatures, newlySelected);
+        selectedFeatures.forEach((f) => {
+            if (typeof layer.getSelectStyle !== "function") return;
+            f.setStyle(layer.getSelectStyle())
         });
 
         // 상태 갱신
@@ -138,10 +168,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             );
     }, [olMap, submenu.menuCode, layer]);
 
-    const toggleGrid = (key: string) => {
-        setExpandedKey((prevKey) => (prevKey === key ? null : key)); // 같은 key면 닫기
-    };
-
     const layers = useMemo(() => {
         return olMap?.getLayers().getArray()
             .filter((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layerGroup"] === "facility");
@@ -156,7 +182,11 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     useHistoryInit(reloadFlag);
 
     const {
+        addRow,
         deleteSelected,
+        saveModifiedFeatures,
+        updateFeatureByRow,
+        switchEditable
     } = useGrid(gridRef, store, historyStore, colDefs)
 
     useEffect(() => {
@@ -345,6 +375,22 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     }, [submenu.menuCode]);
 
+
+    const handleGridSelectionChanged = () => {
+        const selectedRows = gridRef.current?.getSelectedRow() ?? [];
+        const selectedIds = selectedRows.map((row: Record<string, unknown>) => row.id);
+
+        const source = layer.getSource();
+        const features = source?.getFeatures() ?? [];
+
+        features.forEach((feature: Feature) => {
+            const fid = feature.get("id");
+            const selected = selectedIds.includes(fid) ? 1 : 0;
+            feature.set("selected", selected);
+            feature.changed();
+        });
+    };
+
     const handleDrawBtn = () => {
         if (isDrawing) {
             setIsDrawing(false)
@@ -405,6 +451,11 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         }
     }
 
+    const handleEditableBtn = () => {
+        setIsEditable(!isEditable);
+        // switchEditable(!isEditable);
+    }
+
     const handleInitBtn = () => {
         store.getState().initCurrentData()
         const restoredGeojson = store.getState().currentGeojson;
@@ -431,30 +482,37 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         const currentJsonData = store.getState().currentJsonData;
         const firstKey = Object.keys(currentJsonData)[0] as keyof typeof currentJsonData;
         const currentJsonItem = currentJsonData[firstKey];
-        const featuresMap = new Map<string | number, Feature>();
-        const featureData = currentJsonItem.map((data) => createFeature(data));
-
-        featureData.forEach((feature) => {
-            if (!feature) return;
-            const id = feature.get('id');
+        const featuresMap = new Map<string | number, any>();
+        currentJsonItem.forEach((data) => {
+            const id = data.__guid;
             if (id != null) {
-                featuresMap.set(id, feature);
+                featuresMap.set(id, JSON.parse(JSON.stringify(data)));
             }
         });
-
-        const mergeFeature = mergeJsonWithLog(featuresMap, updateHistory.json, isUndo);
-        const interpolated = interpolateByOffset(mergeFeature);
-        const flatRows = interpolated
-            .map(f => convertFeatureToRecord(f))
-            .filter(r => r.id !== undefined && !isNaN(Number(r.id)))
-            .sort((a, b) => Number(a.id) - Number(b.id))
-            .map(({ geometry, ...rest }) => rest);
-
+        const mergeJsonData = mergeJsonWithLog(featuresMap, updateHistory.json, isUndo);
         store.getState().setCurrentJsonData({
-            pavementMarkings: flatRows,
+            ...currentJsonData,
+            [firstKey]: mergeJsonData,
         });
 
         alert(isUndo ? "Undo 성공" : "Redo 성공");
+
+    };
+
+    const increaseSize = () => {
+        setBodySize(prev => {
+            if (prev === "mini") return "default";
+            if (prev === "default") return "full";
+            return "full"; // 이미 full이면 유지
+        });
+    };
+
+    const decreaseSize = () => {
+        setBodySize(prev => {
+            if (prev === "full") return "default";
+            if (prev === "default") return "mini";
+            return "mini"; // 이미 mini면 유지
+        });
     };
 
     return (
@@ -472,55 +530,72 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                             <button onClick={() => handleCheck()}>Interaction 객체 목록 디버깅</button>
                             <button className="btn" onClick={() => handleShowHistory()}>변경 이력 보기</button>
                         </div>
-                        <FontAwesomeIcon className="minimize-btn"
-                                         icon={isMinimized ? faChevronUp : faChevronDown}
-                                         onClick={() => setIsMinimized(!isMinimized)}
-                        />
-                        <FontAwesomeIcon className="close-btn" icon={faClose} onClick={onClose}/>
-                    </div>
-                    {!isMinimized && (
-                        <div className="popup-body">
-                            {isTypeSelect && (
-                                <TypeSelectionModal typeKey={submenu.menuCode} onConfirm={(selectedType) => {
-                                    onConfirm?.(selectedType);
-                                    setIsTypeSelect(false);
-                                }} onCancel={() => {
-                                    setIsTypeSelect(false)
-                                    setIsDrawing(false)
-                                }}/>
-                            )}
-                            {isHistoryOpen && (
-                                <HistoryModal
-                                    onClose={() => setIsHistoryOpen(false)}
-                                    open={isHistoryOpen}
-                                    menuCode={activeSubmenu.menuCode}
-                                />
-                            )}
-                            {submenu.item &&
-                                <div>
-                                    {Object.entries(currentJsonData).map(([key, value]) => (
-                                        Array.isArray(value) && value.length > 0 && (
-                                            <div key={key} className="grid-container">
-                                                <div className="grid-header">
-                                                    <h4 style={{margin: 12}}>
-                                                        {key.charAt(0).toUpperCase() + key.slice(1)}
-                                                    </h4>
-                                                    <FontAwesomeIcon onClick={() => toggleGrid(key)}
-                                                                     icon={expandedKey === key ? faChevronUp : faChevronDown}/>
-                                                </div>
-                                                {expandedKey === key && (
-                                                    <JsonGrid rowData={value} levelName={key}
-                                                              layerName={submenu.item.layer}
-                                                              layerGroupName={"facility"}
-                                                    />
-                                                )}
-                                            </div>
-                                        )
-                                    ))}
-                                </div>
-                            }
+
+                        <div>
+
+                            <FontAwesomeIcon className="close-btn" icon={faClose} onClick={onClose}/>
+                            {(bodySize !== "full") &&(<FontAwesomeIcon
+                                className="expand-btn"
+                                icon={faChevronUp} // ⬆️ 확대 아이콘
+                                onClick={increaseSize}
+                                title="확장"
+                            />)}
+                            {(bodySize !== "mini") &&(<FontAwesomeIcon
+                                className="collapse-btn"
+                                icon={faChevronDown} // ⬇️ 축소 아이콘
+                                onClick={decreaseSize}
+                                title="축소"
+                            />)}
+
                         </div>
-                    )}
+
+                    </div>
+
+                    <div className={
+                        bodySize === "full" ? "popup-body-full"
+                            : bodySize === "mini" ? "popup-body-mini"
+                                : "popup-body"
+                    }>
+                        {isTypeSelect && (
+                            <TypeSelectionModal typeKey={submenu.menuCode} onConfirm={(selectedType) => {
+                                onConfirm?.(selectedType);
+                                setIsTypeSelect(false);
+                            }} onCancel={() => {
+                                setIsTypeSelect(false)
+                                setIsDrawing(false)
+                            }}/>
+                        )}
+                        {isHistoryOpen && (
+                            <HistoryModal
+                                onClose={() => setIsHistoryOpen(false)}
+                                open={isHistoryOpen}
+                                menuCode={activeSubmenu.menuCode}
+                            />
+                        )}
+                        {submenu.item &&
+                            //{ submenu.item && colDefs &&
+                            // <Grid
+                            //     ref={ gridRef }
+                            //     colDefs={ colDefs }
+                            //     rowData={ rowData }
+                            //     onCellValueChanged={ updateFeatureByRow }
+                            //     onSelectionChanged={ handleGridSelectionChanged }
+                            // />
+                            <div style={{width:"99%"}}>
+                                {Object.entries(currentJsonData).map(([key, value]) => (
+                                    Array.isArray(value) && value.length > 0 && (
+                                        <div key={key} className="grid-container">
+
+                                            <JsonGrid rowData={value} levelName={key}
+                                                      layerName={submenu.item.layer}
+                                                      layerGroupName={"facility"}
+                                            />
+                                        </div>
+                                    )
+                                ))}
+                            </div>
+                        }
+                    </div>
                 </div>
             </div>
 

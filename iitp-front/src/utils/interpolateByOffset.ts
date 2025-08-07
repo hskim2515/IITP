@@ -47,6 +47,12 @@ export function interpolateByOffset(features: any[]): any[] {
     return features;
 }
 
+// 단일용 래퍼 함수
+export function interpolateFeatureByOffset(feature: Feature): Feature {
+    const [result] = interpolateByOffset([feature]);
+    return result;
+}
+
 function interpolateAlongLine(coords: number[][], offset: number): { point: [number, number]; angle: number } | null {
     let accumulated = 0;
     for (let i = 1; i < coords.length; i++) {

@@ -79,11 +79,11 @@ export default class NetworkDataSourceLayer {
                 if (!source || !target || !link.lanes) continue;
 
                 // WGS84 좌표 → Cartesian3
-                const sourceCart = Cesium.Cartesian3.fromDegrees(baseLng + x1/ 88000, baseLat + y1/ 111000);
-                const targetCart = Cesium.Cartesian3.fromDegrees(baseLng + x2/ 88000, baseLat + y2/ 111000);
+                const p1 = Cesium.Cartesian3.fromDegrees(baseLng + x1/ 88000, baseLat + y1/ 111000);
+                const p2 = Cesium.Cartesian3.fromDegrees(baseLng + x2/ 88000, baseLat + y2/ 111000);
 
                 // 방향 벡터 계산 (ENU 상)
-                const direction = Cesium.Cartesian3.subtract(targetCart, sourceCart, new Cesium.Cartesian3());
+                const direction = Cesium.Cartesian3.subtract(p1, p2, new Cesium.Cartesian3());
                 Cesium.Cartesian3.normalize(direction, direction);
 
                 // 수직 벡터 계산 (ENU 평면에서 Z 제외한 수직 벡터)
@@ -95,7 +95,7 @@ export default class NetworkDataSourceLayer {
                     id: link.__guid,
                     corridor: {
                         cornerType: Cesium.CornerType.MITERED,
-                        positions: [sourceCart, targetCart],
+                        positions: [p1, p2],
                         width: link.width, // 레인별 폭 적용
                         material: Cesium.Color.WHITE,
                         height: 0.02,
@@ -109,23 +109,33 @@ export default class NetworkDataSourceLayer {
 
                 for (let i = 0; i < n; i++) {
                     const lane = link.lanes[i];
+                    const laneWidth = link.width/laneCount;
+                    const offset = ((laneCount - 1) / 2 - i) * laneWidth;
+                    //const offset = ((laneCount - 1) / 2 - i) * laneWidth;
 
-                    const [firstPointStr, lastPointStr] = lane.shape.split(" ");
-                    const [x1, y1] = firstPointStr.split(",").map(parseFloat);
-                    const [x2, y2] = lastPointStr.split(",").map(parseFloat);
+                    // 방향 벡터에서 수직 방향(right)을 따라 offset 벡터 계산
+                    const offsetVec = Cesium.Cartesian3.multiplyByScalar(right, offset, new Cesium.Cartesian3());
 
-                    const sourceCart = Cesium.Cartesian3.fromDegrees(baseLng + x1/ 88000, baseLat + y1/ 111000);
-                    const targetCart = Cesium.Cartesian3.fromDegrees(baseLng + x2/ 88000, baseLat + y2/ 111000);
+                    // 평행이동된 좌표 생성
+                    const shiftedP1 = Cesium.Cartesian3.add(p1, offsetVec, new Cesium.Cartesian3());
+                    const shiftedP2 = Cesium.Cartesian3.add(p2, offsetVec, new Cesium.Cartesian3());
 
-                    lane.laneSource = sourceCart;
-                    lane.laneTarget = targetCart;
+                    // const [firstPointStr, lastPointStr] = lane.shape.split(" ");
+                    // const [x1, y1] = firstPointStr.split(",").map(parseFloat);
+                    // const [x2, y2] = lastPointStr.split(",").map(parseFloat);
+                    //
+                    // const sourceCart = Cesium.Cartesian3.fromDegrees(baseLng + x1/ 88000, baseLat + y1/ 111000);
+                    // const targetCart = Cesium.Cartesian3.fromDegrees(baseLng + x2/ 88000, baseLat + y2/ 111000);
+
+                    lane.laneSource = shiftedP1;
+                    lane.laneTarget = shiftedP2;
 
                     this.dataSource.entities.add({
                         id: lane.__guid,
                         corridor: {
                             cornerType: Cesium.CornerType.MITERED,
-                            positions: [sourceCart, targetCart],
-                            width: (link.width / laneCount) - 0.05, // 레인별 폭 적용
+                            positions: [shiftedP1, shiftedP2],
+                            width: laneWidth, // 레인별 폭 적용
                             material: Cesium.Color.GREY.withAlpha(0.8),
                             height: 0.03,
                         },
@@ -147,8 +157,6 @@ export default class NetworkDataSourceLayer {
                             this.dataSource.entities.add(corridor);
                         }
                     }
-
-
 
                     if (lane.segments?.length > 0) {
                         for (const segment of lane.segments) {
@@ -217,8 +225,6 @@ export default class NetworkDataSourceLayer {
 
                     this.dataSource.entities.add(portEntity);
                 }
-
-
 
                 const connections = node.connections
 

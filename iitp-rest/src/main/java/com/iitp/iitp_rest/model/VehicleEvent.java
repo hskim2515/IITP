@@ -9,6 +9,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 public class VehicleEvent {
     private String id;
+    private String type;
     private Double timestep;
     private String linkId;
     private String laneId;

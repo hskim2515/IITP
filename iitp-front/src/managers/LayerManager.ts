@@ -377,6 +377,12 @@ export class LayerManager {
         })
     }
 
+    toggleByFeatureType(groupName: string, layerName: string, featureType: string, visible: boolean) {
+        this.getManagersByGroupAndLayerName(groupName, layerName).forEach((manager) => {
+            manager?.toggleByFeatureType(groupName, layerName, featureType, visible);
+        })
+    }
+
     // groupName과 layerName으로 레이어 가져오기
     getLayer(groupName: string, layerName: string) {
         const manager = this.getManagersByGroupAndLayerName(groupName, layerName)

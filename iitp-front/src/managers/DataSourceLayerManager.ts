@@ -84,6 +84,20 @@ class DataSourceLayerManager {
         ds.show = !ds.show;
     }
 
+    toggleByFeatureType(groupName: string, layerName: string, featureType: string, visible: boolean): void {
+        const ds = this.get(groupName, layerName);
+        if (!ds) return;
+
+        ds.entities.values.forEach(entity => {
+            const entityFeatureType = entity?.properties?.featureType?.getValue?.();
+
+            if (entityFeatureType === featureType) {
+                entity.show = visible;
+            }
+        });
+    }
+
+
     remove(groupName: string, layerName: string): void {
         const group = this.layerGroups[groupName];
         const ds = group?.get(layerName);

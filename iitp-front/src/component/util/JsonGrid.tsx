@@ -9,11 +9,15 @@ import VectorLayer from "ol/layer/Vector";
 import BaseLayer from "ol/layer/Base";
 import WebGLVectorLayer from "ol/layer/WebGLVector";
 import { generateGUIDWithType } from "@utils/guid";
+import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
+import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
+
 // 중첩 배열로 생성하지 않을 필드 지정
 const EXCLUDED_NESTED_FIELDS = ["coordinates"];
 
+
 // 컬럼 자동 추출
-function generateColumnsFromData(data: Record<string, unknown>[]) {
+function generateColumnsFromData(data: any[]) {
     if (!data?.length) return [];
 
     const excludedFields = ['shape', '__guid', 'coordinate', 'lat', 'lng', 'featureType', 'from', 'to', 'laneSource', 'laneTarget', 'menuCode'];
@@ -28,7 +32,7 @@ function generateColumnsFromData(data: Record<string, unknown>[]) {
                 title: key,
                 dataIndex: key,
                 key: key,
-                sorter: (a:Record<string, unknown>, b:Record<string, unknown>) => {
+                sorter: (a, b) => {
                     const va = a[key];
                     const vb = b[key];
                     return typeof va === 'number' && typeof vb === 'number'
@@ -39,7 +43,7 @@ function generateColumnsFromData(data: Record<string, unknown>[]) {
                     text: String(val),
                     value: val,
                 })),
-                onFilter: (value:unknown, record:Record<string, unknown>) => record[key] === value,
+                onFilter: (value, record) => record[key] === value,
             };
         });
 }
@@ -88,6 +92,8 @@ const JsonGrid = ({
     const clearSelected = useSelectionStore((state) => state.clearSelected);
     const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
     const [rowEditValues, setRowEditValues] = useState<Record<string, any>>({});
+    const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
 
     const store = layerNameToStoreMap[layerName]
     const historyStore = layerNameToHistoryStoreMap[layerName];
@@ -151,7 +157,7 @@ const JsonGrid = ({
         return null;
     }
 
-    const handleInputChange = (key: string, field: string, value: unknown) => {
+    const handleInputChange = (key: string, field: string, value: any) => {
         setRowEditValues((prev) => ({
             ...prev,
             [key]: {
@@ -165,7 +171,7 @@ const JsonGrid = ({
         selectedGuid?.includes(guid);
     const enhancedColumns = columns.map((col) => ({
         ...col,
-        render: (value:unknown, record:Record<string,any>) => {
+        render: (value, record) => {
             const guid = record.__guid;
             const currentValue = rowEditValues[guid]?.[col.dataIndex] ?? value;
 
@@ -194,7 +200,7 @@ const JsonGrid = ({
             return inputType === 'number' ? (
                 <InputNumber
                     value={currentValue}
-                    onChange={(val:unknown) => handleInputChange(guid, col.dataIndex, val)}
+                    onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
                     onBlur={handleCommit}
                     onPressEnter={handleCommit}
                     size="small"
@@ -233,7 +239,7 @@ const JsonGrid = ({
         if (typeof layer?.createDto === "function") {
             newRecord = layer.createDto(targetFeatureType);
             newRecord.id = Date.now(); // 임시 ID
-            newRecord.__guid = generateGUIDWithType(targetFeatureType??""); // __guid 생성
+            newRecord.__guid = generateGUIDWithType(targetFeatureType); // __guid 생성
 
             console.log("새로 추가될 DTO:::", newRecord);
             store.getState().updateCurrentJsonData(newRecord, historyStore);
@@ -246,13 +252,27 @@ const JsonGrid = ({
         store.getState().removeRecordsByGuid(selectedGuid, historyStore)
     }
 
+    const toggleGrid = (key: string) => {
+        console.log("toggleGrid key:::", key)
+        setExpandedKey((prevKey) => (prevKey === key ? null : key)); // 같은 key면 닫기
+    };
+
     return (
         <div style={{paddingLeft: depth * 24}}>
-            {/*<h3 style={{ display: depth > 0 ? "block" : "none" }}>*/}
-            {/*</h3>*/}
-            <button className="grid-btn add-btn" onClick={() => handleAddBtn()}>+</button>
-            <button className="grid-btn delete-btn" onClick={() => handleDeleteBtn()}>-</button>
-            <Table
+
+            <div style={{ display: "flex", alignItems: "center" }}>
+                <h4>{levelName}</h4>
+                <button className="grid-btn add-btn" onClick={() => handleAddBtn()}>+</button>
+                <button className="grid-btn delete-btn" onClick={() => handleDeleteBtn()}>-</button>
+                <h3 style={{ display: depth === 0 ? "block" : "none" }}>
+                    <div className="grid-header">
+                        <FontAwesomeIcon onClick={() => toggleGrid(levelName)}
+                                         icon={expandedKey === levelName ? faChevronDown : faChevronUp}/>
+                    </div>
+                </h3>
+            </div>
+
+            {((expandedKey === levelName) || depth > 0) && (<Table
                 className="transparent-table"
                 dataSource={rowData}
                 columns={enhancedColumns}
@@ -264,7 +284,7 @@ const JsonGrid = ({
                 }}
                 size="small"
                 pagination={false}
-                scroll={{y: 200}}
+                scroll={{y: 600}}
                 rowSelection={{
                     type: "checkbox",
                     onChange: handleSelect,
@@ -282,7 +302,7 @@ const JsonGrid = ({
                                         return (
                                             Array.isArray(record[field]) && record[field].length > 0 ? (
                                                 <div key={field}>
-                                                    <h4 style={{marginBottom: 4}}>{field}</h4>
+
                                                     <JsonGrid
                                                         rowData={record[field]}
                                                         levelName={field}
@@ -314,7 +334,7 @@ const JsonGrid = ({
                         }
                         : undefined
                 }
-            />
+            />)}
 
         </div>
     );

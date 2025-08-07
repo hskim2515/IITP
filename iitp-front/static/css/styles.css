@@ -76,6 +76,28 @@ body {
     cursor: pointer;
     padding: 4px 8px;
 }
+
+.expand-btn {
+    /*margin-left: auto;*/
+    float: right;
+    background: transparent;
+    border: none;
+    font-size: 20px;
+    color: #fff;
+    cursor: pointer;
+    padding: 4px 8px;
+}
+
+.collapse-btn {
+    /*margin-left: auto;*/
+    float: right;
+    background: transparent;
+    border: none;
+    font-size: 20px;
+    color: #fff;
+    cursor: pointer;
+    padding: 4px 8px;
+}
 .edit-btn {
     /*margin-left: auto;*/
     float: right;
@@ -153,9 +175,23 @@ body {
 
 .popup-body {
     /*margin-bottom: 10px;*/
-    height: 250px;
+    max-height: 300px;
     overflow-y: auto;
-    width: 99%;
+    width: 100%;
+}
+
+.popup-body-full {
+    /*margin-bottom: 10px;*/
+    max-height: 820px;
+    overflow-y: auto;
+    width: 100%;
+}
+
+.popup-body-mini {
+    /*margin-bottom: 10px;*/
+    max-height: 0;
+    overflow-y: auto;
+    width: 100%;
 }
 
 .popup-footer {

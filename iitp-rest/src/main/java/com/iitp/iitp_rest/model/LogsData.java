@@ -15,7 +15,7 @@ public class LogsData {
         private String field;
         private Object newValue;
         private Object oldValue;
-        private String featureId;
+        private String guid;
         private String timestamp;
     }
 }

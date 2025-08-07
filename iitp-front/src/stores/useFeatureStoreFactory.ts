@@ -86,7 +86,7 @@ const createFeatureStore = <T>() =>
                                                 const newValue = diff.value;
 
                                                 featureUpdateLogs(historyStore, {
-                                                    featureId: record.__guid,
+                                                    guid: record.__guid,
                                                     updateType: "modified",
                                                     field,
                                                     oldValue,
@@ -129,7 +129,7 @@ const createFeatureStore = <T>() =>
 
                                 if (historyStore) {
                                     featureUpdateLogs(historyStore, {
-                                        featureId,
+                                        guid: record.id,
                                         updateType: "added",
                                         properties: record,
                                     });
@@ -177,25 +177,25 @@ const createFeatureStore = <T>() =>
                                 return;
                             }
                             // // 변경 적용
-                            // const updatedItem = applyDiffs(existing, diffs);
-                            // console.log("updateCurrentJsonData updatedItem:::", updatedItem)
-                            const newItems = [...items, record];
-                            // const newItems = [ ...items ];
-                            const interpolatedRecords = interpolateAndConvertToRecords(newItems);
+                             const updatedItem = applyDiffs(existing, diffs);
+                             console.log("updateCurrentJsonData updatedItem:::", updatedItem)
+                            //const newItems = [...items, record];
+                             const newItems = [ ...items ];
+                            //const interpolatedRecords = interpolateAndConvertToRecords(newItems);
 
 
 
                             set({
                                 currentJsonData: {
                                     ...current,
-                                    [key]: interpolatedRecords,
+                                    [key]: newItems,
                                 },
                                 isChanged: true,
                             });
 
                             if (historyStore) {
                                 featureUpdateLogs(historyStore, {
-                                    featureId,
+                                    guid: record.__guid,
                                     updateType: "added",
                                     properties: record,
                                 });
@@ -225,12 +225,12 @@ const createFeatureStore = <T>() =>
                                                     // 삭제 이력 기록
                                                     if (historyStore) {
                                                         toBeDeleted.forEach(item => {
-                                                            const featureId = item.id;
+                                                            const guid = item.__guid;
                                                             const properties = item;
 
-                                                            if (featureId && properties) {
+                                                            if (guid && properties) {
                                                                 featureUpdateLogs(historyStore, {
-                                                                    featureId,
+                                                                    guid,
                                                                     updateType: "deleted",
                                                                     properties,
                                                                 });

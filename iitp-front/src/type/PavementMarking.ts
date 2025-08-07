@@ -1,6 +1,6 @@
 export const SNAP_LAYER = "network" as const
 export const SNAP_FEATURE_TYPE = "lane-edit" as const
-export const PAVEMENT_MARKING_SNAP_FIELDS = [ 'linkRef', 'laneRef', 'offset', 'coordinates', 'markingType'] as const;
+export const PAVEMENT_MARKING_SNAP_FIELDS = [ 'linkRef', 'laneRef', 'offset', 'coordinates', 'markingType', 'cellId', 'angle'] as const;
 export type PavementMarkingSnapFields = typeof PAVEMENT_MARKING_SNAP_FIELDS[number];
 
 export const FEATURE_TYPE = {

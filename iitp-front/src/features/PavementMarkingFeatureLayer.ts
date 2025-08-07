@@ -13,7 +13,7 @@ import {
 import { deepEqual } from "@utils/json";
 import { useLayerStore } from "@stores/useLayerStore";
 import {
-    findFeatureByProperties,
+    findFeatureByProperties, getAngleByCoordinate, getCellIdByCoordinate, getCellOffsetRelativeToCell,
     getCoordinateByOffset,
     getFeaturesByProperties,
     getOffsetByCoordinate
@@ -24,7 +24,7 @@ import WebGLVectorLayer from "ol/layer/WebGLVector";
 import BaseLayer from "ol/layer/Base";
 import { Coordinate } from "ol/coordinate";
 import { generateGUIDWithType } from "@utils/guid";
-import {interpolateByOffset} from "@utils/interpolateByOffset";
+import {interpolateByOffset, interpolateFeatureByOffset} from "@utils/interpolateByOffset";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import Geometry from "ol/geom/Geometry";
 
@@ -134,9 +134,8 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
                         const coord = getCoordinateByOffset(baseFeature, offset)
                         if (coord) {
                             const [ lng, lat ] = toLonLat(coord)
-                            // 계산한 값을 json에 적용
-                            item.coordinates.lng = lng
-                            item.coordinates.lat = lat
+                            dto.angle = feature.get('angle'); //angle
+
                             feature.setGeometry(new Point(fromLonLat([ lng, lat ])));
                         }
 
@@ -147,7 +146,8 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
                 added.forEach((item) => {
                     const dto = this.recordToDto(item);
                     const feature = this.createFeature(dto);
-                    src.addFeature(feature);
+                    const mergeFeature = interpolateFeatureByOffset(feature);
+                    src.addFeature(mergeFeature);
                 });
             });
         };
@@ -170,8 +170,10 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
         const features = pavementMarkings
             .map((data) => this.createFeature(data))
             .filter((f): f is Feature<Point> => !!f); // undefined 필터링
+
         const mergedFeatures = interpolateByOffset(features);
         source.addFeatures(mergedFeatures);
+
     }
 
     /**
@@ -301,8 +303,9 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
         fromCoord: Coordinate,
         drawType?: String,
     ): Record<string, unknown> {
-        const offset = getOffsetByCoordinate(targetFeature, fromCoord);
-
+        //const offset = getOffsetByCoordinate(targetFeature, fromCoord);
+        const {cellId, offset} = getCellOffsetRelativeToCell(targetFeature, fromCoord);
+        const angle = getAngleByCoordinate(targetFeature, fromCoord);
         const computeProperties: Record<string, unknown> = {};
         const [ lng, lat ] = toLonLat(fromCoord)
 
@@ -313,6 +316,10 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
                 computeProperties[key] = lng != null && lat != null ? [ { lat, lng } ] : [];
             } else if (key === "markingType") {
                 computeProperties[key] = drawType;
+            } else if (key === "cellId") {
+                computeProperties[key] = cellId;
+            } else if (key === "angle") {
+                computeProperties[key] = angle;
             } else {
                 computeProperties[key] = basedProperties?.[key] ?? null;
             }

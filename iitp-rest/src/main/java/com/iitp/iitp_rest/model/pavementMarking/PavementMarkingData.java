@@ -14,7 +14,7 @@ import java.util.List;
 @Builder
 public class PavementMarkingData {
     private String id;
-    private Integer angle;
+    private Double angle;
     private Integer cellId;
     private Double offset;
     private Integer laneRef;
