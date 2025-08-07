@@ -20,7 +20,12 @@ import {DrawEvent} from "ol/interaction/Draw";
 import {apiConfig, ApiMenuKey} from "../../config/apiConfig";
 import axiosInstance from "../../api/axiosInstance";
 import JsonGrid from "../util/JsonGrid";
-import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
+import {
+    faChevronDown,
+    faChevronUp,
+    faDownLeftAndUpRightToCenter,
+    faUpRightAndDownLeftFromCenter
+} from "@fortawesome/free-solid-svg-icons";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import useHistoryInit, {layerNameToHistoryStoreMap, menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
 import {mergeJsonWithLog, mergeUpdateLogs} from "@utils/history";
@@ -91,8 +96,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const [isTypeSelect, setIsTypeSelect] = useState(false);
     const [onConfirm, setOnConfirm] = useState<((selected: string) => void) | null>(null);
 
-    const [expandedKey, setExpandedKey] = useState<string | null>(null);
-
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const selectedDrawTypeRef = useRef<string | undefined>();
 
@@ -100,7 +103,10 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     const olMap = useOpenLayersStore.state.map()
 
-    const [isMinimized, setIsMinimized] = useState(false);
+    type BodySize = "mini" | "default" | "full";
+    const [bodySize, setBodySize] = useState<BodySize>("default");
+
+
 
 
     useEffect(() => {
@@ -161,10 +167,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                 }
             );
     }, [olMap, submenu.menuCode, layer]);
-
-    const toggleGrid = (key: string) => {
-        setExpandedKey((prevKey) => (prevKey === key ? null : key)); // 같은 key면 닫기
-    };
 
     const layers = useMemo(() => {
         return olMap?.getLayers().getArray()
@@ -497,6 +499,22 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     };
 
+    const increaseSize = () => {
+        setBodySize(prev => {
+            if (prev === "mini") return "default";
+            if (prev === "default") return "full";
+            return "full"; // 이미 full이면 유지
+        });
+    };
+
+    const decreaseSize = () => {
+        setBodySize(prev => {
+            if (prev === "full") return "default";
+            if (prev === "default") return "mini";
+            return "mini"; // 이미 mini면 유지
+        });
+    };
+
     return (
         <>
             <div className={`popup-overlay${submenu.item.type ? `-${submenu.item.type}` : ''}`}>
@@ -512,61 +530,72 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                             <button onClick={() => handleCheck()}>Interaction 객체 목록 디버깅</button>
                             <button className="btn" onClick={() => handleShowHistory()}>변경 이력 보기</button>
                         </div>
-                        <FontAwesomeIcon className="minimize-btn"
-                                         icon={isMinimized ? faChevronUp : faChevronDown}
-                                         onClick={() => setIsMinimized(!isMinimized)}
-                        />
-                        <FontAwesomeIcon className="close-btn" icon={faClose} onClick={onClose}/>
-                    </div>
-                    {!isMinimized && (
-                        <div className="popup-body">
-                            {isTypeSelect && (
-                                <TypeSelectionModal typeKey={submenu.menuCode} onConfirm={(selectedType) => {
-                                    onConfirm?.(selectedType);
-                                    setIsTypeSelect(false);
-                                }} onCancel={() => {
-                                    setIsTypeSelect(false)
-                                    setIsDrawing(false)
-                                }}/>
-                            )}
-                            {isHistoryOpen && (
-                                <HistoryModal
-                                    onClose={() => setIsHistoryOpen(false)}
-                                    open={isHistoryOpen}
-                                    menuCode={activeSubmenu.menuCode}
-                                />
-                            )}
-                            {submenu.item &&
-                                //{ submenu.item && colDefs &&
-                                // <Grid
-                                //     ref={ gridRef }
-                                //     colDefs={ colDefs }
-                                //     rowData={ rowData }
-                                //     onCellValueChanged={ updateFeatureByRow }
-                                //     onSelectionChanged={ handleGridSelectionChanged }
-                                // />
-                                <div>
-                                    {Object.entries(currentJsonData).map(([key, value]) => (
-                                        Array.isArray(value) && value.length > 0 && (
-                                            <div key={key} className="grid-container">
-                                                <div className="grid-header">
-                                                    {/*<h4 style={{margin: 12}}>*/}
-                                                    {/*    {key.charAt(0).toUpperCase() + key.slice(1)}*/}
-                                                    {/*</h4>*/}
-                                                    {/*<FontAwesomeIcon onClick={() => toggleGrid(key)}*/}
-                                                    {/*                 icon={expandedKey === key ? faChevronUp : faChevronDown}/>*/}
-                                                </div>
-                                                <JsonGrid rowData={value} levelName={key}
-                                                          layerName={submenu.item.layer}
-                                                          layerGroupName={"facility"}
-                                                />
-                                            </div>
-                                        )
-                                    ))}
-                                </div>
-                            }
+
+                        <div>
+
+                            <FontAwesomeIcon className="close-btn" icon={faClose} onClick={onClose}/>
+                            {(bodySize !== "full") &&(<FontAwesomeIcon
+                                className="expand-btn"
+                                icon={faChevronUp} // ⬆️ 확대 아이콘
+                                onClick={increaseSize}
+                                title="확장"
+                            />)}
+                            {(bodySize !== "mini") &&(<FontAwesomeIcon
+                                className="collapse-btn"
+                                icon={faChevronDown} // ⬇️ 축소 아이콘
+                                onClick={decreaseSize}
+                                title="축소"
+                            />)}
+
                         </div>
-                    )}
+
+                    </div>
+
+                    <div className={
+                        bodySize === "full" ? "popup-body-full"
+                            : bodySize === "mini" ? "popup-body-mini"
+                                : "popup-body"
+                    }>
+                        {isTypeSelect && (
+                            <TypeSelectionModal typeKey={submenu.menuCode} onConfirm={(selectedType) => {
+                                onConfirm?.(selectedType);
+                                setIsTypeSelect(false);
+                            }} onCancel={() => {
+                                setIsTypeSelect(false)
+                                setIsDrawing(false)
+                            }}/>
+                        )}
+                        {isHistoryOpen && (
+                            <HistoryModal
+                                onClose={() => setIsHistoryOpen(false)}
+                                open={isHistoryOpen}
+                                menuCode={activeSubmenu.menuCode}
+                            />
+                        )}
+                        {submenu.item &&
+                            //{ submenu.item && colDefs &&
+                            // <Grid
+                            //     ref={ gridRef }
+                            //     colDefs={ colDefs }
+                            //     rowData={ rowData }
+                            //     onCellValueChanged={ updateFeatureByRow }
+                            //     onSelectionChanged={ handleGridSelectionChanged }
+                            // />
+                            <div style={{width:"99%"}}>
+                                {Object.entries(currentJsonData).map(([key, value]) => (
+                                    Array.isArray(value) && value.length > 0 && (
+                                        <div key={key} className="grid-container">
+
+                                            <JsonGrid rowData={value} levelName={key}
+                                                      layerName={submenu.item.layer}
+                                                      layerGroupName={"facility"}
+                                            />
+                                        </div>
+                                    )
+                                ))}
+                            </div>
+                        }
+                    </div>
                 </div>
             </div>
 

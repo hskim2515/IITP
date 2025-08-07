@@ -13,6 +13,9 @@ import com.iitp.iitp_rest.util.CoordinateConverter;
 import com.iitp.iitp_rest.util.GeoJsonUtils;
 import com.iitp.iitp_rest.util.VehicleDataReader;
 import lombok.AllArgsConstructor;
+import lombok.Data;
+import org.apache.commons.math3.complex.Quaternion;
+import org.apache.commons.math3.geometry.euclidean.threed.Vector3D;
 import org.locationtech.proj4j.ProjCoordinate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -274,11 +277,11 @@ public class VehicleController {
         roadMap.forEach((key, road) -> {
             CoordinateConverter converter = new CoordinateConverter();
             converter.setBasePoint(scenario.getLongitude(), scenario.getLatitude());
-            converter.setRoadPoint(road.getBaseEasting(), road.getBaseNorthing());
+            converter.setRoadPoint(road.getBaseEasting(), road.getBaseNorthing(), road.getTargetEasting(), road.getTargetNorthing());
             converterCache.put(key, converter);
         });
 
-        Map<String, List<VehicleEvent>> grouped = vehicleDataReader.readVehicleEvent().stream()
+        Map<String, List<VehicleEvent>> grouped = vehicleDataReader.readVehicleEvent(versionId).stream()
                 .collect(Collectors.groupingBy(VehicleEvent::getId));
 
         List<Map<String, Object>> czml = Collections.synchronizedList(new ArrayList<>());
@@ -320,6 +323,7 @@ public class VehicleController {
 
                 CoordinateConverter converter = converterCache.get(key);
                 ProjCoordinate actualCoord = converter.toAbsolute(vehicle.getPosX(), vehicle.getPosY());
+                //System.out.println(actualCoord);
                 Cartesian3 pos = Cartesian3.fromDegrees(actualCoord.x, actualCoord.y, 0);
 
                 path.add(Map.entry(vehicle.getTimestep(), pos));
@@ -336,6 +340,59 @@ public class VehicleController {
                 cartesianArray.add(p.getValue().getY());
                 cartesianArray.add(p.getValue().getZ());
             }
+
+            List<Vector3D> positions = path2d.stream()
+                    .map(p -> new Vector3D(p.getX(), p.getY(), p.getZ()))
+                    .collect(Collectors.toList());
+
+            List<Object> unitQuaternionArray = new ArrayList<>();
+
+            Quaternion prevQuaternion = null;
+
+
+            Cartesian3 first = path2d.getFirst();
+            Cartesian3 last = path2d.get(path.size()-1);
+
+            Vector3D initDirection = new Vector3D(
+                    last.getX() - first.getX(),
+                    last.getY() - first.getY(),
+                    last.getZ() - first.getZ()
+            );
+
+            for (int i = 1; i < path.size(); i++) {
+                double timeOffsetSeconds = path.get(i).getKey(); // Double형 초
+
+                // 기준 시간에 timeOffsetSeconds 만큼 더한 Instant 계산
+                Instant time = startTime.plus(Duration.ofNanos((long)(timeOffsetSeconds * 1_000_000_000L)));
+
+                Cartesian3 prev = path2d.get(i - 1);
+                Cartesian3 curr = path2d.get(i);
+
+                // 방향 벡터 계산
+                Vector3D direction = new Vector3D(
+                        curr.getX() - prev.getX(),
+                        curr.getY() - prev.getY(),
+                        curr.getZ() - prev.getZ()
+                );
+
+                Quaternion q;
+                if (direction.getNorm() < 1e-2) {  // 방향 없음 또는 매우 작을 때
+                    q = prevQuaternion != null ? prevQuaternion : getQuaternionFromDirection(initDirection);
+                } else {
+                    q = getQuaternionFromDirection(direction);
+                }
+
+                prevQuaternion = q;
+
+                // 단위 quaternion = [time, x, y, z, w]
+                unitQuaternionArray.add(Duration.between(startTime, time).getSeconds());  // czml용 offset 시간 값
+                unitQuaternionArray.add(q.getQ1()); // x
+                unitQuaternionArray.add(q.getQ2()); // y
+                unitQuaternionArray.add(q.getQ3()); // z
+                unitQuaternionArray.add(q.getQ0()); // w
+            }
+
+
 
             List<List<Double>> lineCoordinates = path2d.stream()
                     .map(p -> List.of(p.getX(), p.getY(), p.getZ()))
@@ -354,6 +411,12 @@ public class VehicleController {
                             "interpolationDegree", 1,
                             "cartesian", cartesianArray
                     ),
+//                    "orientation", Map.of(
+//                        "interpolationAlgorithm", "LINEAR",
+//                        "interpolationDegree", 1,
+//                        "epoch", startTime.toString(),
+//                        "unitQuaternion", unitQuaternionArray
+//                    )
                     "orientation", Map.of("velocityReference", "#position")
             );
 
@@ -649,6 +712,58 @@ public class VehicleController {
 
         return length;
     }
+
+    // 단위 벡터 a를 기준으로 z축을 회전시켜 맞추는 쿼터니언 반환
+    public Quaternion getQuaternionFromDirection(Vector3D direction) {
+        Vector3D forward = direction.normalize(); // Z축 대체
+        Vector3D up = new Vector3D(0, 0, 1); // 기본 Y축
+        Vector3D right = Vector3D.crossProduct(up, forward).normalize(); // X축 방향
+        up = Vector3D.crossProduct(forward, right); // 새로운 up 벡터
+
+        // 회전 행렬 생성
+        double[][] rot = new double[][]{
+                {right.getX(), up.getX(), forward.getX()},
+                {right.getY(), up.getY(), forward.getY()},
+                {right.getZ(), up.getZ(), forward.getZ()}
+        };
+
+        // 회전 행렬을 쿼터니언으로 변환
+        return rotationMatrixToQuaternion(rot);
+    }
+
+    // 3x3 회전 행렬을 쿼터니언으로 변환
+    private Quaternion rotationMatrixToQuaternion(double[][] m) {
+        double t = m[0][0] + m[1][1] + m[2][2];
+        double x, y, z, w;
+        if (t > 0) {
+            double s = Math.sqrt(t + 1.0) * 2;
+            w = 0.25 * s;
+            x = (m[2][1] - m[1][2]) / s;
+            y = (m[0][2] - m[2][0]) / s;
+            z = (m[1][0] - m[0][1]) / s;
+        } else if ((m[0][0] > m[1][1]) & (m[0][0] > m[2][2])) {
+            double s = Math.sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2;
+            w = (m[2][1] - m[1][2]) / s;
+            x = 0.25 * s;
+            y = (m[0][1] + m[1][0]) / s;
+            z = (m[0][2] + m[2][0]) / s;
+        } else if (m[1][1] > m[2][2]) {
+            double s = Math.sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2;
+            w = (m[0][2] - m[2][0]) / s;
+            x = (m[0][1] + m[1][0]) / s;
+            y = 0.25 * s;
+            z = (m[1][2] + m[2][1]) / s;
+        } else {
+            double s = Math.sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2;
+            w = (m[1][0] - m[0][1]) / s;
+            x = (m[0][2] + m[2][0]) / s;
+            y = (m[1][2] + m[2][1]) / s;
+            z = 0.25 * s;
+        }
+        return new Quaternion(w, x, y, z); // Cesium은 w,x,y,z 순서
+    }
+
+
 
     // 두 점 사이의 거리 계산 (Cartesian3)
 //    private double calculateDistance(Cartesian3 p1, Cartesian3 p2) {

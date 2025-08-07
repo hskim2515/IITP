@@ -61,8 +61,8 @@ public class GeoJsonUtils {
                         Double baseLat = properties.has("base_lat") ? properties.get("base_lat").asDouble() : null;
 
                         Polyline polyline = new Polyline(positions);
-                        Road road = new Road(linkId, laneId, polyline, baseLon, baseLat);
-                        roads.add(road);
+                        //Road road = new Road(linkId, laneId, polyline, baseLon, baseLat);
+                        //roads.add(road);
                     }
                 }
             }
@@ -96,13 +96,21 @@ public class GeoJsonUtils {
                     Double baseEasting = null;
                     Double baseNorthing = null;
 
+                    Double targetEasting = null;
+                    Double targetNorthing = null;
+
                     if (shapeStr != null && !shapeStr.isEmpty()) {
                         String[] coords = shapeStr.trim().split(" ");
                         if (coords.length > 0) {
                             String[] firstCoord = coords[0].split(",");
+                            String[] endCoord = coords[1].split(",");
                             if (firstCoord.length >= 2) {
                                 baseEasting = Double.parseDouble(firstCoord[0]);
                                 baseNorthing = Double.parseDouble(firstCoord[1]);
+                            }
+                            if(endCoord.length >= 2) {
+                                targetEasting = Double.parseDouble(endCoord[0]);
+                                targetNorthing = Double.parseDouble(endCoord[1]);
                             }
 
                             for (String coordPair : coords) {
@@ -119,7 +127,7 @@ public class GeoJsonUtils {
 
                     if (!positions.isEmpty()) {
                         Polyline polyline = new Polyline(positions);
-                        Road road = new Road(linkId, laneId, polyline, baseEasting, baseNorthing);
+                        Road road = new Road(linkId, laneId, polyline, baseEasting, baseNorthing, targetEasting, targetNorthing);
                         roads.add(road);
                     }
                 }

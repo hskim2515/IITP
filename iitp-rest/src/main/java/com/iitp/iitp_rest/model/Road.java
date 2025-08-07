@@ -14,4 +14,8 @@ public class Road {
     private Double baseEasting;
     private Double baseNorthing;
 
+    private Double targetEasting;
+    private Double targetNorthing;
+
+
 }

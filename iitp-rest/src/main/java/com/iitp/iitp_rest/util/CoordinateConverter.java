@@ -10,8 +10,10 @@ public class CoordinateConverter {
 
     private double baseLon;
     private double baseLat;
-    private double roadEasting;
-    private double roadNorthing;
+    private double roadBaseEasting;
+    private double roadBaseNorthing;
+    private double roadTargetEasting;
+    private double roadTargetNorthing;
 
     private final CoordinateTransform wgsToMercator;
     private final CoordinateTransform mercatorToWgs;
@@ -31,29 +33,36 @@ public class CoordinateConverter {
         this.baseLat = lat;
     }
 
-    public void setRoadPoint(double easting, double northing) {
-        this.roadEasting = easting;
-        this.roadNorthing = northing;
+    public void setRoadPoint(double baseEasting, double baseNorthing, double targetEasting, double targetNorthing) {
+        this.roadBaseEasting = baseEasting;
+        this.roadBaseNorthing = baseNorthing;
+        this.roadTargetEasting = targetEasting;
+        this.roadTargetNorthing = targetNorthing;
     }
 
 
     public ProjCoordinate toAbsolute(double relX, double relY) {
-        ProjCoordinate baseGeo = new ProjCoordinate(baseLon, baseLat);
-        ProjCoordinate baseMerc = new ProjCoordinate();
-        wgsToMercator.transform(baseGeo, baseMerc);
+        // 1. 차선 방향 벡터 구하기
+        double dirX = roadTargetEasting - roadBaseEasting;
+        double dirY = roadTargetNorthing - roadBaseNorthing;
+        double length = Math.sqrt(dirX * dirX + dirY * dirY);
+        dirX /= length;
+        dirY /= length;
 
-        double absX = roadEasting + relX;
-        double absY = roadNorthing + relY;
+        // 2. 상대좌표 회전 적용
+        double dx = relX * dirX - relY * dirY;
+        double dy = relX * dirY + relY * dirX;
 
-        double absoluteEasting = baseMerc.x + absX;
-        double absoluteNorthing = baseMerc.y + absY;
+        // 3. 실제 위치 계산 (easting/northing 기반)
+        double absX = roadBaseEasting + dx;
+        double absY = roadBaseNorthing + dy;
 
-        ProjCoordinate mercatorCoord = new ProjCoordinate(absoluteEasting, absoluteNorthing);
-        ProjCoordinate geoCoord = new ProjCoordinate();
-        mercatorToWgs.transform(mercatorCoord, geoCoord);
+        // 4. 근사 위경도 변환 (정밀 필요시 Proj4J 사용 권장)
+        double lon = baseLon + absX / 88000.0;
+        double lat = baseLat + absY / 111000.0;
 
-        geoCoord.z = 0;
-        return geoCoord;
+        return new ProjCoordinate(lon, lat, 0);
     }
+
 
 }

@@ -9,8 +9,12 @@ import VectorLayer from "ol/layer/Vector";
 import BaseLayer from "ol/layer/Base";
 import WebGLVectorLayer from "ol/layer/WebGLVector";
 import { generateGUIDWithType } from "@utils/guid";
+import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
+import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
+
 // 중첩 배열로 생성하지 않을 필드 지정
 const EXCLUDED_NESTED_FIELDS = ["coordinates"];
+
 
 // 컬럼 자동 추출
 function generateColumnsFromData(data: any[]) {
@@ -88,6 +92,8 @@ const JsonGrid = ({
     const clearSelected = useSelectionStore((state) => state.clearSelected);
     const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
     const [rowEditValues, setRowEditValues] = useState<Record<string, any>>({});
+    const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
 
     const store = layerNameToStoreMap[layerName]
     const historyStore = layerNameToHistoryStoreMap[layerName];
@@ -246,16 +252,27 @@ const JsonGrid = ({
         store.getState().removeRecordsByGuid(selectedGuid, historyStore)
     }
 
+    const toggleGrid = (key: string) => {
+        console.log("toggleGrid key:::", key)
+        setExpandedKey((prevKey) => (prevKey === key ? null : key)); // 같은 key면 닫기
+    };
+
     return (
         <div style={{paddingLeft: depth * 24}}>
-            {/*<h3 style={{ display: depth > 0 ? "block" : "none" }}>*/}
-            {/*</h3>*/}
+
             <div style={{ display: "flex", alignItems: "center" }}>
                 <h4>{levelName}</h4>
                 <button className="grid-btn add-btn" onClick={() => handleAddBtn()}>+</button>
                 <button className="grid-btn delete-btn" onClick={() => handleDeleteBtn()}>-</button>
+                <h3 style={{ display: depth === 0 ? "block" : "none" }}>
+                    <div className="grid-header">
+                        <FontAwesomeIcon onClick={() => toggleGrid(levelName)}
+                                         icon={expandedKey === levelName ? faChevronUp : faChevronDown}/>
+                    </div>
+                </h3>
             </div>
-            <Table
+
+            {((expandedKey === levelName) || depth > 0) && (<Table
                 className="transparent-table"
                 dataSource={rowData}
                 columns={enhancedColumns}
@@ -267,7 +284,7 @@ const JsonGrid = ({
                 }}
                 size="small"
                 pagination={false}
-                scroll={{y: 200}}
+                scroll={{y: 600}}
                 rowSelection={{
                     type: "checkbox",
                     onChange: handleSelect,
@@ -317,7 +334,7 @@ const JsonGrid = ({
                         }
                         : undefined
                 }
-            />
+            />)}
 
         </div>
     );
