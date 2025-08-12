@@ -1,12 +1,10 @@
-import React, { useState } from "react";
+import React from "react";
 import { useMenuStore, MenuTree } from "@stores/useMenuStore";
-import { useShallow } from "zustand/react/shallow";
 
-import { propertyFormSchema } from "../form/propertyFormSchema";
-import PropertyForm from "../popup/PropertyPopup";
-import PropertyPanel from "./PropertyPanel";
+import { propertyFormSchema } from "@component/form/propertyFormSchema";
+import PropertyForm from "@component/popup/PropertyPopup";
 
-const LeftPanel: React.FC = () => {
+const LeftPanel = () => {
     const {
         activeDropdownMenu,
         activeSubmenu,
@@ -22,7 +20,7 @@ const LeftPanel: React.FC = () => {
     }
 
     // 일반 메뉴인 경우: 사이드바 + 팝업
-    const submenuData: MenuTree[] = activeDropdownMenu.children;
+    const submenuData: MenuTree[] | undefined = activeDropdownMenu.children;
 
     const handleClickSubmenu = (item: MenuTree) => {
         if (propertyFormSchema[item.menuCode]) {

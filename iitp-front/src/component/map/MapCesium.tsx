@@ -1,7 +1,10 @@
-import {forwardRef} from 'react';
+import React, { forwardRef } from 'react';
 
+interface MapCesiumProps {
+    style?: React.CSSProperties;
+}
 
-const MapCesium= forwardRef(({style} , ref) => {
+const MapCesium = forwardRef<HTMLDivElement, MapCesiumProps>(({ style }, ref) => {
 
     return (
         <div style={{ position: "relative", ...style }}>

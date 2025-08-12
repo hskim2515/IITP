@@ -3,6 +3,7 @@ import { Map as OLMap } from "ol";
 import BaseLayer from "ol/layer/Base";
 import { Tile as TileLayer } from "ol/layer";
 import { XYZ } from "ol/source";
+import { hasCustomKeys, matchesCustomKeyValue } from "@utils/olLayer";
 class TileLayerManager {
     private id;
     private olMap;
@@ -72,10 +73,7 @@ class TileLayerManager {
         if (!group) return;
 
         group.forEach(layer => {
-            const name = layer["layer"];
-            if (name === layerName) {
-                layer.setVisible(false);
-            }
+            if(matchesCustomKeyValue(layer, 'layer', layerName)) layer.setVisible(false)
         });
     }
 
@@ -83,24 +81,24 @@ class TileLayerManager {
         const group = this.baseLayerGroups[groupName];
         if (!group) return;
 
-        const target = group.find(layer => layer["baseMap"] === layerName);
+        const target = group.find(layer => matchesCustomKeyValue(layer, 'baseMap', layerName));
         if (target) {
             const newState = !target.getVisible();
             group.forEach(layer => {
-                if (layer["baseMap"] === layerName) {
+                if (matchesCustomKeyValue(layer, 'baseMap', layerName)) {
                     layer.setVisible(newState);
                 }
             });
         }
     }
 
-    public get(groupName, layerName) {
+    public get(groupName:string, layerName:string) {
         const group = this.baseLayerGroups[groupName];
         if (!group) return null;
-        return group.find(layer => layer["layer"] === layerName) ?? null;
+        return group.find(layer => matchesCustomKeyValue(layer, 'layer', layerName)) ?? null;
     }
 
-    public getAllByGroup(groupName) {
+    public getAllByGroup(groupName:string) {
         const group = this.baseLayerGroups[groupName];
         console.log("baseLayerGroups tile groupName:::", group)
         if (!group) return [];
@@ -117,7 +115,7 @@ class TileLayerManager {
         if (!group) return;
 
         group.forEach(layer => {
-            if (layer["layer"] === layerName && layer.getOpacity() !== undefined) {
+            if (matchesCustomKeyValue(layer, 'layer', layerName) && layer.getOpacity() !== undefined) {
                 layer.setVisible(alpha);
             }
         });
@@ -130,7 +128,7 @@ class TileLayerManager {
 
         for (let i = group.length - 1; i >= 0; i--) {
             const layer = group[i];
-            if (layer["layer"] === layerName) {
+            if (matchesCustomKeyValue(layer, 'layer', layerName)) {
                 this.olMap.removeLayer(layer);
                 group.splice(i, 1);
             }

@@ -26,6 +26,7 @@
     "antd": "^5.26.2",
     "axios": "^1.9.0",
     "cesium": "^1.127.0",
+    "deep-equal": "^2.2.3",
     "heatmap.js": "^2.0.5",
     "immer": "^10.1.1",
     "lodash": "^4.17.21",
@@ -49,6 +50,7 @@
   "devDependencies": {
     "@eslint/js": "^9.15.0",
     "@types/cesium": "^1.67.14",
+    "@types/deep-equal": "^1.0.4",
     "@types/ol": "^6.5.3",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.1",

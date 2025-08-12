@@ -17,6 +17,14 @@ export interface PositionOnGeometry {
     segmentIndex?: number; // 해당 좌표가 위치한 세그먼트(선분)의 인덱스
 }
 
+type FeatureInput =
+    | Feature[]
+    | Collection<Feature>
+    | VectorSource<Feature<Geometry>>
+    | VectorLayer<VectorSource<Feature<Geometry>>>
+    | WebGLVectorLayer
+    | BaseLayer
+
 /**
  * 두 좌표 간 유클리드 거리 계산
  */
@@ -119,27 +127,13 @@ export function getValuesFromFeatures<T = unknown>(
 ): T[] {
     const values = features
         .getArray()
-        .map((feature: Feature) => {
-            const propsContainer = (feature.getProperties() as any).properties;
-            const props: Record<string, any> =
-                propsContainer && typeof propsContainer === "object"
-                    ? propsContainer
-                    : feature.getProperties();
-
-            return props[key] as T | undefined;
-        })
-        // undefined/null 제거
+        .map((feature) => feature.get(key) as T | undefined)
         .filter((v): v is T => v !== undefined && v !== null);
 
-    // Set으로 중복 제거 후 배열 반환
     return Array.from(new Set(values));
 }
 
-function extractFeaturesFromInput(input: Feature[]): Feature[] | null;
-function extractFeaturesFromInput(input: Collection<Feature>): Feature[] | null;
-function extractFeaturesFromInput(input: VectorSource): Feature[] | null;
-function extractFeaturesFromInput(input: VectorLayer | WebGLVectorLayer | BaseLayer): Feature[] | null;
-function extractFeaturesFromInput(input: Feature[] | Collection<Feature> | VectorSource | VectorLayer | WebGLVectorLayer | BaseLayer | undefined): Feature[] | null {
+function extractFeaturesFromInput(input: FeatureInput | undefined | null): Feature[] | null {
     if (!input) return null;
 
     if (Array.isArray(input)) {
@@ -150,8 +144,7 @@ function extractFeaturesFromInput(input: Feature[] | Collection<Feature> | Vecto
         return input.getFeatures();
     } else if (
         input instanceof VectorLayer ||
-        input instanceof WebGLVectorLayer ||
-        input instanceof BaseLayer
+        input instanceof WebGLVectorLayer
     ) {
         const source = input.getSource?.();
         if (!source || !(source instanceof VectorSource)) return null;
@@ -161,8 +154,6 @@ function extractFeaturesFromInput(input: Feature[] | Collection<Feature> | Vecto
     return null;
 }
 
-export function getPositionByCoordinate(input: Feature, coordinate: Coordinate): PositionOnGeometry | null;
-export function getPositionByCoordinate(input: Geometry, coordinate: Coordinate): PositionOnGeometry | null;
 export function getPositionByCoordinate(
     input: Feature | Geometry | undefined,
     coordinate: Coordinate | undefined
@@ -210,8 +201,6 @@ export function getPositionByCoordinate(
  * geometry와 offset(거리)이 주어졌을 때,
  * geometry의 시작점으로부터 offset만큼 진행한 지점의 좌표 반환
  */
-export function getCoordinateByOffset(input: Feature, offset: number): Coordinate | null;
-export function getCoordinateByOffset(input: Geometry, offset: number): Coordinate | null;
 export function getCoordinateByOffset(
     input: Feature | Geometry | undefined,
     offset: number | undefined
@@ -254,33 +243,22 @@ export function getCoordinateByOffset(
     return null;
 }
 
-export function getOffsetByCoordinate(input: Geometry, coordinate: Coordinate): number | null;
-export function getOffsetByCoordinate(input: Feature, coordinate: Coordinate): number | null;
 export function getOffsetByCoordinate(
     input: Geometry | Feature | undefined,
     coordinate: Coordinate
 ): number | null {
     if (!input || !coordinate) return null;
 
-    let geometry;
-    if(input instanceof Feature) {
-        geometry = input.getGeometry()
-    } else if (input instanceof Geometry) {
-        geometry = input
-    } else {
-        console.log("getOffsetByCoordinate typeof input:::", typeof input)
-    }
+    const geometry = input instanceof Feature ? input.getGeometry() : input;
+    if (!geometry) return null;
     if (!geometry) return null;
 
     const pos = getPositionByCoordinate(geometry, coordinate);
     return (pos && typeof pos.offset === 'number') ? pos.offset : null;
 }
 
-export function findFeatureByProperties(input: Collection<Feature>, properties: Record<string, unknown>): Feature | null;
-export function findFeatureByProperties(input: VectorSource, properties: Record<string, unknown>): Feature | null;
-export function findFeatureByProperties(input: VectorLayer | WebGLVectorLayer | BaseLayer, properties: Record<string, unknown>): Feature | null;
 export function findFeatureByProperties(
-    input: Collection<Feature> | VectorSource | VectorLayer | WebGLVectorLayer | BaseLayer | undefined,
+    input: FeatureInput | undefined,
     properties: Record<string, any> | undefined
 ): Feature | null {
     if (!input || !properties) return null;
@@ -299,7 +277,7 @@ export function getCellOffsetRelativeToCell(targetFeature: Feature, coordinate: 
     const offset = getOffsetByCoordinate(targetFeature, coordinate);
     if (offset === null) return { cellId: null, offset: null };
 
-    const cells = targetFeature.get('cells') || targetFeature.cells;
+    const cells = targetFeature.get('cells');
     if (!cells || !Array.isArray(cells)) return { cellId: null, offset: null };
 
     for (const cell of cells) {
@@ -328,7 +306,7 @@ export function getAngleByCoordinate(targetFeature: Feature, coordinate: Coordin
     if (segmentIndex === undefined || segmentIndex === null) return null;
 
     // geometry의 좌표 배열 가져오기 (LineString 기준)
-    const coords = geometry.getCoordinates();
+    const coords = getGeometryCoordinates(geometry);
     if (!Array.isArray(coords) || coords.length < 2) return null;
 
     // segmentIndex가 coords 배열 범위 안에 있는지 체크
@@ -344,11 +322,8 @@ export function getAngleByCoordinate(targetFeature: Feature, coordinate: Coordin
     return angle;
 }
 
-export function getFeaturesByProperties(input: Feature[], properties: Record<string, unknown>): Collection<Feature> | null;
-export function getFeaturesByProperties(input: VectorSource, properties: Record<string, unknown>): Collection<Feature> | null;
-export function getFeaturesByProperties(input: VectorLayer | WebGLVectorLayer | BaseLayer, properties: Record<string, unknown>): Collection<Feature> | null;
 export function getFeaturesByProperties(
-    input: Feature[] | VectorSource | VectorLayer | WebGLVectorLayer | BaseLayer | undefined,
+    input: FeatureInput | undefined,
     properties: Record<string, unknown> | undefined
 ): Collection<Feature> | null {
     if (!input || !properties) return null;
@@ -365,13 +340,8 @@ export function getFeaturesByProperties(
     return new Collection<Feature>(matchedArray)
 }
 
-
-export function filterFeaturesByKey(input: Feature[], ids: Array<string | number>, key?: string): Collection<Feature>;
-export function filterFeaturesByKey(input: Collection<Feature>, ids: Array<string | number>, key?: string): Collection<Feature>;
-export function filterFeaturesByKey(input: VectorSource, ids: Array<string | number>, key?: string): Collection<Feature>;
-export function filterFeaturesByKey(input: VectorLayer | WebGLVectorLayer | BaseLayer, ids: Array<string | number>, key?: string): Collection<Feature>;
 export function filterFeaturesByKey(
-    input: Feature[] | Collection<Feature> | VectorSource | VectorLayer | WebGLVectorLayer | BaseLayer | undefined,
+    input: FeatureInput | undefined,
     ids: Array<string | number>,
     key: string = "__guid"
 ): Collection<Feature> {
@@ -383,9 +353,8 @@ export function filterFeaturesByKey(
     if (!features) return new Collection<Feature>([]);
 
     const matched = features.filter((feature) => {
-        const raw = feature.getProperties() as any;
-        const props = raw.properties && typeof raw.properties === "object" ? raw.properties : raw;
-        return ids.includes(props[key]);
+        const value = feature.get(key);
+        return value !== undefined && ids.includes(value);
     });
 
     return new Collection<Feature>(matched);
@@ -407,7 +376,7 @@ export function createFeature (data: any): Feature<Point> | undefined {
 }
 export function convertFeatureToRecord(f: Feature): any {
     const geometry = f.getGeometry();
-    const coordinates = geometry?.getCoordinates();
+    const coordinates = getGeometryCoordinates(geometry)[0];
     const [lng, lat] = toLonLat(coordinates);
 
     return {
@@ -416,11 +385,8 @@ export function convertFeatureToRecord(f: Feature): any {
     };
 }
 
-export function getFeaturesByGuidPrefix(input: Feature[], prefix: string): Collection<Feature> | null;
-export function getFeaturesByGuidPrefix(input: VectorSource, prefix: string): Collection<Feature> | null;
-export function getFeaturesByGuidPrefix(input: VectorLayer | WebGLVectorLayer | BaseLayer, prefix: string): Collection<Feature> | null;
 export function getFeaturesByGuidPrefix(
-    input: Feature[] | VectorSource | VectorLayer | WebGLVectorLayer | BaseLayer | undefined,
+    input: FeatureInput | undefined,
     prefix: string
 ): Collection<Feature> | null {
     if (!input || !prefix) return null;
@@ -438,7 +404,7 @@ export function getFeaturesByGuidPrefix(
 
 // snap
 export function findNearestFeature(
-    features: Feature[],
+    features: Feature[] | null,
     targetCoord: Coordinate,
     maxDistance: number = 10
 ): Feature | null {
@@ -461,11 +427,7 @@ export function findNearestFeature(
     return closest;
 }
 
-export function getSnapFeature(input: Feature[],  targetCoord: Coordinate | null,maxDistance: number):Feature<Geometry> | null;
-export function getSnapFeature(input: Feature<Geometry>,  targetCoord: Coordinate | null,maxDistance: number):Feature<Geometry> | null;
-export function getSnapFeature(input: VectorSource, targetCoord: Coordinate | null,maxDistance: number):Feature<Geometry> | null;
-export function getSnapFeature(input: VectorLayer | WebGLVectorLayer | BaseLayer, targetCoord: Coordinate | null, maxDistance: number):Feature<Geometry> | null;
-export function getSnapFeature(input: VectorSource | VectorLayer | WebGLVectorLayer | BaseLayer | undefined , targetCoord: Coordinate | null,maxDistance: number):Feature<Geometry> | null{
+export function getSnapFeature(input: FeatureInput | undefined | null , targetCoord: Coordinate | null,maxDistance: number):Feature<Geometry> | null{
     if(!targetCoord) return null;
     const features = extractFeaturesFromInput(input)
     return findNearestFeature(features, targetCoord, maxDistance);

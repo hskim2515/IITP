@@ -4,7 +4,7 @@ import { Feature } from "ol";
 import { Point } from "ol/geom";
 import { Circle as CircleStyle, Fill, Stroke, Style } from "ol/style";
 import { fromLonLat, toLonLat } from "ol/proj";
-import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
+import { layerNameToStoreMap } from "@hooks/useLayerInit";
 
 import {
     BUS_STATION_SNAP_FIELDS,
@@ -20,17 +20,15 @@ import { deepEqual } from "@utils/json";
 import {
     findFeatureByProperties,
     getCoordinateByOffset,
-    getFeaturesByProperties,
     getOffsetByCoordinate
 } from "@utils/feature";
 import { useLayerStore } from "@stores/useLayerStore";
-import WebGLVectorLayer from "ol/layer/WebGLVector";
-import BaseLayer from "ol/layer/Base";
 import { Coordinate } from "ol/coordinate";
 import GeometryType from "@type/FeatureOptions";
 import Geometry from "ol/geom/Geometry";
+import { FeatureLayerAPI } from "@features/FeatureLayerAPI";
 
-export default class BusStationFeatureLayer extends VectorLayer {
+export default class BusStationFeatureLayer extends VectorLayer implements FeatureLayerAPI {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "busStation";
     private unsubscribe: () => void;
@@ -56,6 +54,9 @@ export default class BusStationFeatureLayer extends VectorLayer {
             updated: Record<string, Array<BusStationData>>,
             origin: Record<string, Array<BusStationData>>
         ) => {
+            if (!updated) {
+                return;
+            }
             Object.keys(updated).forEach((objectName) => {
                 const updatedList = updated[objectName] ?? [];
                 const originList = origin[objectName] ?? [];
@@ -109,16 +110,18 @@ export default class BusStationFeatureLayer extends VectorLayer {
                     const feature = existing.find(f => f.get("__guid") === dto.__guid);
                     if (feature) {
                         const baseLayer = layerManager?.getLayerByName(this.getSnapLayerKey())
-                        const baseFeature = findFeatureByProperties(baseLayer,{
+                        if (!baseLayer) return;
+                        const baseFeature = findFeatureByProperties(baseLayer, {
                             featureType: this.getSnapFeatureType(),
                             linkRef: item.linkRef,
                             laneRef: item.laneRef ?? 0,
                         })
 
                         const offset = item.offset ?? 0
+                        if (!baseFeature || !offset) return;
                         const coord = getCoordinateByOffset(baseFeature, offset)
                         if (coord) {
-                            const [ lng, lat ] = toLonLat(coord)
+                            const [lng, lat] = toLonLat(coord)
                             // 계산한 값을 json에 적용
                             item.coordinates.lng = lng
                             item.coordinates.lat = lat
@@ -141,30 +144,30 @@ export default class BusStationFeatureLayer extends VectorLayer {
             // 구독할 값: currentJsonData 배열
             state => state.currentJsonData,
             listener,
-            { fireImmediately: true }
+            {fireImmediately: true}
         );
 
         this.defaultStyle = new Style({
             image: new CircleStyle({
                 radius: 6,
-                fill: new Fill({ color: "rgba(255, 0, 0, 1)" }), // 빨간색
-                stroke: new Stroke({ color: "rgba(0,0,0,0)", width: 1 }),
+                fill: new Fill({color: "rgba(255, 0, 0, 1)"}), // 빨간색
+                stroke: new Stroke({color: "rgba(0,0,0,0)", width: 1}),
             }),
         });
 
         this.selectStyle = new Style({
             image: new CircleStyle({
                 radius: 8,
-                fill: new Fill({ color: "rgba(0, 255, 0, 1)" }), // 초록색
-                stroke: new Stroke({ color: "rgba(255, 0, 0, 1)", width: 2 }),
+                fill: new Fill({color: "rgba(0, 255, 0, 1)"}), // 초록색
+                stroke: new Stroke({color: "rgba(255, 0, 0, 1)", width: 2}),
             }),
         });
 
         this.modifyStyle = new Style({
             image: new CircleStyle({
                 radius: 8,
-                fill: new Fill({ color: "rgba(255, 255, 0, 1)" }), // 노란색
-                stroke: new Stroke({ color: "rgba(0, 0, 0, 1)", width: 2 }),
+                fill: new Fill({color: "rgba(255, 255, 0, 1)"}), // 노란색
+                stroke: new Stroke({color: "rgba(0, 0, 0, 1)", width: 2}),
             }),
         });
 
@@ -174,9 +177,11 @@ export default class BusStationFeatureLayer extends VectorLayer {
     public getSelectStyle() {
         return this.selectStyle
     }
+
     public getDefaultStyle() {
         return this.defaultStyle
     }
+
     public getInteractionStyle(type: "default" | "select" | "modify"): Style {
         switch (type) {
             case "select":
@@ -189,7 +194,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
         }
     }
 
-    private styleFunction(feature: Feature<Point>, resolution: number): Style[] {
+    public styleFunction(feature: Feature<Point>, resolution: number): Style[] {
         const geom = feature.getGeometry();
         const styles: Style[] = [];
         if (geom instanceof Point) {
@@ -197,8 +202,8 @@ export default class BusStationFeatureLayer extends VectorLayer {
                 new Style({
                     image: new CircleStyle({
                         radius: 6,
-                        fill: new Fill({ color: "rgba(255,0,0,1)" }),
-                        stroke: new Stroke({ color: "rgba(0,0,0,0)", width: 1 }),
+                        fill: new Fill({color: "rgb(255,0,0)"}),
+                        stroke: new Stroke({color: "rgba(0,0,0,0)", width: 1}),
                     }),
                 })
             );
@@ -211,7 +216,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
      */
     public async load(): Promise<void> {
         const store = layerNameToStoreMap[this.LAYER_NAME];
-        const { busStations } = store.getState().currentJsonData;
+        const {busStations} = store.getState().currentJsonData;
 
         const source = this.source;
         source.clear();
@@ -269,7 +274,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
      * 일반 객체를 DTO 로 변환
      */
     public recordToDto(record: BusStationFeature): BusStationData {
-        const { geometry, ...cleaned } = record;
+        const {geometry, ...cleaned} = record;
         const guid = cleaned.__guid ?? generateGUIDWithType(this.getFeatureType())
         const dto = {
             ...(cleaned as Omit<BusStationData, "transitMode" | "featureType" | "__guid">),
@@ -315,7 +320,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
         snapProperties: BusStationSnapProperties,
         baseDto: BusStationData
     ): BusStationData {
-        const { id: ignored, ...props } = snapProperties
+        const {id: ignored, ...props} = snapProperties
         return {
             ...baseDto,
             ...props
@@ -346,7 +351,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
     }
 
     public getGeometryType(featureType: string): GeometryType {
-        switch (featureType){
+        switch (featureType) {
             case "busStations" :
                 return GeometryType.POINT
             default:
@@ -368,7 +373,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
         const computeProperties: Record<string, unknown> = {
             ...(basedProperties ?? {}),
             offset: offset ?? null,
-            coordinates: lng != null && lat != null ? [{ lat, lng }] : [],
+            coordinates: lng != null && lat != null ? [{lat, lng}] : [],
         };
 
         return computeProperties;

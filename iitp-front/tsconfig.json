@@ -9,8 +9,14 @@
     "jsx": "react",
     "allowSyntheticDefaultImports": true,
     "baseUrl": "./",  // src 디렉토리를 기준으로 경로 설정
+    "moduleResolution": "node",
+    "moduleDetection": "force",
+    "skipLibCheck": true,
     "paths": {
       "@primitives/*": ["src/primitives/*"],
+      "@api/*": ["src/api/*"],
+      "@config/*": ["src/config/*"],
+      "@component/*": ["src/component/*"],
       "@stores/*": ["src/stores/*"],
       "@css/*": ["static/css/*"],
       "@schema/*": ["src/schema/*"],
@@ -19,7 +25,7 @@
       "@managers/*": ["src/managers/*"],
       "@features/*": ["src/features/*"],
       "@type/*": ["src/type/*"],
-      "@hooks/*": ["src/hooks/*"],
+      "@hooks/*": ["src/hooks/*"]
     }
   },
   "exclude": ["node_modules", "**/*.js"] // JS 파일 제외

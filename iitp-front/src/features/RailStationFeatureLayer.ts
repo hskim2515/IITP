@@ -3,7 +3,7 @@ import VectorSource from "ol/source/Vector";
 import { useLayerStore } from "@stores/useLayerStore";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { Feature } from "ol";
-import { Circle as CircleStyle, Fill, Stroke, Style } from "ol/style";
+import { Fill, Stroke, Style } from "ol/style";
 import { LineString, Point } from "ol/geom";
 import {
     FEATURE_TYPE,
@@ -24,8 +24,11 @@ import { Coordinate } from "ol/coordinate";
 import Geometry from "ol/geom/Geometry";
 import { generateGUIDWithType } from "@utils/guid";
 import { collectGuidsOfTargetAndChildren, deepEqual } from "@utils/json";
+import { FeatureLayerAPI } from "@features/FeatureLayerAPI";
+import CircleStyle from "ol/style/Circle";
+import { FeatureLike } from "ol/Feature";
 
-export default class RailStationFeatureLayer extends VectorLayer {
+export default class RailStationFeatureLayer extends VectorLayer implements FeatureLayerAPI {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "railStation"
 
@@ -40,20 +43,19 @@ export default class RailStationFeatureLayer extends VectorLayer {
             style: (feature, resolution) => this.styleFunction(feature, resolution),
             zIndex: 400,
         });
-        // LayerStore에서 활성화된 레이어 이름(필요 시 visible 제어)
-        const layerStore = useLayerStore.getState();
-
-        const activeLayerName = layerStore.activeLayerName;
-
         const store = layerNameToStoreMap[this.LAYER_NAME];
-
+        this.source = source;
         const listener = (
             updated: Record<string, Array<RailStationData>>,
             origin: Record<string, Array<RailStationData>>
         ) => {
+            if (!updated) {
+                return;
+            }
+
             Object.keys(updated).forEach((objectName) => {
                 const updatedList = updated[objectName] ?? [];
-                const originList = origin[objectName] ?? [];
+                const originList = origin?.[objectName] ?? [];
                 const updatedMap = new Map<string, RailStationData>();
                 const originMap = new Map<string, RailStationData>();
 
@@ -91,6 +93,7 @@ export default class RailStationFeatureLayer extends VectorLayer {
                         const feature = existing.find(f => f.get("__guid") === guid);
                         if (feature) {
                             const dto = this.recordToDto(updatedItem, FEATURE_TYPE.RAIL_STATION);
+                            if(!dto) return;
                             const coord = dto.coordinates?.[0];
                             if (coord?.lng != null && coord?.lat != null) {
                                 feature.setGeometry(new Point(fromLonLat([coord.lng, coord.lat])));
@@ -162,7 +165,6 @@ export default class RailStationFeatureLayer extends VectorLayer {
             });
         };
 
-        this.source = source;
 
         this.unsubscribe = store.subscribe(
             // 구독할 값: currentJsonData 배열
@@ -174,7 +176,7 @@ export default class RailStationFeatureLayer extends VectorLayer {
 
     }
 
-    public styleFunction(feature: Feature, resolution: number): Style[] {
+    public styleFunction(feature: FeatureLike, resolution: number): Style[] {
         const props = feature.getProperties() ?? {};
         const geom = feature.getGeometry();
         const styles: Style[] = [];
@@ -318,11 +320,12 @@ export default class RailStationFeatureLayer extends VectorLayer {
 
         // 스냅 기준 레이어에서 링크 기준 feature 찾기
         const baseLayer = useLayerStore.getState().layerManager?.getLayerByName(this.getSnapLayerKey());
+        if(!baseLayer) return
         const baseFeature = findFeatureByProperties(baseLayer, {
             featureType: this.getSnapFeatureType(),
             linkRef: props.linkRef,
         });
-
+        if(!baseFeature) return
         const offset = props.offset ?? 0;
         const coord = getCoordinateByOffset(baseFeature, offset);
         let geom: Point;
@@ -440,7 +443,7 @@ export default class RailStationFeatureLayer extends VectorLayer {
         return computeProperties;
     }
 
-    public recordToDto(record: RailStationFeature | RailStationExitFeature, featureType): RailStationData | RailStationExitData | undefined {
+    public recordToDto(record: RailStationFeature | RailStationExitFeature, featureType: string | undefined): RailStationData | RailStationExitData | undefined {
         switch (featureType) {
             case FEATURE_TYPE.RAIL_STATION:
                 return this.recordToRailStationDto(record as RailStationFeature);
@@ -541,5 +544,17 @@ export default class RailStationFeatureLayer extends VectorLayer {
         };
 
         return dto;
+    }
+
+    getDefaultStyle(): Style | undefined {
+        return undefined;
+    }
+
+    getFeatureType(): string | undefined {
+        return undefined;
+    }
+
+    getSelectStyle(): Style | undefined {
+        return undefined;
     }
 }

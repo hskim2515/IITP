@@ -55,7 +55,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
     }
 
-    private styleFunction(feature: Feature, resolution: number): Style[] {
+    public styleFunction(feature: Feature, resolution: number): Style[] {
         const props = feature.getProperties() ?? {};
         const geom = feature.getGeometry();
         const styles: Style[] = [];
