@@ -298,7 +298,7 @@ export default class TailPrimitive {
 
     update(frameState) {
 
-        if (this.destroyed) return; // 이미 제거된 경우 업데이트하지 않음
+        if (this.destroyed || !this.show) return;
 
         if(this.show && this.latestPositions){
             this.trails.forEach((trail, index) => {

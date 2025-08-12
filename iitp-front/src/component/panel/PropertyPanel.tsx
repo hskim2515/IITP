@@ -39,6 +39,7 @@ import {faClose} from "@fortawesome/free-solid-svg-icons/faClose";
 import deepEqual from "deep-equal";
 import { FeatureLayerAPI, isFeatureLayer } from "@features/FeatureLayerAPI";
 import { matchesCustomKeyValue } from "@utils/olLayer";
+import {useSchemeStore} from "@stores/useSchemeStore";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTree
@@ -87,6 +88,17 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                 setCurrentJsonData(newJsonData); // 갱신 트리거
             }
         );
+
+        fetch(process.env.VITE_API_URL + "/schemes/" + submenu.item.layer, {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+        }).then((response) => {
+            return response.json();
+        })
+        .then((data) => {
+            useSchemeStore.getState().setSchemes(data);
+        })
+
         return () => unsubscribe();
     }, []);
 
