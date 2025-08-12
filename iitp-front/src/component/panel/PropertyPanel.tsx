@@ -14,7 +14,7 @@ import {ModifyEvent} from "ol/interaction/Modify";
 import {DrawEvent} from "ol/interaction/Draw";
 import {apiConfig, ApiMenuKey} from "@config/apiConfig";
 import axiosInstance from "@api/axiosInstance";
-import JsonGrid from "@util/JsonGrid";
+import JsonGrid from "@component/util/JsonGrid";
 import {
     faChevronDown,
     faChevronUp,
