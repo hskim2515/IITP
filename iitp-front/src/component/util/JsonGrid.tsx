@@ -167,6 +167,7 @@ const JsonGrid = ({
             },
         }));
     };
+
     const columns = generateColumnsFromData(rowData);
     // const isEditableRow = (guid: string) =>
     //     selectedGuid?.includes(guid);
@@ -179,18 +180,21 @@ const JsonGrid = ({
 
             const schemes = useSchemeStore.getState().getByRowKeyAndKey(levelName, col.key);
 
-            const handleCommit = () => {
-                const merged = {
-                    ...record,
-                    ...rowEditValues[guid],
-                };
+            const handleCommit = (e) => {
 
-                //const historyStore = menuCodeToHistoryStoreMap[layerName];
 
-                // 변경점 병합
-                const store = layerNameToStoreMap[layerName]
-                const historyStore = layerNameToHistoryStoreMap[layerName];
-                store.getState().updateCurrentJsonData(merged, historyStore);
+                if(rowEditValues[guid]){
+                    const merged = {
+                        ...record,
+                        ...rowEditValues[guid],
+                    };
+
+                    const store = layerNameToStoreMap[layerName]
+                    const historyStore = layerNameToHistoryStoreMap[layerName];
+                    store.getState().updateCurrentJsonData(merged, historyStore);
+
+                    setRowEditValues({})
+                }
             };
 
             if(!schemes){
@@ -229,9 +233,9 @@ const JsonGrid = ({
             return schemes?.type === 'number' ? (
                 <InputNumber
                     value={currentValue}
-                    onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
+                    onChange={(val) =>handleInputChange(guid, col.dataIndex, val)}
                     onBlur={handleCommit}
-                    onPressEnter={handleCommit}
+                    //onPressEnter={handleCommit}
                     size="small"
                 />
             ) : schemes?.type === 'select' ? (
