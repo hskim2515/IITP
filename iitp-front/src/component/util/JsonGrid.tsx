@@ -179,6 +179,20 @@ const JsonGrid = ({
 
             const schemes = useSchemeStore.getState().getByRowKeyAndKey(levelName, col.key);
 
+            const handleCommit = () => {
+                const merged = {
+                    ...record,
+                    ...rowEditValues[guid],
+                };
+
+                //const historyStore = menuCodeToHistoryStoreMap[layerName];
+
+                // 변경점 병합
+                const store = layerNameToStoreMap[layerName]
+                const historyStore = layerNameToHistoryStoreMap[layerName];
+                store.getState().updateCurrentJsonData(merged, historyStore);
+            };
+
             if(!schemes){
                 const numericFieldSet = new Set(['offset', 'linkRef', 'accessTime']);
 
@@ -211,19 +225,6 @@ const JsonGrid = ({
                 return <span>{String(value)}</span>;
             }
 
-            const handleCommit = () => {
-                const merged = {
-                    ...record,
-                    ...rowEditValues[guid],
-                };
-
-                //const historyStore = menuCodeToHistoryStoreMap[layerName];
-
-                // 변경점 병합
-                const store = layerNameToStoreMap[layerName]
-                const historyStore = layerNameToHistoryStoreMap[layerName];
-                store.getState().updateCurrentJsonData(merged, historyStore);
-            };
 
             return schemes?.type === 'number' ? (
                 <InputNumber
