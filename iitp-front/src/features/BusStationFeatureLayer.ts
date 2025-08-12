@@ -16,7 +16,6 @@ import {
     TRANSIT_MODE
 } from "@type/Station";
 import { generateGUIDWithType } from "@utils/guid";
-import { deepEqual } from "@utils/json";
 import {
     findFeatureByProperties,
     getCoordinateByOffset,
@@ -27,6 +26,7 @@ import { Coordinate } from "ol/coordinate";
 import GeometryType from "@type/FeatureOptions";
 import Geometry from "ol/geom/Geometry";
 import { FeatureLayerAPI } from "@features/FeatureLayerAPI";
+import deepEqual from "deep-equal";
 
 export default class BusStationFeatureLayer extends VectorLayer implements FeatureLayerAPI {
     public readonly source: VectorSource;
