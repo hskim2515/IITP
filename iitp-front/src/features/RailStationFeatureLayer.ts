@@ -321,12 +321,10 @@ export default class RailStationFeatureLayer extends VectorLayer implements Feat
 
         // 스냅 기준 레이어에서 링크 기준 feature 찾기
         const baseLayer = useLayerStore.getState().layerManager?.getLayerByName(this.getSnapLayerKey());
-        if(!baseLayer) return
         const baseFeature = findFeatureByProperties(baseLayer, {
             featureType: this.getSnapFeatureType(),
             linkRef: props.linkRef,
         });
-        if(!baseFeature) return
         const offset = props.offset ?? 0;
         const coord = getCoordinateByOffset(baseFeature, offset);
         let geom: Point;

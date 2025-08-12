@@ -202,7 +202,7 @@ export function getPositionByCoordinate(
  * geometry의 시작점으로부터 offset만큼 진행한 지점의 좌표 반환
  */
 export function getCoordinateByOffset(
-    input: Feature | Geometry | undefined,
+    input: Feature | Geometry | undefined | null,
     offset: number | undefined
 ): Coordinate | null {
     const geometry = input instanceof Feature ? input.getGeometry() : input;
@@ -258,7 +258,7 @@ export function getOffsetByCoordinate(
 }
 
 export function findFeatureByProperties(
-    input: FeatureInput | undefined,
+    input: FeatureInput | undefined | null,
     properties: Record<string, any> | undefined
 ): Feature | null {
     if (!input || !properties) return null;
