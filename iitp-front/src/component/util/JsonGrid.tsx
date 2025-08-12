@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Table } from "antd";
+import {Checkbox, Select, Table} from "antd";
 import { useSelectionStore } from "@stores/useSelectionStore";
 import { Input, InputNumber } from "antd/lib";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
@@ -11,10 +11,10 @@ import WebGLVectorLayer from "ol/layer/WebGLVector";
 import { generateGUIDWithType } from "@utils/guid";
 import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
+import {useSchemeStore} from "@stores/useSchemeStore";
 
 // 중첩 배열로 생성하지 않을 필드 지정
 const EXCLUDED_NESTED_FIELDS = ["coordinates"];
-
 
 // 컬럼 자동 추출
 function generateColumnsFromData(data: any[]) {
@@ -27,7 +27,6 @@ function generateColumnsFromData(data: any[]) {
         .map((key) => {
             const uniqueValues = [...new Set(data.map((item) => item[key]))]
                 .filter(v => v !== undefined && v !== null);
-
             return {
                 title: key,
                 dataIndex: key,
@@ -84,9 +83,11 @@ const JsonGrid = ({
     layerName: string;
     layerGroupName: string;
 }) => {
+
     useEffect(() => {
         console.log("levelName:::", levelName)
     }, [levelName]);
+
     const setSelectedGuid = useSelectionStore((state) => state.setSelectedGuid);
     const selectedGuid = useSelectionStore((state) => state.selectedGuid);
     const clearSelected = useSelectionStore((state) => state.clearSelected);
@@ -108,7 +109,6 @@ const JsonGrid = ({
     const handleSelect = (selectedRowKeys: React.Key[], selectedRows: any[]) => {
         if (selectedRows.length > 0) {
             if (selectedRowKeys) {
-
                 setSelectedGuid(selectedRowKeys);
             }
         } else {
@@ -122,7 +122,6 @@ const JsonGrid = ({
     }, [rowData]);
 
     useEffect(() => {
-        console.log("selectedGuid", selectedGuid)
         scrollToGuid(selectedGuid[0])
     }, [selectedGuid]);
 
@@ -133,12 +132,14 @@ const JsonGrid = ({
 
         setExpandedRowKeys(path.slice(0, -1)); // 부모들을 펼침
 
-        setTimeout(() => {
-            const rowElement = document.querySelector(`tr[data-row-key="${targetGuid}"]`);
-            if (rowElement) {
-                rowElement.scrollIntoView({behavior: "smooth", block: "center"});
-            }
-        }, 300); // DOM 렌더링 이후 실행
+        const rowElement = document.querySelector(`tr[data-row-key="${targetGuid}"]`);
+        if (rowElement) {
+            rowElement.scrollIntoView({behavior: "smooth", block: "center"});
+        }
+
+        // setTimeout(() => {
+        //
+        // }, 300); // DOM 렌더링 이후 실행
     }
 
     function findGuidPath(data: any[], targetGuid: string, path: string[] = []): string[] | null {
@@ -167,17 +168,16 @@ const JsonGrid = ({
         }));
     };
     const columns = generateColumnsFromData(rowData);
-    const isEditableRow = (guid: string) =>
-        selectedGuid?.includes(guid);
+    // const isEditableRow = (guid: string) =>
+    //     selectedGuid?.includes(guid);
     const enhancedColumns = columns.map((col) => ({
         ...col,
         render: (value, record) => {
+
             const guid = record.__guid;
             const currentValue = rowEditValues[guid]?.[col.dataIndex] ?? value;
 
-            if (!isEditableRow(guid)) {
-                return <span>{String(value)}</span>;
-            }
+            const schemes = useSchemeStore.getState().getByRowKeyAndKey(levelName, col.key);
 
             const handleCommit = () => {
                 const merged = {
@@ -193,11 +193,40 @@ const JsonGrid = ({
                 store.getState().updateCurrentJsonData(merged, historyStore);
             };
 
-            const numericFieldSet = new Set(['offset', 'linkRef', 'accessTime']);
+            if(!schemes){
+                const numericFieldSet = new Set(['offset', 'linkRef', 'accessTime']);
 
-            const inputType = numericFieldSet.has(col.dataIndex) ? 'number' : 'text';
+                const inputType = numericFieldSet.has(col.dataIndex) ? 'number' : 'text';
 
-            return inputType === 'number' ? (
+                return inputType === 'number' ? (
+                    <InputNumber
+                        value={currentValue}
+                        onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
+                        onBlur={handleCommit}
+                        onPressEnter={handleCommit}
+                        size="small"
+                    />
+                ) : (
+                    <Input
+                        value={currentValue}
+                        onChange={(e) => {
+                            const raw = e.target.value;
+                            const val = inputType === 'number' ? Number(raw) : raw;
+                            handleInputChange(guid, col.dataIndex, val);
+                        }}
+                        onBlur={handleCommit}
+                        onPressEnter={handleCommit}
+                        size="small"
+                    />
+                );
+            }
+
+            if (schemes?.readonly) {
+                return <span>{String(value)}</span>;
+            }
+
+
+            return schemes?.type === 'number' ? (
                 <InputNumber
                     value={currentValue}
                     onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
@@ -205,12 +234,45 @@ const JsonGrid = ({
                     onPressEnter={handleCommit}
                     size="small"
                 />
+            ) : schemes?.type === 'select' ? (
+                <Select
+                    value={currentValue}
+                    onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
+                    onBlur={handleCommit}
+                    size="small"
+                    style={{ width: '100%' }}
+                >
+                    {schemes?.options?.map((opt) => (
+                        <Select.Option key={opt.value ?? opt} value={opt.value ?? opt}>
+                            {opt.label ?? opt}
+                        </Select.Option>
+                    ))}
+                </Select>
+            ) : schemes?.type === 'boolean' ? (
+                    <Checkbox
+                        checked={Boolean(currentValue)}
+                        value={currentValue}
+                        onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
+                    />
+                // <Select
+                //     value={currentValue}
+                //     onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
+                //     onBlur={handleCommit}
+                //     size="small"
+                //     style={{ width: '100%' }}
+                // >
+                //     {schemes?.options?.map((opt) => (
+                //         <Select.Option key={opt.value ?? opt} value={opt.value ?? opt}>
+                //             {opt.label ?? opt}
+                //         </Select.Option>
+                //     ))}
+                // </Select>
             ) : (
                 <Input
                     value={currentValue}
                     onChange={(e) => {
                         const raw = e.target.value;
-                        const val = inputType === 'number' ? Number(raw) : raw;
+                        const val = schemes?.type === 'number' ? Number(raw) : raw;
                         handleInputChange(guid, col.dataIndex, val);
                     }}
                     onBlur={handleCommit}
@@ -218,6 +280,7 @@ const JsonGrid = ({
                     size="small"
                 />
             );
+
         },
     }));
     const nestedFields = getNestedArrayField(rowData?.[0]);
@@ -302,7 +365,6 @@ const JsonGrid = ({
                                         return (
                                             Array.isArray(record[field]) && record[field].length > 0 ? (
                                                 <div key={field}>
-
                                                     <JsonGrid
                                                         rowData={record[field]}
                                                         levelName={field}
