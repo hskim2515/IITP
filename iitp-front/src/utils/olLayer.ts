@@ -11,27 +11,20 @@ export function isWebGLVectorLayer(layer: BaseLayer): layer is WebGLVectorLayer 
     return layer instanceof WebGLVectorLayer;
 }
 
-export function hasCustomKeys<T extends string>(
+export function hasCustomKeys<K extends string>(
     layer: BaseLayer,
-    ...requiredKeys: T[]
-): layer is BaseLayer & Record<T, string | number | boolean | undefined> {
-    return requiredKeys.every(key => key in layer);
+    ...requiredKeys: K[]
+): layer is BaseLayer & Record<K, unknown> {
+    return requiredKeys.every((key) => key in layer);
 }
 
-export function matchesCustomKeyValue<T extends string>(
+export function matchesCustomKeyValue<
+    K extends string,
+    V extends string | number | boolean | undefined
+>(
     layer: BaseLayer,
-    key: string,
-    value: string | number | boolean | undefined
-): layer is BaseLayer & Record<T, string | number | boolean | undefined> {
-    return hasCustomKeys(layer, key) === value;
-}
-
-export function setCustomKeyValue<T extends string>(
-    layer: BaseLayer,
-    key: string,
-    value: string | number | boolean | undefined
-):void {
-    if(isVectorLayer(layer) || isWebGLVectorLayer(layer)) {
-        layer[key] = value
-    }
+    key: K,
+    value: V
+): layer is BaseLayer & Record<K, V> {
+    return hasCustomKeys(layer, key) && (layer as BaseLayer & Record<K, V>)[key] === value;
 }
