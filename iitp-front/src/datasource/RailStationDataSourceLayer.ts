@@ -61,7 +61,7 @@ export default class RailStationDataSourceLayer {
             for(const exit of railStation.exits){
                 const exitCoord = exit.coordinates?.[0];
                 if (!exitCoord || exitCoord.lng == null || exitCoord.lat == null) {
-                    console.warn("[load] exit 좌표가 유효하지 않습니다:", exit);
+                    // console.warn("[load] exit 좌표가 유효하지 않습니다:", exit);
                     continue;
                 }
                 const exitPosition = Cartesian3.fromDegrees(exitCoord.lng, exitCoord.lat);
