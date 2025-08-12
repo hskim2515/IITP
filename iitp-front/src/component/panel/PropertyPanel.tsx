@@ -1,45 +1,34 @@
-import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import "/static/css/styles.css";
 import {MenuTree} from "@stores/useMenuStore";
-import {propertyFormSchema} from "../form/propertyFormSchema";
-import {buildColumnDefs, featureCollectionToFlatRow,} from "@utils/grid";
-import {ColDef} from "ag-grid-community";
-import {GridHandle} from "@type/GirdOptions";
+import {propertyFormSchema} from "@component/form/propertyFormSchema";
 import {menuCodeToStoreMap} from "@hooks/useLayerInit";
 import {useEventStore} from "@stores/useEventStore";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
-import useGrid, {AddOptions} from "@hooks/useGrid";
 import GeometryType from "@type/FeatureOptions";
-import {SelectEvent} from "ol/interaction/Select";
 import {Feature} from "ol";
 import VectorLayer from "ol/layer/Vector";
 import BaseLayer from "ol/layer/Base";
 import WebGLVectorLayer from "ol/layer/WebGLVector";
 import {ModifyEvent} from "ol/interaction/Modify";
 import {DrawEvent} from "ol/interaction/Draw";
-import {apiConfig, ApiMenuKey} from "../../config/apiConfig";
-import axiosInstance from "../../api/axiosInstance";
-import JsonGrid from "../util/JsonGrid";
+import {apiConfig, ApiMenuKey} from "@config/apiConfig";
+import axiosInstance from "@api/axiosInstance";
+import JsonGrid from "@util/JsonGrid";
 import {
     faChevronDown,
     faChevronUp,
-    faDownLeftAndUpRightToCenter,
-    faUpRightAndDownLeftFromCenter
 } from "@fortawesome/free-solid-svg-icons";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
-import useHistoryInit, {layerNameToHistoryStoreMap, menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
+import useHistoryInit, {menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
 import {mergeJsonWithLog, mergeUpdateLogs} from "@utils/history";
-import {interpolateByOffset} from "@utils/interpolateByOffset";
-import HistoryController from "../modal/HistoryController";
-import {menuDrawRequirements} from "../../config/menuDrawConfig";
-import TypeSelectionModal from "../modal/TypeSelectionModal";
-import HistoryModal from "../modal/HistoryModal";
+import HistoryController from "@component/modal/HistoryController";
+import {menuDrawRequirements} from "@config/menuDrawConfig";
+import TypeSelectionModal from "@component/modal/TypeSelectionModal";
+import HistoryModal from "@component/modal/HistoryModal";
 import {useScenarioStore} from "@stores/useScenarioStore";
 import {useSelectionStore} from "@stores/useSelectionStore";
-import {Select} from "ol/interaction";
 import {
-    convertFeatureToRecord,
-    createFeature,
     filterFeaturesByKey, getFeaturesByProperties,
     getFromToCoordinates, getSnapFeature,
     getValuesFromFeatures
@@ -47,27 +36,21 @@ import {
 import {generateGUIDWithType} from "@utils/guid";
 import Collection from "ol/Collection";
 import {faClose} from "@fortawesome/free-solid-svg-icons/faClose";
-import VectorSource from "ol/source/Vector";
+import deepEqual from "deep-equal";
+import { FeatureLayerAPI, isFeatureLayer } from "@features/FeatureLayerAPI";
+import { matchesCustomKeyValue } from "@utils/olLayer";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTree
     onClose: () => void;
 }
 
-const geometryTypeOptions: GeometryType[] = [
-    GeometryType.POINT,
-    GeometryType.LINE_STRING,
-    GeometryType.POLYGON,
-];
 const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const submenu = {
         menuCode: activeSubmenu.menuCode,
         item: propertyFormSchema[activeSubmenu.menuCode],
         title: activeSubmenu.nameKor
     }
-    const gridRef = useRef<GridHandle>(null)
-    const [rowData, setRowData] = useState<Record<string, unknown>[]>([])
-    const [colDefs, setColDefs] = useState<ColDef[] | undefined>(undefined)
 
     // 동적 스토어
     const store = menuCodeToStoreMap[submenu.menuCode];
@@ -75,23 +58,14 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const setSelectedGuid = useSelectionStore((state) => state.setSelectedGuid)
     const addSelectionId = useSelectionStore((state) => state.addSelectionId)
     const clearSelected = useSelectionStore((state) => state.clearSelected)
-    const removeSelectionId = useSelectionStore((state) => state.removeSelectionId)
-    const selectedGuidRef = useRef<[]>([])
+    const selectedGuidRef = useRef<(string | number)[]>([])
     const historyStore = menuCodeToHistoryStoreMap[submenu.menuCode];
 
     const [currentJsonData, setCurrentJsonData] = useState(store.getState().currentJsonData);
-    const initCurrentData = store.getState().initCurrentData;
 
     const olEventManager = useEventStore.getState().olEventManager;
     const [drawGeometryType, setDrawGeometryType] = useState<GeometryType>(GeometryType.POINT)
 
-    const selectInteractionRef = useRef<Select | undefined>(undefined);
-    const selectedFeatureIdRef = useRef<[]>([]);
-    const snappedPropertiesRef = useRef<Record<string, string | number | undefined>>(undefined);
-
-    const [addedData, setAddedData] = useState<AddOptions>({})
-
-    const [isEditable, setIsEditable] = useState<boolean>(false)
     const [isDrawing, setIsDrawing] = useState<boolean>(false)
     const [isTypeSelect, setIsTypeSelect] = useState(false);
     const [onConfirm, setOnConfirm] = useState<((selected: string) => void) | null>(null);
@@ -106,9 +80,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     type BodySize = "mini" | "default" | "full";
     const [bodySize, setBodySize] = useState<BodySize>("default");
 
-
-
-
     useEffect(() => {
         const unsubscribe = store.subscribe(
             (state) => state.currentJsonData,
@@ -119,25 +90,29 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         return () => unsubscribe();
     }, []);
 
-    const layer = useMemo(() => {
-        return olMap?.getLayers().getArray()
-            .find((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layer"] === submenu.item?.layer);
+    const layer = useMemo<FeatureLayerAPI & VectorLayer | undefined>(() => {
+        const foundLayer = olMap?.getLayers().getArray()
+            .find(layer => matchesCustomKeyValue(layer, 'layer', submenu.item.layer))
+
+            console.log("foundLayer:::", foundLayer)
+        if (foundLayer && isFeatureLayer(foundLayer)) {
+            console.log("foundLayer:::", foundLayer)
+            return foundLayer;
+        }
+        return undefined;
     }, [olMap, submenu.menuCode]);
+
 
     useEffect(() => {
         if (!selectedGuidRef || !layer) return;
 
-        const prevGuids: [] = selectedGuidRef.current;
-        const nextGuids: [] = selectedGuid;
+        const prevGuids: (string | number)[] = selectedGuidRef.current;
+        const nextGuids: (string | number)[] = selectedGuid;
 
-        function shallowEqualArray<T>(a: T[], b: T[]): boolean {
-            if (a.length !== b.length) return false;
-            return a.every((val, i) => val === b[i]);
-        }
-
-        if (shallowEqualArray(prevGuids, nextGuids)) return;
-
-        const allFeatures = layer.getSource().getFeatures();
+        if (deepEqual(prevGuids, nextGuids)) return;
+        const source = layer.getSource();
+        if(!source) return;
+        const allFeatures = source.getFeatures();
         const deselected = prevGuids.filter((id) => !nextGuids.includes(id));
         const deselectedFeatures = filterFeaturesByKey(allFeatures, deselected);
 
@@ -158,19 +133,20 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     }, [selectedGuid]);
 
     const snapLayer = useMemo(() => {
+        if(!layer) return;
         return olMap?.getLayers().getArray()
-            .find((targetLayer: VectorLayer | BaseLayer | WebGLVectorLayer) => {
+            .find((targetLayer): targetLayer is VectorLayer => {
                 if(typeof layer.getSnapLayerKey!=="function") {
-                    return targetLayer["layer"] === "network"
+                    return matchesCustomKeyValue(targetLayer, 'layer', 'network')
                 } else
-                    return targetLayer["layer"] === layer.getSnapLayerKey()
+                    return matchesCustomKeyValue(targetLayer, 'layer', layer.getSnapLayerKey())
                 }
             );
     }, [olMap, submenu.menuCode, layer]);
 
     const layers = useMemo(() => {
         return olMap?.getLayers().getArray()
-            .filter((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => layer["layerGroup"] === "facility");
+            .filter((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => matchesCustomKeyValue(layer, 'layerGroup', 'facility'))
     }, [olMap, submenu.menuCode]);
 
     useEffect(() => {
@@ -180,14 +156,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const [reloadFlag, setReloadFlag] = useState(false);
 
     useHistoryInit(reloadFlag);
-
-    const {
-        addRow,
-        deleteSelected,
-        saveModifiedFeatures,
-        updateFeatureByRow,
-        switchEditable
-    } = useGrid(gridRef, store, historyStore, colDefs)
 
     useEffect(() => {
         if (!olEventManager || !submenu.menuCode || !olMap || !layer ) return;
@@ -215,7 +183,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             const drewProperties = e.feature.getProperties();
             const {fromCoord} = getFromToCoordinates(e.feature);
 
-            addSelectionId([drewProperties["__guid"]]);
+            addSelectionId(drewProperties["__guid"]);
 
             // snap
             const maxDistance = 10
@@ -227,7 +195,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             const snapProperties = snapFeature
                 ? layer.recordToSnapProperties(snapFeature.getProperties())
                 : undefined;
-
+            if(!fromCoord) return
             // metadata 생성 (offset 포함)
             const metadata = layer.computeMetadata(snapFeature, snapProperties, fromCoord, selectedDrawTypeRef.current);
 
@@ -298,8 +266,9 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         if (!olEventManager || !snapLayer || !layer) return
         const onSnap = (e: any) => {
         };
-
-        const features:Feature[] = snapLayer.getSource().getFeatures()
+        const source = snapLayer.getSource();
+        if(!source) return;
+        const features:Feature[] = source.getFeatures()
 
         if(typeof layer.getSnapFeatureType !== "function") {
             const featureCollection = new Collection<Feature>(features)
@@ -315,7 +284,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             const options = {
                 features: featureCollection
             };
-
+            if(!options) return
             olEventManager.bind("snap", onSnap, options);
         }
 
@@ -326,51 +295,15 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     }, [isDrawing, snapLayer, selectedGuid, layer]);
 
     const handleCheck = () => {
-        console.log("체크한 row:", gridRef.current?.getSelectedRow());
-        console.log("그리드 업데이트 확인:", gridRef.current?.isGridChanged());
-        console.log("changed?", gridRef.current?.getChangedValue())
-        console.log("currentGeojson:", store.getState().currentGeojson) // 디버깅용
-        console.log("currentGeojson:", store.getState().currentGeojson) // 디버깅용
+        if (!layer) return
+        const source = layer.getSource();
+        if(!source) return;
         console.log("current originData:", store.getState().originData) // 디버깅용
         console.log("current currentJsonData:", store.getState().currentJsonData) // 디버깅용
         console.log("current layer:", layer) // 디버깅용
-        console.log("current source:", layer.getSource().getFeatures()) // 디버깅용
+        console.log("current source:", source.getFeatures()) // 디버깅용
         console.log("current selectId:", useSelectionStore.getState().selectedGuid) // 디버깅용
-        console.log("current feature:::", filterFeaturesByKey(layer.getSource().getFeatures(), selectedGuid))
-    };
-
-    // currentGeojson 기반으로 Grid용 데이터 가공
-    useEffect(() => {
-        if (!submenu.menuCode || !submenu.item?.fields) return;
-        if (!store) {
-            setRowData([])
-            return;
-        }
-        const currentGeojson = store.getState().currentGeojson
-        if (currentGeojson == undefined) return;
-
-        const flatRow = featureCollectionToFlatRow(currentGeojson);
-        store.getState().setFlatRow(flatRow)
-        setRowData(flatRow);
-        const defs = buildColumnDefs(submenu.item.fields);
-        setColDefs(defs);
-
-    }, [submenu.menuCode]);
-
-
-    const handleGridSelectionChanged = () => {
-        const selectedRows = gridRef.current?.getSelectedRow() ?? [];
-        const selectedIds = selectedRows.map((row: Record<string, unknown>) => row.id);
-
-        const source = layer.getSource();
-        const features = source?.getFeatures() ?? [];
-
-        features.forEach((feature: Feature) => {
-            const fid = feature.get("id");
-            const selected = selectedIds.includes(fid) ? 1 : 0;
-            feature.set("selected", selected);
-            feature.changed();
-        });
+        console.log("current feature:::", filterFeaturesByKey(source.getFeatures(), selectedGuid))
     };
 
     const handleDrawBtn = () => {
@@ -398,7 +331,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     const handleDeleteBtn = () => {
         store.getState().removeRecordsByGuid(selectedGuid, historyStore)
-        deleteSelected()
     }
 
     const handleSaveBtn = async () => {
@@ -433,18 +365,8 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         }
     }
 
-    const handleEditableBtn = () => {
-        setIsEditable(!isEditable);
-        // switchEditable(!isEditable);
-    }
-
     const handleInitBtn = () => {
         store.getState().initCurrentData()
-        const restoredGeojson = store.getState().currentGeojson;
-        if (restoredGeojson == undefined) return;
-        const restoredFlatRow = featureCollectionToFlatRow(restoredGeojson);
-        store.getState().setFlatRow(restoredFlatRow);
-        setRowData(restoredFlatRow);
     }
 
     const handleShowHistory = () => {

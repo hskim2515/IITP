@@ -7,13 +7,14 @@ import { useSelectionStore } from "@stores/useSelectionStore";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import { MapBrowserEvent } from "ol";
 import { useMenuStore } from "@stores/useMenuStore";
-import { propertyFormSchema } from "../../../component/form/propertyFormSchema";
+import { propertyFormSchema } from "@component/form/propertyFormSchema";
 import VectorLayer from "ol/layer/Vector";
 import WebGLVectorLayer from "ol/layer/WebGLVector";
 import VectorSource from "ol/source/Vector";
 import { getFeaturesByGuidPrefix } from "@utils/feature";
 import { Fill, Stroke, Style } from "ol/style";
 import CircleStyle from "ol/style/Circle";
+import { matchesCustomKeyValue } from "@utils/olLayer";
 
 const useDefaultSelect = () => {
 
@@ -102,10 +103,7 @@ const useDefaultSelect = () => {
                 const map = useOpenLayersStore.getState().map
                 if (!map) return
                 const olLayer = map.getLayers().getArray().find((layer) => {
-                    if (
-                        (layer instanceof VectorLayer
-                            || layer instanceof WebGLVectorLayer
-                        ) && layer.get("layer") === layerName) {
+                    if (matchesCustomKeyValue(layer,'layer', layerName)) {
                         return true;
                     }
                     return false;

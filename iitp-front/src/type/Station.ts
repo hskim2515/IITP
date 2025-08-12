@@ -60,7 +60,7 @@ export interface RailStationData {
     linkRef: string | undefined;
     address: string | null;
     coordinates: Coordinates[];
-    exits: RailStationExitData | null
+    exits: RailStationExitData[] | null
     menuCode: string
 }
 

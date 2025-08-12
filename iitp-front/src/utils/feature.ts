@@ -23,6 +23,7 @@ type FeatureInput =
     | VectorSource<Feature<Geometry>>
     | VectorLayer<VectorSource<Feature<Geometry>>>
     | WebGLVectorLayer
+    | BaseLayer
 
 /**
  * 두 좌표 간 유클리드 거리 계산
@@ -132,7 +133,7 @@ export function getValuesFromFeatures<T = unknown>(
     return Array.from(new Set(values));
 }
 
-function extractFeaturesFromInput(input: FeatureInput | undefined): Feature[] | null {
+function extractFeaturesFromInput(input: FeatureInput | undefined | null): Feature[] | null {
     if (!input) return null;
 
     if (Array.isArray(input)) {
@@ -426,7 +427,7 @@ export function findNearestFeature(
     return closest;
 }
 
-export function getSnapFeature(input: FeatureInput | undefined , targetCoord: Coordinate | null,maxDistance: number):Feature<Geometry> | null{
+export function getSnapFeature(input: FeatureInput | undefined | null , targetCoord: Coordinate | null,maxDistance: number):Feature<Geometry> | null{
     if(!targetCoord) return null;
     const features = extractFeaturesFromInput(input)
     return findNearestFeature(features, targetCoord, maxDistance);

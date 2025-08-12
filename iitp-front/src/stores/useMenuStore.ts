@@ -24,8 +24,8 @@ interface State {
 
 interface Actions {
     setMenu: (menu: MenuTree[]) => void;
-    setActiveDropdownMenu: (menu: MenuTree[]) => void;
-    setActiveSubmenu: (menu: MenuTree[]) => void;
+    setActiveDropdownMenu: (menu: MenuTree) => void;
+    setActiveSubmenu: (menu: MenuTree) => void;
 }
 const initialState: State = {
     menu: null,

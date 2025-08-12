@@ -1,7 +1,5 @@
 import { create } from "zustand";
 import { createSelectors } from "@stores/createSelectors";
-import { combine, subscribeWithSelector } from "zustand/middleware";
-import { immer } from "zustand/middleware/immer";
 
 interface State {
     isCesiumSyncingState: boolean;
@@ -12,7 +10,7 @@ interface State {
 interface Actions {
     setCesiumSyncing: (syncing: boolean) => void;
     setOLSyncing: (syncing: boolean) => void;
-    setCurrentBaseMap: (baseMap: string | null) => void;
+    setCurrentBaseMap: (baseMap: 'osm' | 'satellite' | 'hybrid' | 'base' | 'midnight' | undefined) => void;
 }
 
 const initialState: State = {
@@ -21,15 +19,16 @@ const initialState: State = {
     currentBaseMap: 'osm',
 }
 
-export const useMapStore = createSelectors(create<State & Actions>(
-    subscribeWithSelector(
-        immer(
-            combine(initialState,(set) => ({
-                    setCesiumSyncing: (syncing: boolean) => set({ isCesiumSyncingState: syncing, isOLSyncingState: !syncing }),
-                    setOLSyncing: (syncing: boolean) => set({ isCesiumSyncingState: !syncing, isOLSyncingState: syncing }),
-                    setCurrentBaseMap: (baseMap: string) => set({ currentBaseMap: baseMap }),
-                })
-            )
-        )
+export const useMapStore = createSelectors(
+    create<State & Actions>(
+        (set) => ({
+            ...initialState,
+            setCesiumSyncing: (syncing: boolean) => set({
+                isCesiumSyncingState: syncing,
+                isOLSyncingState: !syncing
+            }),
+            setOLSyncing: (syncing: boolean) => set({isCesiumSyncingState: !syncing, isOLSyncingState: syncing}),
+            setCurrentBaseMap: (baseMap: 'osm' | 'satellite' | 'hybrid' | 'base' | 'midnight' | undefined) => set({currentBaseMap: baseMap}),
+        })
     )
-));
+);

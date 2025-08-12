@@ -1,11 +1,11 @@
 import { create } from 'zustand';
 
 type SelectionStore = {
-    selectedGuid: (string | number) [];
+    selectedGuid: (string) [];
     setSelectedGuid: (guids: (string)[]) => void;
 
-    addSelectionId: (guid: string | number) => void;
-    removeSelectionId: (guid: string | number) => void;
+    addSelectionId: (guid: string) => void;
+    removeSelectionId: (guid: string) => void;
     clearSelected: () => void;
 };
 
@@ -14,7 +14,7 @@ export const useSelectionStore = create<SelectionStore>((set, get) => ({
     setSelectedGuid: (guids: (string)[]) => {
         set({selectedGuid: guids})
     },
-    addSelectionId: (guid: string | number) => {
+    addSelectionId: (guid: string) => {
         const currentSelected = get().selectedGuid;
         if (!currentSelected.includes(guid)) set({selectedGuid: [...currentSelected, guid]});
     },

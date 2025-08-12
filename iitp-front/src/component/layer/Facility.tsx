@@ -27,7 +27,7 @@ const getNestedArrayFieldsRecursive = (row: any): string[] => {
     return nestedFields;
 };
 
-const Facility: React.FC<FacilityProps> = ({ fields }) => {
+const Facility = ({ fields }:FacilityProps) => {
     const {
         activeLayerName,
         addActiveLayerName,
@@ -69,13 +69,13 @@ const Facility: React.FC<FacilityProps> = ({ fields }) => {
 
     const isParentChecked = (key: string) => {
         const children = nestedArrayFieldsMap[key] || [];
-        if (children.length === 0) return activeLayerName.includes(key);
+        if (children.length === 0) return activeLayerName?.includes(key);
         // 상위는 자식이 하나라도 있으면 체크된 것으로 본다
-        return children.some((child) => activeLayerName.includes(`${key}.${child}`));
+        return children.some((child) => activeLayerName?.includes(`${key}.${child}`));
     };
 
     const isChildChecked = (parentKey: string, childKey: string) => {
-        return activeLayerName.includes(`${parentKey}.${childKey}`);
+        return activeLayerName?.includes(`${parentKey}.${childKey}`);
     };
 
     const toggleParent = (parentKey: string, checked: boolean) => {
@@ -84,13 +84,13 @@ const Facility: React.FC<FacilityProps> = ({ fields }) => {
             addActiveLayerName(parentKey);
             children.forEach((child) => {
                 addActiveLayerName(`${parentKey}.${child}`)
-                layerManager.toggleByFeatureType('facility', parentKey, child, checked);
+                layerManager?.toggleByFeatureType('facility', parentKey, child, checked);
             });
         } else {
             removeActiveLayerName(parentKey);
             children.forEach((child) => {
                 removeActiveLayerName(`${parentKey}.${child}`)
-                layerManager.toggleByFeatureType('facility', parentKey, child, checked);
+                layerManager?.toggleByFeatureType('facility', parentKey, child, checked);
             });
         }
     };
@@ -102,20 +102,20 @@ const Facility: React.FC<FacilityProps> = ({ fields }) => {
             // child 활성화
             addActiveLayerName(fullKey);
             // parent도 강제로 활성화
-            if (!activeLayerName.includes(parentKey)) {
+            if (!activeLayerName?.includes(parentKey)) {
                 addActiveLayerName(parentKey);
             }
             // layer도 토글
-            layerManager.toggleByFeatureType('facility', parentKey, childKey, true);
+            layerManager?.toggleByFeatureType('facility', parentKey, childKey, true);
         } else {
             // child 비활성화
             removeActiveLayerName(fullKey);
-            layerManager.toggleByFeatureType('facility', parentKey, childKey, false);
+            layerManager?.toggleByFeatureType('facility', parentKey, childKey, false);
 
             // 하위 중 하나라도 켜져 있으면 parent 유지
             const children = nestedArrayFieldsMap[parentKey] || [];
             const anyChecked = children.some(child =>
-                activeLayerName.includes(`${parentKey}.${child}`)
+                activeLayerName?.includes(`${parentKey}.${child}`)
             );
 
             if (!anyChecked) {

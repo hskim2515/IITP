@@ -1,7 +1,8 @@
-import { Map as OLMap, ol } from 'ol';
+import { Map as OLMap } from 'ol';
 import Style from 'ol/style/Style';
 
 import BaseLayer from 'ol/layer/Base';
+import { isVectorLayer, isWebGLVectorLayer, matchesCustomKeyValue } from "@utils/olLayer";
 
 class VectorLayerManager {
     private id;
@@ -11,7 +12,7 @@ class VectorLayerManager {
 
     private layerStore;
 
-    private layerGroups: { [key: string]: BaseLayer[] } = {};
+    private layerGroups: {[key: string]: BaseLayer[]} = {};
 
     constructor(olMap: OLMap, layerStore) {
         this.id = "vectorLayerManager";
@@ -33,7 +34,7 @@ class VectorLayerManager {
         for (const groupName in this.layerGroups) {
             const group = this.layerGroups[groupName];
             for (const layer of group) {
-                if (layer["layer"] === layerName || layer.get("name") === layerName) {
+                if (matchesCustomKeyValue(layer, 'layer', layerName)) {
                     return layer;
                 }
             }
@@ -48,30 +49,30 @@ class VectorLayerManager {
         return this.layerGroups[groupName];
     }
 
-    add(layer, groupName, layerName, basic) {
+    add(layer, groupName: string, layerName: string, basic: boolean) {
         const group = this._getOrCreateGroup(groupName);
 
-        const existingLayer = group.find(layer => layer["layer"] === layerName);
+        const existingLayer = group.find(layer => matchesCustomKeyValue(layer, 'layer', layerName));
         const isOnMap = this.olMap.getLayers().getArray().includes(layer);
 
         layer["layerGroup"] = groupName;
         layer["layer"] = layerName;
 
 
-            if (existingLayer) {
-                const index = group.indexOf(existingLayer);
-                if (index > -1) group.splice(index, 1);
-            }
-            layer.values_.visible = basic;
+        if (existingLayer) {
+            const index = group.indexOf(existingLayer);
+            if (index > -1) group.splice(index, 1);
+        }
+        layer.values_.visible = basic;
 
-            group.push(layer);
-            if (!isOnMap) {
-                this.olMap.addLayer(layer);
-            }
+        group.push(layer);
+        if (!isOnMap) {
+            this.olMap.addLayer(layer);
+        }
 
-            if (typeof this.onAdd === 'function') {
-                this.onAdd(layer, groupName, layerName);
-            }
+        if (typeof this.onAdd === 'function') {
+            this.onAdd(layer, groupName, layerName);
+        }
         return group;
     }
 
@@ -79,10 +80,10 @@ class VectorLayerManager {
     public get(groupName: string, layerName: string) {
         const group = this.layerGroups[groupName];
         if (!group) return [];
-        return group.filter(layer => layer["layer"] === layerName);
+        return group.filter(layer => matchesCustomKeyValue(layer, 'layer', layerName));
     }
 
-    public getAllByGroup(groupName) {
+    public getAllByGroup(groupName: string) {
         const group = this.layerGroups[groupName];
         if (!group) return [];
 
@@ -98,18 +99,18 @@ class VectorLayerManager {
         if (!group) return;
 
         group.forEach(layer => {
-            if (layer["layer"] === layerName) {
+            if (matchesCustomKeyValue(layer, 'layer', layerName)) {
                 console.log(" show layerName", layerName)
                 layer.setVisible(true);
             }
         });
     }
 
-    hide(groupName, layerName) {
+    hide(groupName: string, layerName: string) {
         this.get(groupName, layerName).forEach(layer => layer.setVisible(false));
     }
 
-    toggle(groupName, layerName) {
+    toggle(groupName: string, layerName: string) {
         const items = this.get(groupName, layerName);
         if (items.length === 0) return;
         const shouldShow = !items[0].getVisible();
@@ -121,8 +122,9 @@ class VectorLayerManager {
         if (!group) return;
 
         group.forEach(layer => {
-            if (layer["layer"] === layerName) {
-                const source = layer.getSource?.();
+            if (matchesCustomKeyValue(layer, 'layer', layerName)
+                && (isVectorLayer(layer) || isWebGLVectorLayer(layer))) {
+                const source = layer.getSource();
                 if (!source) return;
                 // featureType 별로 필터링
                 const features = source.getFeatures().filter(f => f.get('__guid')?.split('-')[0] === featureType);
@@ -138,15 +140,13 @@ class VectorLayerManager {
     }
 
 
-
-
-    remove(groupName, layerName) {
+    remove(groupName: string, layerName: string) {
         const group: BaseLayer[] = this.layerGroups[groupName];
         if (!group) return;
 
-        const layersToRemove = group.filter(layer => layer["layer"] === layerName);
+        const layersToRemove = group.filter(layer => matchesCustomKeyValue(layer, 'layer', layerName));
         layersToRemove.forEach(layer => {
-            if (typeof layer.getSource === 'function') {
+            if (isVectorLayer(layer) || isWebGLVectorLayer(layer)) {
                 const source = layer.getSource();
                 if (source && typeof source.clear === 'function') {
                     source.clear();
