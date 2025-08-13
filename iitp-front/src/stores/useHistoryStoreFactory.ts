@@ -2,6 +2,9 @@ import {create} from 'zustand';
 import {combine, subscribeWithSelector} from 'zustand/middleware';
 import {createSelectors} from './createSelectors';
 import {UpdateLogEntry, UpdateLogItem} from "@type/HistoryTypes";
+import {useMessageStore} from "@stores/useMessageStore";
+const setMessage = useMessageStore.getState().setMessage;
+
 
 
 export interface HistoryStoreFactoryType {
@@ -50,7 +53,10 @@ const createHistoryStore = () =>
                         const idx = get().currentIndex;
 
                         if (!logs || idx >= logs.length) {
-                            alert("되돌릴 수 있는 작업이 없습니다.");
+                            setMessage({
+                                type: 'warn',
+                                text: "되돌릴 수 있는 작업이 없습니다.",
+                            });
                             return null;
                         }
 
@@ -64,7 +70,10 @@ const createHistoryStore = () =>
                         const idx = get().currentIndex;
 
                         if (!logs || idx <= 0) {
-                            alert("앞으로 돌릴 수 있는 작업이 없습니다.");
+                            setMessage({
+                                type: 'warn',
+                                text: "앞으로 돌릴 수 있는 작업이 없습니다.",
+                            });
                             return null;
                         }
 

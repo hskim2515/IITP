@@ -97,7 +97,7 @@ export default class NetworkDataSourceLayer {
                         cornerType: Cesium.CornerType.MITERED,
                         positions: [p1, p2],
                         width: link.width, // 레인별 폭 적용
-                        material: Cesium.Color.WHITE,
+                        material: Cesium.Color.SILVER.withAlpha(0.8),
                         height: 0.02,
                     },
                     properties:link
@@ -136,7 +136,7 @@ export default class NetworkDataSourceLayer {
                             cornerType: Cesium.CornerType.MITERED,
                             positions: [shiftedP1, shiftedP2],
                             width: laneWidth, // 레인별 폭 적용
-                            material: Cesium.Color.GREY.withAlpha(0.8),
+                            material: Cesium.Color.BLACK.withAlpha(0.8),
                             height: 0.03,
                         },
                         properties: link.lanes[i]

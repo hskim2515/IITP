@@ -4,7 +4,9 @@ import { createSelectors } from './createSelectors';
 import { FetchFeatureDataType } from "@type/FeatureOptions";
 import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
 import { featureUpdateLogs } from "@utils/history";
-import { applyDiffs, diffObjects, findParentRecordByFeatureType } from "@utils/json";
+import { findParentRecordByFeatureType } from "@utils/json";
+import { diff, applyChange } from 'deep-diff';
+
 
 export interface FeatureStoreFactoryType {
     getState: () => State & Actions;
@@ -42,7 +44,9 @@ const createFeatureStore = <T>() => {
                 combine(initialState, (set, get) => ({
                         setOriginData: (data: FetchFeatureDataType<T>) => set({originData: data}),
                         setCurrentJsonData: (data: FetchFeatureDataType<T>) => {
-                            set({currentJsonData: structuredClone(data)});
+                            set({
+                                currentJsonData: structuredClone(data)
+                            });
                         },
                         updateCurrentJsonData: (record, historyStore) => {
                             function getValueAtPath(obj: any, path: string[]) {
@@ -59,17 +63,24 @@ const createFeatureStore = <T>() => {
                                     return obj.map(item => deepUpdateByGuid(item, record));
                                 } else if (typeof obj === "object" && obj !== null) {
                                     if (obj.__guid === record.__guid) {
-                                        const diffs = diffObjects(obj, record);
-                                        if (diffs.length === 0) return obj;
+                                        // 객체 간 차이 계산
+                                        const differences = diff(obj, record);
+                                        if (!differences || differences.length === 0) return obj;
 
-                                        const updatedItem = applyDiffs(obj, diffs);
+                                        // diff 적용
+                                        const updatedItem = { ...obj };
+                                        differences.forEach(change => {
+                                            applyChange(updatedItem, record, change);
+                                        });
+
                                         updatedFlag.updated = true;
 
+                                        // 변경 로그 기록
                                         if (historyStore) {
-                                            for (const diff of diffs) {
-                                                const field = diff.path.join(".");
-                                                const oldValue = getValueAtPath(obj, diff.path);
-                                                const newValue = diff.value;
+                                            for (const change of differences) {
+                                                const field = change.path?.join(".") ?? "";
+                                                const oldValue = change.lhs;
+                                                const newValue = change.rhs;
 
                                                 featureUpdateLogs(historyStore, {
                                                     guid: record.__guid,

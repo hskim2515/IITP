@@ -325,3 +325,33 @@ body {
 }
 
 
+/* Message popup */
+.messagePopup {
+  position: fixed;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 15px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  z-index: 9999;
+  color: white;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+  animation: fadeInOut 2s ease-in-out;
+}
+
+.messagePopup.info {
+  background-color: #007bff;
+}
+
+.messagePopup.warn {
+  background-color: #ffc107;
+  color: #000;
+}
+
+.messagePopup.error {
+  background-color: #dc3545;
+}
+
+
