@@ -63,9 +63,7 @@ const useDefaultMoveMouse = () => {
             throttledCesiumHover.cancel()
         };
     }, [viewer, cesiumManager]);
-    useEffect(() => {
-        console.log("selectedGuid:::::::", selectedGuid)
-    }, [selectedGuid]);
+
 
     const handleOlHover = (e: MapBrowserEvent<UIEvent>) => {
         if (!olMap) return;
@@ -75,7 +73,11 @@ const useDefaultMoveMouse = () => {
             (feature: FeatureLike, layer: Layer) => {
                 const isTargetLayer = !hoverLayerName || (hoverLayerName && matchesCustomKeyValue(layer, 'layer', hoverLayerName));
 
-                if (isTargetLayer && isVectorLayer(layer) && isFeature(feature) && feature.get("__guid")) {
+                if (isTargetLayer
+                    && isVectorLayer(layer)
+                    && isFeature(feature)
+                    && feature.get("__guid")
+                ) {
                     if (selectedGuid.includes(feature.get("__guid"))) {
                         return undefined;
                     }
