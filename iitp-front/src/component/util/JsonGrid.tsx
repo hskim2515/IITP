@@ -289,10 +289,8 @@ const JsonGrid = ({
     }));
     const nestedFields = getNestedArrayField(rowData?.[0]);
     const handleAddBtn = () => {
-        console.log("grid addBtn rowData:::", rowData)
         let newRecord;
         let targetFeatureType = levelName;
-        console.log("handleAddBtn targetFeatureType:::", targetFeatureType)
         if (!targetFeatureType) {
             if (rowData.length > 0 && rowData[0].featureType) {
                 targetFeatureType = rowData[0].featureType;
@@ -308,7 +306,6 @@ const JsonGrid = ({
             newRecord.id = Date.now(); // 임시 ID
             newRecord.__guid = generateGUIDWithType(targetFeatureType); // __guid 생성
 
-            console.log("새로 추가될 DTO:::", newRecord);
             store.getState().updateCurrentJsonData(newRecord, historyStore);
         } else {
             console.error("레이어에 'createDto' 메서드가 정의되어 있지 않습니다.");
@@ -320,7 +317,6 @@ const JsonGrid = ({
     }
 
     const toggleGrid = (key: string) => {
-        console.log("toggleGrid key:::", key)
         setExpandedKey((prevKey) => (prevKey === key ? null : key)); // 같은 key면 닫기
     };
 
@@ -363,9 +359,6 @@ const JsonGrid = ({
                             expandedRowRender: (record) => (
                                 <>
                                     {nestedFields.map((field) => {
-                                        console.log("grid nestedFields record:::", record)
-                                        console.log("grid nestedFields:::", nestedFields)
-                                        console.log("grid nestedFields field:::", field)
                                         return (
                                             Array.isArray(record[field]) && record[field].length > 0 ? (
                                                 <div key={field}>

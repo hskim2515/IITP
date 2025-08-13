@@ -21,7 +21,7 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import useHistoryInit, {menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
-import {mergeJsonWithLog, mergeUpdateLogs} from "@utils/history";
+import {mergeJsonWithLogRecursive, mergeUpdateLogs} from "@utils/history";
 import HistoryController from "@component/modal/HistoryController";
 import {menuDrawRequirements} from "@config/menuDrawConfig";
 import TypeSelectionModal from "@component/modal/TypeSelectionModal";
@@ -396,20 +396,16 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         }
 
         const currentJsonData = store.getState().currentJsonData;
-        const firstKey = Object.keys(currentJsonData)[0] as keyof typeof currentJsonData;
-        const currentJsonItem = currentJsonData[firstKey];
-        const featuresMap = new Map<string | number, any>();
-        currentJsonItem.forEach((data) => {
-            const id = data.__guid;
-            if (id != null) {
-                featuresMap.set(id, JSON.parse(JSON.stringify(data)));
-            }
-        });
-        const mergeJsonData = mergeJsonWithLog(featuresMap, updateHistory.json, isUndo);
-        store.getState().setCurrentJsonData({
-            ...currentJsonData,
-            [firstKey]: mergeJsonData,
-        });
+
+        const mergeJsonData = mergeJsonWithLogRecursive(currentJsonData, updateHistory.json, isUndo);
+
+        const originalData = store.getState().originData;
+        console.log("originalData:::", originalData)
+        console.log({
+            mergeJsonData
+        })
+
+        store.getState().setCurrentJsonData(mergeJsonData);
 
         alert(isUndo ? "Undo 성공" : "Redo 성공");
 

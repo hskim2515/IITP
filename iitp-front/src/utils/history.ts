@@ -94,69 +94,73 @@ interface FeatureUpdateHistoryOptions {
 //     return Array.from(featuresMap.values());
 // }
 
-export function mergeJsonWithLog(
-    featuresMap: Map<string | number, any>,
+function updateFeatureByGuid(obj: any, guid: string, updater: (feature: any) => void): boolean {
+    if (Array.isArray(obj)) {
+        return obj.some(item => updateFeatureByGuid(item, guid, updater));
+    }
+    if (obj && typeof obj === "object") {
+        if (obj.__guid === guid || obj.id === guid) {
+            updater(obj);
+            return true; // 찾았으니 중단
+        }
+        return Object.values(obj).some(value => updateFeatureByGuid(value, guid, updater));
+    }
+    return false;
+}
+
+export function mergeJsonWithLogRecursive(
+    currentJsonData: unknown,
     updateLog: UpdateLogEntry,
     isUndo: boolean
-): any[] {
+): any {
     const { added, modified, deleted } = updateLog;
 
     if (isUndo) {
         // Undo: 삭제 → 다시 추가
-        const deletedPropsMap = new Map<string, Record<string, any>>();
-
-        deleted?.forEach((change) => {
-            const fid = change.guid;
-            if (!fid || !change.field) return;
-            if (!deletedPropsMap.has(fid)) {
-                deletedPropsMap.set(fid, {});
-            }
-            deletedPropsMap.get(fid)![change.field!] = change.oldValue;
-        });
-
-        deletedPropsMap.forEach((props, fid) => {
-            featuresMap.set(fid, {
-                id: fid,
-                ...props
+        deleted?.forEach(change => {
+            updateFeatureByGuid(currentJsonData, change.guid, feature => {
+                feature[change.field!] = change.oldValue;
             });
         });
 
         // Undo: 수정 → 원래 값으로 복원
-        modified?.forEach((change) => {
-            const data = featuresMap.get(change.guid);
-            if (data) {
-                data[change.field!] = change.oldValue;
-            }
+        modified?.forEach(change => {
+            updateFeatureByGuid(currentJsonData, change.guid, feature => {
+                feature[change.field!] = change.oldValue;
+            });
         });
 
         // Undo: 추가 → 제거
-        added?.forEach((change) => {
-            featuresMap.delete(change.guid);
+        added?.forEach(change => {
+            updateFeatureByGuid(currentJsonData, change.guid, feature => {
+                Object.keys(feature).forEach(k => delete feature[k]);
+            });
         });
 
     } else {
         // Redo: 삭제 → 제거
-        deleted?.forEach((change) => {
-            featuresMap.delete(change.guid);
+        deleted?.forEach(change => {
+            updateFeatureByGuid(currentJsonData, change.guid, feature => {
+                Object.keys(feature).forEach(k => delete feature[k]);
+            });
         });
 
         // Redo: 수정 → 새로운 값 반영
-        modified?.forEach((change) => {
-            const data = featuresMap.get(change.guid);
-            if (data) {
-                data[change.field!] = change.newValue;
-            }
+        modified?.forEach(change => {
+            updateFeatureByGuid(currentJsonData, change.guid, feature => {
+                feature[change.field!] = change.newValue;
+            });
         });
 
         // Redo: 추가 → 다시 생성
-        added?.forEach((change) => {
-            featuresMap.set(change.guid, {
-                id: change.guid,
-                ...change.properties
+        added?.forEach(change => {
+            updateFeatureByGuid(currentJsonData, change.guid, feature => {
+                Object.assign(feature, { id: change.guid, ...change.properties });
             });
         });
     }
-    return Array.from(featuresMap.values());
+
+    return currentJsonData;
 }
 
 export function buildMergedDataFromLogs(
@@ -181,7 +185,7 @@ export function buildMergedDataFromLogs(
     });
 
     sortedLogs.forEach(log => {
-        mergeJsonWithLog(featuresMap, log.data, isUndo);
+        mergeJsonWithLogRecursive(featuresMap, log.data, isUndo);
     });
     return Array.from(featuresMap.values());
 }

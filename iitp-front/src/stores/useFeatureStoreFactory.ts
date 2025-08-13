@@ -4,7 +4,7 @@ import { createSelectors } from './createSelectors';
 import { FetchFeatureDataType } from "@type/FeatureOptions";
 import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
 import { featureUpdateLogs } from "@utils/history";
-import { applyDiffs, diffObjects, findParentRecordByFeatureType } from "@utils/json";
+import { findParentRecordByFeatureType } from "@utils/json";
 import { diff, applyChange } from 'deep-diff';
 
 
@@ -44,7 +44,9 @@ const createFeatureStore = <T>() => {
                 combine(initialState, (set, get) => ({
                         setOriginData: (data: FetchFeatureDataType<T>) => set({originData: data}),
                         setCurrentJsonData: (data: FetchFeatureDataType<T>) => {
-                            set({currentJsonData: structuredClone(data)});
+                            set({
+                                currentJsonData: structuredClone(data)
+                            });
                         },
                         updateCurrentJsonData: (record, historyStore) => {
                             function getValueAtPath(obj: any, path: string[]) {
