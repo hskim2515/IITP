@@ -9,6 +9,7 @@ import { LineString, Point, Polygon } from "ol/geom";
 import { Coordinate } from "ol/coordinate";
 import { getDistance } from "ol/sphere";
 import {fromLonLat, toLonLat} from "ol/proj";
+import { FeatureLike } from "ol/Feature";
 
 export interface PositionOnGeometry {
     coordinate: Coordinate; // 최적 위치 좌표
@@ -431,4 +432,8 @@ export function getSnapFeature(input: FeatureInput | undefined | null , targetCo
     if(!targetCoord) return null;
     const features = extractFeaturesFromInput(input)
     return findNearestFeature(features, targetCoord, maxDistance);
+}
+
+export function isFeature(input: Feature | FeatureLike): input is Feature {
+    return input instanceof Feature;
 }
