@@ -191,7 +191,7 @@ const useSimulation = () => {
             if (vehicleDataRef.current) {
                 const newVehicleData = vehicleDataRef.current;
                 const type = 'tick';
-                changeModelWorkerRef.current.postMessage({ type, newVehicleData, cameraPositionWC, cameraDirectionWC });
+                //changeModelWorkerRef.current.postMessage({ type, newVehicleData, cameraPositionWC, cameraDirectionWC });
             }
             const newVehicleRoute = vehicleRouteStartEndRef.current;
             const lastPositions = lastPositionsRef.current;
@@ -238,29 +238,29 @@ const useSimulation = () => {
 
             vehicleDataRef.current = VehicleModelData
 
-            changeModelWorkerRef.current.postMessage({ type:'init', newVehicleData: VehicleModelData})
+            //changeModelWorkerRef.current.postMessage({ type:'init', newVehicleData: VehicleModelData})
 
         });
 
         // Worker 메시지 처리
-        changeModelWorkerRef.current.onmessage = (e) => {
-            const map = entityMapRef.current;
-
-            e.data.forEach(data => {
-                const vehicleEntity = map.get(data.id);
-
-                if (data.changed) {
-                    if (data.display) {
-                        vehicleEntity.model = sampleModel;
-                        //layerManager?.hideLayer("layer", "default");
-                    } else {
-                        vehicleEntity.model = undefined;
-                        layerManager?.showLayer("analyze", "default");
-                    }
-                }
-            });
-            vehicleDataRef.current = e.data;
-        };
+        // changeModelWorkerRef.current.onmessage = (e) => {
+        //     const map = entityMapRef.current;
+        //
+        //     e.data.forEach(data => {
+        //         const vehicleEntity = map.get(data.id);
+        //
+        //         if (data.changed) {
+        //             if (data.display) {
+        //                 vehicleEntity.model = sampleModel;
+        //                 //layerManager?.hideLayer("layer", "default");
+        //             } else {
+        //                 vehicleEntity.model = undefined;
+        //                 layerManager?.showLayer("analyze", "default");
+        //             }
+        //         }
+        //     });
+        //     vehicleDataRef.current = e.data;
+        // };
 
         czmlPositionWorkerRef.current.onmessage = (e) => {
             const { positions } = e.data;

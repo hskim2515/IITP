@@ -9,6 +9,7 @@ import {useScenarioStore} from "@stores/useScenarioStore";
 import PropertyModal from "./component/modal/PropertyModal";
 import PropertyPanel from "./component/panel/PropertyPanel";
 import {useMenuStore} from "@stores/useMenuStore";
+import {MessagePopup} from "@component/message/MessagePopup";
 
 function App() {
 
@@ -101,6 +102,7 @@ function App() {
               </div>
           )}
           <Header />
+          <MessagePopup/>
           <LeftPanel />
           <Tools />
           <ToolsPanel />

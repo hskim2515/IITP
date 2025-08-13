@@ -40,6 +40,7 @@ import deepEqual from "deep-equal";
 import { FeatureLayerAPI, isFeatureLayer } from "@features/FeatureLayerAPI";
 import { matchesCustomKeyValue } from "@utils/olLayer";
 import {useSchemeStore} from "@stores/useSchemeStore";
+import {useMessageStore} from "@stores/useMessageStore";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTree
@@ -80,6 +81,8 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     type BodySize = "mini" | "default" | "full";
     const [bodySize, setBodySize] = useState<BodySize>("default");
+    const setMessage = useMessageStore.getState().setMessage;
+
 
     useEffect(() => {
         const unsubscribe = store.subscribe(
@@ -350,7 +353,10 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         const currentJson = store.getState().currentJsonData;
         const logJson = historyStore.getState().updateLogs;
         if (!logJson) {
-            alert('변경사항이 없습니다.');
+            setMessage({
+                type: 'warn',
+                text: '변경사항이 없습니다.',
+            });
             return
         }
         const mergedLog = mergeUpdateLogs(logJson);
@@ -369,11 +375,15 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
             historyStore.getState().resetAllUpdates();
             setReloadFlag(prev => !prev);
-            console.log("저장 완료:",);
-            alert("저장 완료")
+            setMessage({
+                type: 'info',
+                text: '저장 완료',
+            });
         } catch (error) {
-            console.error("저장 실패:", error);
-            alert("저장 실패")
+            setMessage({
+                type: 'error',
+                text: '저장 실패: ' + error,
+            });
         }
     }
 
@@ -407,7 +417,10 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
         store.getState().setCurrentJsonData(mergeJsonData);
 
-        alert(isUndo ? "Undo 성공" : "Redo 성공");
+        setMessage({
+            type: 'info',
+            text: isUndo ? "Undo 성공" : "Redo 성공",
+        });
 
     };
 
@@ -434,13 +447,13 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                     <div className="popup-header">
                         <span>{submenu.title}</span>
                         <div className="popup-header-actions">
-                            <button className="add-btn" onClick={() => handleDrawBtn()}>그리기</button>
-                            <button className="delete-btn" onClick={() => handleDeleteBtn()}>지우기</button>
-                            <button className="save-btn" onClick={() => handleSaveBtn()}>저장</button>
+                            {/*<button className="add-btn" onClick={() => handleDrawBtn()}>그리기</button>*/}
+                            {/*<button className="delete-btn" onClick={() => handleDeleteBtn()}>지우기</button>*/}
                             <button className="save-btn" onClick={() => handleInitBtn()}>되돌리기</button>
                             <HistoryController onHistoryAply={handleHistoryApply}></HistoryController>
-                            <button onClick={() => handleCheck()}>Interaction 객체 목록 디버깅</button>
+                            {/*<button onClick={() => handleCheck()}>Interaction 객체 목록 디버깅</button>*/}
                             <button className="btn" onClick={() => handleShowHistory()}>변경 이력 보기</button>
+                            <button className="save-btn" onClick={() => handleSaveBtn()}>저장</button>
                         </div>
 
                         <div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {Checkbox, Select, Table} from "antd";
 import { useSelectionStore } from "@stores/useSelectionStore";
 import { Input, InputNumber } from "antd/lib";
@@ -12,6 +12,8 @@ import { generateGUIDWithType } from "@utils/guid";
 import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {useSchemeStore} from "@stores/useSchemeStore";
+import debounce from "lodash.debounce";
+
 
 // 중첩 배열로 생성하지 않을 필드 지정
 const EXCLUDED_NESTED_FIELDS = ["coordinates"];
@@ -158,15 +160,26 @@ const JsonGrid = ({
         return null;
     }
 
-    const handleInputChange = (key: string, field: string, value: any) => {
-        setRowEditValues((prev) => ({
-            ...prev,
-            [key]: {
-                ...(prev[key] || {}),
-                [field]: value,
-            },
-        }));
-    };
+    const debouncedSetRowEditValues = useRef(
+        debounce((key: string, field: string, value: any) => {
+            setRowEditValues(prev => ({
+                ...prev,
+                [key]: {
+                    ...(prev[key] || {}),
+                    [field]: value,
+                },
+            }));
+        }, 300) // 300ms 지연
+    ).current;
+
+    const handleInputChange = useCallback((key: string, field: string, value: any) => {
+        debouncedSetRowEditValues(key, field, value);
+    }, []);
+
+    React.useEffect(() => {
+        return () => debouncedSetRowEditValues.cancel();
+    }, [debouncedSetRowEditValues]);
+
 
     const columns = generateColumnsFromData(rowData);
     // const isEditableRow = (guid: string) =>
@@ -182,6 +195,7 @@ const JsonGrid = ({
 
             const handleCommit = (e) => {
 
+                debouncedSetRowEditValues.flush();
 
                 if(rowEditValues[guid]){
                     const merged = {
@@ -235,7 +249,7 @@ const JsonGrid = ({
                     value={currentValue}
                     onChange={(val) =>handleInputChange(guid, col.dataIndex, val)}
                     onBlur={handleCommit}
-                    //onPressEnter={handleCommit}
+                    onPressEnter={handleCommit}
                     size="small"
                 />
             ) : schemes?.type === 'select' ? (
