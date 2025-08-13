@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useCesiumStore } from "@stores/useCesiumStore";
 import * as Cesium from "cesium";
 import { useEventStore } from "@stores/useEventStore";
@@ -7,11 +7,13 @@ import { MapBrowserEvent } from "ol";
 import Feature, { FeatureLike } from "ol/Feature";
 import { Layer } from "ol/layer";
 import { StyleFunction, StyleLike } from "ol/style/Style";
-import { isVectorLayer } from "@utils/olLayer";
+import { isVectorLayer, matchesCustomKeyValue } from "@utils/olLayer";
 import CircleStyle from "ol/style/Circle";
 import { Icon, Style } from "ol/style";
 import { isFeature } from "@utils/feature";
 import throttle from 'lodash/throttle';
+import { useMenuStore } from "@stores/useMenuStore";
+import { propertyFormSchema } from "@component/form/propertyFormSchema";
 
 const useDefaultMoveMouse = () => {
 
@@ -20,6 +22,8 @@ const useDefaultMoveMouse = () => {
 
     const olManager = useEventStore((state) => state.olEventManager);
     const cesiumManager = useEventStore((state) => state.cesiumEventManager);
+
+    const activeSubmenu = useMenuStore((state)=> state.activeSubmenu)
 
     const highlightedEntityRef = useRef<Cesium.Entity | null>(null);
     const originalSizeCesiumMap = useRef<WeakMap<Cesium.Entity, any>>(new WeakMap());
@@ -30,14 +34,22 @@ const useDefaultMoveMouse = () => {
     const HIGHLIGHT_SCALE = 3;
     const THROTTLE_MS = 16
 
+    const hoverLayerName = useMemo(() => {
+        if (!activeSubmenu) {
+            return undefined;
+        }
+        return propertyFormSchema[activeSubmenu.menuCode].layer;
+    }, [activeSubmenu]);
+
     useEffect(() => {
         if (!olMap || !olManager) return;
         const throttledOlHover = throttle(handleOlHover, THROTTLE_MS);
         olManager.bind("pointermove", throttledOlHover);
         return () => {
+            throttledOlHover.cancel()
             olManager.unbind("pointermove", throttledOlHover);
         };
-    }, [olMap, olManager]);
+    }, [olMap, olManager, hoverLayerName]);
 
     useEffect(() => {
         if (!viewer || !cesiumManager) return;
@@ -45,24 +57,25 @@ const useDefaultMoveMouse = () => {
         cesiumManager.bind("move", throttledCesiumHover);
         return () => {
             cesiumManager.unbind("move", throttledCesiumHover);
+            throttledCesiumHover.cancel()
         };
     }, [viewer, cesiumManager]);
 
-
     const handleOlHover = (e: MapBrowserEvent<UIEvent>) => {
         if (!olMap) return;
-        const featureInfo = olMap.forEachFeatureAtPixel(e.pixel, (feature: FeatureLike, layer: Layer) => {
-                if (isVectorLayer(layer)) {
-                    if (isFeature(feature)) {
-                        return {feature, layer};
-                    }
+
+        const featureInfo = olMap.forEachFeatureAtPixel(
+            e.pixel,
+            (feature: FeatureLike, layer: Layer) => {
+                const isTargetLayer = !hoverLayerName || (hoverLayerName && matchesCustomKeyValue(layer, 'layer', hoverLayerName));
+
+                if (isTargetLayer && isVectorLayer(layer) && isFeature(feature)) {
+                    return { feature, layer };
                 }
                 return undefined;
-
             },
-            {
-                hitTolerance: 10
-            });
+            {hitTolerance: 10}
+        );
 
         if (!featureInfo) {
             if (highlightedFeatureRef.current) {

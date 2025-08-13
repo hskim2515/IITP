@@ -103,10 +103,7 @@ const useDefaultSelect = () => {
                 const map = useOpenLayersStore.getState().map
                 if (!map) return
                 const olLayer = map.getLayers().getArray().find((layer) => {
-                    if (matchesCustomKeyValue(layer,'layer', layerName)) {
-                        return true;
-                    }
-                    return false;
+                    return matchesCustomKeyValue(layer,'layer', layerName)
                 }) as (VectorLayer<VectorSource> | WebGLVectorLayer | undefined); // 반환 타입 명시
                 const features = getFeaturesByGuidPrefix(olLayer, guid);
                 features?.getArray().forEach((feature) => {
