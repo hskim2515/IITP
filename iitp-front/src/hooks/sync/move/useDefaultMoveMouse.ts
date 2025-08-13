@@ -14,6 +14,7 @@ import { isFeature } from "@utils/feature";
 import throttle from 'lodash/throttle';
 import { useMenuStore } from "@stores/useMenuStore";
 import { propertyFormSchema } from "@component/form/propertyFormSchema";
+import { useSelectionStore } from "@stores/useSelectionStore";
 
 const useDefaultMoveMouse = () => {
 
@@ -23,13 +24,15 @@ const useDefaultMoveMouse = () => {
     const olManager = useEventStore((state) => state.olEventManager);
     const cesiumManager = useEventStore((state) => state.cesiumEventManager);
 
-    const activeSubmenu = useMenuStore((state)=> state.activeSubmenu)
+    const activeSubmenu = useMenuStore((state) => state.activeSubmenu)
 
     const highlightedEntityRef = useRef<Cesium.Entity | null>(null);
     const originalSizeCesiumMap = useRef<WeakMap<Cesium.Entity, any>>(new WeakMap());
 
     const highlightedFeatureRef = useRef<Feature | FeatureLike | undefined>(undefined);
     const originalFeatureStyles = useRef<WeakMap<Feature, StyleLike | undefined>>(new WeakMap())
+
+    const selectedGuid = useSelectionStore((state) => state.selectedGuid)
 
     const HIGHLIGHT_SCALE = 3;
     const THROTTLE_MS = 16
@@ -60,6 +63,9 @@ const useDefaultMoveMouse = () => {
             throttledCesiumHover.cancel()
         };
     }, [viewer, cesiumManager]);
+    useEffect(() => {
+        console.log("selectedGuid:::::::", selectedGuid)
+    }, [selectedGuid]);
 
     const handleOlHover = (e: MapBrowserEvent<UIEvent>) => {
         if (!olMap) return;
@@ -69,8 +75,11 @@ const useDefaultMoveMouse = () => {
             (feature: FeatureLike, layer: Layer) => {
                 const isTargetLayer = !hoverLayerName || (hoverLayerName && matchesCustomKeyValue(layer, 'layer', hoverLayerName));
 
-                if (isTargetLayer && isVectorLayer(layer) && isFeature(feature)) {
-                    return { feature, layer };
+                if (isTargetLayer && isVectorLayer(layer) && isFeature(feature) && feature.get("__guid")) {
+                    if (selectedGuid.includes(feature.get("__guid"))) {
+                        return undefined;
+                    }
+                    return {feature, layer};
                 }
                 return undefined;
             },
