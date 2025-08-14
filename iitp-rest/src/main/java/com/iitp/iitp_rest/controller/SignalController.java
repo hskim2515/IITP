@@ -37,7 +37,7 @@ class SignalController {
                 node.setId(nodeElement.getAttribute("id"));
 
                 // turn_list
-                NodeList turnNodes = ((Element) nodeElement.getElementsByTagName("turn_list").item(0)).getElementsByTagName("turn");
+                NodeList turnNodes = ((Element) nodeElement.getElementsByTagName("turnList").item(0)).getElementsByTagName("turn");
                 for (int j = 0; j < turnNodes.getLength(); j++) {
                     Element turnElement = (Element) turnNodes.item(j);
                     TurnData turn = new TurnData();
@@ -45,14 +45,14 @@ class SignalController {
                     turn.setTurning(turnElement.getAttribute("turning"));
                     turn.setType(turnElement.getAttribute("type"));
 
-                    String[] connIds = turnElement.getAttribute("conn_list").trim().split("\\s+");
+                    String[] connIds = turnElement.getAttribute("connList").trim().split("\\s+");
                     turn.setConnList(Arrays.asList(connIds));
 
                     node.getTurns().add(turn);
                 }
 
                 // plan_list
-                NodeList planNodes = ((Element) nodeElement.getElementsByTagName("plan_list").item(0)).getElementsByTagName("plan");
+                NodeList planNodes = ((Element) nodeElement.getElementsByTagName("planList").item(0)).getElementsByTagName("plan");
                 for (int j = 0; j < planNodes.getLength(); j++) {
                     Element planElement = (Element) planNodes.item(j);
                     PlanData plan = new PlanData();
@@ -67,7 +67,7 @@ class SignalController {
                         phase.setId(phaseElement.getAttribute("id"));
                         phase.setDuration(Integer.parseInt(phaseElement.getAttribute("duration")));
 
-                        String[] turns = phaseElement.getAttribute("turn_list").trim().split("\\s+");
+                        String[] turns = phaseElement.getAttribute("turnList").trim().split("\\s+");
                         phase.setTurnList(Arrays.asList(turns));
 
                         plan.getPhases().add(phase);
