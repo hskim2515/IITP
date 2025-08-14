@@ -314,12 +314,27 @@ const JsonGrid = ({
                 return;
             }
         }
+        const schemes = useSchemeStore.getState().getByRowKey(levelName);
 
-        if (typeof layer?.createDto === "function") {
-            newRecord = layer.createDto(targetFeatureType);
-            newRecord.id = Date.now(); // 임시 ID
-            newRecord.__guid = generateGUIDWithType(targetFeatureType); // __guid 생성
+        const template = schemes.reduce((acc, cur) => {
+            acc[cur.key] = "";
+            return acc;
+        }, {} as Record<string, any>);
 
+        if (typeof layer?.createDto === "function" || template) {
+
+            if (template) {
+                newRecord = {
+                    ...template,
+                    featureType: targetFeatureType,
+                    id : Date.now(),
+                    __guid: generateGUIDWithType(targetFeatureType), // __guid 생성
+                };
+            }else{
+                newRecord = layer.createDto(targetFeatureType);
+                newRecord.id = Date.now(); // 임시 ID
+                newRecord.__guid = generateGUIDWithType(targetFeatureType); // __guid 생성
+            }
             store.getState().updateCurrentJsonData(newRecord, historyStore);
         } else {
             console.error("레이어에 'createDto' 메서드가 정의되어 있지 않습니다.");
@@ -336,7 +351,6 @@ const JsonGrid = ({
 
     return (
         <div style={{paddingLeft: depth * 24}}>
-
             <div style={{ display: "flex", alignItems: "center" }}>
                 <h4>{levelName}</h4>
                 <button className="grid-btn add-btn" onClick={() => handleAddBtn()}>+</button>

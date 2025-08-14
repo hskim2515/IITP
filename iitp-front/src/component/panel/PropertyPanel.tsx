@@ -409,12 +409,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
         const mergeJsonData = mergeJsonWithLogRecursive(currentJsonData, updateHistory.json, isUndo);
 
-        const originalData = store.getState().originData;
-        console.log("originalData:::", originalData)
-        console.log({
-            mergeJsonData
-        })
-
         store.getState().setCurrentJsonData(mergeJsonData);
 
         setMessage({
