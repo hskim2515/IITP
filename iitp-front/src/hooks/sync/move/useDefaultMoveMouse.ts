@@ -52,7 +52,7 @@ const useDefaultMoveMouse = () => {
             throttledOlHover.cancel()
             olManager.unbind("pointermove", throttledOlHover);
         };
-    }, [olMap, olManager, hoverLayerName]);
+    }, [olMap, olManager, hoverLayerName, selectedGuid]);
 
     useEffect(() => {
         if (!viewer || !cesiumManager) return;
@@ -62,7 +62,7 @@ const useDefaultMoveMouse = () => {
             cesiumManager.unbind("move", throttledCesiumHover);
             throttledCesiumHover.cancel()
         };
-    }, [viewer, cesiumManager]);
+    }, [viewer, cesiumManager, selectedGuid]);
 
 
     const handleOlHover = (e: MapBrowserEvent<UIEvent>) => {
