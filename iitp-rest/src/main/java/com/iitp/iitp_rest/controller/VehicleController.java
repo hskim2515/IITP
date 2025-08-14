@@ -6,8 +6,10 @@ import com.iitp.iitp_rest.model.*;
 import com.iitp.iitp_rest.model.geometry.Cartesian3;
 import com.iitp.iitp_rest.model.request.VehicleRequest;
 import com.iitp.iitp_rest.model.scenario.Scenario;
+import com.iitp.iitp_rest.model.signal.SignalTimelineResponse;
 import com.iitp.iitp_rest.repository.NetworkRepository;
 import com.iitp.iitp_rest.service.scenario.ScenarioService;
+import com.iitp.iitp_rest.service.signal.SignalTimelineService;
 import com.iitp.iitp_rest.service.vehicle.VehicleRouteService;
 import com.iitp.iitp_rest.util.CoordinateConverter;
 import com.iitp.iitp_rest.util.GeoJsonUtils;
@@ -42,6 +44,7 @@ public class VehicleController {
     private final ScenarioService scenarioService;
     private final CorsConfigurationSource corsConfigurationSource;
     private final VehicleRouteService vehicleRouteService;
+    private final SignalTimelineService signalTimelineService;
 
     @PostMapping("/generate-czml")
     public ResponseEntity<Map<String, Object>> generateCzml(@RequestBody VehicleRequest request) {
@@ -259,6 +262,7 @@ public class VehicleController {
             @PathVariable String versionId) throws IOException {
 
         Scenario scenario = scenarioService.getScenarioByKey(versionId);
+
         if (scenario == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "Scenario not found"));
         }
@@ -289,7 +293,11 @@ public class VehicleController {
         List<List<Double>> vehiclePathList = Collections.synchronizedList(new ArrayList<>());
 
         Instant startTime = Instant.now();
+
         long baseEpoch = startTime.getEpochSecond();
+
+        // 타임라인 생성
+        List<SignalTimelineResponse> result = signalTimelineService.generateSignalTimeline(baseEpoch,"0");
 
         AtomicReference<Instant> earliestStartRef = new AtomicReference<>(null);
         AtomicReference<Instant> latestStopRef = new AtomicReference<>(null);
@@ -456,11 +464,12 @@ public class VehicleController {
 
         vehicleRouteService.saveRoute(versionId, czml, featureList, vehiclePathList);
 
-
         Map<String, Object> response = new HashMap<>();
         response.put("czml", czml);
         response.put("features", featureList);
         response.put("positions", vehiclePathList);
+
+        response.put("signalTimeline", result);
 
         return ResponseEntity.ok(response);
     }

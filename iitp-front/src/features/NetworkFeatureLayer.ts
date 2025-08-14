@@ -102,7 +102,6 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
         if (geom instanceof LineString && props.featureType === "connection-edit") {
             let color = "#ffffff";
-
             styles.push(new Style({
                 stroke: new Stroke({ color, width: Math.min(3, 0.5 / resolution) }),
                 zIndex
@@ -316,6 +315,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                         ...conn,
                         featureType: "connection-edit",
                         fromNodeType: node.type,
+                        nodeId: node.id,
                     });
                     featureBuffer.push(connLineFeature);
                 }
@@ -335,5 +335,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
     public getSnapFeatureType(): string {
         return "link-edit";
     }
-
+    public getConnectionFeatureType(): string {
+        return "connection-edit";
+    }
 }

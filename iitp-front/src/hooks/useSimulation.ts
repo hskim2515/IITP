@@ -12,6 +12,10 @@ import LayerManager from "../managers/LayerManager";
 import HeatBarLayer from "@primitives/HeatBarLayer";
 import {JulianDate} from "cesium";
 import {useScenarioStore} from "@stores/useScenarioStore";
+import {useSignalStore} from "@stores/useSignalStore";
+import {getFeaturesByProperties} from "@utils/feature";
+import {Fill, Stroke, Style} from "ol/style";
+import {Feature} from "ol";
 
 const useSimulation = () => {
     const { isRunning, isStop, speed } = useSimulationStore();
@@ -34,7 +38,9 @@ const useSimulation = () => {
     const setFeatures = useVehicleStore((state) => state.setFeatures);
     const features = useVehicleStore((state) => state.features);
     const vehicleRoute = useVehicleStore((state) => state.vehicleRoute);
-
+    //신호
+    const setSignalTimeline = useSignalStore((state) => state.setSignalTimeline);
+    const signalTimeline = useSignalStore((state) => state.signalTimeline);
     // Ref 선언 (OpenLayers, Cesium, 애니메이션)
     const viewerClockMultiplier = useRef(null);
 
@@ -143,11 +149,11 @@ const useSimulation = () => {
             body: JSON.stringify({ numVehicle, speedFactor, czml }),
         })
             .then((response) => response.json())
-            .then(({ czml, positions, features }) => {
+            .then(({ czml, positions, features, signalTimeline }) => {
                 setVehicleRoute(positions);
                 setCzml(czml);
                 setFeatures(features);
-
+                setSignalTimeline(signalTimeline);
                 const clock = czml[0].clock;
                 const [startTime, endTime] = czml[0].clock.interval.split('/');
                 const start = JulianDate.fromIso8601(startTime);
@@ -191,17 +197,144 @@ const useSimulation = () => {
             if (vehicleDataRef.current) {
                 const newVehicleData = vehicleDataRef.current;
                 const type = 'tick';
-                //changeModelWorkerRef.current.postMessage({ type, newVehicleData, cameraPositionWC, cameraDirectionWC });
+                changeModelWorkerRef.current.postMessage({ type, newVehicleData, cameraPositionWC, cameraDirectionWC });
+                updateSignalStyles(simTime); //신호 커넥션 스타일 변경
             }
             const newVehicleRoute = vehicleRouteStartEndRef.current;
             const lastPositions = lastPositionsRef.current;
             makeOdDataWorkerRef.current?.postMessage({ lastPositions, newVehicleRoute })
+
         }
 
         if(isRunningRef.current){
             czmlPositionWorkerRef.current.postMessage({ type: 'tick', currentTime: simTime });
         }
     };
+
+    const connectionFeatureMapRef = useRef<Map<string, Feature>>(new Map());
+    const updateSignalStyles = (currentSimTime: number) => {
+        const signalConnectionSet = new Set<string>();
+        if (connectionFeatureMapRef.current.size === 0) {
+            const networkLayer = layerManager.getLayer("facility", "network")?.[0];
+            if (!networkLayer) return;
+            const features = getFeaturesByProperties(networkLayer, { featureType: networkLayer.getConnectionFeatureType() });
+            features.forEach(f => {
+                const nodeId = f.get("nodeId");
+                const connId = f.get("id");
+                const key = `${nodeId}_${connId}`;
+                connectionFeatureMapRef.current.set(key, f);
+            });
+        }
+        signalTimeline.forEach(sig => {
+            sig.turnInfo.forEach(turn => {
+                turn.connList.forEach(connIdStr => {
+                    const key = `${sig.nodeId}_${connIdStr}`;
+                    signalConnectionSet.add(key);
+                });
+            });
+        });
+
+        const activeConnectionsMap = new Map<string, { nodeId: string, connId: number, signalState: string }>();
+        signalTimeline.forEach(sig => {
+            sig.signalTimeline.forEach(timeline => {
+                const start = new Date(timeline.startTime).getTime();
+                const end = new Date(timeline.endTime).getTime();
+
+                if (currentSimTime >= start && currentSimTime < end) {
+                    timeline.activeTurns.forEach(turnId => {
+                        const turn = sig.turnInfo.find(t => t.id == turnId);
+                        if (turn?.connList) {
+                            turn.connList.forEach(connIdStr => {
+                                const key = `${sig.nodeId}_${connIdStr}`;
+                                if (!activeConnectionsMap.has(key)) {
+                                    activeConnectionsMap.set(key, { nodeId: sig.nodeId, connId: Number(connIdStr), signalState: timeline.signalState });
+                                }
+                            });
+                        }
+                    });
+                }
+            });
+        });
+
+        connectionFeatureMapRef.current.forEach((feature, key) => {
+            if (signalConnectionSet.has(key)) {
+                const activeConn = activeConnectionsMap.get(key);
+                if (activeConn) {
+                    olSignalStyleChange(feature, activeConn.signalState);
+                    cesiumSignalStyleChange(feature.get('__guid'), activeConn.signalState);
+                } else {
+                    olSignalStyleChange(feature, "red");
+                    cesiumSignalStyleChange(feature.get('__guid'), "red");
+                }
+            } else {
+                //feature.setStyle(originalStyle);
+                //cesiumSignalStyleChange(feature.get('__guid'), "off");
+            }
+        });
+    };
+
+
+    // OpenLayers 스타일 변경 함수
+    const olSignalStyleChange = (feature: Feature, state?: string) => {
+        let fillColor = "";
+        switch (state) {
+            case "green":
+                fillColor = "rgba(0, 255, 0, 0.4)";
+                break;
+            case "yellow":
+                fillColor = "rgba(255, 255, 0, 0.4)";
+                break;
+            case "red":
+                fillColor = "rgba(255, 0, 0, 0.4)";
+                break;
+            default:
+                fillColor = "rgba(255, 255, 255, 0.6)";
+        }
+        const style = new Style({
+            stroke: new Stroke({ color: fillColor, width: 3 }),
+            fill: new Fill({ color: fillColor }),
+            zIndex: 10,
+        });
+        feature.setStyle(style);
+    };
+
+    // Cesium 스타일 변경 함수
+    const cesiumSignalStyleChange = (guid: string, state: string) => {
+        if (!guid) return;
+        const dataSource = viewer.dataSources.get(0);
+        if (!dataSource) return;
+
+        const entity = dataSource.entities.getById(guid);
+        if (!entity) return;
+
+        if (entity.polyline) {
+            let color;
+            switch (state) {
+                case "green":
+                    color = Cesium.Color.GREEN.withAlpha(0.4);
+                    break;
+                case "yellow":
+                    color = Cesium.Color.YELLOW.withAlpha(0.4);
+                    break;
+                case "red":
+                    color = Cesium.Color.RED.withAlpha(0.4);
+                    break;
+                default:
+                    color = Cesium.Color.WHITE.withAlpha(0.4);
+                    break;
+            }
+
+            entity.polyline.material = new Cesium.ColorMaterialProperty(color);
+        }
+    };
+
+// 원래 스타일 저장 (필요하면 기존 네트워크 레이어 스타일을 복사해도 됨)
+    const originalStyle = new Style({
+        stroke: new Stroke({
+            color: "#ffffff",
+            width: 2
+        })
+    });
 
     const setSimulation = () => {
         //if (!viewer || !czml || !vehicleData || vehicleRoute.length === 0 || !layerManager) return;
