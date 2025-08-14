@@ -149,11 +149,12 @@ const useSimulation = () => {
             body: JSON.stringify({ numVehicle, speedFactor, czml }),
         })
             .then((response) => response.json())
-            .then(({ czml, positions, features, signalTimeline }) => {
+            //.then(({ czml, positions, features, signalTimeline }) => { //신호
+            .then(({ czml, positions, features }) => {
                 setVehicleRoute(positions);
                 setCzml(czml);
                 setFeatures(features);
-                setSignalTimeline(signalTimeline);
+                //setSignalTimeline(signalTimeline); //신호
                 const clock = czml[0].clock;
                 const [startTime, endTime] = czml[0].clock.interval.split('/');
                 const start = JulianDate.fromIso8601(startTime);
@@ -198,7 +199,7 @@ const useSimulation = () => {
                 const newVehicleData = vehicleDataRef.current;
                 const type = 'tick';
                 changeModelWorkerRef.current.postMessage({ type, newVehicleData, cameraPositionWC, cameraDirectionWC });
-                updateSignalStyles(simTime); //신호 커넥션 스타일 변경
+                //updateSignalStyles(simTime); //신호 커넥션 스타일 변경
             }
             const newVehicleRoute = vehicleRouteStartEndRef.current;
             const lastPositions = lastPositionsRef.current;

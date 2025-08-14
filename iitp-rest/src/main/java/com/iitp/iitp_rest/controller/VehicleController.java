@@ -297,7 +297,7 @@ public class VehicleController {
         long baseEpoch = startTime.getEpochSecond();
 
         // 타임라인 생성
-        List<SignalTimelineResponse> result = signalTimelineService.generateSignalTimeline(baseEpoch,"0");
+        List<SignalTimelineResponse> signalTimeline = signalTimelineService.generateSignalTimeline(baseEpoch,"0");
 
         AtomicReference<Instant> earliestStartRef = new AtomicReference<>(null);
         AtomicReference<Instant> latestStopRef = new AtomicReference<>(null);
@@ -469,7 +469,7 @@ public class VehicleController {
         response.put("features", featureList);
         response.put("positions", vehiclePathList);
 
-        response.put("signalTimeline", result);
+        //response.put("signalTimeline", signalTimeline);
 
         return ResponseEntity.ok(response);
     }
