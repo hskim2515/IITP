@@ -22,9 +22,10 @@ export function matchesCustomKeyValue<
     K extends string,
     V extends string | number | boolean | undefined
 >(
-    layer: BaseLayer,
+    layer: BaseLayer | null,
     key: K,
     value: V
 ): layer is BaseLayer & Record<K, V> {
+    if(layer === null) return false;
     return hasCustomKeys(layer, key) && (layer as BaseLayer & Record<K, V>)[key] === value;
 }

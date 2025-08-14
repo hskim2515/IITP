@@ -48,4 +48,8 @@ export class EventManager {
         }
         this.listeners.clear();
     }
+
+    getListenerKey(): string[] {
+        return Array.from(this.listeners.keys());
+    }
 }

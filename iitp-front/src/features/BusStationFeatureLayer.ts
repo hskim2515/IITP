@@ -16,7 +16,6 @@ import {
     TRANSIT_MODE
 } from "@type/Station";
 import { generateGUIDWithType } from "@utils/guid";
-import { deepEqual } from "@utils/json";
 import {
     findFeatureByProperties,
     getCoordinateByOffset,
@@ -27,6 +26,7 @@ import { Coordinate } from "ol/coordinate";
 import GeometryType from "@type/FeatureOptions";
 import Geometry from "ol/geom/Geometry";
 import { FeatureLayerAPI } from "@features/FeatureLayerAPI";
+import deepEqual from "deep-equal";
 
 export default class BusStationFeatureLayer extends VectorLayer implements FeatureLayerAPI {
     public readonly source: VectorSource;
@@ -110,7 +110,6 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
                     const feature = existing.find(f => f.get("__guid") === dto.__guid);
                     if (feature) {
                         const baseLayer = layerManager?.getLayerByName(this.getSnapLayerKey())
-                        if (!baseLayer) return;
                         const baseFeature = findFeatureByProperties(baseLayer, {
                             featureType: this.getSnapFeatureType(),
                             linkRef: item.linkRef,
@@ -118,7 +117,6 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
                         })
 
                         const offset = item.offset ?? 0
-                        if (!baseFeature || !offset) return;
                         const coord = getCoordinateByOffset(baseFeature, offset)
                         if (coord) {
                             const [lng, lat] = toLonLat(coord)

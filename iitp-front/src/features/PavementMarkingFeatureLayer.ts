@@ -1,7 +1,7 @@
 import VectorSource from "ol/source/Vector";
 import VectorLayer from "ol/layer/Vector";
 import { Icon, Style } from "ol/style";
-import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
+import {layerNameToStoreMap} from "@hooks/useLayerInit";
 import { Feature } from "ol";
 import {
     FEATURE_TYPE,
@@ -10,23 +10,18 @@ import {
     SNAP_FEATURE_TYPE,
     SNAP_LAYER
 } from "@type/PavementMarking";
-import { deepEqual } from "@utils/json";
 import { useLayerStore } from "@stores/useLayerStore";
 import {
-    findFeatureByProperties, getAngleByCoordinate, getCellIdByCoordinate, getCellOffsetRelativeToCell,
+    findFeatureByProperties, getAngleByCoordinate, getCellOffsetRelativeToCell,
     getCoordinateByOffset,
-    getFeaturesByProperties,
-    getOffsetByCoordinate
 } from "@utils/feature";
 import { fromLonLat, toLonLat } from "ol/proj";
 import { Point } from "ol/geom";
-import WebGLVectorLayer from "ol/layer/WebGLVector";
-import BaseLayer from "ol/layer/Base";
 import { Coordinate } from "ol/coordinate";
 import { generateGUIDWithType } from "@utils/guid";
 import {interpolateByOffset, interpolateFeatureByOffset} from "@utils/interpolateByOffset";
-import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import Geometry from "ol/geom/Geometry";
+import deepEqual from "deep-equal";
 
 export class PavementMarkingFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;

@@ -23,10 +23,11 @@ import { findFeatureByProperties, getCoordinateByOffset, getOffsetByCoordinate }
 import { Coordinate } from "ol/coordinate";
 import Geometry from "ol/geom/Geometry";
 import { generateGUIDWithType } from "@utils/guid";
-import { collectGuidsOfTargetAndChildren, deepEqual } from "@utils/json";
+import { collectGuidsOfTargetAndChildren } from "@utils/json";
 import { FeatureLayerAPI } from "@features/FeatureLayerAPI";
 import CircleStyle from "ol/style/Circle";
 import { FeatureLike } from "ol/Feature";
+import deepEqual from "deep-equal";
 
 export default class RailStationFeatureLayer extends VectorLayer implements FeatureLayerAPI {
     public readonly source: VectorSource;
@@ -320,12 +321,10 @@ export default class RailStationFeatureLayer extends VectorLayer implements Feat
 
         // 스냅 기준 레이어에서 링크 기준 feature 찾기
         const baseLayer = useLayerStore.getState().layerManager?.getLayerByName(this.getSnapLayerKey());
-        if(!baseLayer) return
         const baseFeature = findFeatureByProperties(baseLayer, {
             featureType: this.getSnapFeatureType(),
             linkRef: props.linkRef,
         });
-        if(!baseFeature) return
         const offset = props.offset ?? 0;
         const coord = getCoordinateByOffset(baseFeature, offset);
         let geom: Point;

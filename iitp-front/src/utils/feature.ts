@@ -9,6 +9,7 @@ import { LineString, Point, Polygon } from "ol/geom";
 import { Coordinate } from "ol/coordinate";
 import { getDistance } from "ol/sphere";
 import {fromLonLat, toLonLat} from "ol/proj";
+import { FeatureLike } from "ol/Feature";
 
 export interface PositionOnGeometry {
     coordinate: Coordinate; // 최적 위치 좌표
@@ -202,7 +203,7 @@ export function getPositionByCoordinate(
  * geometry의 시작점으로부터 offset만큼 진행한 지점의 좌표 반환
  */
 export function getCoordinateByOffset(
-    input: Feature | Geometry | undefined,
+    input: Feature | Geometry | undefined | null,
     offset: number | undefined
 ): Coordinate | null {
     const geometry = input instanceof Feature ? input.getGeometry() : input;
@@ -258,7 +259,7 @@ export function getOffsetByCoordinate(
 }
 
 export function findFeatureByProperties(
-    input: FeatureInput | undefined,
+    input: FeatureInput | undefined | null,
     properties: Record<string, any> | undefined
 ): Feature | null {
     if (!input || !properties) return null;
@@ -431,4 +432,8 @@ export function getSnapFeature(input: FeatureInput | undefined | null , targetCo
     if(!targetCoord) return null;
     const features = extractFeaturesFromInput(input)
     return findNearestFeature(features, targetCoord, maxDistance);
+}
+
+export function isFeature(input: Feature | FeatureLike): input is Feature {
+    return input instanceof Feature;
 }
