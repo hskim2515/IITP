@@ -122,8 +122,8 @@ const createFeatureStore = <T>() => {
                                 container = findParentRecordByFeatureType(updatedJson, record);
                             }
                             if (container) {
-                                const {parent, key} = container;
-                                parent[key].push(record);
+                                const {parent} = container;
+                                parent[record.featureType].push(record);
 
                                 set({
                                     currentJsonData: updatedJson,

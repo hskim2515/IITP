@@ -325,6 +325,7 @@ const JsonGrid = ({
         }, {} as Record<string, any>);
 
         if (typeof layer?.createDto === "function" || template) {
+            console.log(template)
 
             if (template) {
                 newRecord = {
@@ -333,11 +334,11 @@ const JsonGrid = ({
                     id : Date.now(),
                     __guid: generateGUIDWithType(targetFeatureType), // __guid 생성
                     parentGuid : parentGuid
-
                 };
             }else{
                 newRecord = layer.createDto(targetFeatureType);
                 newRecord.id = Date.now(); // 임시 ID
+                newRecord.featureType = targetFeatureType;
                 newRecord.__guid = generateGUIDWithType(targetFeatureType); // __guid 생성
                 newRecord.parentGuid = parentGuid; // __guid 생성
             }
