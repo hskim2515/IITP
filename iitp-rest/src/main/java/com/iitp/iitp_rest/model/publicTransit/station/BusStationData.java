@@ -17,9 +17,10 @@ public class BusStationData {
     private Integer linkRef;
     private Integer laneRef;
     private Double offset;
-    private String type;
+    private String type; // side, island, face-to-face, staggered
+    private Integer parkingLots;
     private String address;
-
+    private String center;
     private List<Coordinates> coordinates;
 
     @Data

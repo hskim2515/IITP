@@ -13,6 +13,7 @@ public class ExitData {
     private double offset;
     private double accessTime;
     private List<Coordinates> coordinates;
+    private String coord;
 
     @Data
     public static class Coordinates {

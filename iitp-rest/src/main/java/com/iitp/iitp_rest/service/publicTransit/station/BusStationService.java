@@ -1,15 +1,16 @@
 package com.iitp.iitp_rest.service.publicTransit.station;
 
-import com.iitp.iitp_rest.model.pavementMarking.PavementMarkingSaveRequest;
-import com.iitp.iitp_rest.model.publicTransit.station.BusStationLogs;
-import com.iitp.iitp_rest.model.publicTransit.station.BusStationSaveRequest;
-import com.iitp.iitp_rest.model.publicTransit.station.BusStationVersion;
+import com.iitp.iitp_rest.model.publicTransit.station.*;
 import com.iitp.iitp_rest.repository.BusStationLogsRepository;
 import com.iitp.iitp_rest.repository.BusStationVersionsRepository;
+import com.iitp.iitp_rest.service.xml.StaxParserService;
+import com.iitp.iitp_rest.util.XmlUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.xml.stream.XMLStreamException;
+import java.io.InputStream;
 import java.util.List;
 
 @Service
@@ -19,7 +20,7 @@ public class BusStationService {
 
     private final BusStationVersionsRepository busStationVersionsRepository;
     private final BusStationLogsRepository busStationLogsRepository;
-
+    private final StaxParserService staxParserService;
 
     public BusStationVersion getByVersionId(String id) {
         return busStationVersionsRepository.findByVersionId(id).orElse(new BusStationVersion());
@@ -51,5 +52,13 @@ public class BusStationService {
                 .build();
 
         busStationLogsRepository.save(entityLog);
+    }
+
+    public PublicTransitData getBusStation(String path) throws XMLStreamException {
+        InputStream is = XmlUtils.loadXmlAsStream(path);
+
+        PublicTransitData result = (PublicTransitData) staxParserService.parse(is);
+
+        return result;
     }
 }

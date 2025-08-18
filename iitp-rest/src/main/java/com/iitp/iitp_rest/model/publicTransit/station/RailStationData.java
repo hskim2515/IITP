@@ -15,6 +15,7 @@ public class RailStationData {
     private String id;
     private String transitMode;
     private String address;
+    private String center;
     private List<ExitData> exits;
 
     private List<Coordinates> coordinates;
