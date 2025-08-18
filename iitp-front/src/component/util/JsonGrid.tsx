@@ -13,6 +13,7 @@ import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {useSchemeStore} from "@stores/useSchemeStore";
 import debounce from "lodash.debounce";
+import {featureTypeEventHandlers} from "../../handler/featureTypeEventHandlers";
 
 
 // 중첩 배열로 생성하지 않을 필드 지정
@@ -344,13 +345,11 @@ const JsonGrid = ({
             }
             store.getState().updateCurrentJsonData(newRecord, historyStore);
             setSelectedGuid([newRecord.__guid]);
+            featureTypeEventHandlers(newRecord)
         } else {
             console.error("레이어에 'createDto' 메서드가 정의되어 있지 않습니다.");
             alert("레이어에 'createDto' 메서드가 정의되어 있지 않습니다.");
         }
-
-
-
     }
     const handleDeleteBtn = () => {
         store.getState().removeRecordsByGuid(selectedGuid, historyStore)

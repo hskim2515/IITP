@@ -27,16 +27,16 @@ export const useEventStore = create<EventStore>((set, get) => ({
     bind: (type, cb) => {
         const { activeMap, cesiumEventManager, olEventManager } = get();
         const manager = activeMap === 'cesium' ? cesiumEventManager : olEventManager;
-        manager?.register(type, cb);
+        manager?.bind(type, cb);
     },
     unbind: (type, cb) => {
         const { activeMap, cesiumEventManager, olEventManager } = get();
         const manager = activeMap === 'cesium' ? cesiumEventManager : olEventManager;
-        manager?.unregister(type, cb);
+        manager?.unbind(type, cb);
     },
     clearAll: () => {
         const { cesiumEventManager, olEventManager } = get();
-        cesiumEventManager?.clear();
-        olEventManager?.clear();
+        cesiumEventManager?.destroy();
+        olEventManager?.destroy();
     },
 }));
