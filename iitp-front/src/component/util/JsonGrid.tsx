@@ -75,12 +75,14 @@ function getNestedArrayField(row: any): any[] {
 const JsonGrid = ({
                       rowData,
                       levelName,
+                      parentGuid,
                       depth = 0,
                       layerName,
                       layerGroupName,
                   }: {
     rowData: any[];
     levelName?: string;
+    parentGuid?: string;
     depth?: number;
     layerName: string;
     layerGroupName: string;
@@ -303,6 +305,7 @@ const JsonGrid = ({
     }));
     const nestedFields = getNestedArrayField(rowData?.[0]);
     const handleAddBtn = () => {
+        console.log(parentGuid)
         let newRecord;
         let targetFeatureType = levelName;
         if (!targetFeatureType) {
@@ -329,17 +332,24 @@ const JsonGrid = ({
                     featureType: targetFeatureType,
                     id : Date.now(),
                     __guid: generateGUIDWithType(targetFeatureType), // __guid 생성
+                    parentGuid : parentGuid
+
                 };
             }else{
                 newRecord = layer.createDto(targetFeatureType);
                 newRecord.id = Date.now(); // 임시 ID
                 newRecord.__guid = generateGUIDWithType(targetFeatureType); // __guid 생성
+                newRecord.parentGuid = parentGuid; // __guid 생성
             }
             store.getState().updateCurrentJsonData(newRecord, historyStore);
+            setSelectedGuid([newRecord.__guid]);
         } else {
             console.error("레이어에 'createDto' 메서드가 정의되어 있지 않습니다.");
             alert("레이어에 'createDto' 메서드가 정의되어 있지 않습니다.");
         }
+
+
+
     }
     const handleDeleteBtn = () => {
         store.getState().removeRecordsByGuid(selectedGuid, historyStore)
@@ -393,6 +403,7 @@ const JsonGrid = ({
                                                     <JsonGrid
                                                         rowData={record[field]}
                                                         levelName={field}
+                                                        parentGuid={record['__guid']}
                                                         depth={depth + 1}
                                                         layerName={layerName}
                                                         layerGroupName={layerGroupName}

@@ -4,7 +4,7 @@ import { createSelectors } from './createSelectors';
 import { FetchFeatureDataType } from "@type/FeatureOptions";
 import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
 import { featureUpdateLogs } from "@utils/history";
-import { findParentRecordByFeatureType } from "@utils/json";
+import {findParentRecordByFeatureType, findParentRecordByGuid} from "@utils/json";
 import { diff, applyChange } from 'deep-diff';
 
 
@@ -49,6 +49,7 @@ const createFeatureStore = <T>() => {
                             });
                         },
                         updateCurrentJsonData: (record, historyStore) => {
+
                             function getValueAtPath(obj: any, path: string[]) {
                                 return path.reduce((acc, key) => (acc && acc[key] !== undefined) ? acc[key] : undefined, obj);
                             }
@@ -114,7 +115,12 @@ const createFeatureStore = <T>() => {
                             }
 
                             // 구조 기반 부모 찾기
-                            const container = findParentRecordByFeatureType(updatedJson, record);
+                            let container = null;
+                            if(record.parentGuid.length > 0){
+                                container = findParentRecordByGuid(updatedJson, record);
+                            }else{
+                                container = findParentRecordByFeatureType(updatedJson, record);
+                            }
                             if (container) {
                                 const {parent, key} = container;
                                 parent[key].push(record);

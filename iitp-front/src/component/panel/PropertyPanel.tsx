@@ -505,7 +505,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                                     Array.isArray(value) && value.length > 0 && (
                                         <div key={key} className="grid-container">
 
-                                            <JsonGrid rowData={value} levelName={key}
+                                            <JsonGrid rowData={value} levelName={key} parentGuid={selectedGuidRef.current}
                                                       layerName={submenu.item.layer}
                                                       layerGroupName={"facility"}
                                             />
