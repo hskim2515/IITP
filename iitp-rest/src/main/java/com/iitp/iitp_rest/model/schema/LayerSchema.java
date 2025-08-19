@@ -12,7 +12,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class LayerSchemaNode {
+public class LayerSchema {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -24,17 +24,6 @@ public class LayerSchemaNode {
 
     @Column(nullable = false)
     private String name;
-
-    @Column(nullable = false)
-    private Integer depth;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "parent_id")
-    private LayerSchemaNode parent;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "root_id")
-    private LayerSchemaNode root;
 
     @Column(name = "sort_order", nullable = false)
     private Integer sortOrder;

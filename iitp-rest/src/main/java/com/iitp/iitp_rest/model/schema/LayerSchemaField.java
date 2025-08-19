@@ -15,11 +15,10 @@ public class LayerSchemaField {
     private Long id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "layer_schema_node_id")
-    private LayerSchemaNode layerSchemaNode;
+    @JoinColumn(name = "layer_schema_id")
+    private LayerSchema layerSchema;
 
     private String name;
-    private String dataType;
     private String inputType;
     @Column(nullable=false)
     private boolean readOnly;

@@ -1,7 +1,7 @@
 package com.iitp.iitp_rest.controller;
 
 import com.iitp.iitp_rest.model.schema.LayerSchemaResponse;
-import com.iitp.iitp_rest.service.schema.LayerSchemaService;
+import com.iitp.iitp_rest.service.schema.SchemaService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -13,16 +13,16 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SchemaController {
 
-    private final LayerSchemaService layerSchemeService;
+    private final SchemaService schemeService;
 
     @GetMapping("/{layerKey}")
     public ResponseEntity<LayerSchemaResponse> getSchemaByLayerKey(@PathVariable("layerKey") String layerKey) {
-        LayerSchemaResponse result = layerSchemeService.getSchemaByLayerKey(layerKey);
+        LayerSchemaResponse result = schemeService.getSchemaByLayerKey(layerKey);
         return ResponseEntity.ok(result);
     }
     @GetMapping("")
     public ResponseEntity<List<LayerSchemaResponse>> getSchemata() {
-        List<LayerSchemaResponse> result = layerSchemeService.getSchemata();
+        List<LayerSchemaResponse> result = schemeService.getSchemata();
         return ResponseEntity.ok(result);
     }
 }

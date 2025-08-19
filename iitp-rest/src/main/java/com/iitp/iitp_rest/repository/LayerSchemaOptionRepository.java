@@ -9,6 +9,6 @@ import java.util.List;
 public interface LayerSchemaOptionRepository extends JpaRepository<LayerSchemaOption, Long> {
 
     List<LayerSchemaOption> findAllByFieldId(Long fieldId);
-    List<LayerSchemaOption> findAllByField_LayerSchemaNode_Layer_Id(Long layerId);
-    List<LayerSchemaOption> findAllByField_LayerSchemaNode_Layer_IdIn(Collection<Long> layerId);
+    List<LayerSchemaOption> findAllByField_LayerSchema_Layer_Id(Long layerId);
+    List<LayerSchemaOption> findAllByField_LayerSchema_Layer_IdIn(Collection<Long> layerId);
 }

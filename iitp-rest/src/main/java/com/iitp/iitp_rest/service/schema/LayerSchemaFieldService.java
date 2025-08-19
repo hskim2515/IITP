@@ -18,7 +18,7 @@ public class LayerSchemaFieldService {
     }
 
     public List<LayerSchemaField> getSchemaFieldsByNodeId(Long nodeId) {
-        return layerSchemaFieldRepository.findAllByLayerSchemaNodeId(nodeId);
+        return layerSchemaFieldRepository.findAllByLayerSchemaId(nodeId);
     }
 
     public LayerSchemaField findById(Long id) {

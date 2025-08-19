@@ -8,7 +8,7 @@ import java.util.List;
 
 public interface LayerSchemaFieldRepository extends JpaRepository<LayerSchemaField, Long> {
 
-    List<LayerSchemaField> findAllByLayerSchemaNodeId(Long nodeId);
-    List<LayerSchemaField> findAllByLayerSchemaNode_Layer_Id(Long layerId);
-    List<LayerSchemaField> findAllByLayerSchemaNode_Layer_IdIn(Collection<Long> nodeId);
+    List<LayerSchemaField> findAllByLayerSchemaId(Long schemaId);
+    List<LayerSchemaField> findAllByLayerSchema_Layer_Id(Long layerId);
+    List<LayerSchemaField> findAllByLayerSchema_Layer_IdIn(Collection<Long> schemaId);
 }
