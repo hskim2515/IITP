@@ -92,7 +92,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             }
         );
 
-        fetch(process.env.VITE_API_URL + "/schemes/" + submenu.item.layer, {
+        fetch(process.env.VITE_API_URL + "/schema/" + submenu.item.layer, {
             method: "GET",
             headers: { "Content-Type": "application/json" },
         }).then((response) => {

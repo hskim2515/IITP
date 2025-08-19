@@ -28,7 +28,13 @@ public class LayerSchemaService {
     private final LayerSchemaFieldRepository fieldRepository;
     private final LayerSchemaOptionRepository optionRepository;
 
-    public LayerSchemaResponse getSchema(Long layerId) {
+    public LayerSchemaResponse getSchemaByLayerKey(String layerKey) {
+
+        Layer layer = layerRepository.findByKey(layerKey)
+                .orElseThrow(() -> new IllegalArgumentException("Layer not found for key: " + layerKey));
+
+        Long layerId = layer.getId();
+
         List<LayerSchemaResponse> schemata = createSchemata(Collections.singletonList(layerId));
         if (CollectionUtils.isEmpty(schemata)) {
             throw new IllegalArgumentException("Schema not found for layerId: " + layerId);

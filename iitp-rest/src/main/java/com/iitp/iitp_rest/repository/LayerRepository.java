@@ -16,5 +16,6 @@ public interface LayerRepository extends JpaRepository<Layer, Long> {
 
     @Query("select l.key from Layer l where l.id = :id")
     Optional<String> findKeyById(@Param("id") Long id);
+    Optional<Layer> findByKey(String key);
 }
 

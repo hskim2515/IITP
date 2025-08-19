@@ -15,9 +15,9 @@ public class SchemaController {
 
     private final LayerSchemaService layerSchemeService;
 
-    @GetMapping("/{layerId}")
-    public ResponseEntity<LayerSchemaResponse> getSchemaByLayerKey(@PathVariable("layerId") Long layerId) {
-        LayerSchemaResponse result = layerSchemeService.getSchema(layerId);
+    @GetMapping("/{layerKey}")
+    public ResponseEntity<LayerSchemaResponse> getSchemaByLayerKey(@PathVariable("layerKey") String layerKey) {
+        LayerSchemaResponse result = layerSchemeService.getSchemaByLayerKey(layerKey);
         return ResponseEntity.ok(result);
     }
     @GetMapping("")
