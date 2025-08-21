@@ -1,8 +1,21 @@
 import {create} from 'zustand';
 
-interface SignalState {
-    signalTimeline: object,
-    setSignalTimeline: (signalTimeline: object) => void;
+export interface Timeline {
+    startTime: string;
+    endTime: string;
+    activeTurns: number[];
+    signalState: "green" | "yellow" | "red";
+}
+
+export interface SignalTimelineResponse {
+    nodeId: string;
+    signalTimeline: Timeline[];
+    turnInfo: { id: number; connList: string[] }[];
+}
+
+export interface SignalState {
+    signalTimeline: SignalTimelineResponse[];
+    setSignalTimeline: (timeline: SignalTimelineResponse[]) => void;
 }
 
 export const useSignalStore = create<SignalState>(((set) => ({
