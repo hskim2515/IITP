@@ -13,7 +13,7 @@ import {StyleFunction, StyleLike} from "ol/style/Style";
 import {Icon, Style} from "ol/style";
 import CircleStyle from "ol/style/Circle";
 import {useEventStore} from "@stores/useEventStore";
-import {propertyFormSchema} from "@component/form/propertyFormSchema";
+import {propertyFormSchema} from "@schema/propertyFormSchema";
 import {useMenuStore} from "@stores/useMenuStore";
 
 

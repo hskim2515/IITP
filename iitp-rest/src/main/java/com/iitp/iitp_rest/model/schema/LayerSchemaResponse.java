@@ -15,6 +15,8 @@ public class LayerSchemaResponse {
     private Long layerId;
     private String layerName;
 
+    private List<SchemaColumn> schemaColumns;
+
     private List<Schema> schemata;
 
     @Data
@@ -25,10 +27,10 @@ public class LayerSchemaResponse {
 
         private Long id;
         private String name;
-        private Integer sortOrder;
+//        private Integer sortOrder;
         private String status;
 
-        private List<SchemaField> fields;
+        private List<LayerSchemaFieldResponse> fields;
 
     }
 
@@ -36,23 +38,19 @@ public class LayerSchemaResponse {
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class SchemaField {
-        private Long id;
-        private String name;
+    public static class SchemaColumn {
+        private String columnKey;
         private String inputType;
-        private boolean readOnly;
-        private boolean nullable;
-        private String status;
+//        private Integer sortOrder;
 
-        private List<SchemaOption> options;
+        private List<ColumnOption> options;
     }
 
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class SchemaOption {
-        private Long id;
+    public static class ColumnOption {
         private String value;
     }
 }

@@ -3,6 +3,9 @@ package com.iitp.iitp_rest.model.schema;
 import jakarta.persistence.*;
 import lombok.*;
 
+import java.util.ArrayList;
+import java.util.List;
+
 @Entity
 @Data
 @NoArgsConstructor
@@ -19,6 +22,8 @@ public class LayerSchemaField {
     private LayerSchema layerSchema;
 
     private String name;
+    @Column(name = "sort_order")
+    private Integer sortOrder;
     private String inputType;
     @Column(nullable=false)
     private boolean readOnly;
@@ -27,4 +32,11 @@ public class LayerSchemaField {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Status status = Status.ACTIVE;
+
+    @OneToMany(
+            mappedBy = "field",
+            cascade = {CascadeType.PERSIST, CascadeType.MERGE},
+            fetch = FetchType.LAZY
+    )
+    private List<LayerSchemaOption> options = new ArrayList<>();
 }

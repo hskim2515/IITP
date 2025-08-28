@@ -55,7 +55,64 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         inputFields: [],
         rowFields: []
     },
-
+    SCHEMA_NETWORK:{
+        type:"",
+        layer: "network",
+        fields: [
+            { name: "", label: "", type: "" },
+            { name: "", label: "", type: "" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    SCHEMA_BUS_STATION:{
+        type:"",
+        layer: "busStation",
+        fields: [
+            { name: "", label: "", type: "" },
+            { name: "", label: "", type: "" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    SCHEMA_DRT_STATION:{
+        type:"",
+        fields: [
+            { name: "", label: "", type: "" },
+            { name: "", label: "", type: "" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    SCHEMA_RAIL_STATION:{
+        type:"",
+        layer: "railStation",
+        fields: [
+            { name: "", label: "", type: "" },
+            { name: "", label: "", type: "" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    SCHEMA_TRAM_STATION:{
+        type:"",
+        fields: [
+            { name: "", label: "", type: "" },
+            { name: "", label: "", type: "" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    SCHEMA_PAVEMENT_MARKING:{
+        type:"",
+        layer: "pavementMarking",
+        fields: [
+            { name: "", label: "", type: "" },
+            { name: "", label: "", type: "" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
     NETWORK: {
         type:"table",
         layer: "network",

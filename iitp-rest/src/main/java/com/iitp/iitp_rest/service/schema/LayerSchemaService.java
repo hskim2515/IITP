@@ -13,7 +13,6 @@ public class LayerSchemaService {
 
     private final LayerSchemaRepository layerSchemaRepository;
 
-
     public List<LayerSchema> getSchemata() {
         return layerSchemaRepository.findAll();
     }
@@ -31,6 +30,11 @@ public class LayerSchemaService {
     }
 
 
+    public List<Long> findDistinctLayerIds() {
+        return layerSchemaRepository.findDistinctLayerIds();
+    }
 
-
+    public List<LayerSchema> findAllByLayerIdIn(List<Long> layerIds) {
+        return layerSchemaRepository.findAllByLayerIdIn(layerIds);
+    }
 }

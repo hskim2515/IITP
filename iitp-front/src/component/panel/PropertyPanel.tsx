@@ -1,15 +1,13 @@
 import React, {useEffect, useMemo, useRef, useState} from 'react';
 import "/static/css/styles.css";
 import {MenuTree} from "@stores/useMenuStore";
-import {propertyFormSchema} from "@component/form/propertyFormSchema";
+import {propertyFormSchema} from "@schema/propertyFormSchema";
 import {menuCodeToStoreMap} from "@hooks/useLayerInit";
 import {useEventStore} from "@stores/useEventStore";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import GeometryType from "@type/FeatureOptions";
 import {Feature} from "ol";
 import VectorLayer from "ol/layer/Vector";
-import BaseLayer from "ol/layer/Base";
-import WebGLVectorLayer from "ol/layer/WebGLVector";
 import {ModifyEvent} from "ol/interaction/Modify";
 import {DrawEvent} from "ol/interaction/Draw";
 import {apiConfig, ApiMenuKey} from "@config/apiConfig";
@@ -39,7 +37,6 @@ import {faClose} from "@fortawesome/free-solid-svg-icons/faClose";
 import deepEqual from "deep-equal";
 import { FeatureLayerAPI, isFeatureLayer } from "@features/FeatureLayerAPI";
 import { matchesCustomKeyValue } from "@utils/olLayer";
-import {useSchemeStore} from "@stores/useSchemeStore";
 import {useMessageStore} from "@stores/useMessageStore";
 
 export interface PropertyPanelProps {
@@ -78,7 +75,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const selectedScenario = useScenarioStore.getState().selectedScenario;
 
     const olMap = useOpenLayersStore.state.map()
-
     type BodySize = "mini" | "default" | "full";
     const [bodySize, setBodySize] = useState<BodySize>("default");
     const setMessage = useMessageStore.getState().setMessage;
@@ -91,17 +87,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                 setCurrentJsonData(newJsonData); // 갱신 트리거
             }
         );
-
-        fetch(process.env.VITE_API_URL + "/schema/" + submenu.item.layer, {
-            method: "GET",
-            headers: { "Content-Type": "application/json" },
-        }).then((response) => {
-            return response.json();
-        })
-        .then((data) => {
-            useSchemeStore.getState().setSchemes(data);
-        })
-
         return () => unsubscribe();
     }, []);
 
@@ -158,11 +143,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                 }
             );
     }, [olMap, submenu.menuCode, layer]);
-
-    const layers = useMemo(() => {
-        return olMap?.getLayers().getArray()
-            .filter((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => matchesCustomKeyValue(layer, 'layerGroup', 'facility'))
-    }, [olMap, submenu.menuCode]);
 
     useEffect(() => {
         clearSelected()
@@ -232,7 +212,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
         const onModifyEnd = (e: ModifyEvent) => {
             const features: Collection<Feature> = e.features;
-            const modifiedIds = getValuesFromFeatures(features, "__guid")
+            const modifiedIds = getValuesFromFeatures<string>(features, "__guid")
             setSelectedGuid(modifiedIds)
 
             const modifiedFeature = e.features.getArray()[0]
@@ -309,18 +289,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         };
     }, [isDrawing, snapLayer, selectedGuid, layer]);
 
-    const handleCheck = () => {
-        if (!layer) return
-        const source = layer.getSource();
-        if(!source) return;
-        console.log("current originData:", store.getState().originData) // 디버깅용
-        console.log("current currentJsonData:", store.getState().currentJsonData) // 디버깅용
-        console.log("current layer:", layer) // 디버깅용
-        console.log("current source:", source.getFeatures()) // 디버깅용
-        console.log("current selectId:", useSelectionStore.getState().selectedGuid) // 디버깅용
-        console.log("current feature:::", filterFeaturesByKey(source.getFeatures(), selectedGuid))
-    };
-
     const handleDrawBtn = () => {
         if (isDrawing) {
             setIsDrawing(false)
@@ -343,10 +311,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         setOnConfirm(() => callback);
         setIsTypeSelect(true);
     };
-
-    const handleDeleteBtn = () => {
-        store.getState().removeRecordsByGuid(selectedGuid, historyStore)
-    }
 
     const handleSaveBtn = async () => {
         const api = apiConfig[submenu.menuCode as ApiMenuKey].update;
@@ -492,14 +456,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                             />
                         )}
                         {submenu.item &&
-                            //{ submenu.item && colDefs &&
-                            // <Grid
-                            //     ref={ gridRef }
-                            //     colDefs={ colDefs }
-                            //     rowData={ rowData }
-                            //     onCellValueChanged={ updateFeatureByRow }
-                            //     onSelectionChanged={ handleGridSelectionChanged }
-                            // />
                             <div style={{width:"99%"}}>
                                 {Object.entries(currentJsonData).map(([key, value]) => (
                                     Array.isArray(value) && value.length > 0 && (

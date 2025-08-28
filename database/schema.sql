@@ -7,7 +7,7 @@ create table layer_schema
     status     varchar(255) not null
         constraint layer_schema_status_check
             check ((status)::text = ANY
-                   ((ARRAY ['ACTIVE'::character varying, 'INACTIVE'::character varying, 'DELETED'::character varying])::text[])),
+                   (ARRAY [('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text, ('DELETED'::character varying)::text])),
     layer_id   bigint
         constraint fk1nxldm8wy7q7bjgffrdhc67v6
             references layer
@@ -16,25 +16,162 @@ create table layer_schema
 alter table layer_schema
     owner to postgres;
 
+INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (1, 'links', 10, 'ACTIVE', 7);
+INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (4, 'nodes', 0, 'ACTIVE', 7);
+INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (3, 'ports', 1, 'ACTIVE', 7);
+INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (7, 'cells', 12, 'ACTIVE', 7);
+INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (5, 'segments', 13, 'ACTIVE', 7);
+INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (2, 'connections', 2, 'ACTIVE', 7);
+INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (6, 'lanes', 11, 'ACTIVE', 7);
+INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (8, 'busStations', 0, 'ACTIVE', 9);
+INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (10, 'exits', 0, 'ACTIVE', 13);
+INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (9, 'railStations', 0, 'ACTIVE', 13);
+INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (11, 'vehType', 0, 'ACTIVE', null);
+INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (12, 'pavementMarkings', 0, 'ACTIVE', 22);
+
+create table layer_schema_column
+(
+    id         bigserial
+        primary key,
+    column_key varchar(255) not null,
+    input_type varchar(255) not null,
+    sort_order integer      not null
+);
+
+alter table layer_schema_column
+    owner to postgres;
+
+INSERT INTO public.layer_schema_column (id, column_key, input_type, sort_order) VALUES (1, 'name', 'text', 1);
+INSERT INTO public.layer_schema_column (id, column_key, input_type, sort_order) VALUES (3, 'readOnly', 'select', 3);
+INSERT INTO public.layer_schema_column (id, column_key, input_type, sort_order) VALUES (4, 'nullable', 'select', 4);
+INSERT INTO public.layer_schema_column (id, column_key, input_type, sort_order) VALUES (5, 'status', 'select', 5);
+INSERT INTO public.layer_schema_column (id, column_key, input_type, sort_order) VALUES (2, 'inputType', 'select', 2);
+INSERT INTO public.layer_schema_column (id, column_key, input_type, sort_order) VALUES (6, 'options', 'tags', 6);
+
+create table layer_schema_column_option
+(
+    id            bigserial
+        primary key,
+    value         varchar(255),
+    definition_id bigint
+        constraint fkln4jdespbgc14o6evuxhgv0ul
+            references layer_schema_column
+);
+
+alter table layer_schema_column_option
+    owner to postgres;
+
+INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (1, 'true', 3);
+INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (2, 'false', 3);
+INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (3, 'true', 4);
+INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (4, 'false', 4);
+INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (5, 'ACTIVE', 5);
+INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (6, 'INACTIVE', 5);
+INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (9, 'number', 2);
+INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (10, 'checkbox', 2);
+INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (11, 'textarea', 2);
+INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (8, 'select', 2);
+INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (7, 'text', 2);
+
 create table layer_schema_field
 (
-    id                   bigserial
+    id              bigserial
         primary key,
-    input_type           varchar(255),
-    name                 varchar(255),
-    nullable             boolean      not null,
-    read_only            boolean      not null,
-    status               varchar(255) not null
+    input_type      varchar(255),
+    name            varchar(255),
+    nullable        boolean      not null,
+    read_only       boolean      not null,
+    status          varchar(255) not null
         constraint layer_schema_field_status_check
             check ((status)::text = ANY
-                   ((ARRAY ['ACTIVE'::character varying, 'INACTIVE'::character varying, 'DELETED'::character varying])::text[])),
+                   (ARRAY [('ACTIVE'::character varying)::text, ('INACTIVE'::character varying)::text, ('DELETED'::character varying)::text])),
     layer_schema_id bigint
         constraint fka7vbpvgnyuwiku9oku0y9qjy5
-            references layer_schema
+            references layer_schema,
+    sort_order      integer
 );
 
 alter table layer_schema_field
     owner to postgres;
+
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (63, 'text', 'linkRef', true, false, 'ACTIVE', 10, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (23, 'number', 'waveSpd', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (52, 'checkbox', 'leftLc', true, false, 'ACTIVE', 6, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (47, 'select', 'v2x', true, false, 'ACTIVE', 4, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (44, 'text', 'direction', true, false, 'ACTIVE', 3, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (36, 'number', 'ffSpd', true, false, 'ACTIVE', 2, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (37, 'number', 'width', true, false, 'ACTIVE', 2, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (64, 'number', 'offset', true, false, 'ACTIVE', 10, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (65, 'number', 'accessTime', true, false, 'ACTIVE', 10, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (62, 'text', 'id', true, true, 'ACTIVE', 10, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (31, 'number', 'numLane', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (60, 'textarea', 'address', true, false, 'ACTIVE', 8, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (7, 'number', 'endPoint', true, false, 'ACTIVE', 5, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (4, 'select', 'type', true, false, 'ACTIVE', 4, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (30, 'number', 'layer', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (66, 'textarea', 'coord', true, false, 'ACTIVE', 10, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (69, 'select', 'type', true, false, 'ACTIVE', 9, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (70, 'textarea', 'address', true, false, 'ACTIVE', 9, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (71, 'text', 'center', true, false, 'ACTIVE', 9, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (25, 'number', 'maxSpd', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (61, 'textarea', 'center', true, false, 'ACTIVE', 8, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (28, 'number', 'length', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (1, 'select', 'type', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (21, 'number', 'maxVeh', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (24, 'number', 'minSpd', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (26, 'number', 'ffSpd', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (22, 'number', 'qmax', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (20, 'select', 'simType', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (14, 'textarea', 'shape', true, false, 'ACTIVE', 6, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (15, 'text', 'rightLaneId', true, false, 'ACTIVE', 6, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (13, 'text', 'id', true, true, 'ACTIVE', 7, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (12, 'number', 'length', true, false, 'ACTIVE', 7, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (17, 'number', 'numCell', true, false, 'ACTIVE', 6, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (16, 'text', 'leftLaneId', true, false, 'ACTIVE', 6, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (18, 'text', 'id', true, true, 'ACTIVE', 6, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (19, 'textarea', 'shape', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (32, 'text', 'toNode', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (27, 'number', 'width', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (40, 'text', 'toLink', true, false, 'ACTIVE', 2, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (3, 'select', 'type', true, false, 'ACTIVE', 3, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (68, 'select', 'transitMode', true, false, 'ACTIVE', 9, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (48, 'number', 'numConnection', true, false, 'ACTIVE', 4, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (51, 'checkbox', 'rightLc', true, false, 'ACTIVE', 6, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (29, 'number', 'stopLine', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (2, 'select', 'turning', true, false, 'ACTIVE', 2, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (41, 'number', 'fromLane', true, false, 'ACTIVE', 2, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (11, 'number', 'offset', true, false, 'ACTIVE', 7, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (8, 'number', 'initPoint', true, false, 'ACTIVE', 5, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (10, 'text', 'id', true, true, 'ACTIVE', 5, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (58, 'select', 'type', true, false, 'ACTIVE', 8, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (54, 'select', 'transitMode', true, false, 'ACTIVE', 8, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (42, 'text', 'fromLink', true, false, 'ACTIVE', 2, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (9, 'checkbox', 'block', true, false, 'ACTIVE', 5, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (34, 'text', 'id', true, true, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (46, 'text', 'center', true, false, 'ACTIVE', 4, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (45, 'text', 'linkId', true, false, 'ACTIVE', 3, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (43, 'text', 'id', true, true, 'ACTIVE', 2, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (49, 'number', 'numPort', true, false, 'ACTIVE', 4, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (39, 'number', 'toLane', true, false, 'ACTIVE', 2, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (38, 'number', 'length', true, false, 'ACTIVE', 2, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (50, 'text', 'id', true, true, 'ACTIVE', 4, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (59, 'number', 'parkingLots', true, false, 'ACTIVE', 8, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (33, 'text', 'fromNode', true, false, 'ACTIVE', 1, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (55, 'text', 'linkRef', true, false, 'ACTIVE', 8, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (53, 'text', 'id', true, true, 'ACTIVE', 8, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (35, 'textarea', 'shape', true, false, 'ACTIVE', 2, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (67, 'text', 'id', true, true, 'ACTIVE', 9, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (56, 'text', 'laneRef', true, false, 'ACTIVE', 8, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (57, 'text', 'offset', true, false, 'ACTIVE', 8, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (247, 'textarea', 'lineList', true, false, 'INACTIVE', 9, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (248, 'text', 'id', false, true, 'ACTIVE', 12, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (249, 'number', 'angle', true, false, 'ACTIVE', 12, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (250, 'number', 'cellId', true, false, 'ACTIVE', 12, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (251, 'number', 'laneRef', true, false, 'ACTIVE', 12, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (252, 'number', 'linkRef', true, false, 'ACTIVE', 12, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (253, 'select', 'markingType', false, false, 'ACTIVE', 12, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (254, 'number', 'offset', true, false, 'ACTIVE', 12, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (255, 'textarea', 'coordinates', true, false, 'INACTIVE', 12, null);
 
 create table layer_schema_option
 (
@@ -49,357 +186,35 @@ create table layer_schema_option
 alter table layer_schema_option
     owner to postgres;
 
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (1, 'straight', 1);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (2, 'L', 2);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (3, 'S', 2);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (4, 'R', 2);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (5, 'in', 3);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (6, 'out', 3);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (7, 'terminal', 4);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (8, 'intersection', 4);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (9, 'normal', 4);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (10, 'diverging', 4);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (11, 'merging', 4);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (12, 'garage', 4);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (13, 'curve', 1);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (14, 'Meso', 20);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (15, 'Micro', 20);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (16, 'on', 47);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (17, 'off', 47);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (20, 'test', 1);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (21, 'subway', 68);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (22, 'island', 69);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (23, 'side', 69);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (24, 'Diamond', 253);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (25, 'LeftTurn', 253);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (26, 'RightTurn', 253);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (27, 'Straight', 253);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (28, 'StraightLeft', 253);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (29, 'StraightRight', 253);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (30, 'UTurn', 253);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (31, 'side', 58);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (32, 'island', 58);
+INSERT INTO public.layer_schema_option (id, value, field_id) VALUES (33, 'bus', 54);
 
-
-BEGIN;
-
-WITH params AS (
-    SELECT 7::bigint AS layer_id  -- 네트워크 레이어 ID
-),
-
--- Node 루트
-     node_root AS (
-         INSERT INTO layer_schema (name, sort_order, status, layer_id)
-             SELECT 'Node', 0, 'ACTIVE', p.layer_id
-             FROM params p
-             RETURNING id
-     ),
--- Node 하위
-     node_port AS (
-         INSERT INTO layer_schema (name, sort_order, status, layer_id)
-             SELECT 'Port', 1, 'ACTIVE', p.layer_id
-             FROM params p
-             RETURNING id
-     ),
-     node_connection AS (
-         INSERT INTO layer_schema (name, sort_order, status, layer_id)
-             SELECT 'Connection', 2, 'ACTIVE', p.layer_id
-             FROM params p
-             RETURNING id
-     ),
-
--- Link 루트
-     link_root AS (
-         INSERT INTO layer_schema (name, sort_order, status, layer_id)
-             SELECT 'Link', 10, 'ACTIVE', p.layer_id
-             FROM params p
-             RETURNING id
-     ),
--- Link 하위: Lane
-     link_lane AS (
-         INSERT INTO layer_schema (name, sort_order, status, layer_id)
-             SELECT 'Lane', 11, 'ACTIVE', p.layer_id
-             FROM params p
-             RETURNING id
-     ),
--- Lane 하위: Cell
-     lane_cell AS (
-         INSERT INTO layer_schema (name, sort_order, status, layer_id)
-             SELECT 'Cell', 12, 'ACTIVE', p.layer_id
-             FROM params p, link_lane ll
-             RETURNING id
-     ),
--- Lane 하위: Segment
-     lane_segment AS (
-         INSERT INTO layer_schema (name, sort_order, status, layer_id)
-             SELECT 'Segment', 13, 'ACTIVE', p.layer_id
-             FROM params p
-             RETURNING id
-     ),
-
--- Node 필드
-     node_field_id AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nr.id, 'id', 'text', TRUE, FALSE, 'ACTIVE' FROM node_root nr
-             RETURNING id
-     ),
-     node_field_type AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nr.id, 'type', 'select', FALSE, FALSE, 'ACTIVE' FROM node_root nr
-             RETURNING id
-     ),
-     node_field_num_port AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nr.id, 'num_port', 'number', FALSE, FALSE, 'ACTIVE' FROM node_root nr
-             RETURNING id
-     ),
-     node_field_num_conn AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nr.id, 'num_connection', 'number', FALSE, FALSE, 'ACTIVE' FROM node_root nr
-             RETURNING id
-     ),
-     node_field_v2x AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nr.id, 'v2x', 'text', FALSE, FALSE, 'ACTIVE' FROM node_root nr
-             RETURNING id
-     ),
-     node_field_center AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nr.id, 'center', 'text', FALSE, FALSE, 'ACTIVE' FROM node_root nr
-             RETURNING id
-     ),
-
--- Port 필드
-     port_field_type AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT np.id, 'type', 'select', FALSE, FALSE, 'ACTIVE' FROM node_port np
-             RETURNING id
-     ),
-     port_field_link_id AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT np.id, 'link_id', 'text', FALSE, FALSE, 'ACTIVE' FROM node_port np
-             RETURNING id
-     ),
-     port_field_direction AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT np.id, 'direction', 'text', FALSE, FALSE, 'ACTIVE' FROM node_port np
-             RETURNING id
-     ),
-
--- Connection 필드
-     conn_field_id AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nc.id, 'id', 'text', TRUE, FALSE, 'ACTIVE' FROM node_connection nc
-             RETURNING id
-     ),
-     conn_field_from_link AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nc.id, 'from_link', 'text', FALSE, FALSE, 'ACTIVE' FROM node_connection nc
-             RETURNING id
-     ),
-     conn_field_from_lane AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nc.id, 'from_lane', 'number', FALSE, FALSE, 'ACTIVE' FROM node_connection nc
-             RETURNING id
-     ),
-     conn_field_to_link AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nc.id, 'to_link', 'text', FALSE, FALSE, 'ACTIVE' FROM node_connection nc
-             RETURNING id
-     ),
-     conn_field_to_lane AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nc.id, 'to_lane', 'number', FALSE, FALSE, 'ACTIVE' FROM node_connection nc
-             RETURNING id
-     ),
-     conn_field_turning AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nc.id, 'turning', 'select', FALSE, FALSE, 'ACTIVE' FROM node_connection nc
-             RETURNING id
-     ),
-     conn_field_length AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nc.id, 'length', 'number', FALSE, FALSE, 'ACTIVE' FROM node_connection nc
-             RETURNING id
-     ),
-     conn_field_width AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nc.id, 'width', 'number', FALSE, FALSE, 'ACTIVE' FROM node_connection nc
-             RETURNING id
-     ),
-     conn_field_ff_spd AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nc.id, 'ff_spd', 'number', FALSE, FALSE, 'ACTIVE' FROM node_connection nc
-             RETURNING id
-     ),
-     conn_field_shape AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT nc.id, 'shape', 'textarea', FALSE, FALSE, 'ACTIVE' FROM node_connection nc
-             RETURNING id
-     ),
-
--- Link 필드들
-     link_field_id AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'id', 'text', TRUE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_from_node AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'from_node', 'text', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_to_node AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'to_node', 'text', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_num_lane AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'num_lane', 'number', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_type AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'type', 'select', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_layer AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'layer', 'number', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_stop_line AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'stop_line', 'number', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_length AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'length', 'number', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_width AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'width', 'number', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_ff_spd AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'ff_spd', 'number', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_max_spd AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'max_spd', 'number', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_min_spd AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'min_spd', 'number', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_wave_spd AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'wave_spd', 'number', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_qmax AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'qmax', 'number', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_max_veh AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'max_veh', 'number', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_sim_type AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'sim_type', 'select', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-     link_field_shape AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lr.id, 'shape', 'textarea', FALSE, FALSE, 'ACTIVE' FROM link_root lr
-             RETURNING id
-     ),
-
--- Lane 필드들
-     lane_field_id AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT ll.id, 'id', 'text', TRUE, FALSE, 'ACTIVE' FROM link_lane ll
-             RETURNING id
-     ),
-     lane_field_num_cell AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT ll.id, 'num_cell', 'number', FALSE, FALSE, 'ACTIVE' FROM link_lane ll
-             RETURNING id
-     ),
-     lane_field_left_lane_id AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT ll.id, 'left_lane_id', 'text', FALSE, FALSE, 'ACTIVE' FROM link_lane ll
-             RETURNING id
-     ),
-     lane_field_right_lane_id AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT ll.id, 'right_lane_id', 'text', FALSE, FALSE, 'ACTIVE' FROM link_lane ll
-             RETURNING id
-     ),
-     lane_field_shape AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT ll.id, 'shape', 'textarea', FALSE, FALSE, 'ACTIVE' FROM link_lane ll
-             RETURNING id
-     ),
-
--- Cell 필드들
-     cell_field_id AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lc.id, 'id', 'text', TRUE, FALSE, 'ACTIVE' FROM lane_cell lc
-             RETURNING id
-     ),
-     cell_field_length AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lc.id, 'length', 'number', FALSE, FALSE, 'ACTIVE' FROM lane_cell lc
-             RETURNING id
-     ),
-     cell_field_offset AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT lc.id, 'offset', 'number', FALSE, FALSE, 'ACTIVE' FROM lane_cell lc
-             RETURNING id
-     ),
-
--- Segment 필드들
-     segment_field_id AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT ls.id, 'id', 'text', TRUE, FALSE, 'ACTIVE' FROM lane_segment ls
-             RETURNING id
-     ),
-     segment_field_block AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT ls.id, 'block', 'checkbox', FALSE, FALSE, 'ACTIVE' FROM lane_segment ls
-             RETURNING id
-     ),
-     segment_field_init_point AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT ls.id, 'init_point', 'number', FALSE, FALSE, 'ACTIVE' FROM lane_segment ls
-             RETURNING id
-     ),
-     segment_field_end_point AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT ls.id, 'end_point', 'number', FALSE, FALSE, 'ACTIVE' FROM lane_segment ls
-             RETURNING id
-     ),
-     segment_field_right_lc AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT ls.id, 'right_lc', 'text', FALSE, FALSE, 'ACTIVE' FROM lane_segment ls
-             RETURNING id
-     ),
-     segment_field_left_lc AS (
-         INSERT INTO layer_schema_field (layer_schema_id, name, input_type, read_only, nullable, status)
-             SELECT ls.id, 'left_lc', 'text', FALSE, FALSE, 'ACTIVE' FROM lane_segment ls
-             RETURNING id
-     ),
-
--- Node.type
-     ins_node_type_options AS (
-         INSERT INTO layer_schema_option (field_id, value)
-             SELECT (SELECT id FROM node_field_type), v
-             FROM (VALUES ('terminal'),('intersection'),('normal'),('diverging'),('merging'),('garage')) AS t(v)
-             RETURNING 1
-     ),
--- Port.type
-     ins_port_type_options AS (
-         INSERT INTO layer_schema_option (field_id, value)
-             SELECT (SELECT id FROM port_field_type), v
-             FROM (VALUES ('in'),('out')) AS t(v)
-             RETURNING 1
-     ),
--- Connection.turning
-     ins_conn_turning_options AS (
-         INSERT INTO layer_schema_option (field_id, value)
-             SELECT (SELECT id FROM conn_field_turning), v
-             FROM (VALUES ('L'),('S'),('R')) AS t(v)
-             RETURNING 1
-     ),
--- Link.type
-     ins_link_type_options AS (
-         INSERT INTO layer_schema_option (field_id, value)
-             SELECT (SELECT id FROM link_field_type), v
-             FROM (VALUES ('straight')) AS t(v)
-             RETURNING 1
-     )
-
-SELECT 1;
-
-COMMIT;

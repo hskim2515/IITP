@@ -1,10 +1,11 @@
 import { create } from 'zustand'
+import { Scenario } from "@type/Scenario";
 
 interface ScenarioStore {
-    selectedScenario: string | null;
-    setScenario: (scenario: string) => void;
+    selectedScenario: Scenario | null;
+    setScenario: (scenario: Scenario) => void;
     selectedScenarioVersion: string | null;
-    setVersion: (version: number) => void;
+    setVersion: (version: string) => void;
     resetScenario: () => void;
 }
 
