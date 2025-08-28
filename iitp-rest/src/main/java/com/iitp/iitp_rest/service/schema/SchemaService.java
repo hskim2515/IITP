@@ -3,8 +3,8 @@ package com.iitp.iitp_rest.service.schema;
 import com.iitp.iitp_rest.mapper.schema.SchemaMapper;
 import com.iitp.iitp_rest.model.layer.Layer;
 import com.iitp.iitp_rest.model.schema.*;
-import com.iitp.iitp_rest.model.schema.column.LayerSchemaColumn;
-import com.iitp.iitp_rest.model.schema.column.LayerSchemaColumnOption;
+import com.iitp.iitp_rest.model.schema.LayerSchemaConfig;
+import com.iitp.iitp_rest.model.schema.LayerSchemaConfigOption;
 import com.iitp.iitp_rest.repository.LayerRepository;
 import com.iitp.iitp_rest.repository.LayerSchemaColumnRepository;
 import com.iitp.iitp_rest.repository.LayerSchemaColumnOptionRepository;
@@ -55,8 +55,8 @@ public class SchemaService {
     }
     private List<LayerSchemaResponse> createSchemaResponseForLayers(List<Long> layerIds) {
 
-        List<LayerSchemaColumn> allColumns = columnRepository.findAll(Sort.by(Sort.Direction.ASC, "sortOrder"));
-        List<LayerSchemaColumnOption> allColumnOptions = columnOptionRepository.findAll();
+        List<LayerSchemaConfig> allColumns = columnRepository.findAll(Sort.by(Sort.Direction.ASC, "sortOrder"));
+        List<LayerSchemaConfigOption> allColumnOptions = columnOptionRepository.findAll();
 
         Map<Long, String> layerKeyById = layerRepository.findAllById(layerIds).stream()
                 .collect(Collectors.toMap(Layer::getId, Layer::getKey));

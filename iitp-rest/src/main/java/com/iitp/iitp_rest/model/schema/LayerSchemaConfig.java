@@ -1,4 +1,4 @@
-package com.iitp.iitp_rest.model.schema.column;
+package com.iitp.iitp_rest.model.schema;
 
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
@@ -11,12 +11,12 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class LayerSchemaColumn {
+public class LayerSchemaConfig {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-    @Column(name = "column_key", nullable = false)
-    private String columnKey;
+    @Column(name = "config_key", nullable = false)
+    private String configKey;
     @Column(name = "input_type", nullable = false)
     private String inputType;
     @Column(name = "sort_order", nullable = false)

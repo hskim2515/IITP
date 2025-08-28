@@ -39,7 +39,7 @@ public class LayerSchemaResponse {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class SchemaColumn {
-        private String columnKey;
+        private String configKey;
         private String inputType;
 //        private Integer sortOrder;
 

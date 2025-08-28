@@ -25,10 +25,10 @@ export const EditableCell = memo<EditableCellProps>(function EditableCell({
                                                                               onUpdate
                                                                           }) {
     const setMessage = useMessageStore.getState().setMessage;
-    const dataKey = column.columnKey as keyof Field;
+    const dataKey = column.configKey as keyof Field;
 
     const isOptionsColumn =
-        (column.columnKey as string) === 'options' || column.inputType === 'tags';
+        (column.configKey as string) === 'options' || column.inputType === 'tags';
 
     const canEditOptions = !isOptionsColumn || field.inputType === 'select';
 

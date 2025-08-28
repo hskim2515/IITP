@@ -1,4 +1,4 @@
-package com.iitp.iitp_rest.model.schema.column;
+package com.iitp.iitp_rest.model.schema;
 
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
@@ -11,12 +11,12 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class LayerSchemaColumnOption {
+public class LayerSchemaConfigOption {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "definition_id")
-    private LayerSchemaColumn definition;
+    private LayerSchemaConfig definition;
     private String value;
 }

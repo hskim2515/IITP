@@ -29,49 +29,49 @@ INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES 
 INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (11, 'vehType', 0, 'ACTIVE', null);
 INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (12, 'pavementMarkings', 0, 'ACTIVE', 22);
 
-create table layer_schema_column
+create table layer_schema_config
 (
     id         bigserial
         primary key,
-    column_key varchar(255) not null,
+    config_key varchar(255) not null,
     input_type varchar(255) not null,
     sort_order integer      not null
 );
 
-alter table layer_schema_column
+alter table layer_schema_config
     owner to postgres;
 
-INSERT INTO public.layer_schema_column (id, column_key, input_type, sort_order) VALUES (1, 'name', 'text', 1);
-INSERT INTO public.layer_schema_column (id, column_key, input_type, sort_order) VALUES (3, 'readOnly', 'select', 3);
-INSERT INTO public.layer_schema_column (id, column_key, input_type, sort_order) VALUES (4, 'nullable', 'select', 4);
-INSERT INTO public.layer_schema_column (id, column_key, input_type, sort_order) VALUES (5, 'status', 'select', 5);
-INSERT INTO public.layer_schema_column (id, column_key, input_type, sort_order) VALUES (2, 'inputType', 'select', 2);
-INSERT INTO public.layer_schema_column (id, column_key, input_type, sort_order) VALUES (6, 'options', 'tags', 6);
+INSERT INTO public.layer_schema_config (id, config_key, input_type, sort_order) VALUES (1, 'name', 'text', 1);
+INSERT INTO public.layer_schema_config (id, config_key, input_type, sort_order) VALUES (3, 'readOnly', 'select', 3);
+INSERT INTO public.layer_schema_config (id, config_key, input_type, sort_order) VALUES (4, 'nullable', 'select', 4);
+INSERT INTO public.layer_schema_config (id, config_key, input_type, sort_order) VALUES (5, 'status', 'select', 5);
+INSERT INTO public.layer_schema_config (id, config_key, input_type, sort_order) VALUES (2, 'inputType', 'select', 2);
+INSERT INTO public.layer_schema_config (id, config_key, input_type, sort_order) VALUES (6, 'options', 'tags', 6);
 
-create table layer_schema_column_option
+create table layer_schema_config_option
 (
     id            bigserial
         primary key,
     value         varchar(255),
     definition_id bigint
         constraint fkln4jdespbgc14o6evuxhgv0ul
-            references layer_schema_column
+            references layer_schema_config
 );
 
-alter table layer_schema_column_option
+alter table layer_schema_config_option
     owner to postgres;
 
-INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (1, 'true', 3);
-INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (2, 'false', 3);
-INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (3, 'true', 4);
-INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (4, 'false', 4);
-INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (5, 'ACTIVE', 5);
-INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (6, 'INACTIVE', 5);
-INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (9, 'number', 2);
-INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (10, 'checkbox', 2);
-INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (11, 'textarea', 2);
-INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (8, 'select', 2);
-INSERT INTO public.layer_schema_column_option (id, value, definition_id) VALUES (7, 'text', 2);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (1, 'true', 3);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (2, 'false', 3);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (3, 'true', 4);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (4, 'false', 4);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (5, 'ACTIVE', 5);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (6, 'INACTIVE', 5);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (9, 'number', 2);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (10, 'checkbox', 2);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (11, 'textarea', 2);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (8, 'select', 2);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (7, 'text', 2);
 
 create table layer_schema_field
 (

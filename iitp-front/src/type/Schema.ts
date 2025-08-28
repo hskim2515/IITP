@@ -28,7 +28,7 @@ export interface Field {
 
 // 기본값 schemaColumns 배열의 요소 타입
 export interface SchemaColumn {
-    columnKey: 'name' | 'inputType' | 'readOnly' | 'nullable' | 'status' | 'options'
+    configKey: 'name' | 'inputType' | 'readOnly' | 'nullable' | 'status' | 'options'
     inputType: InputType | 'tags';
     options: SchemaColumnOption[];
 }

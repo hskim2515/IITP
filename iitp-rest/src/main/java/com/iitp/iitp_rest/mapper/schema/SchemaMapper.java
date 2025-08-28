@@ -1,8 +1,8 @@
 package com.iitp.iitp_rest.mapper.schema;
 
 import com.iitp.iitp_rest.model.schema.*;
-import com.iitp.iitp_rest.model.schema.column.LayerSchemaColumn;
-import com.iitp.iitp_rest.model.schema.column.LayerSchemaColumnOption;
+import com.iitp.iitp_rest.model.schema.LayerSchemaConfig;
+import com.iitp.iitp_rest.model.schema.LayerSchemaConfigOption;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -14,14 +14,14 @@ public class SchemaMapper {
     /**
      * 조회된 모든 엔티티 데이터를 받아 최종 LayerSchemaResponse DTO로 조립
      */
-    public LayerSchemaResponse toLayerSchemaResponse(Long layerId, String layerKey, List<LayerSchema> schemata, List<LayerSchemaField> fields, List<LayerSchemaOption> options, List<LayerSchemaColumn> columns, List<LayerSchemaColumnOption> columnOptions) {
+    public LayerSchemaResponse toLayerSchemaResponse(Long layerId, String layerKey, List<LayerSchema> schemata, List<LayerSchemaField> fields, List<LayerSchemaOption> options, List<LayerSchemaConfig> columns, List<LayerSchemaConfigOption> columnOptions) {
 
         // 데이터를 구조화하기 위해 ID를 기준으로 Map으로 변환
         Map<Long, List<LayerSchemaField>> fieldsBySchemaId = fields.stream()
                 .collect(Collectors.groupingBy(field -> field.getLayerSchema().getId()));
         Map<Long, List<LayerSchemaOption>> optionsByFieldId = options.stream()
                 .collect(Collectors.groupingBy(option -> option.getField().getId()));
-        Map<Long, List<LayerSchemaColumnOption>> columnOptionsByColumnId = columnOptions.stream()
+        Map<Long, List<LayerSchemaConfigOption>> columnOptionsByColumnId = columnOptions.stream()
                 .collect(Collectors.groupingBy(option -> option.getDefinition().getId()));
 
         // 각 엔티티를 DTO로 변환
@@ -92,15 +92,15 @@ public class SchemaMapper {
     /**
      * LayerSchemaColumn 엔티티를 SchemaColumn DTO로 변환
      */
-    private LayerSchemaResponse.SchemaColumn toSchemaColumnDto(LayerSchemaColumn column, Map<Long, List<LayerSchemaColumnOption>> columnOptionsByColumnId) {
-        List<LayerSchemaColumnOption> optionsForThisColumn = columnOptionsByColumnId.getOrDefault(column.getId(), Collections.emptyList());
+    private LayerSchemaResponse.SchemaColumn toSchemaColumnDto(LayerSchemaConfig column, Map<Long, List<LayerSchemaConfigOption>> columnOptionsByColumnId) {
+        List<LayerSchemaConfigOption> optionsForThisColumn = columnOptionsByColumnId.getOrDefault(column.getId(), Collections.emptyList());
 
         List<LayerSchemaResponse.ColumnOption> optionDtos = optionsForThisColumn.stream()
                 .map(this::toColumnOptionDto)
                 .toList();
 
         return LayerSchemaResponse.SchemaColumn.builder()
-                .columnKey(column.getColumnKey())
+                .configKey(column.getConfigKey())
                 .inputType(column.getInputType())
                 .options(optionDtos)
                 .build();
@@ -109,7 +109,7 @@ public class SchemaMapper {
     /**
      * LayerSchemaColumnOption 엔티티를 ColumnOption DTO로 변환
      */
-    private LayerSchemaResponse.ColumnOption toColumnOptionDto(LayerSchemaColumnOption option) {
+    private LayerSchemaResponse.ColumnOption toColumnOptionDto(LayerSchemaConfigOption option) {
         return LayerSchemaResponse.ColumnOption.builder()
                 .value(option.getValue())
                 .build();

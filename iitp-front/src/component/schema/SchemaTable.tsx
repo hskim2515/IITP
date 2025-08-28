@@ -44,7 +44,7 @@ export const SchemaTable = ({
     const handleAddField = useCallback(() => {
         const defaultFields: Partial<Field> = {};
         for (const column of schemaColumns) {
-            const fieldName = column.columnKey as keyof Omit<Field, 'id'>;
+            const fieldName = column.configKey as keyof Omit<Field, 'id'>;
             (defaultFields as any)[fieldName] = setDefaultFieldValue(column.inputType, column.options);
         }
 
@@ -66,9 +66,9 @@ export const SchemaTable = ({
 
     const columns = useMemo((): ColumnsType<Field> => {
         return schemaColumns.map(column => ({
-            title: column.columnKey.charAt(0).toUpperCase() + column.columnKey.slice(1),
-            dataIndex: column.columnKey,
-            key: column.columnKey,
+            title: column.configKey.charAt(0).toUpperCase() + column.configKey.slice(1),
+            dataIndex: column.configKey,
+            key: column.configKey,
             width: DEFAULT_CELL_WIDTH,
             render: (value, field) => (
                 <EditableCell
