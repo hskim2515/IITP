@@ -20,6 +20,9 @@ import {assignPropertyToResponseData} from "@utils/guid";
 import {usePavementMarkingStore} from "@stores/usePavementMarkingStore";
 import { useBusStationStore } from "@stores/useBusStationStore";
 import { useRailStationStore } from "@stores/useRailStationStore";
+import {useSignalTimelineStore} from "@stores/useSignalTimelineStore";
+import {useSignalStore} from "@stores/useSignalStore";
+import {FEATURE_TYPE} from "@type/Signal";
 
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToStoreMap: Record<string, FeatureStoreFactoryType> = {
@@ -28,6 +31,7 @@ export const menuCodeToStoreMap: Record<string, FeatureStoreFactoryType> = {
     BUS_STATION: useBusStationStore,
     RAIL_STATION: useRailStationStore,
     PAVEMENT_MARKING: usePavementMarkingStore,
+    SIGNAL: useSignalStore,
 }
 
 export const layerNameToStoreMap: Record<string, FeatureStoreFactoryType> = {
@@ -36,6 +40,7 @@ export const layerNameToStoreMap: Record<string, FeatureStoreFactoryType> = {
     busStation: useBusStationStore,
     railStation: useRailStationStore,
     pavementMarking: usePavementMarkingStore,
+    signal: useSignalStore,
 }
 
 const useLayerInit = (): void => {

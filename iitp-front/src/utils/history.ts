@@ -5,6 +5,7 @@ import { Feature as OLFeature } from "ol";
 import { Point } from "ol/geom";
 import {fromLonLat} from "ol/proj";
 import {createFeature} from "@utils/feature";
+import {useMessageStore} from "@stores/useMessageStore";
 
 interface FeatureUpdateHistoryOptions {
     guid: string | number;
@@ -17,90 +18,27 @@ interface FeatureUpdateHistoryOptions {
     grandParentGuid?: string;
 }
 
-//
-// export function mergeJsonWithLog(
-//     //featuresMap: Map<string | number, OLFeature>,
-//     featuresMap: Map<string | number, any>,
-//     updateLog: UpdateLogEntry,
-//     isUndo: boolean
-// ): OLFeature[] {
-//     const { added, modified, deleted } = updateLog;
-//     if (isUndo) {
-//         // Undo: 삭제 → 다시 추가
-//         const deletedPropsMap = new Map<string | number, Record<string, any>>();
-//         deleted?.forEach((change) => {
-//             const fid = change.guid;
-//             if (!deletedPropsMap.has(fid)) {
-//                 deletedPropsMap.set(fid, {});
-//             }
-//             deletedPropsMap.get(fid)![change.field!] = change.oldValue;
-//         });
-//
-//         deletedPropsMap.forEach((props, fid) => {
-//             const coords = props.coordinates?.[0];
-//             const geom = coords ? new Point(fromLonLat([coords.lng, coords.lat])) : new Point([0, 0]);
-//             const feature = new Feature({ geometry: geom });
-//             feature.setProperties({
-//                 ...props,
-//                 //id: fid,
-//             });
-//             feature.setId(fid);
-//             featuresMap.set(fid, feature);
-//         });
-//
-//         // Undo: 수정 → 원래 값으로 복원
-//         modified?.forEach((change) => {
-//             const feature = featuresMap.get(change.guid);
-//             if (feature) {
-//                 feature.set(change.field!, change.oldValue);
-//             }
-//         });
-//
-//         // Undo: 추가 → 제거
-//         added?.forEach((change) => {
-//             featuresMap.delete(change.guid);
-//         });
-//
-//     } else {
-//         // Redo: 삭제 → 제거
-//         deleted?.forEach((change) => {
-//             featuresMap.delete(change.guid);
-//         });
-//
-//         // Redo: 수정 → 새로운 값 반영
-//         modified?.forEach((change) => {
-//             const feature = featuresMap.get(change.guid);
-//             if (feature) {
-//                 feature.set(change.field!, change.newValue);
-//             }
-//         });
-//
-//         // Redo: 추가 → 다시 생성
-//         added?.forEach((change) => {
-//             const feature = new OLFeature({
-//                 ...change.properties,
-//                 id: change.guid,
-//             });
-//
-//             // geometry가 없다면 기본 geometry 설정
-//             if (!feature.getGeometry()) {
-//                 feature.setGeometry(new Point([0, 0]));
-//             }
-//
-//             featuresMap.set(change.guid, feature);
-//         });
-//     }
-//
-//     return Array.from(featuresMap.values());
-// }
+const setMessage = useMessageStore.getState().setMessage;
 
 function updateFeatureByGuid(obj: any, guid: string, updater: (feature: any) => void): boolean {
     if (Array.isArray(obj)) {
         return obj.some(item => updateFeatureByGuid(item, guid, updater));
     }
+
+    if (obj instanceof Map) {
+        for (const value of obj.values()) {
+            if (updateFeatureByGuid(value, guid, updater)) return true;
+        }
+        return false;
+    }
+
     if (obj && typeof obj === "object") {
         if (obj.__guid === guid || obj.id === guid) {
             updater(obj);
+            setMessage({
+                type: 'info',
+                text: "성공",
+            });
             return true; // 찾았으니 중단
         }
         return Object.values(obj).some(value => updateFeatureByGuid(value, guid, updater));

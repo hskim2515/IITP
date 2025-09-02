@@ -15,7 +15,7 @@ function addMultiplePropertiesRecursively(
         obj.forEach(item => addMultiplePropertiesRecursively(item, type, propertyGenerators));
     } else if (typeof obj === 'object' && obj !== null) {
         for (const [keyName, generator] of Object.entries(propertyGenerators)) {
-            if (obj[keyName] === undefined) {
+            if (obj[keyName] === undefined || obj[keyName] === null) {
                 obj[keyName] = generator(type);
             }
         }

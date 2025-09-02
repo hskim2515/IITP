@@ -55,7 +55,14 @@ export const apiConfig:ApiConfig = {
     SCHEMA_SETTING: {
         list:    { url: '/schema', method: 'GET',   useFormData: false },
         update:  { url: '/schema/{layer-key}', method: 'POST',  useFormData: false },
+    },
+    SIGNAL: {
+        list:    { url: '/signal',       method: 'GET', useFormData: false },
+        update:  { url: '/signal', method: 'POST', useFormData: false },
+        create:  { url: '/signal', method: 'POST', useFormData: false },
+        historyList: { url: '/signal/histories', method: 'GET', useFormData: false },
     }
+
 } as const;
 
 export type ApiMenuKey = keyof typeof apiConfig;

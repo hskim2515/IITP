@@ -1,15 +1,14 @@
-package com.iitp.iitp_rest.model;
+package com.iitp.iitp_rest.model.signal;
 
 import jakarta.persistence.*;
 import lombok.Data;
-import org.hibernate.annotations.Type;
 
 import java.time.LocalDateTime;
 
 @Entity
 @Data
-@Table(name = "vehicle_route")
-public class VehicleRoute {
+@Table(name = "signal_timeline")
+public class SignalTimelineEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -18,17 +17,11 @@ public class VehicleRoute {
     @Column(name = "version_id")
     private String versionId;
 
-    @Column(columnDefinition = "text")
-    private String czml;
+    @Column(name = "target_id")
+    private String targetId;
 
     @Column(columnDefinition = "text")
-    private String features;
-
-    @Column(columnDefinition = "text")
-    private String positions;
-
-    @Column(name = "start_time")
-    private Long startTime;
+    private String signalTimelines;
 
     @Column(name = "insert_date")
     private LocalDateTime insertDate = LocalDateTime.now();

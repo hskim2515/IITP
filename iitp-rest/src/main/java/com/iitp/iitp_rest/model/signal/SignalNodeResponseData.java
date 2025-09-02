@@ -6,7 +6,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Data
-public class SignalNodeData {
-    private List<TurnData> signals = new ArrayList<>();
+public class SignalNodeResponseData {
+    private List<SignalResponse> signals = new ArrayList<>();
     //private List<PlanData> plans = new ArrayList<>();
 }

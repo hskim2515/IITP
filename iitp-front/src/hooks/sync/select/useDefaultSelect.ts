@@ -16,6 +16,9 @@ import CircleStyle from "ol/style/Circle";
 import { matchesCustomKeyValue } from "@utils/olLayer";
 import { Entity, Viewer } from "cesium";
 import {defaultEventHandlers} from "@handler/defaultEventHandler";
+import {FEATURE_TYPE} from "@type/Signal";
+import {getNetworkGuid} from "@utils/signal";
+import {useLayerStore} from "@stores/useLayerStore";
 
 const useDefaultSelect = () => {
 
@@ -27,6 +30,8 @@ const useDefaultSelect = () => {
 
     const activeSubmenu = useMenuStore((state) => state.activeSubmenu)
 
+    const layerManager = useLayerStore((state) => state.layerManager);
+
     const selectedGuid = useSelectionStore((state) => state.selectedGuid);
 
     const prevSelectedGuidsRef = useRef<Set<string>>(new Set());
@@ -37,7 +42,7 @@ const useDefaultSelect = () => {
         return () => {
             cesiumEventManager.unbind('select', defaultEventHandlers.handleCesiumSelect);
         };
-    }, [viewer, cesiumEventManager]);
+    }, [viewer, cesiumEventManager, activeSubmenu]);
 
     useEffect(() => {
         if (!olEventManager || !olMap) return
@@ -45,7 +50,7 @@ const useDefaultSelect = () => {
         return () => {
             olEventManager.unbind('click', defaultEventHandlers.handleOLSelect);
         };
-    }, [olEventManager, olMap]);
+    }, [olEventManager, olMap, activeSubmenu]);
 
     useEffect(() => {
         console.log('selectedGuid', selectedGuid)
@@ -66,8 +71,17 @@ const useDefaultSelect = () => {
 
             for (const guid of nextSet) {
                 if (!prevSet.has(guid)) {
-                    highlightOlStyleByGuid(olMap, layerName, guid);
-                    highlightCesiumStyleByGuid(viewer, layerName, guid);
+                    if (FEATURE_TYPE.SIGNAL === layerName) {
+                        const mappedGuid = getNetworkGuid(layerManager,guid);
+                        if (mappedGuid) {
+                            const networkLayerName  ='network'
+                            highlightOlStyleByGuid(olMap, networkLayerName, mappedGuid);
+                            highlightCesiumStyleByGuid(viewer, networkLayerName, mappedGuid);
+                        }
+                    } else {
+                        highlightOlStyleByGuid(olMap, layerName, guid);
+                        highlightCesiumStyleByGuid(viewer, layerName, guid);
+                    }
                 }
             }
 

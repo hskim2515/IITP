@@ -8,6 +8,7 @@ import {useScenarioStore} from "@stores/useScenarioStore";
 import {useNetworkHistoryStore} from "@stores/useNetworkStore";
 import {useBusStationHistoryStore} from "@stores/useBusStationStore";
 import { useRailStationHistoryStore } from "@stores/useRailStationStore";
+import {useSignalHistoryStore} from "@stores/useSignalStore";
 
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToHistoryStoreMap: Record<string, HistoryStoreFactoryType> = {
@@ -16,6 +17,7 @@ export const menuCodeToHistoryStoreMap: Record<string, HistoryStoreFactoryType> 
     BUS_STATION: useBusStationHistoryStore,
     RAIL_STATION: useRailStationHistoryStore,
     PAVEMENT_MARKING: usePavementMarkingHistoryStore,
+    SIGNAL: useSignalHistoryStore
 }
 export const layerNameToHistoryStoreMap: Record<string, HistoryStoreFactoryType> = {
     // layerName: store
@@ -23,6 +25,7 @@ export const layerNameToHistoryStoreMap: Record<string, HistoryStoreFactoryType>
     busStation: useBusStationHistoryStore,
     railStation: useRailStationHistoryStore,
     pavementMarking: usePavementMarkingHistoryStore,
+    signal: useSignalHistoryStore
 }
 
 const useHistoryInit = (reloadFlag:boolean) => {

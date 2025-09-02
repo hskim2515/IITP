@@ -28,6 +28,7 @@ INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES 
 INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (9, 'railStations', 0, 'ACTIVE', 13);
 INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (11, 'vehType', 0, 'ACTIVE', null);
 INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (12, 'pavementMarkings', 0, 'ACTIVE', 22);
+INSERT INTO public.layer_schema (id, name, sort_order, status, layer_id) VALUES (13, 'signals', 0, 'ACTIVE', 8);
 
 create table layer_schema_config
 (
@@ -171,7 +172,11 @@ INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only
 INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (252, 'number', 'linkRef', true, false, 'ACTIVE', 12, null);
 INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (253, 'select', 'markingType', false, false, 'ACTIVE', 12, null);
 INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (254, 'number', 'offset', true, false, 'ACTIVE', 12, null);
-INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (255, 'textarea', 'coordinates', true, false, 'INACTIVE', 12, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (255, 'text', 'coordinates', true, false, 'INACTIVE', 12, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (256, 'number', 'nodeId', true, false, 'ACTIVE', 13, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (257, 'number', 'connectionId', true, false, 'ACTIVE', 13, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (258, 'text', 'turning', true, false, 'ACTIVE', 13, null);
+INSERT INTO public.layer_schema_field (id, input_type, name, nullable, read_only, status, layer_schema_id, sort_order) VALUES (259, 'text', 'type', true, false, 'ACTIVE', 13, null);
 
 create table layer_schema_option
 (
