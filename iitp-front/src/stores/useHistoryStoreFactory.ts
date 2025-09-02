@@ -26,9 +26,7 @@ export interface State {
 
 export interface Actions {
     setOriginHistoryData: (data: FetchHistoryDataType) => void;
-    initCurrentHistoryData: () => void;
 
-    applyStep: (index: number) => UpdateLogEntry | null;
     undo: () => UpdateLogEntry | null;
     redo: () => UpdateLogEntry | null;
 
@@ -38,14 +36,15 @@ export interface Actions {
 
 const initialState: State = {
     originHistoryData: undefined,
-    currentIndex: 0
+    currentIndex: 0,
+    updateLogs: [],
 };
 
 const createHistoryStore = () =>
-    createSelectors(
-        create<State & Actions>(
+        create<State & Actions>()(
             subscribeWithSelector(
-                combine(initialState, (set, get) => ({
+                (set, get) => ({
+                    ...initialState,
                     setOriginHistoryData: (data: FetchHistoryDataType) => set({ originHistoryData: data }),
 
                     undo: () => {
@@ -109,8 +108,8 @@ const createHistoryStore = () =>
                     },
                     resetAllUpdates: () => set({ updateLogs: [] }),
 
-                }))
-            ))
+                })
+            )
     );
 
 export default createHistoryStore;

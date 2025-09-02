@@ -1,18 +1,25 @@
 import React, { useEffect, useState } from "react";
 import { usePropertyStore } from "@stores/usePropertyStore";
-import {findMenuByCode, useMenuStore} from "@stores/useMenuStore";
-import {faClose} from "@fortawesome/free-solid-svg-icons/faClose";
-import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
-import {faEdit} from "@fortawesome/free-solid-svg-icons"; // 경로에 맞게 수정
+import { findMenuByCode, MenuTree, useMenuStore } from "@stores/useMenuStore";
+import { faClose } from "@fortawesome/free-solid-svg-icons/faClose";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faEdit } from "@fortawesome/free-solid-svg-icons";
+
+function truncate(value: string, maxLength: number = 50): string {
+    if (value.length <= maxLength) return value;
+    return value.slice(0, maxLength) + '...';
+}
 
 const PropertyModal = () => {
     const selectedProps = usePropertyStore((state) => state.selectedProps);
-    const [showViewer, setShowViewer] = useState(false);
-    const [subMenu, setSubMenu] = useState(false);
+    const [showViewer, setShowViewer] = useState<boolean | null>(false);
+    const [subMenu, setSubMenu] = useState<MenuTree | null>(null);
+    const [dropdownMenu, setDropdownMenu] = useState<MenuTree | null>(null);
 
     const {
         activeSubmenu,
         menu,
+        setActiveDropdownMenu,
         setActiveSubmenu,
     } = useMenuStore();
 
@@ -26,59 +33,53 @@ const PropertyModal = () => {
     }, [selectedProps]);
 
     useEffect(() => {
-        if(menu){
+        if(menu) {
             setSubMenu(findMenuByCode(menu, 'NETWORK'))
+            setDropdownMenu(findMenuByCode(menu, 'FACILITY'))
         }
     }, [menu]);
 
     if (!selectedProps || Object.keys(selectedProps).length === 0) return null;
-
-    function truncate(value: string, maxLength: number = 50): string {
-        if (value.length <= maxLength) return value;
-        return value.slice(0, maxLength) + '...';
-    }
+    if (!showViewer || activeSubmenu) return null;
 
     return (
-        showViewer && !activeSubmenu && (
-            <div style={styles.container}>
-                <table style={styles.table}>
-                    <thead>
-                    <tr>
-                        <th colSpan={2}>
-                            <h2 style={{display:"contents"}}>{selectedProps?.featureType}</h2>
-                            <FontAwesomeIcon className="close-btn" icon={faClose} onClick={() => setShowViewer(false)}/>
-                            <FontAwesomeIcon className="edit-btn" icon={faEdit} onClick={() => {
-                                if (selectedProps?.menuCode) {
-                                    setActiveSubmenu(subMenu);
-                                }
-                            }}/>
-                        </th>
+        <div style={styles.container}>
+            <table style={styles.table}>
+                <thead>
+                <tr>
+                    <th colSpan={2}>
+                        <h2 style={{display: "contents"}}>{selectedProps?.featureType}</h2>
+                        <FontAwesomeIcon className="close-btn" icon={faClose} onClick={() => setShowViewer(false)}/>
+                        <FontAwesomeIcon className="edit-btn" icon={faEdit} onClick={() => {
+                            if (selectedProps?.menuCode) {
+                                setActiveSubmenu(subMenu);
+                                setActiveDropdownMenu(dropdownMenu);
+                            }
+                        }}/>
+                    </th>
+                </tr>
+                <tr>
+                    <th style={styles.th}>Property</th>
+                    <th style={styles.th}>Value</th>
+                </tr>
+                </thead>
+                <tbody>
+                {Object.entries(selectedProps).map(([key, value]) => (
+                    <tr key={key}>
+                        <td style={styles.td}>{key}</td>
+                        <td style={styles.td} title={String(value)}>
+                            {Array.isArray(value)
+                                ? `${value.length} (count)`
+                                : typeof value === 'object'
+                                    ? truncate(JSON.stringify(value), 60)
+                                    : truncate(String(value), 60)}
+                        </td>
+
                     </tr>
-                    <tr>
-                        <th style={styles.th}>Property</th>
-                        <th style={styles.th}>Value</th>
-                    </tr>
-                    </thead>
-                    <tbody>
-                    {Object.entries(selectedProps).map(([key, value]) => (
-                        <tr key={key}>
-                            <td style={styles.td}>{key}</td>
-                            <td style={styles.td} title={String(value)}>
-                                {Array.isArray(value)
-                                    ? `${value.length} (count)`
-                                    : typeof value === 'object'
-                                        ? truncate(JSON.stringify(value), 60)
-                                        : truncate(String(value), 60)}
-                            </td>
-
-                        </tr>
-                    ))}
-                    </tbody>
-                </table>
-
-            </div>
-        )
-
+                ))}
+                </tbody>
+            </table>
+        </div>
     );
 };
 

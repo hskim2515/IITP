@@ -1,13 +1,12 @@
 import { useEffect, useRef } from "react";
 import { useCesiumStore } from "@stores/useCesiumStore";
-import { usePropertyStore } from "@stores/usePropertyStore";
 import * as Cesium from "cesium";
 import { useEventStore } from "@stores/useEventStore";
 import { useSelectionStore } from "@stores/useSelectionStore";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import { Map as OLMap, MapBrowserEvent } from 'ol';
 import { useMenuStore } from "@stores/useMenuStore";
-import { propertyFormSchema } from "@component/form/propertyFormSchema";
+import { propertyFormSchema } from "@schema/propertyFormSchema";
 import VectorLayer from "ol/layer/Vector";
 import WebGLVectorLayer from "ol/layer/WebGLVector";
 import VectorSource from "ol/source/Vector";
@@ -16,7 +15,7 @@ import { Fill, Stroke, Style } from "ol/style";
 import CircleStyle from "ol/style/Circle";
 import { matchesCustomKeyValue } from "@utils/olLayer";
 import { Entity, Viewer } from "cesium";
-import {defaultEventHandlers} from "../../../handler/defaultEventHandler";
+import {defaultEventHandlers} from "@handler/defaultEventHandler";
 
 const useDefaultSelect = () => {
 

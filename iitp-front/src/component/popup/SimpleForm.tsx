@@ -1,6 +1,6 @@
 import React from 'react';
 import DynamicInput from "./DynamicInput";
-import {PropertyFormSchemaProps} from "../form/propertyFormSchema";
+import {PropertyFormSchemaProps} from "@schema/propertyFormSchema";
 import {MenuTree} from "@stores/useMenuStore";
 
 interface Props {

@@ -10,11 +10,7 @@ import useLayer from "@hooks/useLayer";
 import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
 import useLayerInit from "@hooks/useLayerInit";
 import useDefaultSelect from "@hooks/sync/select/useDefaultSelect";
-import {useScenarioStore} from "@stores/useScenarioStore";
 import '../../App.css'
-import {useCesiumStore} from "@stores/useCesiumStore";
-import {useOpenLayersStore} from "@stores/useOpenLayersStore";
-import useHistoryInit from "@hooks/useHistoryInit";
 import useDefaultMoveMouse from "@hooks/sync/move/useDefaultMoveMouse";
 
 const Maps = () => {
@@ -26,7 +22,14 @@ const Maps = () => {
     const activeSubmenu = useMenuStore.state.activeSubmenu()
     const activeDropdownMenu = useMenuStore.state.activeDropdownMenu()
 
-    const panelWidth = (!activeSubmenu && activeDropdownMenu) ? 250 : 0; // 패널이 열리면 250px 너비 적용
+
+
+    // left panel 과 동일한 조건 적용
+    const isSidebarVisible =
+        !!activeDropdownMenu &&
+        !(activeDropdownMenu.menuCode === "FACILITY" && !!activeSubmenu);
+
+    const panelWidth = isSidebarVisible ? 250 : 0;
     const mapWidth = `calc((100vw - ${ panelWidth }px) / 2)`; // 패널이 열리면 남은 공간을 2등분
 
     const isResizing = useRef(false);
