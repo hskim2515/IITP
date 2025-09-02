@@ -15,7 +15,6 @@ import throttle from 'lodash/throttle';
 import { useMenuStore } from "@stores/useMenuStore";
 import { propertyFormSchema } from "@component/form/propertyFormSchema";
 import { useSelectionStore } from "@stores/useSelectionStore";
-import {FEATURE_TYPE} from "@type/Signal";
 
 const useDefaultMoveMouse = () => {
 
