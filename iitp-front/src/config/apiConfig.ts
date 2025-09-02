@@ -52,6 +52,13 @@ export const apiConfig:ApiConfig = {
         create:  { url: '/pavement-marking', method: 'POST', useFormData: false },
         historyList: { url: '/pavement-marking/histories', method: 'GET', useFormData: false },
     },
+    SIGNAL: {
+        list:    { url: '/signal',       method: 'GET', useFormData: false },
+        update:  { url: '/signal', method: 'POST', useFormData: false },
+        create:  { url: '/signal', method: 'POST', useFormData: false },
+        historyList: { url: '/signal/histories', method: 'GET', useFormData: false },
+    }
+
 } as const;
 
 export type ApiMenuKey = keyof typeof apiConfig;

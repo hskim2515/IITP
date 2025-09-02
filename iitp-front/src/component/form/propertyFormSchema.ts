@@ -102,11 +102,13 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         rowFields: []
     },
     SIGNAL: {
-        type:"",
+        type:"table",
+        layer: "signal",
         fields: [
-            { name: "assignedTime", label: "Assigned Time (s)", type: "number" },
-            { name: "phase", label: "Phase", type: "text" },
-            { name: "offset", label: "Offset (s)", type: "number" },
+            { name: "nodeId", label: "NodeId", type: "text" },
+            { name: "turning", label: "Turning", type: "text" },
+            { name: "type", label: "Type", type: "text" },
+            { name: "connectionId", label: "ConnectionId", type: "text" },
         ],
         inputFields: [],
         rowFields: []

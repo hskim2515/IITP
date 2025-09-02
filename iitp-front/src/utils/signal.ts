@@ -1,7 +1,7 @@
 import * as Cesium from "cesium";
 import { Style } from "ol/style";
 import {getFeaturesByProperties} from "@utils/feature";
-import {SignalTimelineResponse} from "@stores/useSignalStore";
+import {SignalTimelineResponse} from "@stores/useSignalTimelineStore";
 import {LayerManager} from "@deck.gl/core";
 import {Feature} from "ol";
 
@@ -113,3 +113,65 @@ export const applyCesiumSignalStyle = (viewer: Cesium.Viewer, guid: string, stat
     entity.polyline.material = new Cesium.PolylineArrowMaterialProperty(cesium);
     entity.polyline.clampToGround = true;
 };
+
+export const getNetworkGuid = (layerManager: LayerManager, signalGuid: string) => {
+    if (!layerManager) return null;
+
+    const networkLayer = layerManager.current.getLayer("facility", "network")?.[0];
+    const signalLayer = layerManager.current.getLayer("facility", "signal");
+    if (!networkLayer || !signalLayer) return null;
+
+    const networkFeatures = networkLayer.getSource?.()?.getFeatures?.() || [];
+    const signalFeatures = signalLayer.getSource?.()?.getFeatures?.() || [];
+
+    const connectionFeatures = networkFeatures.filter(
+        f => f.get('featureType') === 'connection-edit'
+    );
+
+    const targetFeature = signalFeatures.find(
+        f => f.get("__guid") === signalGuid
+    );
+    if (!targetFeature) return null;
+
+    const nodeId = targetFeature.get("nodeId");
+    const connectionId = targetFeature.get("connectionId");
+
+    const feature = connectionFeatures.find(
+        f => f.get('nodeId') === nodeId && f.get('id') === connectionId
+    );
+
+    if (feature) {
+        return feature.get('__guid');
+    }
+
+    return null;
+}
+
+
+export const getSignalGuid = (layerManager: LayerManager, connectionGuid: string): string | null => {
+    if (!layerManager) return null;
+
+    const networkLayer = layerManager.current.getLayer("facility", "network")?.[0];
+    const signalLayer = layerManager.current.getLayer("facility", "signal");
+    if (!networkLayer || !signalLayer) return null;
+    const networkFeatures = networkLayer.getSource?.()?.getFeatures?.() || [];
+    const signalFeatures = signalLayer.getSource?.()?.getFeatures?.() || [];
+
+    const connectionFeatures = networkFeatures.filter(
+        f => f.get('featureType') === 'connection-edit'
+    );
+
+    const connectionFeature = connectionFeatures.find(
+        f => f.get("__guid") === connectionGuid
+    );
+    if (!connectionFeature) return null;
+
+    const nodeId = connectionFeature.get("nodeId");
+    const connectionId = connectionFeature.get("id");
+
+    const signalFeature = signalFeatures.find(
+        f => f.get("nodeId") === nodeId && f.get("connectionId") === connectionId
+    );
+
+    return signalFeature?.get("__guid") ?? null;
+}

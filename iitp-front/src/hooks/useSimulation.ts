@@ -12,7 +12,7 @@ import LayerManager from "../managers/LayerManager";
 import HeatBarLayer from "@primitives/HeatBarLayer";
 import {JulianDate} from "cesium";
 import {useScenarioStore} from "@stores/useScenarioStore";
-import {useSignalStore} from "@stores/useSignalStore";
+import {useSignalTimelineStore} from "@stores/useSignalTimelineStore";
 import {getFeaturesByProperties} from "@utils/feature";
 import {Fill, Stroke, Style} from "ol/style";
 import {Feature} from "ol";
@@ -40,8 +40,8 @@ const useSimulation = () => {
     const features = useVehicleStore((state) => state.features);
     const vehicleRoute = useVehicleStore((state) => state.vehicleRoute);
     //신호
-    const setSignalTimeline = useSignalStore((state) => state.setSignalTimeline);
-    const signalTimeline = useSignalStore((state) => state.signalTimeline);
+    const setSignalTimeline = useSignalTimelineStore((state) => state.setSignalTimeline);
+    const signalTimeline = useSignalTimelineStore((state) => state.signalTimeline);
     const connectionFeatureMapRef = useRef<Map<string, Feature>>(new Map());
 
     // Ref 선언 (OpenLayers, Cesium, 애니메이션)

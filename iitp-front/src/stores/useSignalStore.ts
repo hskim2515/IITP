@@ -1,23 +1,5 @@
-import {create} from 'zustand';
+import createFeatureStore from "@stores/useFeatureStoreFactory";
+import createHistoryStore from "@stores/useHistoryStoreFactory";
 
-export interface Timeline {
-    startTime: string;
-    endTime: string;
-    activeTurns: number[];
-    signalState: "green" | "yellow" | "red";
-}
-
-export interface SignalTimelineResponse {
-    nodeId: string;
-    signalTimeline: Timeline[];
-    turnInfo: { id: number; connList: string[] }[];
-}
-
-export interface SignalState {
-    signalTimeline: SignalTimelineResponse[];
-    setSignalTimeline: (timeline: SignalTimelineResponse[]) => void;
-}
-
-export const useSignalStore = create<SignalState>(((set) => ({
-    setSignalTimeline: (state : SignalState) => set({ signalTimeline: state }),
-})));
+export const useSignalStore = createFeatureStore();
+export const useSignalHistoryStore = createHistoryStore();

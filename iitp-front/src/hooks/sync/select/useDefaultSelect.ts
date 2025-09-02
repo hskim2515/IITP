@@ -16,6 +16,9 @@ import { Fill, Stroke, Style } from "ol/style";
 import CircleStyle from "ol/style/Circle";
 import { matchesCustomKeyValue } from "@utils/olLayer";
 import { Entity, Viewer } from "cesium";
+import {FEATURE_TYPE} from "@type/Signal";
+import {useLayerStore} from "@stores/useLayerStore";
+import {getNetworkGuid, getSignalGuid} from "@utils/signal";
 
 const useDefaultSelect = () => {
 
@@ -25,7 +28,11 @@ const useDefaultSelect = () => {
     const cesiumEventManager = useEventStore.getState().cesiumEventManager;
     const olEventManager = useEventStore.getState().olEventManager;
 
+    const layerManager = useLayerStore((state) => state.layerManager);
+    const layerManagerRef = useRef(layerManager);
+
     const activeSubmenu = useMenuStore((state) => state.activeSubmenu)
+    const activeSubmenuRef = useRef(activeSubmenu);
 
     const setSelectedProps = usePropertyStore((state) => state.setSelectedProps);
     const setSelectedGuid = useSelectionStore((state) => state.setSelectedGuid);
@@ -54,8 +61,13 @@ const useDefaultSelect = () => {
                 props[key] = propBag[key].getValue(Cesium.JulianDate.now());
             });
             setSelectedProps(props);
+            const layerName = propertyFormSchema[activeSubmenuRef.current.menuCode].layer
+            const guid =
+                layerName === FEATURE_TYPE.SIGNAL
+                    ? getSignalGuid(layerManagerRef, props.__guid)
+                    : props.__guid;
 
-            setSelectedGuid([props.__guid])
+            setSelectedGuid([guid]);
 
         } else {
             setSelectedProps(null);
@@ -70,19 +82,31 @@ const useDefaultSelect = () => {
         }
         let isFeatureExist = false
         olMap.forEachFeatureAtPixel(e.pixel, function (feature) {
-            const guid = feature.get("__guid");
-            if (guid) {
-                isFeatureExist = true;
-                setSelectedProps(feature.getProperties())
-                setSelectedGuid([feature.get("__guid")])
-                return true
-            }
+            const layerName = propertyFormSchema[activeSubmenuRef.current.menuCode].layer
+            const guid =
+                layerName === FEATURE_TYPE.SIGNAL
+                    ? getSignalGuid(layerManagerRef, feature.get("__guid"))
+                    : feature.get("__guid");
+
+            setSelectedGuid([guid]);
+            isFeatureExist = true;
+            setSelectedProps(feature.getProperties())
+
+            return true
         });
         if (!isFeatureExist) {
             setSelectedProps(null)
             setSelectedGuid([])
         }
     }
+
+    useEffect(() => {
+        activeSubmenuRef.current = activeSubmenu;
+    }, [activeSubmenu]);
+
+    useEffect(() => {
+        layerManagerRef.current = layerManager;
+        }, [layerManager]);
 
     useEffect(() => {
         if (!cesiumEventManager || !viewer) return
@@ -100,10 +124,11 @@ const useDefaultSelect = () => {
         return () => {
             olEventManager.unbind('click', handleOLSelect);
         };
-    }, [olEventManager, olMap]);
+    }, [olEventManager, olMap, activeSubmenu]);
+
     useEffect(() => {
-            if (!activeSubmenu) return;
-            const layerName = propertyFormSchema[activeSubmenu.menuCode].layer
+            if (!activeSubmenuRef.current) return;
+            const layerName = propertyFormSchema[activeSubmenuRef.current.menuCode].layer
 
             if (!layerName || !viewer || !olMap) return
 
@@ -117,15 +142,22 @@ const useDefaultSelect = () => {
                 }
             }
 
-            for (const guid of nextSet) {
-                if (!prevSet.has(guid)) {
+        for (const guid of nextSet) {
+            if (!prevSet.has(guid)) {
+                if (FEATURE_TYPE.SIGNAL === layerName) {
+                    const mappedGuid = getNetworkGuid(layerManagerRef,guid);
+                    if (mappedGuid) {
+                        const networkLayerName  ='network'
+                        highlightOlStyleByGuid(olMap, networkLayerName, mappedGuid);
+                        highlightCesiumStyleByGuid(viewer, networkLayerName, mappedGuid);
+                    }
+                } else {
                     highlightOlStyleByGuid(olMap, layerName, guid);
                     highlightCesiumStyleByGuid(viewer, layerName, guid);
                 }
             }
-
-            prevSelectedGuidsRef.current = nextSet;
-
+        }
+        prevSelectedGuidsRef.current = nextSet;
 
             return () => {
                 for (const guid of prevSelectedGuidsRef.current) {
@@ -134,10 +166,8 @@ const useDefaultSelect = () => {
                 }
                 prevSelectedGuidsRef.current.clear();
             };
-        }, [selectedGuid, activeSubmenu]
-    )
-
-    ;
+        }, [selectedGuid, activeSubmenuRef]
+    );
 
     function highlightCesiumStyleByGuid(viewer: Viewer, layerName: string, guid: string) {
         viewer?.dataSources?.getByName(layerName)[0]?.entities.values.forEach(entity => {

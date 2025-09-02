@@ -15,6 +15,7 @@ import throttle from 'lodash/throttle';
 import { useMenuStore } from "@stores/useMenuStore";
 import { propertyFormSchema } from "@component/form/propertyFormSchema";
 import { useSelectionStore } from "@stores/useSelectionStore";
+import {FEATURE_TYPE} from "@type/Signal";
 
 const useDefaultMoveMouse = () => {
 
@@ -37,11 +38,17 @@ const useDefaultMoveMouse = () => {
     const HIGHLIGHT_SCALE = 3;
     const THROTTLE_MS = 16
 
+    const layerOverrideMap: Record<string, string> = {
+        SIGNAL: 'NETWORK',
+    };
+
     const hoverLayerName = useMemo(() => {
-        if (!activeSubmenu) {
-            return undefined;
-        }
-        return propertyFormSchema[activeSubmenu.menuCode].layer;
+        if (!activeSubmenu) return undefined;
+
+        const overrideLayer = layerOverrideMap[activeSubmenu.menuCode];
+        if (overrideLayer) return propertyFormSchema[overrideLayer]?.layer;
+
+        return propertyFormSchema[activeSubmenu.menuCode]?.layer;
     }, [activeSubmenu]);
 
     useEffect(() => {
