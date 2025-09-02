@@ -6,7 +6,7 @@ import 'ag-grid-community/styles/ag-theme-alpine.css';
 import ColorCellRenderer from "../util/ColorCellRenderer";
 import FileCellRenderer from "../util/FileCellRenderer";
 import {fieldType} from "./PropertyPopup";
-import {PropertyFormSchemaProps} from "../form/propertyFormSchema";
+import {PropertyFormSchemaProps} from "@schema/propertyFormSchema";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 

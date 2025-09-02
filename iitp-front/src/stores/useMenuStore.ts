@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { combine, devtools } from "zustand/middleware";
+import { combine } from "zustand/middleware";
 import { createSelectors } from "@stores/createSelectors";
 
 // 트리 구조 데이터를 표현하는 인터페이스
@@ -24,22 +24,22 @@ interface State {
 
 interface Actions {
     setMenu: (menu: MenuTree[]) => void;
-    setActiveDropdownMenu: (menu: MenuTree) => void;
-    setActiveSubmenu: (menu: MenuTree) => void;
+    setActiveDropdownMenu: (menu: MenuTree | null) => void;
+    setActiveSubmenu: (menu: MenuTree | null) => void;
 }
 const initialState: State = {
     menu: null,
     activeDropdownMenu: null,
     activeSubmenu: null,
 }
-// useMenuStore.state.menu() useMenuStore.actions.setMenu() 과 같이 사용
+
 export const useMenuStore = createSelectors(create<State & Actions>(
-    combine(initialState,(set) => ({
-            setMenu: (state: MenuTree[]) => set({ menu: state }),
-            setActiveDropdownMenu: (state: MenuTree) => set({ activeDropdownMenu: state }),
-            setActiveSubmenu: (state: MenuTree) => set({ activeSubmenu: state }),
+    (combine(initialState,(set) => ({
+            setMenu: (state) => set({ menu: state }),
+            setActiveDropdownMenu: (state) => set({ activeDropdownMenu: state }),
+            setActiveSubmenu: (state) => set({ activeSubmenu: state }),
         })
-    )
+    ))
 ));
 
 export function findMenuByCode(menuList: MenuTree[], code: string): MenuTree | null {

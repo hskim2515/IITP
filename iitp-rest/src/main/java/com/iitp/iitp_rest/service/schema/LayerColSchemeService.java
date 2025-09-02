@@ -1,6 +1,6 @@
-package com.iitp.iitp_rest.service.scheme;
+package com.iitp.iitp_rest.service.schema;
 
-import com.iitp.iitp_rest.model.scheme.LayerColScheme;
+import com.iitp.iitp_rest.model.schema.LayerColScheme;
 import com.iitp.iitp_rest.repository.LayerColSchemeRepository;
 import org.springframework.stereotype.Service;
 import java.util.List;

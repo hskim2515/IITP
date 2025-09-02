@@ -1,15 +1,9 @@
-package com.iitp.iitp_rest.model.scheme;
+package com.iitp.iitp_rest.model.schema;
 
-import com.vladmihalcea.hibernate.type.array.ListArrayType;
 import com.vladmihalcea.hibernate.type.array.StringArrayType;
-import com.vladmihalcea.hibernate.type.json.JsonType;
 import jakarta.persistence.*;
 import lombok.Data;
 import org.hibernate.annotations.Type;
-
-
-
-import java.util.List;
 
 @Entity
 @Data

@@ -2,9 +2,9 @@ import React, {FC, useEffect, useRef, useState} from 'react';
 import "/static/css/styles.css";
 import ListTable, {ListTableRef} from "./ListTable"
 import FormPopup from "./FormPopup";
-import {apiConfig, ApiMenuKey} from "../../config/apiConfig";
+import {apiConfig, ApiMenuKey} from "@config/apiConfig";
 import axiosInstance from "../../api/axiosInstance";
-import {PropertyFormSchemaProps} from "../form/propertyFormSchema";
+import {PropertyFormSchemaProps} from "@schema/propertyFormSchema";
 import {MenuTree} from "@stores/useMenuStore";
 
 export interface fieldType {

@@ -117,8 +117,8 @@ export const applyCesiumSignalStyle = (viewer: Cesium.Viewer, guid: string, stat
 export const getNetworkGuid = (layerManager: LayerManager, signalGuid: string) => {
     if (!layerManager) return null;
 
-    const networkLayer = layerManager.current.getLayer("facility", "network")?.[0];
-    const signalLayer = layerManager.current.getLayer("facility", "signal");
+    const networkLayer = layerManager.getLayer("facility", "network")?.[0];
+    const signalLayer = layerManager.getLayer("facility", "signal");
     if (!networkLayer || !signalLayer) return null;
 
     const networkFeatures = networkLayer.getSource?.()?.getFeatures?.() || [];
@@ -151,8 +151,8 @@ export const getNetworkGuid = (layerManager: LayerManager, signalGuid: string) =
 export const getSignalGuid = (layerManager: LayerManager, connectionGuid: string): string | null => {
     if (!layerManager) return null;
 
-    const networkLayer = layerManager.current.getLayer("facility", "network")?.[0];
-    const signalLayer = layerManager.current.getLayer("facility", "signal");
+    const networkLayer = layerManager.getLayer("facility", "network")?.[0];
+    const signalLayer = layerManager.getLayer("facility", "signal");
     if (!networkLayer || !signalLayer) return null;
     const networkFeatures = networkLayer.getSource?.()?.getFeatures?.() || [];
     const signalFeatures = signalLayer.getSource?.()?.getFeatures?.() || [];

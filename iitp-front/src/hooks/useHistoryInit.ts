@@ -1,7 +1,7 @@
 import { useEffect } from "react";
-import { propertyFormSchema, PropertyFormSchemaProps } from "../component/form/propertyFormSchema";
-import { apiConfig, ApiMenuKey } from "../config/apiConfig";
-import axiosInstance from "../api/axiosInstance";
+import { propertyFormSchema, PropertyFormSchemaProps } from "@schema/propertyFormSchema";
+import { apiConfig, ApiMenuKey } from "@config/apiConfig";
+import axiosInstance from "@api/axiosInstance";
 import {usePavementMarkingHistoryStore} from "@stores/usePavementMarkingStore";
 import {HistoryStoreFactoryType} from "@stores/useHistoryStoreFactory";
 import {useScenarioStore} from "@stores/useScenarioStore";

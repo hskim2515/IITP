@@ -3,20 +3,18 @@ import { useMenuStore, MenuTree } from "@stores/useMenuStore";
 import { useShallow } from "zustand/react/shallow";
 import SimulationControls from "./SimulationControls";
 
-const Header: React.FC = () => {
-    const { menu, setMenu, activeDropdownMenu, setActiveDropdownMenu, activeSubmenu } = useMenuStore(useShallow((state) => ({
+const Header = () => {
+    const {menu, setMenu, setActiveDropdownMenu} = useMenuStore(useShallow((state) => ({
         menu: state.menu,
         setMenu: state.setMenu,
-        activeDropdownMenu: state.activeDropdownMenu,
         setActiveDropdownMenu: state.setActiveDropdownMenu,
-        activeSubmenu : state.activeSubmenu
     })));
-    const baseUrl =process.env.VITE_API_URL;
+    const baseUrl = process.env.VITE_API_URL;
     const menuTreeUrl = `${baseUrl}/menu/tree`;
 
     // 컴포넌트 마운트 시 백엔드에서 메뉴 트리 데이터를 fetch하여 zustand 스토어에 저장
     useEffect(() => {
-        fetch(menuTreeUrl, { method: "GET" })
+        fetch(menuTreeUrl, {method: "GET"})
             .then(response => response.json())
             .then(data => setMenu(data))
             .catch(error => console.error("메뉴 데이터 가져오기 실패:", error));
@@ -38,7 +36,7 @@ const Header: React.FC = () => {
                     />
                 ))}
             </nav>
-            <SimulationControls />
+            <SimulationControls/>
         </header>
     );
 };
@@ -50,40 +48,39 @@ interface DropdownMenuProps {
     setActiveDropdownMenu: (menu: MenuTree) => void;
 }
 
-const DropdownMenu: React.FC<DropdownMenuProps> = ({ title, items, setActiveDropdownMenu }) => {
+const DropdownMenu = ({title, items, setActiveDropdownMenu}: DropdownMenuProps) => {
     const [isOpen, setIsOpen] = useState(false);
-    const {activeSubmenu } = useMenuStore(useShallow((state) => ({
-        activeSubmenu : state.activeSubmenu
+    const {activeSubmenu} = useMenuStore(useShallow((state) => ({
+        activeSubmenu: state.activeSubmenu
     })));
-    if(!activeSubmenu){
-        return (
+    useEffect(() => {
+        if(!activeSubmenu) return;
+    }, [activeSubmenu]);
 
-            <div
-                style={styles.menuContainer}
-                onMouseEnter={() => setIsOpen(true)}
-                onMouseLeave={() => setIsOpen(false)}
-            >
-                <span style={styles.menuTitle}>{title}</span>
-                {isOpen && (
-                    <div style={styles.dropdown}>
-                        {items.map((item, index) => (
-                            <div
-                                key={item.menuId} // key로 menuId를 사용하는 것이 고유 식별에 좋습니다.
-                                style={styles.menuItem}
-                                onClick={() => {
-                                    setActiveDropdownMenu(item);
-                                    console.log("activeDropdownMenu set:", item);
-                                }}
-                            >
-                                {item.nameKor}
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-        );
-    }
-
+    return (
+        <div
+            style={styles.menuContainer}
+            onMouseEnter={() => setIsOpen(true)}
+            onMouseLeave={() => setIsOpen(false)}
+        >
+            <span style={styles.menuTitle}>{title}</span>
+            {isOpen && (
+                <div style={styles.dropdown}>
+                    {items.map((item, index) => (
+                        <div
+                            key={item.menuId} // key로 menuId를 사용하는 것이 고유 식별에 좋습니다.
+                            style={styles.menuItem}
+                            onClick={() => {
+                                setActiveDropdownMenu(item);
+                            }}
+                        >
+                            {item.nameKor}
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
 };
 
 const styles = {
