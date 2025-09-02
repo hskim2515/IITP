@@ -24,7 +24,6 @@ interface HistoryStep {
 }
 
 const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
-    const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
     const [historySteps, setHistorySteps] = useState<HistoryStep[]>([]);
 
     const historyStore = menuCodeToHistoryStoreMap[menuCode];
@@ -33,10 +32,9 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
     const originData = featureStore.getState().originData;
     const firstKey = Object.keys(originData)[0] as keyof typeof originData;
     const originItem = originData[firstKey];
-    const currentJsonData = featureStore.getState().currentJsonData;
     const originHistoryData = historyStore.getState().originHistoryData;
-
-    const [currentData, setCurrentData] = useState<Record<string,any>>(originItem);
+    const selectedIndex = historyStore.getState().currentIndex;
+    const setCurrentIndex = historyStore.getState().setCurrentIndex;
 
     useEffect(() => {
         if (!originHistoryData) return;
@@ -57,7 +55,7 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
     useEffect(() => {
         if (selectedIndex === null && historySteps.length > 0) {
             const currentIdx = historySteps.findIndex(step => step.isCurrent);
-            setSelectedIndex(currentIdx >= 0 ? currentIdx : 0);
+            setCurrentIndex(currentIdx >= 0 ? currentIdx : 0);
         }
     }, [historySteps, selectedIndex]);
 
@@ -65,7 +63,7 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
         const step = historySteps[idx];
         const confirmed = window.confirm(`${step.message} 시점으로 되돌리시겠습니까?`);
         if (confirmed) {
-            setSelectedIndex(idx);
+            setCurrentIndex(idx);
 
             const logsToApply = historySteps.slice(0, idx + 1);
 

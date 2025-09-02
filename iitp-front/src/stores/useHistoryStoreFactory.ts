@@ -34,6 +34,8 @@ export interface Actions {
 
     addFieldUpdate: (updateJson: JSON) => void;
     resetAllUpdates: () => void;
+
+    setCurrentIndex: (index:number) => void;
 }
 
 const initialState: State = {
@@ -108,6 +110,8 @@ const createHistoryStore = () =>
                         });
                     },
                     resetAllUpdates: () => set({ updateLogs: [] }),
+
+                    setCurrentIndex: (index:number) => set({ currentIndex: index})
 
                 }))
             ))
