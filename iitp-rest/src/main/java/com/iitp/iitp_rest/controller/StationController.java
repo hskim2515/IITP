@@ -17,6 +17,7 @@ import org.w3c.dom.NodeList;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.stream.XMLStreamException;
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,11 +33,10 @@ public class StationController {
     private final RailStationService railStationService;
 
     @GetMapping("/bus/{versionId}")
-    public ResponseEntity<PublicTransitData> getBusStation(@PathVariable String versionId) throws XMLStreamException {
+    public ResponseEntity<PublicTransitData> getBusStation(@PathVariable String versionId) throws XMLStreamException, IOException {
         logger.info("[getBusStation] versionId: {}", versionId);
 
-        String path = versionId + "/publicTransit.xml";
-        PublicTransitData result = busStationService.getBusStation(path);
+        PublicTransitData result = busStationService.getBusStation(versionId);
         return ResponseEntity.ok(result);
     }
 
@@ -65,81 +65,11 @@ public class StationController {
 
 
     @GetMapping("/rail/{versionId}")
-    public ResponseEntity<RailPublicTransitData> getRailStation(@PathVariable String versionId) {
-        RailPublicTransitData result = new RailPublicTransitData();
-        List<RailStationData> stations = new ArrayList<>();
+    public ResponseEntity<RailPublicTransitData> getRailStation(@PathVariable String versionId) throws XMLStreamException {
+        logger.info("[getRailStation] versionId: {}", versionId);
 
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream(versionId + "/railPublicTransit.xml")) {
-            if (is == null) {
-                return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
-            }
-
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            DocumentBuilder builder = factory.newDocumentBuilder();
-            Document doc = builder.parse(is);
-
-            NodeList stationNodes = doc.getElementsByTagName("railStation");
-
-            for (int i = 0; i < stationNodes.getLength(); i++) {
-                Element stationElement = (Element) stationNodes.item(i);
-
-                if (!"subway".equalsIgnoreCase(stationElement.getAttribute("transitMode"))) {
-                    continue;
-                }
-
-                // 좌표 처리
-                RailStationData.Coordinates coord = new RailStationData.Coordinates();
-                try {
-                    coord.setLat(Double.parseDouble(stationElement.getAttribute("lat")));
-                    coord.setLng(Double.parseDouble(stationElement.getAttribute("lng")));
-                } catch (NumberFormatException e) {
-                    coord.setLat(null);
-                    coord.setLng(null);
-                }
-
-                RailStationData station = RailStationData.builder()
-                        .id(stationElement.getAttribute("id"))
-                        .transitMode(stationElement.getAttribute("transitMode"))
-                        .address(stationElement.getAttribute("address"))
-                        .coordinates(List.of(coord))
-                        .exits(new ArrayList<>())
-                        .build();
-
-                // 자식 exit 파싱
-                NodeList exitNodes = stationElement.getElementsByTagName("exit");
-                for (int j = 0; j < exitNodes.getLength(); j++) {
-                    Element exitElement = (Element) exitNodes.item(j);
-
-                    ExitData.Coordinates exitCoord = new ExitData.Coordinates();
-                    try {
-                        exitCoord.setLat(Double.parseDouble(exitElement.getAttribute("lat")));
-                        exitCoord.setLng(Double.parseDouble(exitElement.getAttribute("lng")));
-                    } catch (NumberFormatException e) {
-                        exitCoord.setLat(null);
-                        exitCoord.setLng(null);
-                    }
-
-                    ExitData exit = ExitData.builder()
-                            .id(exitElement.getAttribute("id"))
-                            .linkRef(parseIntSafe(exitElement.getAttribute("linkRef")))
-                            .offset(parseDoubleSafe(exitElement.getAttribute("offset")))
-                            .accessTime(parseDoubleSafe(exitElement.getAttribute("accessTime")))
-                            .coordinates(List.of(exitCoord))
-                            .build();
-
-                    station.getExits().add(exit);
-                }
-
-                stations.add(station);
-            }
-
-            result.setRailStations(stations);
-            return ResponseEntity.ok(result);
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
+        RailPublicTransitData result = railStationService.getRailStation(versionId);
+        return ResponseEntity.ok(result);
     }
 
     // 안전한 Integer 파싱 (널/빈 문자열 대응)

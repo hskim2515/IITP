@@ -3,85 +3,103 @@ package com.iitp.iitp_rest.service.publicTransit.station;
 import com.iitp.iitp_rest.model.publicTransit.station.BusStationData;
 import com.iitp.iitp_rest.model.publicTransit.station.PublicTransitData;
 import com.iitp.iitp_rest.service.xml.XmlParser;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import javax.xml.stream.XMLEventReader;
+import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamException;
-import javax.xml.stream.events.Attribute;
 import javax.xml.stream.events.StartElement;
 import javax.xml.stream.events.XMLEvent;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
+import java.io.InputStream;
+import java.util.*;
+
+import static com.iitp.iitp_rest.util.XmlUtils.*;
 
 @Component
+@RequiredArgsConstructor
 public class BusStationXmlParser implements XmlParser<PublicTransitData> {
-    @Override
-    public boolean supports(String rootTagName) {
-        return "stations".equals(rootTagName);
-    }
+
+    private final XMLInputFactory xmlInputFactory;
+
+    private static final String TAG_PUBLIC_TRANSIT = "PublicTransit";
+    private static final String TAG_STATIONS = "Stations";
+    private static final String TAG_STATION = "station";
+    private static final String TAG_LINE = "line";
 
     @Override
-    public PublicTransitData parse(XMLEventReader eventReader) throws XMLStreamException {
-        List<BusStationData> stationList = new ArrayList<>();
+    public PublicTransitData parse(InputStream is) throws XMLStreamException {
+        XMLEventReader eventReader = xmlInputFactory.createXMLEventReader(is);
+        PublicTransitData publicTransit = new PublicTransitData();
+        publicTransit.setBusStations(new ArrayList<>());
 
         while (eventReader.hasNext()) {
             XMLEvent event = eventReader.nextEvent();
 
             if (event.isStartElement()) {
                 StartElement startElement = event.asStartElement();
-                String tagName = startElement.getName().getLocalPart();
-
-                if ("station".equals(tagName)) {
-                    BusStationData.BusStationDataBuilder stationBuilder = BusStationData.builder();
-
-                    Iterator<Attribute> attributes = startElement.getAttributes();
-                    while (attributes.hasNext()) {
-                        Attribute attribute = attributes.next();
-                        String attrName = attribute.getName().getLocalPart();
-                        String attrValue = attribute.getValue();
-
-                        switch (attrName) {
-                            case "id":
-                                stationBuilder.id(attrValue);
-                                break;
-                            case "transitMode":
-                                stationBuilder.transitMode(attrValue);
-                                break;
-                            case "linkRef":
-                                stationBuilder.linkRef(Integer.parseInt(attrValue));
-                                break;
-                            case "laneRef":
-                                stationBuilder.laneRef(Integer.parseInt(attrValue));
-                                break;
-                            case "offset":
-                                stationBuilder.offset(Double.parseDouble(attrValue));
-                                break;
-                            case "type":
-                                stationBuilder.type(attrValue);
-                                break;
-                            case "parkingLots":
-                                stationBuilder.parkingLots(Integer.parseInt(attrValue));
-                                break;
-                            case "address":
-                                stationBuilder.address(attrValue);
-                                break;
-                            case "center":
-                                stationBuilder.center(attrValue);
-                                break;
-                        }
-                    }
-                    stationList.add(stationBuilder.build());
+                if (startElement.getName().getLocalPart().equals(TAG_STATIONS)) {
+                    parseStations(eventReader, publicTransit);
                 }
             }
-
-            if (event.isEndElement() && "stations".equals(event.asEndElement().getName().getLocalPart())) {
+            if (event.isEndElement() && event.asEndElement().getName().getLocalPart().equals(TAG_PUBLIC_TRANSIT)) {
                 break;
             }
         }
+        return publicTransit;
+    }
 
-        PublicTransitData publicTransitData = new PublicTransitData();
-        publicTransitData.setBusStations(stationList);
-        return publicTransitData;
+    private void parseStations(XMLEventReader reader, PublicTransitData publicTransit) throws XMLStreamException {
+        while (reader.hasNext()) {
+            XMLEvent event = reader.nextEvent();
+            if (event.isStartElement()) {
+                StartElement startElement = event.asStartElement();
+                if (startElement.getName().getLocalPart().equals(TAG_STATION)) {
+                    publicTransit.getBusStations().add(parseBusStation(reader, startElement));
+                }
+            }
+            if (event.isEndElement() && event.asEndElement().getName().getLocalPart().equals(TAG_STATIONS)) {
+                return;
+            }
+        }
+    }
+
+    private BusStationData parseBusStation(XMLEventReader reader, StartElement busStationStartElement) throws XMLStreamException {
+        BusStationData busStation = new BusStationData();
+
+        parseBusStationAttributes(busStation, busStationStartElement);
+
+        while (reader.hasNext()) {
+            XMLEvent event = reader.nextEvent();
+
+            if (event.isStartElement()) {
+                StartElement startElement = event.asStartElement();
+                if (startElement.getName().getLocalPart().equals(TAG_LINE)) {
+                    String lineList = getStringAttribute(startElement, "list");
+                    if (lineList != null && !lineList.isEmpty()) {
+                        busStation.setLines(Arrays.asList(lineList.split(" ")));
+                    } else {
+                        busStation.setLines(Collections.emptyList());
+                    }
+                }
+            }
+
+            if (event.isEndElement() && event.asEndElement().getName().getLocalPart().equals(TAG_STATION)) {
+                return busStation;
+            }
+        }
+        throw new XMLStreamException("Malformed XML: <station> tag not closed.");
+    }
+
+    private void parseBusStationAttributes(BusStationData busStation, StartElement element) {
+        busStation.setId(getStringAttribute(element, "id"));
+        busStation.setTransitMode(getStringAttribute(element, "transitMode"));
+        busStation.setLinkRef(getIntAttribute(element, "link_ref"));
+        busStation.setLaneRef(getIntAttribute(element, "lane_ref"));
+        busStation.setPos(getDoubleAttribute(element, "pos"));
+        busStation.setType(getStringAttribute(element, "type"));
+        busStation.setParkingLots(getIntAttribute(element, "parkingLots"));
+        busStation.setAddress(getStringAttribute(element, "address"));
+        busStation.setCenter(getStringAttribute(element, "center"));
     }
 }

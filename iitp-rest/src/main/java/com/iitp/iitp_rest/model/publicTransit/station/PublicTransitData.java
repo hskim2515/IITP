@@ -6,5 +6,5 @@ import java.util.List;
 
 @Data
 public class PublicTransitData {
-    public List<BusStationData> busStations;
+    private List<BusStationData> busStations;
 }

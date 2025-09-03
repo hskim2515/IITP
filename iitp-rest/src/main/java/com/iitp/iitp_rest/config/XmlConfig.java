@@ -9,7 +9,6 @@ import javax.xml.stream.XMLInputFactory;
 public class XmlConfig {
     @Bean
     public XMLInputFactory xmlInputFactory() {
-        XMLInputFactory factory = XMLInputFactory.newInstance();
-        return factory;
+        return XMLInputFactory.newInstance();
     }
 }
