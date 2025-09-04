@@ -10,7 +10,6 @@ import jakarta.xml.bind.Unmarshaller;
 import org.springframework.stereotype.Component;
 
 import javax.xml.stream.XMLInputFactory;
-import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
 
@@ -48,7 +47,7 @@ public class NetworkJaxbParser implements XmlParser<NetworkXmlResponse> {
                         locationTracker.getLastElementName(),
                         locationTracker.getLastAttributeName());
             }
-            throw new RuntimeException("네트워크 XML 파싱 실패. [오류 추정 위치: " + errorLocation + "]", e);
+            throw new RuntimeException(String.format("네트워크 XML 파싱 실패. [오류 추정 위치: %s]", errorLocation), e);
         }
     }
 }

@@ -1,26 +1,21 @@
 package com.iitp.iitp_rest.util;
 
+import lombok.Getter;
+
 import javax.xml.namespace.QName;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import javax.xml.stream.util.StreamReaderDelegate;
 
+@Getter
 public class LocationTrackingXmlStreamReader extends StreamReaderDelegate {
 
+    // 외부에서 마지막 위치를 가져갈 수 있는 getter
     private String lastElementName;
     private String lastAttributeName;
 
     public LocationTrackingXmlStreamReader(XMLStreamReader reader) {
         super(reader);
-    }
-
-    // 외부에서 마지막 위치를 가져갈 수 있는 getter
-    public String getLastElementName() {
-        return lastElementName;
-    }
-
-    public String getLastAttributeName() {
-        return lastAttributeName;
     }
 
     // 현재 요소의 이름을 가져오는 헬퍼 메서드

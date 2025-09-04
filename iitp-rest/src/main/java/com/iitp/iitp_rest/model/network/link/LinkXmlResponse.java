@@ -2,6 +2,7 @@ package com.iitp.iitp_rest.model.network.link;
 
 import com.iitp.iitp_rest.model.geometry.Coordinates;
 import com.iitp.iitp_rest.model.network.lane.LaneXmlResponse;
+import com.iitp.iitp_rest.model.network.section.SectionXmlResponse;
 import jakarta.xml.bind.annotation.*;
 import jakarta.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 import lombok.Data;
@@ -50,6 +51,9 @@ public class LinkXmlResponse {
     private String shape;
     @XmlElement(name = "lane")
     private List<LaneXmlResponse> lanes = new ArrayList<>();
+
+    @XmlElement(name = "section")
+    private List<SectionXmlResponse> sections = new ArrayList<>();
 
     @XmlTransient
     private List<Coordinates> coordinates;

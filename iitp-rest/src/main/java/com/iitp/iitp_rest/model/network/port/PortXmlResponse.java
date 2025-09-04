@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.model.network.port;
 
+import com.iitp.iitp_rest.service.xml.EmptyStringToNullLongAdapter;
 import jakarta.xml.bind.annotation.XmlAccessType;
 import jakarta.xml.bind.annotation.XmlAccessorType;
 import jakarta.xml.bind.annotation.XmlAttribute;
@@ -15,5 +16,6 @@ public class PortXmlResponse {
     @XmlAttribute(name = "link_id")
     private String linkId;
     @XmlAttribute
+    @XmlJavaTypeAdapter(EmptyStringToNullLongAdapter.class)
     private Long direction;
 }
