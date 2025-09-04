@@ -1108,6 +1108,11 @@
   resolved "https://registry.npmjs.org/@types/d3-timer/-/d3-timer-3.0.2.tgz"
   integrity sha512-Ps3T8E8dZDam6fUyNiMkekK3XUsaUEik+idO9/YjPtfj2qruF8tFBXS7XhtE4iIXBLxhmLjP3SXpLhVf21I9Lw==
 
+"@types/deep-diff@^1.0.5":
+  version "1.0.5"
+  resolved "https://registry.npmjs.org/@types/deep-diff/-/deep-diff-1.0.5.tgz"
+  integrity sha512-PQyNSy1YMZU1hgZA5tTYfHPpUAo9Dorn1PZho2/budQLfqLu3JIP37JAavnwYpR1S2yFZTXa3hxaE4ifGW5jaA==
+
 "@types/deep-equal@^1.0.4":
   version "1.0.4"
   resolved "https://registry.npmjs.org/@types/deep-equal/-/deep-equal-1.0.4.tgz"
