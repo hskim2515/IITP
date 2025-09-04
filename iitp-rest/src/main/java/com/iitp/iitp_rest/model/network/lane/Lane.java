@@ -1,7 +1,10 @@
-package com.iitp.iitp_rest.model.network.link;
+package com.iitp.iitp_rest.model.network.lane;
 
 import com.fasterxml.jackson.annotation.JsonBackReference;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
+import com.iitp.iitp_rest.model.network.cell.Cell;
+import com.iitp.iitp_rest.model.network.link.Link;
+import com.iitp.iitp_rest.model.network.segment.Segment;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -12,6 +15,9 @@ import java.util.List;
 @Builder
 @AllArgsConstructor
 @NoArgsConstructor
+@Table(indexes = {
+        @Index(name = "lane_link_id_idx", columnList = "link_id")
+})
 @Entity
 public class Lane {
     @Id

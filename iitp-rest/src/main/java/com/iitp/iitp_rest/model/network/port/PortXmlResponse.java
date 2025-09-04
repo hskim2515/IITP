@@ -1,4 +1,4 @@
-package com.iitp.iitp_rest.model.network.node;
+package com.iitp.iitp_rest.model.network.port;
 
 import jakarta.xml.bind.annotation.XmlAccessType;
 import jakarta.xml.bind.annotation.XmlAccessorType;
@@ -8,7 +8,7 @@ import lombok.Data;
 
 @Data
 @XmlAccessorType(XmlAccessType.NONE)
-public class PortResponse {
+public class PortXmlResponse {
     @XmlAttribute
     @XmlJavaTypeAdapter(PortTypeAdapter.class)
     private PortType type;

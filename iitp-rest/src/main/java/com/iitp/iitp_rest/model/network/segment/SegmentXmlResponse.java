@@ -1,4 +1,4 @@
-package com.iitp.iitp_rest.model.network.link;
+package com.iitp.iitp_rest.model.network.segment;
 
 import jakarta.xml.bind.annotation.XmlAccessType;
 import jakarta.xml.bind.annotation.XmlAccessorType;
@@ -7,12 +7,14 @@ import lombok.Data;
 
 @Data
 @XmlAccessorType(XmlAccessType.NONE)
-public class CellResponse {
+public class SegmentXmlResponse {
     @XmlAttribute
     private Long id;
     @XmlAttribute
-    private double length;
+    private Boolean block;
     @XmlAttribute
-    private double offset;
+    private double initPoint;
+    @XmlAttribute
+    private double endPoint;
 }
 

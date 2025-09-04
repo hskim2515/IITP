@@ -1,7 +1,11 @@
-package com.iitp.iitp_rest.model.network.link;
+package com.iitp.iitp_rest.model.network.lane;
 
-import com.iitp.iitp_rest.model.geometry.Coordinates;
-import jakarta.xml.bind.annotation.*;
+import com.iitp.iitp_rest.model.network.cell.CellXmlResponse;
+import com.iitp.iitp_rest.model.network.segment.SegmentXmlResponse;
+import jakarta.xml.bind.annotation.XmlAccessType;
+import jakarta.xml.bind.annotation.XmlAccessorType;
+import jakarta.xml.bind.annotation.XmlAttribute;
+import jakarta.xml.bind.annotation.XmlElement;
 import lombok.Data;
 
 import java.util.ArrayList;
@@ -9,7 +13,7 @@ import java.util.List;
 
 @Data
 @XmlAccessorType(XmlAccessType.NONE)
-public class LaneResponse {
+public class LaneXmlResponse {
     @XmlAttribute
     private Long id;
     @XmlAttribute(name = "left_lane_id")
@@ -26,11 +30,9 @@ public class LaneResponse {
     private boolean leftLC;
     @XmlAttribute
     private String shape;
-    @XmlTransient
-    private List<Coordinates> coordinates;
     @XmlElement(name = "segment")
-    private List<SegmentResponse> segments = new ArrayList<>();
+    private List<SegmentXmlResponse> segments = new ArrayList<>();
     @XmlElement(name = "cell")
-    private List<CellResponse> cells = new ArrayList<>();
+    private List<CellXmlResponse> cells = new ArrayList<>();
 }
 

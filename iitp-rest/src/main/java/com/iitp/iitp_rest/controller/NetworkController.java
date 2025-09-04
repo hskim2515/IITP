@@ -1,6 +1,7 @@
 package com.iitp.iitp_rest.controller;
 
-import com.iitp.iitp_rest.model.network.NetworkResponse;
+import com.iitp.iitp_rest.model.network.NetworkTreeResponse;
+import com.iitp.iitp_rest.model.network.NetworkXmlResponse;
 import com.iitp.iitp_rest.model.network.RoadResponse;
 import com.iitp.iitp_rest.service.network.NetworkService;
 import com.iitp.iitp_rest.service.network.RoadService;
@@ -22,9 +23,9 @@ public class NetworkController {
     private final RoadService roadService;
 
     @GetMapping("/{key}")
-    public ResponseEntity<NetworkResponse> getNetwork(@PathVariable String key) throws Exception {
+    public ResponseEntity<NetworkXmlResponse> getNetwork(@PathVariable String key) throws Exception {
         return ResponseEntity.ok(networkService.getOrLoad(key));
-
+//        return ResponseEntity.ok(networkService.getNetworkTree(key));
     }
 
     @GetMapping("/road/{key}")

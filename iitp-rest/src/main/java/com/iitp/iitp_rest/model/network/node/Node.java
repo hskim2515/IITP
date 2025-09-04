@@ -3,6 +3,8 @@ package com.iitp.iitp_rest.model.network.node;
 import com.fasterxml.jackson.annotation.JsonBackReference;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import com.iitp.iitp_rest.model.network.Network;
+import com.iitp.iitp_rest.model.network.connection.Connection;
+import com.iitp.iitp_rest.model.network.port.Port;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -32,7 +34,6 @@ public class Node {
     private Network network;
     @Column(length = 16, nullable = false)
     private NodeType type;
-    @Enumerated(EnumType.STRING)
     @Column(length = 4, nullable = true)
     private V2x v2x = V2x.off;
     @Column(nullable = false)

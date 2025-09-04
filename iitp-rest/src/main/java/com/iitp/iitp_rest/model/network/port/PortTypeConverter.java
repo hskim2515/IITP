@@ -1,4 +1,4 @@
-package com.iitp.iitp_rest.model.network.node;
+package com.iitp.iitp_rest.model.network.port;
 
 import com.iitp.iitp_rest.model.converter.AbstractEnumConverter;
 import jakarta.persistence.Converter;

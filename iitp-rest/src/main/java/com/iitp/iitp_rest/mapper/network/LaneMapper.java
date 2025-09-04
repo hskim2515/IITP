@@ -1,7 +1,8 @@
 package com.iitp.iitp_rest.mapper.network;
 
-import com.iitp.iitp_rest.model.network.link.LaneResponse;
-import com.iitp.iitp_rest.model.network.link.Lane;
+import com.iitp.iitp_rest.model.network.lane.LaneResponse;
+import com.iitp.iitp_rest.model.network.lane.LaneXmlResponse;
+import com.iitp.iitp_rest.model.network.lane.Lane;
 import com.iitp.iitp_rest.model.network.link.Link;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -17,7 +18,7 @@ public class LaneMapper {
     private final SegmentMapper segmentMapper;
     private final CellMapper cellMapper;
 
-    public Lane toEntity(LaneResponse dto, Link link) {
+    public Lane xmlToEntity(LaneXmlResponse dto, Link link) {
         return Lane.builder()
                 .id(dto.getId())
                 .link(link)
@@ -32,18 +33,32 @@ public class LaneMapper {
     }
 
     /** 리스트 변환 */
-    public List<Lane> toEntities(List<LaneResponse> list, Link link) {
+    public List<Lane> xmlToEntities(List<LaneXmlResponse> list, Link link) {
         if (list == null || list.isEmpty()) return List.of();
         List<Lane> out = new ArrayList<>(list.size());
-        for (LaneResponse dto : list) {
-            out.add(toEntity(dto, link));
+        for (LaneXmlResponse dto : list) {
+            out.add(xmlToEntity(dto, link));
         }
         return out;
     }
 
-    public LaneResponse toDto(Lane entity) {
+    public LaneResponse entityToResponse(Lane entity) {
         if (entity == null) return null;
         LaneResponse dto = new LaneResponse();
+        dto.setId(entity.getId());
+        dto.setLeftLaneId(entity.getLeftLaneId());
+        dto.setRightLaneId(entity.getRightLaneId());
+        dto.setNumCell(entity.getNumCell());
+        dto.setLaneAccessType(entity.getLaneAccessType());
+        dto.setRightLC(entity.getRightLC());
+        dto.setLeftLC(entity.getLeftLC());
+        dto.setShape(entity.getShape());
+        return dto;
+    }
+
+    public LaneXmlResponse toDto(Lane entity) {
+        if (entity == null) return null;
+        LaneXmlResponse dto = new LaneXmlResponse();
         dto.setId(entity.getId());
         dto.setLeftLaneId(entity.getLeftLaneId());
         dto.setRightLaneId(entity.getRightLaneId());
@@ -58,7 +73,7 @@ public class LaneMapper {
         return dto;
     }
 
-    public List<LaneResponse> toDtos(List<Lane> entities) {
+    public List<LaneXmlResponse> toDtos(List<Lane> entities) {
         if (entities == null) return new ArrayList<>();
         return entities.stream().map(e -> toDto(e)).collect(Collectors.toList());
     }

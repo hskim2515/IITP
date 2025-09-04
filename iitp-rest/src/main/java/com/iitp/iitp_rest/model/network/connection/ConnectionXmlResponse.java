@@ -1,32 +1,24 @@
-package com.iitp.iitp_rest.model.network.node;
+package com.iitp.iitp_rest.model.network.connection;
 
-import com.iitp.iitp_rest.model.geometry.Coordinates;
 import jakarta.xml.bind.annotation.XmlAccessType;
 import jakarta.xml.bind.annotation.XmlAccessorType;
 import jakarta.xml.bind.annotation.XmlAttribute;
-import jakarta.xml.bind.annotation.XmlTransient;
 import jakarta.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 import lombok.Data;
 
-import java.util.List;
-
 @Data
 @XmlAccessorType(XmlAccessType.NONE)
-public class ConnectionResponse {
+public class ConnectionXmlResponse {
     @XmlAttribute
     private Long id;
     @XmlAttribute(name = "from_link")
     private Long fromLink;
     @XmlAttribute(name = "from_lane")
     private Long fromLane;
-    @XmlTransient
-    private Coordinates fromLaneCoordinates;
     @XmlAttribute(name = "to_link")
     private Long toLink;
     @XmlAttribute(name = "to_lane")
     private Long toLane;
-    @XmlTransient
-    private Coordinates toLaneCoordinates;
     @XmlAttribute
     @XmlJavaTypeAdapter(TurningAdapter.class)
     private Turning turning;
@@ -38,6 +30,4 @@ public class ConnectionResponse {
     private double ffSpd;
     @XmlAttribute
     private String shape;
-    @XmlTransient
-    private List<Coordinates> coordinates;
 }

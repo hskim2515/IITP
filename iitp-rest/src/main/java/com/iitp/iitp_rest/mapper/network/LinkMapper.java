@@ -4,6 +4,7 @@ package com.iitp.iitp_rest.mapper.network;
 import com.iitp.iitp_rest.model.network.Network;
 import com.iitp.iitp_rest.model.network.link.Link;
 import com.iitp.iitp_rest.model.network.link.LinkResponse;
+import com.iitp.iitp_rest.model.network.link.LinkXmlResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -17,7 +18,7 @@ public class LinkMapper {
 
     private final LaneMapper laneMapper;
 
-    public Link toEntity(LinkResponse dto
+    public Link xmlToEntity(LinkXmlResponse dto
             , Network network
     ) {
         return Link.builder()
@@ -42,18 +43,41 @@ public class LinkMapper {
                 .build();
     }
 
-    public List<Link> toEntities(List<LinkResponse> list, Network network) {
+    public List<Link> xmlToEntities(List<LinkXmlResponse> list, Network network) {
         if (list == null || list.isEmpty()) return List.of();
         List<Link> out = new ArrayList<>(list.size());
-        for (LinkResponse dto : list) {
-            out.add(toEntity(dto, network));
+        for (LinkXmlResponse dto : list) {
+            out.add(xmlToEntity(dto, network));
         }
         return out;
     }
 
-    public LinkResponse toDto(Link entity) {
+    public LinkResponse entityToResponse(Link entity) {
         if (entity == null) return null;
         LinkResponse dto = new LinkResponse();
+        dto.setId(entity.getId());
+        dto.setFromNode(entity.getFromNode());
+        dto.setToNode(entity.getToNode());
+        dto.setNumLane(entity.getNumLane());
+        dto.setLength(entity.getLength());
+        dto.setWidth(entity.getWidth());
+        dto.setMaxSpd(entity.getMaxSpd());
+        dto.setMinSpd(entity.getMinSpd());
+        dto.setFfSpd(entity.getFfSpd());
+        dto.setWaveSpd(entity.getWaveSpd());
+        dto.setQmax(entity.getQmax());
+        dto.setMaxVeh(entity.getMaxVeh());
+        dto.setSimType(entity.getSimType());
+        dto.setType(entity.getType());
+        dto.setLayer(entity.getLayer());
+        dto.setStopLine(entity.getStopLine());
+        dto.setShape(entity.getShape());
+        return dto;
+    }
+
+    public LinkXmlResponse toDto(Link entity) {
+        if (entity == null) return null;
+        LinkXmlResponse dto = new LinkXmlResponse();
         dto.setId(entity.getId());
         dto.setFromNode(entity.getFromNode());
         dto.setToNode(entity.getToNode());
@@ -75,7 +99,7 @@ public class LinkMapper {
         return dto;
     }
 
-    public List<LinkResponse> toDtos(List<Link> entities) {
+    public List<LinkXmlResponse> toDtos(List<Link> entities) {
         if (entities == null) return new ArrayList<>();
         return entities.stream().map(e -> toDto(e)).collect(Collectors.toList());
     }

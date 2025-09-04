@@ -1,8 +1,15 @@
 package com.iitp.iitp_rest.service.network;
 
-import com.iitp.iitp_rest.model.network.NetworkResponse;
+import com.iitp.iitp_rest.model.network.NetworkXmlResponse;
+import com.iitp.iitp_rest.model.network.cell.CellXmlResponse;
+import com.iitp.iitp_rest.model.network.connection.ConnectionXmlResponse;
+import com.iitp.iitp_rest.model.network.connection.Turning;
+import com.iitp.iitp_rest.model.network.lane.LaneXmlResponse;
 import com.iitp.iitp_rest.model.network.link.*;
 import com.iitp.iitp_rest.model.network.node.*;
+import com.iitp.iitp_rest.model.network.port.PortXmlResponse;
+import com.iitp.iitp_rest.model.network.port.PortType;
+import com.iitp.iitp_rest.model.network.segment.SegmentXmlResponse;
 import com.iitp.iitp_rest.service.xml.XmlParser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -19,7 +26,7 @@ import static com.iitp.iitp_rest.util.XmlUtils.*;
 
 @Component
 @RequiredArgsConstructor
-public class NetworkXmlParser implements XmlParser<NetworkResponse> {
+public class NetworkXmlParser implements XmlParser<NetworkXmlResponse> {
 
     private final XMLInputFactory xmlInputFactory;
 
@@ -33,9 +40,9 @@ public class NetworkXmlParser implements XmlParser<NetworkResponse> {
     private static final String TAG_SEGMENT = "segment";
 
     @Override
-    public NetworkResponse parse(InputStream is) throws XMLStreamException {
+    public NetworkXmlResponse parse(InputStream is) throws XMLStreamException {
         XMLEventReader eventReader = xmlInputFactory.createXMLEventReader(is);
-        NetworkResponse network = new NetworkResponse();
+        NetworkXmlResponse network = new NetworkXmlResponse();
         network.setNodes(new ArrayList<>());
         network.setLinks(new ArrayList<>());
 
@@ -63,8 +70,8 @@ public class NetworkXmlParser implements XmlParser<NetworkResponse> {
         return network;
     }
 
-    private NodeResponse parseNode(XMLEventReader reader, StartElement nodeStartElement) throws XMLStreamException {
-        NodeResponse node = new NodeResponse();
+    private NodeXmlResponse parseNode(XMLEventReader reader, StartElement nodeStartElement) throws XMLStreamException {
+        NodeXmlResponse node = new NodeXmlResponse();
         parseNodeAttributes(node, nodeStartElement);
 
         while (reader.hasNext()) {
@@ -76,13 +83,13 @@ public class NetworkXmlParser implements XmlParser<NetworkResponse> {
 
                 switch (tagName) {
                     case TAG_PORT:
-                        PortResponse port = new PortResponse();
+                        PortXmlResponse port = new PortXmlResponse();
                         parsePortAttributes(port, childElement);
                         node.getPorts().add(port);
-                        node.getPortLinkIds().add(port.getLinkId());
+//                        node.getPortLinkIds().add(port.getLinkId());
                         break;
                     case TAG_CONNECTION:
-                        ConnectionResponse connection = new ConnectionResponse();
+                        ConnectionXmlResponse connection = new ConnectionXmlResponse();
                         parseConnectionAttributes(connection, childElement);
                         node.getConnections().add(connection);
                         break;
@@ -96,8 +103,8 @@ public class NetworkXmlParser implements XmlParser<NetworkResponse> {
         throw new XMLStreamException("Malformed XML: <node> tag not closed.");
     }
 
-    private LinkResponse parseLink(XMLEventReader reader, StartElement linkStartElement) throws XMLStreamException {
-        LinkResponse link = new LinkResponse();
+    private LinkXmlResponse parseLink(XMLEventReader reader, StartElement linkStartElement) throws XMLStreamException {
+        LinkXmlResponse link = new LinkXmlResponse();
         parseLinkAttributes(link, linkStartElement);
 
         while (reader.hasNext()) {
@@ -117,8 +124,8 @@ public class NetworkXmlParser implements XmlParser<NetworkResponse> {
         throw new XMLStreamException("Malformed XML: <link> tag not closed.");
     }
 
-    private LaneResponse parseLane(XMLEventReader reader, StartElement laneStartElement) throws XMLStreamException {
-        LaneResponse lane = new LaneResponse();
+    private LaneXmlResponse parseLane(XMLEventReader reader, StartElement laneStartElement) throws XMLStreamException {
+        LaneXmlResponse lane = new LaneXmlResponse();
         parseLaneAttributes(lane, laneStartElement);
 
         while (reader.hasNext()) {
@@ -129,12 +136,12 @@ public class NetworkXmlParser implements XmlParser<NetworkResponse> {
                 String tagName = childElement.getName().getLocalPart();
                 switch (tagName) {
                     case TAG_CELL:
-                        CellResponse cell = new CellResponse();
+                        CellXmlResponse cell = new CellXmlResponse();
                         parseCellAttributes(cell, childElement);
                         lane.getCells().add(cell);
                         break;
                     case TAG_SEGMENT:
-                        SegmentResponse segment = new SegmentResponse();
+                        SegmentXmlResponse segment = new SegmentXmlResponse();
                         parseSegmentAttributes(segment, childElement);
                         lane.getSegments().add(segment);
                         break;
@@ -148,7 +155,7 @@ public class NetworkXmlParser implements XmlParser<NetworkResponse> {
         throw new XMLStreamException("Malformed XML: <lane> tag not closed.");
     }
 
-    private void parseNodeAttributes(NodeResponse node, StartElement element) {
+    private void parseNodeAttributes(NodeXmlResponse node, StartElement element) {
         node.setId(getLongAttribute(element, "id"));
         node.setType(NodeType.fromValue(getStringAttribute(element, "type")));
         node.setNumPort(getIntAttribute(element, "num_port"));
@@ -157,13 +164,13 @@ public class NetworkXmlParser implements XmlParser<NetworkResponse> {
         node.setCenter(getStringAttribute(element, "center"));
     }
 
-    private void parsePortAttributes(PortResponse port, StartElement element) {
+    private void parsePortAttributes(PortXmlResponse port, StartElement element) {
         port.setType(PortType.fromValue(getStringAttribute(element, "type")));
         port.setLinkId(getStringAttribute(element, "link_id"));
         port.setDirection(getLongAttribute(element, "direction"));
     }
 
-    private void parseConnectionAttributes(ConnectionResponse connection, StartElement element) {
+    private void parseConnectionAttributes(ConnectionXmlResponse connection, StartElement element) {
         connection.setId(getLongAttribute(element, "id"));
         connection.setFromLink(getLongAttribute(element, "from_link"));
         connection.setFromLane(getLongAttribute(element, "from_lane"));
@@ -176,7 +183,7 @@ public class NetworkXmlParser implements XmlParser<NetworkResponse> {
         connection.setShape(getStringAttribute(element, "shape"));
     }
 
-    private void parseLinkAttributes(LinkResponse link, StartElement element) {
+    private void parseLinkAttributes(LinkXmlResponse link, StartElement element) {
         link.setId(getLongAttribute(element, "id"));
         link.setFromNode(getLongAttribute(element, "from_node"));
         link.setToNode(getLongAttribute(element, "to_node"));
@@ -196,7 +203,7 @@ public class NetworkXmlParser implements XmlParser<NetworkResponse> {
         link.setShape(getStringAttribute(element, "shape"));
     }
 
-    private void parseLaneAttributes(LaneResponse lane, StartElement element) {
+    private void parseLaneAttributes(LaneXmlResponse lane, StartElement element) {
         lane.setId(getLongAttribute(element, "id"));
         lane.setNumCell(getIntAttribute(element, "num_cell"));
         lane.setLeftLaneId(getStringAttribute(element, "left_lane_id"));
@@ -204,13 +211,13 @@ public class NetworkXmlParser implements XmlParser<NetworkResponse> {
         lane.setShape(getStringAttribute(element, "shape"));
     }
 
-    private void parseCellAttributes(CellResponse cell, StartElement element) {
+    private void parseCellAttributes(CellXmlResponse cell, StartElement element) {
         cell.setId(getLongAttribute(element, "id"));
         cell.setLength(getDoubleAttribute(element, "length"));
         cell.setOffset(getDoubleAttribute(element, "offset"));
     }
 
-    private void parseSegmentAttributes(SegmentResponse segment, StartElement element) {
+    private void parseSegmentAttributes(SegmentXmlResponse segment, StartElement element) {
         segment.setId(getLongAttribute(element, "id"));
         segment.setBlock(getBooleanAttributeOrDefault(element, "block", false));
         segment.setInitPoint(getDoubleAttribute(element, "init_point"));

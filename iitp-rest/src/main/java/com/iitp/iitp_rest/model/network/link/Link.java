@@ -3,6 +3,7 @@ package com.iitp.iitp_rest.model.network.link;
 import com.fasterxml.jackson.annotation.JsonBackReference;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import com.iitp.iitp_rest.model.network.Network;
+import com.iitp.iitp_rest.model.network.lane.Lane;
 import jakarta.persistence.*;
 import lombok.*;
 

@@ -1,9 +1,10 @@
 package com.iitp.iitp_rest.mapper.network;
 
 import com.iitp.iitp_rest.model.network.Network;
-import com.iitp.iitp_rest.model.network.NetworkResponse;
 import com.iitp.iitp_rest.model.network.node.Node;
 import com.iitp.iitp_rest.model.network.node.NodeResponse;
+import com.iitp.iitp_rest.model.network.node.NodeTreeResponse;
+import com.iitp.iitp_rest.model.network.node.NodeXmlResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -19,7 +20,7 @@ public class NodeMapper {
     private final ConnectionMapper connectionMapper;
 
 
-    public Node toEntity(NodeResponse dto
+    public Node xmlToEntity(NodeXmlResponse dto
             , Network network
     ) {
         return Node.builder()
@@ -33,18 +34,42 @@ public class NodeMapper {
                 .build();
     }
 
-    public List<Node> toEntities(List<NodeResponse> dtos, Network network) {
+    public NodeResponse entityToResponse(Node entity) {
+        if (entity == null) return null;
+        NodeResponse dto = new NodeResponse();
+        dto.setId(entity.getId());
+        dto.setType(entity.getType());
+        dto.setNumPort(entity.getNumPort());
+        dto.setNumConnection(entity.getNumConnection());
+        dto.setV2x(entity.getV2x());
+        dto.setCenter(entity.getCenter());
+        return dto;
+    }
+
+    public NodeTreeResponse entityToTreeResponse(Node entity) {
+        if (entity == null) return null;
+        NodeTreeResponse dto = new NodeTreeResponse();
+        dto.setId(entity.getId());
+        dto.setType(entity.getType());
+        dto.setNumPort(entity.getNumPort());
+        dto.setNumConnection(entity.getNumConnection());
+        dto.setV2x(entity.getV2x());
+        dto.setCenter(entity.getCenter());
+        return dto;
+    }
+
+    public List<Node> xmlToEntities(List<NodeXmlResponse> dtos, Network network) {
         if (dtos == null || dtos.isEmpty()) return List.of();
         List<Node> out = new ArrayList<>(dtos.size());
-        for (NodeResponse dto : dtos) {
-            out.add(toEntity(dto, network));
+        for (NodeXmlResponse dto : dtos) {
+            out.add(xmlToEntity(dto, network));
         }
         return out;
     }
 
-    public NodeResponse toDto(Node entity) {
+    public NodeXmlResponse toDto(Node entity) {
         if (entity == null) return null;
-        NodeResponse dto = new NodeResponse();
+        NodeXmlResponse dto = new NodeXmlResponse();
         dto.setId(entity.getId());
         dto.setType(entity.getType());
         dto.setNumPort(entity.getNumPort());
@@ -56,7 +81,7 @@ public class NodeMapper {
         return dto;
     }
 
-    public List<NodeResponse> toDtos(List<Node> entities) {
+    public List<NodeXmlResponse> toDtos(List<Node> entities) {
         if (entities == null) return new ArrayList<>();
         return entities.stream().map(e -> toDto(e)).collect(Collectors.toList());
     }

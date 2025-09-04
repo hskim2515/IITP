@@ -1,6 +1,7 @@
-package com.iitp.iitp_rest.model.network.link;
+package com.iitp.iitp_rest.model.network.cell;
 
 import com.fasterxml.jackson.annotation.JsonBackReference;
+import com.iitp.iitp_rest.model.network.lane.Lane;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -8,6 +9,9 @@ import lombok.*;
 @Builder
 @AllArgsConstructor
 @NoArgsConstructor
+@Table(indexes = {
+        @Index(name = "cell_lane_id_idx", columnList = "lane_id")
+})
 @Entity
 public class Cell {
     @Id
