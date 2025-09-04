@@ -3,7 +3,7 @@ package com.iitp.iitp_rest.service.network;
 import com.iitp.iitp_rest.handler.XmlValidationEventHandler;
 import com.iitp.iitp_rest.model.network.NetworkXmlResponse;
 import com.iitp.iitp_rest.service.xml.XmlParser;
-import com.iitp.iitp_rest.util.LocationTrackingXmlStreamReader;
+import com.iitp.iitp_rest.service.xml.LocationTrackingXmlStreamReader;
 import jakarta.xml.bind.JAXBContext;
 import jakarta.xml.bind.JAXBException;
 import jakarta.xml.bind.Unmarshaller;

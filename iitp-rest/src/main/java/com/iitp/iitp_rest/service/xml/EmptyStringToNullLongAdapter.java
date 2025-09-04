@@ -8,7 +8,7 @@ import jakarta.xml.bind.annotation.adapters.XmlAdapter;
 public class EmptyStringToNullLongAdapter extends XmlAdapter<String, Long> {
 
     @Override
-    public Long unmarshal(String v) throws Exception {
+    public Long unmarshal(String v) {
         if (v == null || v.trim().isEmpty()) {
             return null;
         }
@@ -16,7 +16,7 @@ public class EmptyStringToNullLongAdapter extends XmlAdapter<String, Long> {
     }
 
     @Override
-    public String marshal(Long v) throws Exception {
+    public String marshal(Long v) {
         if (v == null) {
             return null;
         }
