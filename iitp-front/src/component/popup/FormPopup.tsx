@@ -1,9 +1,9 @@
 import React, { FC, useEffect, useState } from 'react';
 import { SimpleForm } from './SimpleForm';
 import { TableForm } from './TableForm';
-import {apiConfig, ApiMenuKey} from "../../config/apiConfig";
+import {apiConfig, ApiMenuKey} from "@config/apiConfig";
 import axiosInstance from "../../api/axiosInstance";
-import {PropertyFormSchemaProps} from "../form/propertyFormSchema";
+import {PropertyFormSchemaProps} from "@schema/propertyFormSchema";
 import {MenuTree} from "@stores/useMenuStore";
 
 interface InsertPopupProps {

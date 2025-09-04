@@ -1,10 +1,5 @@
-import {create} from 'zustand';
+import createFeatureStore from "@stores/useFeatureStoreFactory";
+import createHistoryStore from "@stores/useHistoryStoreFactory";
 
-interface SignalState {
-    signalTimeline: object,
-    setSignalTimeline: (signalTimeline: object) => void;
-}
-
-export const useSignalStore = create<SignalState>(((set) => ({
-    setSignalTimeline: (state : SignalState) => set({ signalTimeline: state }),
-})));
+export const useSignalStore = createFeatureStore();
+export const useSignalHistoryStore = createHistoryStore();

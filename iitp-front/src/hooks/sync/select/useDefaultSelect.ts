@@ -1,13 +1,12 @@
 import { useEffect, useRef } from "react";
 import { useCesiumStore } from "@stores/useCesiumStore";
-import { usePropertyStore } from "@stores/usePropertyStore";
 import * as Cesium from "cesium";
 import { useEventStore } from "@stores/useEventStore";
 import { useSelectionStore } from "@stores/useSelectionStore";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import { Map as OLMap, MapBrowserEvent } from 'ol';
 import { useMenuStore } from "@stores/useMenuStore";
-import { propertyFormSchema } from "@component/form/propertyFormSchema";
+import { propertyFormSchema } from "@schema/propertyFormSchema";
 import VectorLayer from "ol/layer/Vector";
 import WebGLVectorLayer from "ol/layer/WebGLVector";
 import VectorSource from "ol/source/Vector";
@@ -16,6 +15,10 @@ import { Fill, Stroke, Style } from "ol/style";
 import CircleStyle from "ol/style/Circle";
 import { matchesCustomKeyValue } from "@utils/olLayer";
 import { Entity, Viewer } from "cesium";
+import {defaultEventHandlers} from "@handler/defaultEventHandler";
+import {FEATURE_TYPE} from "@type/Signal";
+import {getNetworkGuid} from "@utils/signal";
+import {useLayerStore} from "@stores/useLayerStore";
 
 const useDefaultSelect = () => {
 
@@ -27,81 +30,30 @@ const useDefaultSelect = () => {
 
     const activeSubmenu = useMenuStore((state) => state.activeSubmenu)
 
-    const setSelectedProps = usePropertyStore((state) => state.setSelectedProps);
-    const setSelectedGuid = useSelectionStore((state) => state.setSelectedGuid);
+    const layerManager = useLayerStore((state) => state.layerManager);
+
     const selectedGuid = useSelectionStore((state) => state.selectedGuid);
 
     const prevSelectedGuidsRef = useRef<Set<string>>(new Set());
 
-    const handleCesiumSelect = (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
-        if (!viewer) return
-        const picked = viewer.scene.pick(e.position);
-        if (Cesium.defined(picked) && picked.id?.properties) {
-            const props: Record<string, any> = {};
-            const cartesian = viewer.scene.camera.pickEllipsoid(e.position, viewer.scene.globe.ellipsoid);
-            if (cartesian) {
-                const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-                const longitude = Cesium.Math.toDegrees(cartographic.longitude);
-                const latitude = Cesium.Math.toDegrees(cartographic.latitude);
-                const height = cartographic.height;
-
-                props.longitude = longitude;
-                props.latitude = latitude;
-                props.height = height; // 높이도 함께 포함
-            }
-            const propBag = picked.id.properties;
-            propBag.propertyNames.forEach((key: string) => {
-                props[key] = propBag[key].getValue(Cesium.JulianDate.now());
-            });
-            setSelectedProps(props);
-
-            setSelectedGuid([props.__guid])
-
-        } else {
-            setSelectedProps(null);
-        }
-    }
-
-    const handleOLSelect = (e: MapBrowserEvent<UIEvent>) => {
-        if (!olMap) {
-            setSelectedProps(null);
-            setSelectedGuid([]);
-            return;
-        }
-        let isFeatureExist = false
-        olMap.forEachFeatureAtPixel(e.pixel, function (feature) {
-            const guid = feature.get("__guid");
-            if (guid) {
-                isFeatureExist = true;
-                setSelectedProps(feature.getProperties())
-                setSelectedGuid([feature.get("__guid")])
-                return true
-            }
-        });
-        if (!isFeatureExist) {
-            setSelectedProps(null)
-            setSelectedGuid([])
-        }
-    }
-
     useEffect(() => {
         if (!cesiumEventManager || !viewer) return
-        cesiumEventManager.bind('select', handleCesiumSelect);
-
+        cesiumEventManager.bind('select', defaultEventHandlers.handleCesiumSelect);
         return () => {
-            cesiumEventManager.unbind('select', handleCesiumSelect);
+            cesiumEventManager.unbind('select', defaultEventHandlers.handleCesiumSelect);
         };
-    }, [viewer, cesiumEventManager]);
+    }, [viewer, cesiumEventManager, activeSubmenu]);
 
     useEffect(() => {
         if (!olEventManager || !olMap) return
-        olEventManager.bind('click', handleOLSelect);
-
+        olEventManager.bind('click', defaultEventHandlers.handleOLSelect);
         return () => {
-            olEventManager.unbind('click', handleOLSelect);
+            olEventManager.unbind('click', defaultEventHandlers.handleOLSelect);
         };
-    }, [olEventManager, olMap]);
+    }, [olEventManager, olMap, activeSubmenu]);
+
     useEffect(() => {
+        console.log('selectedGuid', selectedGuid)
             if (!activeSubmenu) return;
             const layerName = propertyFormSchema[activeSubmenu.menuCode].layer
 
@@ -119,8 +71,17 @@ const useDefaultSelect = () => {
 
             for (const guid of nextSet) {
                 if (!prevSet.has(guid)) {
-                    highlightOlStyleByGuid(olMap, layerName, guid);
-                    highlightCesiumStyleByGuid(viewer, layerName, guid);
+                    if (FEATURE_TYPE.SIGNAL === layerName) {
+                        const mappedGuid = getNetworkGuid(layerManager,guid);
+                        if (mappedGuid) {
+                            const networkLayerName  ='network'
+                            highlightOlStyleByGuid(olMap, networkLayerName, mappedGuid);
+                            highlightCesiumStyleByGuid(viewer, networkLayerName, mappedGuid);
+                        }
+                    } else {
+                        highlightOlStyleByGuid(olMap, layerName, guid);
+                        highlightCesiumStyleByGuid(viewer, layerName, guid);
+                    }
                 }
             }
 
@@ -135,9 +96,7 @@ const useDefaultSelect = () => {
                 prevSelectedGuidsRef.current.clear();
             };
         }, [selectedGuid, activeSubmenu]
-    )
-
-    ;
+    );
 
     function highlightCesiumStyleByGuid(viewer: Viewer, layerName: string, guid: string) {
         viewer?.dataSources?.getByName(layerName)[0]?.entities.values.forEach(entity => {

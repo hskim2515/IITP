@@ -7,6 +7,6 @@ import java.util.List;
 
 @Data
 public class SignalData {
-    private String id;
+    private String nodeId;
     private List<SignalNodeData> nodes = new ArrayList<>();
 }

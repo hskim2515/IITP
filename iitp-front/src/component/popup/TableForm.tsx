@@ -1,5 +1,5 @@
 import React from 'react';
-import {PropertyFormSchemaProps} from "../form/propertyFormSchema";
+import {PropertyFormSchemaProps} from "@schema/propertyFormSchema";
 import DynamicInput from "./DynamicInput";
 import {MenuTree} from "@stores/useMenuStore";
 

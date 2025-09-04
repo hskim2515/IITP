@@ -245,14 +245,14 @@ public class VehicleController {
         );
         czml.addFirst(documentPacket);
 
-        vehicleRouteService.saveRoute(versionId, czml, featureList, vehiclePathList);
+        vehicleRouteService.saveRoute(versionId, czml, featureList, vehiclePathList, baseEpoch);
 
         Map<String, Object> response = new HashMap<>();
         response.put("czml", czml);
         response.put("features", featureList);
         response.put("positions", vehiclePathList);
 
-        //response.put("signalTimeline", signalTimeline);
+        response.put("signalTimeline", signalTimeline);
 
         return ResponseEntity.ok(response);
     }
@@ -268,11 +268,14 @@ public class VehicleController {
         VehicleRoute route = optional.get();
         ObjectMapper mapper = new ObjectMapper();
 
+        List<SignalTimelineResponse> signalTimeline = signalTimelineService.generateSignalTimeline(route.getStartTime(),"0");
+
         try {
             Map<String, Object> response = new HashMap<>();
             response.put("czml", mapper.readValue(route.getCzml(), Object.class));
             response.put("features", mapper.readValue(route.getFeatures(), Object.class));
             response.put("positions", mapper.readValue(route.getPositions(), Object.class));
+            response.put("signalTimeline", signalTimeline);
             return ResponseEntity.ok(response);
         } catch (JsonProcessingException e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

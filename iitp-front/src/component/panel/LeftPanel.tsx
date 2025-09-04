@@ -1,10 +1,9 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { useMenuStore, MenuTree } from "@stores/useMenuStore";
-
-import { propertyFormSchema } from "@component/form/propertyFormSchema";
-import PropertyForm from "@component/popup/PropertyPopup";
+import { propertyFormSchema } from "@schema/propertyFormSchema";
 
 const LeftPanel = () => {
+
     const {
         activeDropdownMenu,
         activeSubmenu,
@@ -12,12 +11,14 @@ const LeftPanel = () => {
         setActiveSubmenu,
     } = useMenuStore();
 
+    useEffect(() => {
+        if(!activeDropdownMenu) return
+    }, [activeDropdownMenu]);
+
     if (!activeDropdownMenu) return null;
 
     // FACILITY인 경우: 사이드바 없이 PropertyPanel만 렌더링
-    if (activeDropdownMenu.menuCode === "FACILITY" && activeSubmenu) {
-        return;
-    }
+    if (activeDropdownMenu.menuCode === "FACILITY" && activeSubmenu) return null;
 
     // 일반 메뉴인 경우: 사이드바 + 팝업
     const submenuData: MenuTree[] | undefined = activeDropdownMenu.children;
@@ -30,32 +31,19 @@ const LeftPanel = () => {
         }
     };
 
-    const renderActivePopup = () => {
-        if (!activeSubmenu) return null;
-
-        const config = propertyFormSchema[activeSubmenu.menuCode];
-        if (!config) return null;
-
-        return (
-            <PropertyForm
-                open
-                activePopupMenu={activeSubmenu}
-                onClose={() => setActiveSubmenu(null)}
-                config={config}
-            />
-        );
-    };
-
     return (
         <div style={styles.sidebar}>
             <div style={styles.header}>
                 <h3>{activeDropdownMenu.nameKor}</h3>
-                <button style={styles.closeButton} onClick={() => setActiveDropdownMenu(null)}>
+                <button className="close-btn" onClick={() => {
+                    setActiveDropdownMenu(null)
+                    setActiveSubmenu(null)
+                }}>
                     ×
                 </button>
             </div>
             <div>
-                {submenuData.map((item) => (
+                {submenuData && submenuData.map((item) => (
                     <p
                         key={item.menuId}
                         onClick={() => handleClickSubmenu(item)}
@@ -65,7 +53,6 @@ const LeftPanel = () => {
                     </p>
                 ))}
             </div>
-            {renderActivePopup()}
         </div>
     );
 };
@@ -90,13 +77,6 @@ const styles = {
         justifyContent: "space-between",
         alignItems: "center",
         marginBottom: "10px",
-    },
-    closeButton: {
-        background: "none",
-        border: "none",
-        color: "#fff",
-        fontSize: "20px",
-        cursor: "pointer",
     },
     menuItem: {
         cursor: "pointer",

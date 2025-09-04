@@ -20,19 +20,23 @@ export default defineConfig(({ mode }) => {
         plugins: [react(), cesium()],
         resolve: {
             alias: {
-                '@primitives': path.resolve(__dirname, 'src/primitives'),
                 '@api': path.resolve(__dirname, 'src/api'),
-                '@config': path.resolve(__dirname, 'src/config'),
-                '@component': path.resolve(__dirname, 'src/component'),
-                '@stores': path.resolve(__dirname, 'src/stores'),
-                '@schema': path.resolve(__dirname, 'src/schema'),
-                '@utils': path.resolve(__dirname, 'src/utils'),
                 '@adaptor': path.resolve(__dirname, 'src/adaptor'),
-                '@managers': path.resolve(__dirname, 'src/managers'),
-                '@features': path.resolve(__dirname, 'src/features'),
+                '@assets': path.resolve(__dirname, 'src/assets'),
+                '@component': path.resolve(__dirname, 'src/component'),
+                '@config': path.resolve(__dirname, 'src/config'),
                 '@datasource': path.resolve(__dirname, 'src/datasource'),
-                '@type': path.resolve(__dirname, 'src/type'),
+                '@features': path.resolve(__dirname, 'src/features'),
+                '@handler': path.resolve(__dirname, 'src/handler'),
                 '@hooks': path.resolve(__dirname, 'src/hooks'),
+                '@managers': path.resolve(__dirname, 'src/managers'),
+                '@primitives': path.resolve(__dirname, 'src/primitives'),
+                '@schema': path.resolve(__dirname, 'src/schema'),
+                '@stores': path.resolve(__dirname, 'src/stores'),
+                '@type': path.resolve(__dirname, 'src/type'),
+                '@utils': path.resolve(__dirname, 'src/utils'),
+                '@worker': path.resolve(__dirname, 'src/worker'),
+                '@css': path.resolve(__dirname, 'static/css'),
             }
         }
     };

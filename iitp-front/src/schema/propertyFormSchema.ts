@@ -55,7 +55,65 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         inputFields: [],
         rowFields: []
     },
+    SCHEMA_NETWORK:{
+        type:"",
+        layer: "network",
+        fields: [
+            { name: "", label: "", type: "" },
+            { name: "", label: "", type: "" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    SCHEMA_BUS_STATION:{
+        type:"",
+        layer: "busStation",
+        fields: [
+            { name: "", label: "", type: "" },
+            { name: "", label: "", type: "" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    SCHEMA_DRT_STATION:{
+        type:"",
+        fields: [
+            { name: "", label: "", type: "" },
+            { name: "", label: "", type: "" },
 
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    SCHEMA_RAIL_STATION:{
+        type:"",
+        layer: "railStation",
+        fields: [
+            { name: "", label: "", type: "" },
+            { name: "", label: "", type: "" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    SCHEMA_TRAM_STATION:{
+        type:"",
+        fields: [
+            { name: "", label: "", type: "" },
+            { name: "", label: "", type: "" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    SCHEMA_PAVEMENT_MARKING:{
+        type:"",
+        layer: "pavementMarking",
+        fields: [
+            { name: "", label: "", type: "" },
+            { name: "", label: "", type: "" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
     NETWORK: {
         type:"table",
         layer: "network",
@@ -102,11 +160,13 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         rowFields: []
     },
     SIGNAL: {
-        type:"",
+        type:"table",
+        layer: "signal",
         fields: [
-            { name: "assignedTime", label: "Assigned Time (s)", type: "number" },
-            { name: "phase", label: "Phase", type: "text" },
-            { name: "offset", label: "Offset (s)", type: "number" },
+            { name: "nodeId", label: "NodeId", type: "text" },
+            { name: "turning", label: "Turning", type: "text" },
+            { name: "type", label: "Type", type: "text" },
+            { name: "connectionId", label: "ConnectionId", type: "text" },
         ],
         inputFields: [],
         rowFields: []

@@ -27,6 +27,9 @@ public class VehicleRoute {
     @Column(columnDefinition = "text")
     private String positions;
 
+    @Column(name = "start_time")
+    private Long startTime;
+
     @Column(name = "insert_date")
     private LocalDateTime insertDate = LocalDateTime.now();
 }
