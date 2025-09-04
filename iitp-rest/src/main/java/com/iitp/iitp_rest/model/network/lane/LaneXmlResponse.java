@@ -1,11 +1,9 @@
 package com.iitp.iitp_rest.model.network.lane;
 
+import com.iitp.iitp_rest.model.geometry.Coordinates;
 import com.iitp.iitp_rest.model.network.cell.CellXmlResponse;
 import com.iitp.iitp_rest.model.network.segment.SegmentXmlResponse;
-import jakarta.xml.bind.annotation.XmlAccessType;
-import jakarta.xml.bind.annotation.XmlAccessorType;
-import jakarta.xml.bind.annotation.XmlAttribute;
-import jakarta.xml.bind.annotation.XmlElement;
+import jakarta.xml.bind.annotation.*;
 import lombok.Data;
 
 import java.util.ArrayList;
@@ -34,5 +32,8 @@ public class LaneXmlResponse {
     private List<SegmentXmlResponse> segments = new ArrayList<>();
     @XmlElement(name = "cell")
     private List<CellXmlResponse> cells = new ArrayList<>();
+
+    @XmlTransient
+    private List<Coordinates> coordinates;
 }
 

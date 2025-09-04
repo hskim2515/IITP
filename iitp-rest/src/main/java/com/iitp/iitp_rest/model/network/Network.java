@@ -1,60 +1,40 @@
 package com.iitp.iitp_rest.model.network;
 
-import com.fasterxml.jackson.annotation.JsonManagedReference;
-import com.iitp.iitp_rest.model.network.link.Link;
-import com.iitp.iitp_rest.model.network.node.Node;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.*;
-import lombok.*;
-import org.hibernate.annotations.Fetch;
-import org.hibernate.annotations.FetchMode;
-import org.springframework.data.annotation.CreatedDate;
-import org.springframework.data.annotation.LastModifiedDate;
-import org.springframework.data.jpa.domain.support.AuditingEntityListener;
+import lombok.Data;
 
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
-
-@EntityListeners(AuditingEntityListener.class)
-@Data
-@Builder
-@AllArgsConstructor
-@NoArgsConstructor
-@Table(indexes = {
-        @Index(name = "network_name_idx", columnList = "name", unique = true)
-})
 @Entity
+@Data
 public class Network {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(unique = true)
     private String name;
-    @Builder.Default
-    @OneToMany(mappedBy = "network", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @JsonManagedReference
-    private List<Node> nodes = new ArrayList<>();
-    @Builder.Default
-    @OneToMany(mappedBy = "network", cascade = CascadeType.ALL, fetch = FetchType.LAZY)
-    @JsonManagedReference
-    private List<Link> links = new ArrayList<>();
 
-    @CreatedDate
-    @Column(name = "insert_date", nullable = false)
-    private LocalDateTime insertDate;
-    @LastModifiedDate
-    @Column(name = "modify_date")
-    private LocalDateTime modifyDate;
+    // GeoJSON을 저장할 때 String으로 변환하여 저장
+    @Column(columnDefinition = "TEXT")
+    private String geojson; // GeoJSON 데이터를 문자열로 저장
 
-    public void addNode(Node node) {
-        this.nodes.add(node);
-        node.setNetwork(this);
+    public JsonNode getGeojson() {
+        try {
+            ObjectMapper objectMapper = new ObjectMapper();
+            return objectMapper.readTree(geojson); // GeoJSON 문자열을 JsonNode로 변환
+        } catch (Exception e) {
+            return null;
+        }
     }
 
-    public void addLink(Link link) {
-        this.links.add(link);
-        link.setNetwork(this);
+    public void setGeojson(JsonNode geojson) {
+        try {
+            ObjectMapper objectMapper = new ObjectMapper();
+            this.geojson = objectMapper.writeValueAsString(geojson); // JsonNode를 문자열로 변환하여 저장
+        } catch (Exception e) {
+            this.geojson = null;
+        }
     }
+
 }

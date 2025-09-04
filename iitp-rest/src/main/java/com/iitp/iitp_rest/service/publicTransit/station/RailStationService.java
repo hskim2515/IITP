@@ -100,7 +100,7 @@ public class RailStationService {
         final long stationParsingS = System.nanoTime();
 
         // --- 4. 철도 정류장 정보 파싱 ---
-        String railPublicTransitXmlPath = versionId + "/railPublicStation.xml";
+        String railPublicTransitXmlPath = versionId + "/railPublicTransit.xml";
         InputStream is = XmlUtils.loadXmlAsStream(railPublicTransitXmlPath);
         RailPublicTransitData result = railStationXmlParser.parse(is);
         final long stationParsingE = System.nanoTime();

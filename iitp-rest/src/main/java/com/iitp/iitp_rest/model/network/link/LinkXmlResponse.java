@@ -1,10 +1,8 @@
 package com.iitp.iitp_rest.model.network.link;
 
+import com.iitp.iitp_rest.model.geometry.Coordinates;
 import com.iitp.iitp_rest.model.network.lane.LaneXmlResponse;
-import jakarta.xml.bind.annotation.XmlAccessType;
-import jakarta.xml.bind.annotation.XmlAccessorType;
-import jakarta.xml.bind.annotation.XmlAttribute;
-import jakarta.xml.bind.annotation.XmlElement;
+import jakarta.xml.bind.annotation.*;
 import jakarta.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 import lombok.Data;
 
@@ -52,5 +50,8 @@ public class LinkXmlResponse {
     private String shape;
     @XmlElement(name = "lane")
     private List<LaneXmlResponse> lanes = new ArrayList<>();
+
+    @XmlTransient
+    private List<Coordinates> coordinates;
 }
 
