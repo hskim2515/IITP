@@ -73,6 +73,7 @@ public class SchemaMapper {
                 .id(field.getId())
                 .name(field.getName())
                 .inputType(field.getInputType())
+                .defaultValue(field.getDefaultValue())
                 .readOnly(field.isReadOnly())
                 .status(getEnumNameSafe(field.getStatus()))
                 .options(optionDtos)
@@ -128,6 +129,7 @@ public class SchemaMapper {
                 .layerSchema(schema)
                 .name(dto.getName())
                 .inputType(dto.getInputType())
+                .defaultValue(dto.getDefaultValue())
                 .readOnly(dto.getReadOnly())
                 .nullable(dto.getNullable())
                 .status(parseStatus(dto.getStatus()))
@@ -163,6 +165,9 @@ public class SchemaMapper {
         }
         if (dto.getInputType() != null) {
             field.setInputType(dto.getInputType());
+        }
+        if (dto.getDefaultValue() != null) {
+            field.setDefaultValue(dto.getDefaultValue());
         }
     }
 

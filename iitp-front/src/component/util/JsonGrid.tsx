@@ -336,7 +336,6 @@ const JsonGrid = ({
             const guid = record.__guid;
             const currentValue = rowEditValues[guid]?.[col.dataIndex] ?? value;
             const field = col.fieldSchema; // 스키마에서 가져온 필드 정보 사용
-
             const handleCommit = (e) => {
                 debouncedSetRowEditValues.flush();
 
@@ -390,7 +389,7 @@ const JsonGrid = ({
             // nullable 체크 및 렌더링
             const isNullable = field.nullable;
             const displayValue = (!isNullable && (currentValue === null || currentValue === undefined))
-                ? ''
+                ? field.defaultValue
                 : currentValue;
 
             // 입력 타입에 따른 렌더링

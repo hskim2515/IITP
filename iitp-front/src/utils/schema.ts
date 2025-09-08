@@ -7,7 +7,7 @@ import type {
     InputType,
     SchemaFieldsRequest,
     CreateFieldRequest,
-    UpdateFieldRequest,
+    UpdateFieldRequest, GenerateTemplateOptions,
 } from "@type/Schema";
 import { isNil } from "lodash";
 
@@ -134,6 +134,7 @@ export function buildSchemaFieldsRequestUsingPresence(
                 {
                     name: f.name,
                     nullable: f.nullable,
+                    defaultValue: f.defaultValue,
                     readOnly: f.readOnly,
                     status: f.status,
                 } as Omit<CreateFieldRequest, "inputType" | "options"> & { inputType?: any; options?: any };
@@ -171,6 +172,7 @@ export function buildSchemaFieldsRequestUsingPresence(
         const base: Partial<UpdateFieldRequest> = {
             ...(baseField.name !== editedField.name ? { name: editedField.name } : {}),
             ...(baseField.nullable !== editedField.nullable ? { nullable: editedField.nullable } : {}),
+            ...(baseField.defaultValue !== editedField.defaultValue ? { defaultValue: editedField.defaultValue } : {}),
             ...(baseField.readOnly !== editedField.readOnly ? { readOnly: editedField.readOnly } : {}),
             ...(baseField.status !== editedField.status ? { status: editedField.status } : {}),
         };
@@ -271,14 +273,26 @@ export function buildLayerSchemaRequestsUsingPresence(
     return out;
 }
 
-
 export function generateTemplate(
     schema: Schema | null,
-) {
-    if(schema == null) return;
+    options: GenerateTemplateOptions = {}
+): Record<string, any> | undefined {
+    if (schema == null) return;
 
-    return schema?.fields.reduce((acc, cur) => {
-        acc[cur.name] = undefined;
+    const { additionalProps = {}, exclude = [] } = options;
+
+    const baseTemplate = schema.fields.reduce((acc, field) => {
+        if (!exclude.includes(field.name)) {
+            acc[field.name] = (field.defaultValue !== undefined && field.defaultValue !== null)
+                ? field.defaultValue
+                : undefined;
+        }
         return acc;
     }, {} as Record<string, any>);
+    const template = {
+        ...baseTemplate,
+        ...additionalProps,
+    }
+    console.log("template:::", template)
+    return template;
 }
