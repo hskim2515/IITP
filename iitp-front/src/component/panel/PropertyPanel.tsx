@@ -72,6 +72,8 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const selectedDrawTypeRef = useRef<string | undefined>();
 
+    const setCurrentIndex = historyStore.getState().setCurrentIndex;
+
     const selectedScenario = useScenarioStore.getState().selectedScenario;
 
     const olMap = useOpenLayersStore.state.map()
@@ -353,6 +355,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     const handleInitBtn = () => {
         store.getState().initCurrentData()
+        historyStore.getState().setCurrentIndex(null);
     }
 
     const handleShowHistory = () => {
