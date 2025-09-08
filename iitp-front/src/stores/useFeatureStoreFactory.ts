@@ -1,49 +1,45 @@
-import { create } from 'zustand';
+import { create, StoreApi, UseBoundStore } from 'zustand';
 import { combine, subscribeWithSelector } from 'zustand/middleware';
 import { createSelectors } from './createSelectors';
-import { FetchFeatureDataType } from "@type/FeatureOptions";
+
 import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
 import { featureUpdateLogs } from "@utils/history";
 import {findParentRecordByFeatureType, findParentRecordByGuid} from "@utils/json";
 import { diff, applyChange } from 'deep-diff';
 
+export type FeatureStoreFactoryType<T> = UseBoundStore<StoreApi<State<T>&Actions<T>>>
 
-export interface FeatureStoreFactoryType {
-    getState: () => State & Actions;
-    setState: (partial: Partial<State & Actions>, replace?: boolean) => void;
-}
-
-
-export interface State<T = unknown> {
+export interface State<T> {
     // fetch 한 data
-    originData: FetchFeatureDataType<T> | undefined
-    currentJsonData: T
+    originData: T | undefined
+    currentJsonData: T | undefined
     // 변경 확인
     isChanged: boolean
 }
 
-export interface Actions<T = unknown> {
-    setOriginData: (data: FetchFeatureDataType<T>) => void;
-    setCurrentJsonData: (data: FetchFeatureDataType<T>) => void;
-    updateCurrentJsonData: (data: FetchFeatureDataType<T>, historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
+export interface Actions<T> {
+    setOriginData: (data: T) => void;
+    setCurrentJsonData: (data: T) => void;
+    updateCurrentJsonData: (data: T, historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
     removeRecordsByGuid: (guids: (string | number)[], historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
     setChange: (changed: boolean) => void;
     initCurrentData: () => void;
 }
 
-const initialState: State = {
-    originData: undefined,
-    currentJsonData: undefined,
-    isChanged: false
-};
+
 
 const createFeatureStore = <T>() => {
+    const initialState: State<T> = {
+        originData: undefined,
+        currentJsonData: undefined,
+        isChanged: false
+    };
     return createSelectors(
         create(
             subscribeWithSelector(
                 combine(initialState, (set, get) => ({
-                        setOriginData: (data: FetchFeatureDataType<T>) => set({originData: data}),
-                        setCurrentJsonData: (data: FetchFeatureDataType<T>) => {
+                        setOriginData: (data: T) => set({originData: data}),
+                        setCurrentJsonData: (data: T) => {
                             set({
                                 currentJsonData: structuredClone(data)
                             });

@@ -1,6 +1,6 @@
 package com.iitp.iitp_rest.repository;
 
-import com.iitp.iitp_rest.model.publicTransit.station.RailStationLogs;
+import com.iitp.iitp_rest.model.publicTransit.rail.RailStationLogs;
 import jakarta.transaction.Transactional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;

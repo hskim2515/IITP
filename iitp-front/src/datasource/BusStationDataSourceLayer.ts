@@ -42,7 +42,7 @@ export default class BusStationDataSourceLayer {
                 transitMode: data.transitMode ?? TRANSIT_MODE.BUS,
                 featureType: data.featureType ?? FEATURE_TYPE.BUS_STATION,
             };
-            const coord = data.coordinates[0];
+            const coord = data.coordinates;
             const position = Cartesian3.fromDegrees(coord.lng, coord.lat);
 
             this.dataSource.entities.add(

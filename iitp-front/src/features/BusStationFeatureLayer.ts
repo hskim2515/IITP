@@ -8,25 +8,25 @@ import { layerNameToStoreMap } from "@hooks/useLayerInit";
 
 import {
     BUS_STATION_SNAP_FIELDS,
-    BusStationData, BusStationFeature,
+    BusPublicStationResponse,
+    BusStationData,
+    BusStationFeature,
     BusStationSnapProperties,
     FEATURE_TYPE,
+    MENU_CODE,
     SNAP_FEATURE_TYPE,
     SNAP_LAYER,
     TRANSIT_MODE
 } from "@type/Station";
 import { generateGUIDWithType } from "@utils/guid";
-import {
-    findFeatureByProperties,
-    getCoordinateByOffset,
-    getOffsetByCoordinate
-} from "@utils/feature";
+import { findFeatureByProperties, getCoordinateByOffset, getOffsetByCoordinate } from "@utils/feature";
 import { useLayerStore } from "@stores/useLayerStore";
 import { Coordinate } from "ol/coordinate";
 import GeometryType from "@type/FeatureOptions";
 import Geometry from "ol/geom/Geometry";
 import { FeatureLayerAPI } from "@features/FeatureLayerAPI";
 import deepEqual from "deep-equal";
+import { FeatureLike } from "ol/Feature";
 
 export default class BusStationFeatureLayer extends VectorLayer implements FeatureLayerAPI {
     public readonly source: VectorSource;
@@ -51,91 +51,89 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
 
         const store = layerNameToStoreMap[this.LAYER_NAME];
         const listener = (
-            updated: Record<string, Array<BusStationData>>,
-            origin: Record<string, Array<BusStationData>>
+            state: BusPublicStationResponse,
+            prevState: BusPublicStationResponse
         ) => {
-            if (!updated) {
+            if (!state) {
                 return;
             }
-            Object.keys(updated).forEach((objectName) => {
-                const updatedList = updated[objectName] ?? [];
-                const originList = origin[objectName] ?? [];
+            const updatedData = state.busStations ?? [];
+            const prevData = prevState.busStations ?? [];
 
-                const updatedMap = new Map<string, Record<string, unknown>>();
-                const originMap = new Map<string, Record<string, unknown>>();
+            const updatedMap = new Map<string, BusStationData>();
+            const prevMap = new Map<string, BusStationData>();
 
-                updatedList.forEach((item) => {
-                    const guid = item?.__guid as string;
-                    if (guid) updatedMap.set(guid, item);
-                });
+            updatedData.forEach((item) => {
+                const guid = item.__guid;
+                if (guid) updatedMap.set(guid, item);
+            })
 
-                originList.forEach((item) => {
-                    const guid = item?.__guid as string;
-                    if (guid) originMap.set(guid, item);
-                });
+            prevData.forEach((item) => {
+                const guid = item.__guid;
+                if (guid) prevMap.set(guid, item);
+            })
 
-                const added: Record<string, unknown>[] = [];
-                const removed: Record<string, unknown>[] = [];
-                const changed: Record<string, unknown>[] = [];
+            const added: BusStationData[] = []
+            const removed: BusStationData[] = [];
+            const changed: BusStationData[] = [];
 
-                originMap.forEach((originItem, guid) => {
-                    const updatedItem = updatedMap.get(guid);
-                    if (!updatedItem) {
-                        removed.push(originItem);
-                    } else if (!deepEqual(originItem, updatedItem)) {
-                        changed.push(updatedItem);
-                    }
-                });
-
-                updatedMap.forEach((updatedItem, guid) => {
-                    if (!originMap.has(guid)) {
-                        added.push(updatedItem);
-                    }
-                });
-
-                const src = this.source;
-                const existing = src.getFeatures();
-
-                removed.forEach((item) => {
-                    const guid = item.__guid;
-                    const feature = existing.find(f => f.get("__guid") === guid);
-                    if (feature) {
-                        src.removeFeature(feature);
-                    }
-                });
-
-                changed.forEach((item) => {
-                    const dto = this.recordToDto(item);
-
-                    const feature = existing.find(f => f.get("__guid") === dto.__guid);
-                    if (feature) {
-                        const baseLayer = layerManager?.getLayerByName(this.getSnapLayerKey())
-                        const baseFeature = findFeatureByProperties(baseLayer, {
-                            featureType: this.getSnapFeatureType(),
-                            linkRef: item.linkRef,
-                            laneRef: item.laneRef ?? 0,
-                        })
-
-                        const offset = item.offset ?? 0
-                        const coord = getCoordinateByOffset(baseFeature, offset)
-                        if (coord) {
-                            const [lng, lat] = toLonLat(coord)
-                            // 계산한 값을 json에 적용
-                            item.coordinates.lng = lng
-                            item.coordinates.lat = lat
-                            feature.setGeometry(new Point(fromLonLat([lng, lat])));
-                        }
-
-                        feature.setProperties(dto);
-                    }
-                });
-
-                added.forEach((item) => {
-                    const dto = this.recordToDto(item);
-                    const feature = this.createFeature(dto);
-                    src.addFeature(feature);
-                });
+            prevMap.forEach((prevItem, guid) => {
+                const updatedItem = updatedMap.get(guid);
+                if (!updatedItem) {
+                    removed.push(prevItem);
+                } else if (!deepEqual(prevItem, updatedItem)) {
+                    changed.push(updatedItem);
+                }
+            })
+            updatedMap.forEach((updatedItem, guid) => {
+                if (!prevMap.has(guid)) {
+                    added.push(updatedItem);
+                }
             });
+
+            const src = this.source;
+            const existing = src.getFeatures();
+
+            removed.forEach((item) => {
+                const guid = item.__guid;
+                const feature = existing.find(f => f.get("__guid") === guid);
+                if (feature) {
+                    src.removeFeature(feature)
+                }
+            })
+
+            changed.forEach((item) => {
+                const dto = this.recordToDto(item);
+
+                const feature = existing.find(f => f.get("__guid") === dto.__guid);
+                if (feature) {
+                    const baseLayer = layerManager?.getLayerByName(this.getSnapLayerKey())
+                    const baseFeature = findFeatureByProperties(baseLayer, {
+                        featureType: this.getSnapFeatureType(),
+                        linkRef: item.linkRef,
+                        laneRef: item.laneRef ?? 0,
+                    })
+
+                    const offset = item.offset ?? 0
+                    const coord = getCoordinateByOffset(baseFeature, offset)
+                    if (coord) {
+                        const [lng, lat] = toLonLat(coord)
+                        // 계산한 값을 json에 적용
+                        item.coordinates.lng = lng
+                        item.coordinates.lat = lat
+                        feature.setGeometry(new Point(fromLonLat([lng, lat])));
+                    }
+
+                    feature.setProperties(dto);
+                }
+            });
+
+            added.forEach((item) => {
+                const dto = this.recordToDto(item);
+                const feature = this.createFeature(dto);
+                src.addFeature(feature);
+            });
+
         };
 
         this.unsubscribe = store.subscribe(
@@ -192,7 +190,7 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
         }
     }
 
-    public styleFunction(feature: Feature<Point>, resolution: number): Style[] {
+    public styleFunction(feature: FeatureLike, resolution: number): Style[] {
         const geom = feature.getGeometry();
         const styles: Style[] = [];
         if (geom instanceof Point) {
@@ -214,64 +212,43 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
      */
     public async load(): Promise<void> {
         const store = layerNameToStoreMap[this.LAYER_NAME];
-        const {busStations} = store.getState().currentJsonData;
+        const busPublicStationResponse: BusPublicStationResponse = store.getState().currentJsonData;
+        const busStations = busPublicStationResponse.busStations;
+        const featureBuffer: Feature[] = [];
 
-        const source = this.source;
-        source.clear();
+        for (const busStation of busStations) {
+            const stationFeature = this.createFeature(busStation)
+            if (stationFeature) featureBuffer.push(stationFeature);
+        }
 
-        const features = busStations.map((data) => this.createFeature(data));
-
-        source.addFeatures(features);
+        this.source.clear();
+        this.source.addFeatures(featureBuffer);
     }
 
     /**
      * DTO로부터 Point Feature와 속성을 생성
      */
-    public createFeature(data: BusStationData): Feature<Point> | undefined {
+    public createFeature(data: BusStationData): Feature | undefined {
+        const {lines, ...rest} = data;
         const props: BusStationFeature = {
-            ...data,
-            transitMode: data.transitMode ?? TRANSIT_MODE.BUS,
-            featureType: data.featureType ?? FEATURE_TYPE.BUS_STATION,
+            ...rest,
+            featureType: data.featureType,
+            menuCode: MENU_CODE.BUS_STATION
         };
-        const coord = data.coordinates[0];
-        const hasValidCoordinate = typeof coord.lng === 'number' && typeof coord.lat === 'number';
 
-        const geom = hasValidCoordinate ? new Point(fromLonLat([coord.lng!, coord.lat!])) : undefined;
-
-        const feature = new Feature<Point>(geom);
+        const feature = new Feature();
         feature.setProperties(props);
-
+        if (props.coordinates.lng && props.coordinates.lat) {
+            const point = new Point(fromLonLat([props.coordinates.lng, props.coordinates.lat] ))
+            feature.setGeometry(point)
+        }
         return feature;
-    }
-
-    public createDto(): BusStationData {
-        const guid = generateGUIDWithType(this.getFeatureType());
-
-        const dto: BusStationData = {
-            id: undefined,
-            __guid: guid,
-            featureType: FEATURE_TYPE.BUS_STATION,
-            transitMode: TRANSIT_MODE.BUS,
-            linkRef: null,
-            laneRef: null,
-            offset: null,
-            coordinates: [{
-                lng: null,
-                lat: null,
-            }],
-            type: null,
-            address: '',
-            parkingLots: null,
-            menuCode: "BUS_STATION",
-        };
-
-        return dto;
     }
 
     /**
      * 일반 객체를 DTO 로 변환
      */
-    public recordToDto(record: BusStationFeature): BusStationData {
+    public recordToDto(record): BusStationData {
         const {geometry, ...cleaned} = record;
         const guid = cleaned.__guid ?? generateGUIDWithType(this.getFeatureType())
         const dto = {

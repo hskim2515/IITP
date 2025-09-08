@@ -6,7 +6,6 @@ import { Circle as CircleStyle, Fill, Stroke, Style, } from "ol/style";
 import { LineString, Point, Polygon } from "ol/geom";
 import { fromLonLat } from "ol/proj";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
-import { useScenarioStore } from "@stores/useScenarioStore";
 import { Coordinate } from "ol/coordinate";
 import { Network } from "@type/Network";
 import { getTriangleConnectionPoints } from "@utils/network";
@@ -29,6 +28,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         "connection": 30,
         "connection-edit": 130,
         "node": 150,
+        "port": 160
     };
 
     private static readonly BASE_STYLES = {
@@ -191,7 +191,31 @@ export default class NetworkFeatureLayer extends VectorLayer {
         //         zIndex
         //     }));
         // }
-
+        if (geom instanceof Point && props.featureType === "port") {
+            // if(props.type === 'in') {
+            //     styles.push(new Style({
+            //         image: new RegularShape({
+            //             fill: new Fill({ color: 'rgba(0,255,255,0.8)' }),
+            //             stroke: new Stroke({ color: 'rgba(0,128,128,1)' }),
+            //             points: 3,
+            //             radius: 8,
+            //             angle: Math.PI / 2
+            //         }),
+            //         zIndex: zIndex + 1
+            //     }))
+            // } else if (props.type === 'out') {
+            //     styles.push(new Style({
+            //         image: new RegularShape({
+            //             fill: new Fill({ color: 'rgba(255, 0,255,0.8)' }),
+            //             stroke: new Stroke({ color: 'rgba(128, 0,128,1)' }),
+            //             points: 3,
+            //             radius: 10,
+            //             angle: Math.PI / 4
+            //         }),
+            //         zIndex
+            //     }))
+            // }
+        }
         return styles;
     }
 
@@ -278,7 +302,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 linkPolygonFeature.setProperties({ ...link, featureType: "link" });
                 featureBuffer.push(linkPolygonFeature);
 
-                const laneCount = link.lanes?.length ?? 1;
+                const laneCount = link.lanes?.length ?? 2;
                 for (let i = 0; i < laneCount; i++) {
                     const lane = link.lanes[i];
                     const laneWidth = 3.5; // lane.width 부재
@@ -310,6 +334,14 @@ export default class NetworkFeatureLayer extends VectorLayer {
                     const laneLineFeature = new Feature(new LineString([ centerP1, centerP2 ]));
                     laneLineFeature.setProperties({ ...laneProps, featureType: "lane-edit" });
                     featureBuffer.push(laneLineFeature);
+                    if (lane.cells?.length > 0) {
+                        for (const cell of lane.cells) {
+                            // const cooridor = createCorridorAlongLane({
+                            //     id: cell.__guid,
+                            //     so
+                            // })
+                        }
+                    }
                 }
             }
 
@@ -321,8 +353,6 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 const nodeFeature = new Feature(point);
                 nodeFeature.setProperties({ ...node, featureType: "node" });
                 featureBuffer.push(nodeFeature);
-
-
 
                 if (!node.connections) continue;
                 for (const conn of node.connections) {
@@ -377,9 +407,25 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
                 if (!node.ports) continue;
                 for (const port of node.ports) {
+                    const link = links.find((l) => l.id == port.linkId);
+                    if (!link) continue;
 
+                    const sourceNode = nodes.find((n) => n.id == link.fromNode);
+                    const targetNode = nodes.find((n) => n.id == link.toNode);
+                    if (!sourceNode || !targetNode) continue;
+
+                    const source = fromLonLat([sourceNode.coordinates.lng, sourceNode.coordinates.lat]);
+                    const target = fromLonLat([targetNode.coordinates.lng, targetNode.coordinates.lat]);
+
+                    const position = port.type === 'in' ? source : target;
+
+                    const portFeature = new Feature({
+                        ...port,
+                        geometry: new Point(position),
+                        featureType: "port",
+                    });
+                    featureBuffer.push(portFeature);
                 }
-
             }
 
             this.source.clear();

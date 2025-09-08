@@ -1,7 +1,7 @@
 package com.iitp.iitp_rest.service.publicTransit.station;
 
-import com.iitp.iitp_rest.model.publicTransit.station.BusStationData;
-import com.iitp.iitp_rest.model.publicTransit.station.PublicTransitData;
+import com.iitp.iitp_rest.model.publicTransit.bus.BusStationData;
+import com.iitp.iitp_rest.model.publicTransit.bus.PublicTransitData;
 import com.iitp.iitp_rest.service.xml.XmlParser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;

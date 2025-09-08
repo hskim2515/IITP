@@ -13,7 +13,7 @@ import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {useSchemaStore} from "@stores/useSchemaStore";
 import debounce from "lodash.debounce";
-import {featureTypeEventHandlers} from "../../handler/featureTypeEventHandlers";
+import {featureTypeEventHandlers} from "@handler/featureTypeEventHandlers";
 import { matchesCustomKeyValue } from "@utils/olLayer";
 import { useMessageStore } from "@stores/useMessageStore";
 import { Field, Schema } from "@type/Schema";
@@ -23,37 +23,6 @@ import { generateTemplate } from "@utils/schema";
 
 // 중첩 배열로 생성하지 않을 필드 지정
 const EXCLUDED_NESTED_FIELDS = ["coordinates"];
-
-// 컬럼 자동 추출
-function generateColumnsFromData(data: any[]) {
-    if (!data?.length) return [];
-
-    const excludedFields = ['shape', '__guid', 'coordinate', 'lat', 'lng', 'featureType', 'from', 'to', 'laneSource', 'laneTarget', 'menuCode'];
-
-    return Object.keys(data[0])
-        .filter((key) => !Array.isArray(data[0][key]) && !excludedFields.includes(key))
-        .map((key) => {
-            const uniqueValues = [...new Set(data.map((item) => item[key]))]
-                .filter(v => v !== undefined && v !== null);
-            return {
-                title: key,
-                dataIndex: key,
-                key: key,
-                sorter: (a, b) => {
-                    const va = a[key];
-                    const vb = b[key];
-                    return typeof va === 'number' && typeof vb === 'number'
-                        ? va - vb
-                        : String(va).localeCompare(String(vb));
-                },
-                filters: uniqueValues.map((val) => ({
-                    text: String(val),
-                    value: val,
-                })),
-                onFilter: (value, record) => record[key] === value,
-            };
-        });
-}
 
 function generateColumnsFromSchema(
     data: any[],

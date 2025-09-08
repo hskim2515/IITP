@@ -26,28 +26,17 @@ public class NetworkController {
 
     @GetMapping("/{key}")
     public ResponseEntity<NetworkXmlResponse> getNetwork(@PathVariable String key) {
-        try {
-            String path = key + "/network.xml";
-            InputStream is = XmlUtils.loadXmlAsStream(path);
-            NetworkXmlResponse dto = networkService.streamToDto(is);
-            NetworkXmlResponse result = networkService.transformNetworkCoordinates(key, dto);
-            return ResponseEntity.ok(result);
-        } catch (XMLStreamException e) {
-            return ResponseEntity.status(500).body(new NetworkXmlResponse());
-        }
+        return ResponseEntity.ok(networkService.getNetwork(key));
     }
 
     @GetMapping("/road/{key}")
-    public ResponseEntity<RoadResponse> getRoad(@PathVariable String key) {
-        try {
+    public ResponseEntity<RoadResponse> getRoad(@PathVariable String key) throws XMLStreamException {
+
             String path = key + "/network.xml";
             InputStream is = XmlUtils.loadXmlAsStream(path);
             RoadResponse result = roadService.streamToDto(is);
 
             return ResponseEntity.ok(result);
-        } catch (XMLStreamException e) {
-            return ResponseEntity.status(500).body(new RoadResponse());
-        }
     }
 
 }

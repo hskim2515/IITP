@@ -26,14 +26,15 @@ public class RoadXmlParser implements XmlParser<RoadResponse> {
     private final XMLInputFactory xmlInputFactory;
 
     private static final String TAG_NETWORK = "Network";
-    private static final String TAG_LINK    = "link";
-    private static final String TAG_LANE    = "lane";
+    private static final String TAG_LINK = "link";
+    private static final String TAG_LANE = "lane";
 
-    private static final String ATTR_ID     = "id";
-    private static final String ATTR_SHAPE  = "shape";
+    private static final String ATTR_ID = "id";
+    private static final String ATTR_SHAPE = "shape";
 
     @Override
     public RoadResponse parse(InputStream is) throws XMLStreamException {
+
         XMLEventReader eventReader = xmlInputFactory.createXMLEventReader(is);
 
         RoadResponse out = new RoadResponse();
@@ -59,7 +60,9 @@ public class RoadXmlParser implements XmlParser<RoadResponse> {
         return out;
     }
 
-    /** <link> 내부의 모든 <lane>에 대해 Road를 생성 */
+    /**
+     * <link> 내부의 모든 <lane>에 대해 Road를 생성
+     */
     private void parseLinkAndEmitRoads(XMLEventReader reader,
                                        StartElement linkStartElement,
                                        List<RoadResponse.Road> out) throws XMLStreamException {
@@ -107,7 +110,7 @@ public class RoadXmlParser implements XmlParser<RoadResponse> {
      * - 두 번째 점 → targetEasting/targetNorthing
      */
     private RoadResponse.Road laneStartElementToRoad(String linkId, StartElement laneStartElement) {
-        final String laneId   = getStringAttribute(laneStartElement, ATTR_ID);
+        final String laneId = getStringAttribute(laneStartElement, ATTR_ID);
         final String shapeStr = getStringAttribute(laneStartElement, ATTR_SHAPE);
 
         if (shapeStr == null || shapeStr.trim().isEmpty()) return null;
@@ -117,11 +120,9 @@ public class RoadXmlParser implements XmlParser<RoadResponse> {
 
         Double baseEasting = null, baseNorthing = null, targetEasting = null, targetNorthing = null;
 
-        if (positions.size() >= 1) {
-            Cartesian3 p0 = positions.get(0);
-            baseEasting = p0.getX();
-            baseNorthing = p0.getY();
-        }
+        Cartesian3 p0 = positions.getFirst();
+        baseEasting = p0.getX();
+        baseNorthing = p0.getY();
         if (positions.size() >= 2) {
             Cartesian3 p1 = positions.get(1);
             targetEasting = p1.getX();
@@ -132,7 +133,9 @@ public class RoadXmlParser implements XmlParser<RoadResponse> {
         return new RoadResponse.Road(linkId, laneId, polyline, baseEasting, baseNorthing, targetEasting, targetNorthing);
     }
 
-    /** "x,y x,y ..." → Cartesian3 목록 (숫자 파싱은 XmlUtils.parseDoubleOrNullStrict 사용) */
+    /**
+     * "x,y x,y ..." → Cartesian3 목록 (숫자 파싱은 XmlUtils.parseDoubleOrNullStrict 사용)
+     */
     private List<Cartesian3> parseShapeToPositions(String shapeStr) {
         List<Cartesian3> positions = new ArrayList<>();
         String trimmed = shapeStr.trim();

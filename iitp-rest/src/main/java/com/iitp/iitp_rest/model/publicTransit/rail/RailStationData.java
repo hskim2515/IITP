@@ -1,4 +1,4 @@
-package com.iitp.iitp_rest.model.publicTransit.station;
+package com.iitp.iitp_rest.model.publicTransit.rail;
 
 import com.iitp.iitp_rest.model.geometry.Coordinates;
 import lombok.AllArgsConstructor;
@@ -13,17 +13,20 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class BusStationData {
+public class RailStationData {
     private String id;
     private String transitMode;
-    private Integer linkRef;
-    private Integer laneRef;
-    private Double pos;
-    private String type; // side, island, face-to-face, staggered
-    private Integer parkingLots;
     private String address;
     private String center;
-    private List<String> lines;
+    private List<ExitData> exits = new ArrayList<>();
+    private List<TimetableData> timetables = new ArrayList<>();
+    private List<String> lineList = new ArrayList<>();
     private List<Coordinates> coordinates = new ArrayList<>();
 
+    @Data // 임시
+    public static class TimetableData {
+        private String dayOfWeek;
+        private String lineId;
+        private List<String> times;
+    }
 }

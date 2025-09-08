@@ -1,6 +1,6 @@
 package com.iitp.iitp_rest.repository;
 
-import com.iitp.iitp_rest.model.publicTransit.station.BusStationVersion;
+import com.iitp.iitp_rest.model.publicTransit.bus.BusStationVersion;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.Optional;

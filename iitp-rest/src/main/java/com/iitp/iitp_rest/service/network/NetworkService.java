@@ -9,11 +9,11 @@ import com.iitp.iitp_rest.model.network.node.NodeXmlResponse;
 import com.iitp.iitp_rest.model.scenario.Scenario;
 import com.iitp.iitp_rest.repository.ScenarioRepository;
 import com.iitp.iitp_rest.util.CoordinateUtils;
+import com.iitp.iitp_rest.util.XmlUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import javax.xml.stream.XMLStreamException;
 import java.io.InputStream;
 import java.util.List;
 import java.util.Map;
@@ -32,10 +32,14 @@ public class NetworkService {
 
     private final ScenarioRepository scenarioRepository;
 
-    private static final double SCALE_X = 1.0 / 88000.0;
-    private static final double SCALE_Y = 1.0 / 111000.0;
+    public NetworkXmlResponse getNetwork(String key) {
+        String path = key + "/network.xml";
+        InputStream is = XmlUtils.loadXmlAsStream(path);
+        NetworkXmlResponse dto = streamToDto(is);
+        return transformNetworkCoordinates(key, dto);
+    }
 
-    public NetworkXmlResponse streamToDto(InputStream is) throws XMLStreamException {
+    public NetworkXmlResponse streamToDto(InputStream is) {
         final long totalStart = System.nanoTime();
 //        NetworkXmlResponse networkDto = networkXmlParser.parse(is);
         NetworkXmlResponse networkDto = networkJaxbParser.parse(is);
@@ -43,9 +47,6 @@ public class NetworkService {
         log.info("NetworkData streamToDto total:{}", totalEnd - totalStart);
         return networkDto;
     }
-
-
-
 
     /**
      * 1) Node/Link/Lane의 shape 문자열 → 좌표 변환
@@ -63,7 +64,7 @@ public class NetworkService {
         // 2. Nodes & Connections: node.center / connection.shape → coordinates
         dto.getNodes().forEach(node -> {
             List<Coordinates> transformedNodeCoords = CoordinateUtils.parseAndTransform(
-                    node.getCenter(), baseLongitude, baseLatitude, SCALE_X, SCALE_Y
+                    node.getCenter(), baseLongitude, baseLatitude
             );
             if (!transformedNodeCoords.isEmpty()) {
                 node.setCoordinates(transformedNodeCoords.getFirst());
@@ -71,7 +72,7 @@ public class NetworkService {
 
             node.getConnections().forEach(connection ->
                     connection.setCoordinates(CoordinateUtils.parseAndTransform(
-                            connection.getShape(), baseLongitude, baseLatitude, SCALE_X, SCALE_Y
+                            connection.getShape(), baseLongitude, baseLatitude
                     ))
             );
         });
@@ -79,11 +80,11 @@ public class NetworkService {
         // 3. Links & Lanes: link.shape / lane.shape → coordinates
         dto.getLinks().forEach(link -> {
             link.setCoordinates(CoordinateUtils.parseAndTransform(
-                    link.getShape(), baseLongitude, baseLatitude, SCALE_X, SCALE_Y
+                    link.getShape(), baseLongitude, baseLatitude
             ));
             link.getLanes().forEach(lane ->
                     lane.setCoordinates(CoordinateUtils.parseAndTransform(
-                            lane.getShape(), baseLongitude, baseLatitude, SCALE_X, SCALE_Y
+                            lane.getShape(), baseLongitude, baseLatitude
                     ))
             );
         });

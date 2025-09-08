@@ -9,6 +9,9 @@ import java.util.stream.Collectors;
 
 public class CoordinateUtils {
 
+    private static final double SCALE_X = 1.0 / 88000.0;
+    private static final double SCALE_Y = 1.0 / 111000.0;
+
     /**
      * @param input xml의 shape, coord 등의 좌표문자열
      * @return Coordinates 배열로 변환
@@ -85,8 +88,7 @@ public class CoordinateUtils {
     }
 
     public static List<Coordinates> parseAndTransform(
-            String input, double baseLongitude, double baseLatitude,
-            double scaleX, double scaleY
+            String input, double baseLongitude, double baseLatitude
     ) {
         List<Coordinates> relativeCoords = parse(input);
         if (relativeCoords.isEmpty()) {
@@ -97,7 +99,7 @@ public class CoordinateUtils {
                 .map(relative -> transformCoordinates(
                         baseLongitude, baseLatitude,
                         relative.getLng(), relative.getLat(),
-                        scaleX, scaleY))
+                        SCALE_X, SCALE_Y))
                 .collect(Collectors.toList());
     }
 }

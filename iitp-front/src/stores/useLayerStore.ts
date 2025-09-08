@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createSelectors } from "@stores/createSelectors";
-import { LayerManager } from "../managers/LayerManager";
+import { LayerManager } from "@managers/LayerManager";
 
 interface State {
     activeLayerName: Array<string> | null; // heatmap, trip

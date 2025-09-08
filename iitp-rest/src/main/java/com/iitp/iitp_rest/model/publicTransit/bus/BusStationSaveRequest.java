@@ -1,4 +1,4 @@
-package com.iitp.iitp_rest.model.publicTransit.station;
+package com.iitp.iitp_rest.model.publicTransit.bus;
 
 import com.iitp.iitp_rest.model.LogsData;
 import lombok.Data;

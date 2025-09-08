@@ -20,6 +20,4 @@ public class RoadService {
         log.info("RoadData streamToDto total:{}", totalEnd-totalStart);
         return roadDto;
     }
-    // Map으로 변환하면서 id 설정하는 과정이 필요함.
-    //
 }

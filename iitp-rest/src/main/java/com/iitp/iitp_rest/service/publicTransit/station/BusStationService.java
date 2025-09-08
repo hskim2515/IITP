@@ -1,25 +1,25 @@
 package com.iitp.iitp_rest.service.publicTransit.station;
 
 import com.iitp.iitp_rest.model.geometry.Coordinates;
-import com.iitp.iitp_rest.model.network.RoadResponse;
-import com.iitp.iitp_rest.model.publicTransit.station.*;
+import com.iitp.iitp_rest.model.publicTransit.bus.BusStationLogs;
+import com.iitp.iitp_rest.model.publicTransit.bus.BusStationSaveRequest;
+import com.iitp.iitp_rest.model.publicTransit.bus.BusStationVersion;
+import com.iitp.iitp_rest.model.publicTransit.bus.PublicTransitXmlResponse;
 import com.iitp.iitp_rest.model.scenario.Scenario;
-import com.iitp.iitp_rest.repository.*;
+import com.iitp.iitp_rest.repository.BusStationLogsRepository;
+import com.iitp.iitp_rest.repository.BusStationVersionsRepository;
+import com.iitp.iitp_rest.repository.ScenarioRepository;
 import com.iitp.iitp_rest.service.network.RoadService;
-import com.iitp.iitp_rest.util.CoordinateConverter;
+import com.iitp.iitp_rest.util.CoordinateUtils;
 import com.iitp.iitp_rest.util.XmlUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.locationtech.proj4j.ProjCoordinate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 import javax.xml.stream.XMLStreamException;
 import java.io.InputStream;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -28,7 +28,7 @@ public class BusStationService {
 
     private final BusStationVersionsRepository busStationVersionsRepository;
     private final BusStationLogsRepository busStationLogsRepository;
-    private final BusStationXmlParser busStationXmlParser;
+    private final BusStationJaxbParser busStationJaxbParser;
     private final RoadService roadService;
     private final ScenarioRepository scenarioRepository;
 
@@ -64,78 +64,36 @@ public class BusStationService {
         busStationLogsRepository.save(entityLog);
     }
 
-    public PublicTransitData getBusStation(String versionId) throws XMLStreamException {
+    public PublicTransitXmlResponse getBusStation(String key) throws XMLStreamException {
+        String path = key + "/publicTransit.xml";
+        InputStream is = XmlUtils.loadXmlAsStream(path);
+        PublicTransitXmlResponse busPublicTransitDto = streamToDto(is);
+        return transformBusPublicTransitCoordinates(key, busPublicTransitDto);
+    }
+
+
+    public PublicTransitXmlResponse streamToDto(InputStream is) {
         final long totalStart = System.nanoTime();
-        Scenario scenario = scenarioRepository.findByKey(versionId).orElse(new Scenario());
-        final long networkParsingS = System.nanoTime();
-
-        String networkXmlPath = versionId + "/network.xml";
-        InputStream networkIs = XmlUtils.loadXmlAsStream(networkXmlPath);
-        List<RoadResponse.Road> roadEntities = roadService.streamToDto(networkIs).getRoads();
-
-        final long networkParsingE = System.nanoTime();
-        log.info("Station Data getBusStation network parsing: {}", networkParsingE - networkParsingS);
-
-        final long roadMapS = System.nanoTime();
-        Map<String, RoadResponse.Road> roadMap = roadEntities.stream().collect(Collectors.toMap(
-                road -> road.getLinkId() + "|" + road.getLaneId(),
-                Function.identity(),
-                (r1, r2) -> r1
-        ));
-        final long roadMapE = System.nanoTime();
-        log.info("Station Data getBusStation roadMap : {}", roadMapE - roadMapS);
-        final long CoordinateConverterS = System.nanoTime();
-        // --- 3. CoordinateConverter 캐시 생성 ---
-        Map<String, CoordinateConverter> converterCache = new ConcurrentHashMap<>();
-        roadMap.forEach((key, road) -> {
-            CoordinateConverter converter = new CoordinateConverter();
-            converter.setBasePoint(scenario.getLongitude(), scenario.getLatitude());
-            converter.setRoadPoint(road.getBaseEasting(), road.getBaseNorthing(), road.getTargetEasting(), road.getTargetNorthing());
-            converterCache.put(key, converter);
-        });
-        final long CoordinateConverterE = System.nanoTime();
-        log.info("Station Data getBusStation CoordinateConverter : {}", CoordinateConverterE - CoordinateConverterS);
-
-        final long stationParsingS = System.nanoTime();
-
-        // --- 4. 버스 정류장 정보 파싱 ---
-        String publicTransitXmlPath = versionId + "/publicTransit.xml";
-        InputStream is = XmlUtils.loadXmlAsStream(publicTransitXmlPath);
-        PublicTransitData result = busStationXmlParser.parse(is);
-        final long stationParsingE = System.nanoTime();
-        log.info("Station Data getBusStation station parsing: {}", stationParsingE - stationParsingS);
-        final long convertS = System.nanoTime();
-
-        // --- 5. 파싱된 각 버스 정류장의 상대좌표를 절대좌표로 변환 ---
-        if (result.getBusStations() != null) {
-            for (BusStationData station : result.getBusStations()) {
-                // 도로 ID와 차선 ID로 Key 생성
-                String key = station.getLinkRef() + "|" + station.getLaneRef();
-                CoordinateConverter converter = converterCache.get(key);
-
-                // 해당 도로 정보가 없으면 변환 불가
-                if (converter == null) {
-                    continue;
-                }
-
-                // 버스 정류장의 offset(pos)은 도로 시작점에서의 거리(1D)이므로,
-                // toAbsolute 메서드의 첫 번째 인자(posX)로 사용합니다. posY는 0으로 가정합니다.
-                double posX = station.getPos(); // 또는 getPos()
-                double posY = 0.0; // 차선 중심에 위치한다고 가정
-
-                ProjCoordinate actualCoord = converter.toAbsolute(posX, posY);
-
-                // 변환된 절대좌표를 DTO의 coordinates 필드에 추가
-                Coordinates newCoord = new Coordinates();
-                newCoord.setLat(actualCoord.y); // ProjCoordinate의 y가 위도(lat)
-                newCoord.setLng(actualCoord.x); // ProjCoordinate의 x가 경도(lng)
-                station.getCoordinates().add(newCoord);
-            }
-        }
-        final long convertE = System.nanoTime();
-        log.info("Station Data getBusStation station convert: {}", convertE - convertS);
+        PublicTransitXmlResponse dto = busStationJaxbParser.parse(is);
         final long totalEnd = System.nanoTime();
-        log.info("Station Data getBusStation station total: {}", totalEnd - totalStart);
-        return result;
+        log.info("BusPublicTransitXmlResponse streamToDto total:{}", totalEnd - totalStart);
+        return dto;
+    }
+
+    public PublicTransitXmlResponse transformBusPublicTransitCoordinates (String key, PublicTransitXmlResponse dto) {
+        Scenario scenario = scenarioRepository.findByKey(key).orElse(new Scenario());
+        double baseLatitude = scenario.getLatitude();
+        double baseLongitude = scenario.getLongitude();
+
+        dto.getBusStations().forEach(busStation -> {
+            List<Coordinates> transformedStationCoords = CoordinateUtils.parseAndTransform(
+                    busStation.getCenter(), baseLongitude, baseLatitude
+            );
+            if (!transformedStationCoords.isEmpty()) {
+                busStation.setCoordinates(transformedStationCoords.getFirst());
+            }
+        });
+
+        return dto;
     }
 }

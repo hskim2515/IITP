@@ -1,6 +1,8 @@
 package com.iitp.iitp_rest.service.publicTransit.station;
 
-import com.iitp.iitp_rest.model.publicTransit.station.*;
+import com.iitp.iitp_rest.model.publicTransit.rail.ExitData;
+import com.iitp.iitp_rest.model.publicTransit.rail.RailPublicTransitData;
+import com.iitp.iitp_rest.model.publicTransit.rail.RailStationData;
 import com.iitp.iitp_rest.service.xml.XmlParser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;

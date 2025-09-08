@@ -27,7 +27,8 @@ export const FEATURE_TYPE = {
     BUS_STATION: 'busStations',
     RAIL_STATION: 'railStations',
     RAIL_STATION_EXIT: 'exits',
-}
+} as const;
+
 export type TransitMode = typeof TRANSIT_MODE[keyof typeof TRANSIT_MODE];
 
 export interface Coordinates {
@@ -45,22 +46,35 @@ export interface BusStationData {
     offset: number | null;
     type: string | null;
     address: string | null;
-    coordinates: Coordinates[],
+    coordinates: Coordinates,
     parkingLots: number | null;
     menuCode: string
+    lines: unknown[]
 }
 
-export type BusStationFeature = BusStationData;
+export type BusStationFeature = Omit<BusStationData, 'lines'>;
+
+export interface BusPublicStationResponse {
+    busStations: BusStationData[]
+}
+
+export interface RailPublicStationResponse {
+    railStations: RailStationData[]
+}
 
 export interface RailStationData {
     __guid: string;
     featureType: typeof FEATURE_TYPE.RAIL_STATION;
     id: string | undefined;
     transitMode: TransitMode;
-    linkRef: string | undefined;
+    lineList: string | null;
+    type: string | null;
     address: string | null;
-    coordinates: Coordinates[];
+    center: string | null;
     exits: RailStationExitData[] | null
+
+    linkRef: string | undefined;
+    coordinates: Coordinates;
     menuCode: string
 }
 
@@ -73,7 +87,7 @@ export interface RailStationExitData {
     linkRef: string | null;
     exitRef: number | undefined;
     offset: number | null;
-    coordinates: Coordinates[];
+    coordinates: Coordinates;
     accessTime: number | null;
     menuCode: string
 }
@@ -86,10 +100,10 @@ export const defaultRailStationExitData = {
     exitRef: undefined,
     offset: null,
     accessTime: null,
-    coordinates: [{
+    coordinates: {
         lng: null,
         lat: null,
-    }],
+    },
     menuCode: "RAIL_STATION",
 } as RailStationExitData
 
@@ -102,10 +116,10 @@ export const defaultRailStationExitFeature = {
     exitRef: undefined,
     offset: null,
     accessTime: null,
-    coordinates: [{
+    coordinates: {
         lng: null,
         lat: null,
-    }],
+    },
     menuCode: "RAIL_STATION",
 } as RailStationExitFeature
 

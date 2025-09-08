@@ -1,4 +1,4 @@
-package com.iitp.iitp_rest.model.publicTransit.station;
+package com.iitp.iitp_rest.model.publicTransit.rail;
 
 import com.iitp.iitp_rest.model.BaseVersion;
 import com.vladmihalcea.hibernate.type.json.JsonType;
@@ -13,13 +13,13 @@ import org.hibernate.annotations.Type;
 import java.util.List;
 
 @Entity
-@Table(name = "bus_station_versions")
+@Table(name = "rail_station_versions")
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @SuperBuilder
-public class BusStationVersion extends BaseVersion {
+public class RailStationVersion extends BaseVersion {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -27,5 +27,5 @@ public class BusStationVersion extends BaseVersion {
 
     @Type(JsonType.class)
     @Column(columnDefinition = "jsonb")
-    private List<BusStationData> data;
+    private List<RailStationData> data;
 }
