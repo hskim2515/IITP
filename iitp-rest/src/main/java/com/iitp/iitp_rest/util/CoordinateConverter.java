@@ -15,17 +15,19 @@ public class CoordinateConverter {
     private double roadTargetEasting;
     private double roadTargetNorthing;
 
-    private final CoordinateTransform wgsToMercator;
-    private final CoordinateTransform mercatorToWgs;
+    private static final CoordinateTransform wgsToMercator;
+    private static final CoordinateTransform mercatorToWgs;
 
-    public CoordinateConverter() {
+    static  {
         CRSFactory crsFactory = new CRSFactory();
         CoordinateReferenceSystem wgs84 = crsFactory.createFromName("EPSG:4326");
         CoordinateReferenceSystem webMercator = crsFactory.createFromName("EPSG:3857");
 
         CoordinateTransformFactory transformFactory = new CoordinateTransformFactory();
-        this.wgsToMercator = transformFactory.createTransform(wgs84, webMercator);
-        this.mercatorToWgs = transformFactory.createTransform(webMercator, wgs84);
+        wgsToMercator = transformFactory.createTransform(wgs84, webMercator);
+        mercatorToWgs = transformFactory.createTransform(webMercator, wgs84);
+    }
+    public CoordinateConverter() {
     }
 
     public void setBasePoint(double lon, double lat) {
@@ -39,7 +41,6 @@ public class CoordinateConverter {
         this.roadTargetEasting = targetEasting;
         this.roadTargetNorthing = targetNorthing;
     }
-
 
     public ProjCoordinate toAbsolute(double relX, double relY) {
         // 1. 차선 방향 벡터 구하기

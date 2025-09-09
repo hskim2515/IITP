@@ -1,14 +1,14 @@
-import {useEffect, useRef, useState} from 'react';
-import {useCesiumStore} from "@stores/useCesiumStore";
+import {MutableRefObject, useEffect, useRef, useState } from 'react';
+import { useCesiumStore } from "@stores/useCesiumStore";
 import * as Cesium from "cesium";
-import {Cartesian3, Cartographic, HeightReference, Viewer} from "cesium";
-import {useLayerStore} from "@stores/useLayerStore";
-import {useOpenLayersStore} from "@stores/useOpenLayersStore";
-import {useLayerSchemaStore} from "@stores/useLayerSchemaStore";
-import {Map as OLMap, View} from "ol";
+import { Cartesian3, Cartographic, HeightReference, Viewer } from "cesium";
+import { useLayerStore } from "@stores/useLayerStore";
+import { useOpenLayersStore } from "@stores/useOpenLayersStore";
+import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
+import { Map as OLMap, View } from "ol";
 import * as olProj from "ol/proj";
 
-const useMapInit = (openlayersMapRef, cesiumMapRef) => {
+const useMapInit = (openlayersMapRef: MutableRefObject<HTMLElement | null>, cesiumMapRef: MutableRefObject<Element | null>) => {
 
     const setMap = useOpenLayersStore.actions.setMap();
     const setView = useOpenLayersStore.actions.setView();
@@ -43,12 +43,14 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
     }, [setActiveLayerGroupName, setActiveLayerName])
 
     const openLayersMapInit = () => {
+        if(!openlayersMapRef.current) return;
         // 1) Map & View 초기화
         const view = new View({
             center: olProj.fromLonLat([ 126.77496, 37.49720 ]),
             zoom: 16,
         });
         const olMap = new OLMap({
+            pixelRatio: 1,
             target: openlayersMapRef.current,
             view,
         });
@@ -59,6 +61,7 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
     }
 
     const cesiumMapInit = async () => {
+        if(!cesiumMapRef.current) return;
         Cesium.Ion.defaultAccessToken = '';  // Set your Cesium Ion access token here
         const cesiumViewer = new Viewer(cesiumMapRef.current, {
             //terrain: new Cesium.Terrain(Cesium.CesiumTerrainProvider.fromUrl('http://175.197.92.213:10201/terrain-tile/dem05_ellipsoid')),
@@ -85,7 +88,7 @@ const useMapInit = (openlayersMapRef, cesiumMapRef) => {
             destination: Cartesian3.fromDegrees(126.77496, 37.49720, 10000) // Adjust the height as needed
         });
 
-        cesiumViewer.cesiumWidget.creditContainer.style.display = "none";
+        cesiumViewer.cesiumWidget.creditDisplay.container.style.display = "none";
 
         cesiumViewer.scene.globe.depthTestAgainstTerrain = true;
         cesiumViewer.scene.useDepthPicking = true

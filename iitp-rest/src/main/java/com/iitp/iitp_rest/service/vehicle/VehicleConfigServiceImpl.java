@@ -1,7 +1,7 @@
 package com.iitp.iitp_rest.service.vehicle;
 
-import com.iitp.iitp_rest.model.vehicle.VehicleType;
-import com.iitp.iitp_rest.model.vehicle.VehicleTypeParameter;
+import com.iitp.iitp_rest.model.vehicle.type.VehicleType;
+import com.iitp.iitp_rest.model.vehicle.type.VehicleTypeParameter;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;

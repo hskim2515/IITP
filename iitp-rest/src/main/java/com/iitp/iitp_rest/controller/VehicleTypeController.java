@@ -1,8 +1,8 @@
 package com.iitp.iitp_rest.controller;
 
-import com.iitp.iitp_rest.model.vehicle.VehicleType;
-import com.iitp.iitp_rest.model.vehicle.VehicleTypeParameter;
-import com.iitp.iitp_rest.model.vehicle.VehicleTypeParameterDTO;
+import com.iitp.iitp_rest.model.vehicle.type.VehicleType;
+import com.iitp.iitp_rest.model.vehicle.type.VehicleTypeParameter;
+import com.iitp.iitp_rest.model.vehicle.type.VehicleTypeParameterDTO;
 import com.iitp.iitp_rest.repository.VehicleTypeParameterRepository;
 import com.iitp.iitp_rest.repository.VehicleTypeRepository;
 import jakarta.transaction.Transactional;

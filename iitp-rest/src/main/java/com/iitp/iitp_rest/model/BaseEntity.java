@@ -14,7 +14,7 @@ import java.time.Instant;
 @Getter
 @Setter
 @MappedSuperclass
-@EntityListeners(AuditingEntityListener.class)  // AuditingEntityListener는 @PrePersist/@PreUpdate 호출을 지원합니다 :contentReference[oaicite:1]{index=1}
+@EntityListeners(AuditingEntityListener.class)
 public abstract class BaseEntity {
 
     @CreatedBy
@@ -42,21 +42,15 @@ public abstract class BaseEntity {
     )
     private Instant lastModifiedDate;
 
-    /**
-     * INSERT 시점에 한 번만 호출되어 createdDate/lastModifiedDate를 채웁니다.
-     * JPA @PrePersist 콜백 메서드는 매개변수 없이 void 반환 타입이어야 합니다. :contentReference[oaicite:2]{index=2}
-     */
-    @PrePersist  // INSERT 직전에 호출됩니다 :contentReference[oaicite:3]{index=3}
+    @PrePersist
     protected void onCreate() {
-        Instant now = Instant.now();  // Instant는 UTC 기반 절대 시점을 나타냅니다 :contentReference[oaicite:4]{index=4}
+        Instant now = Instant.now();
         this.createdDate = now;
         this.lastModifiedDate = now;
     }
 
-    /**
-     * UPDATE 시마다 호출되어 lastModifiedDate를 갱신합니다.
-     */
-    @PreUpdate  // UPDATE 직전에 호출됩니다 :contentReference[oaicite:5]{index=5}
+
+    @PreUpdate
     protected void onUpdate() {
         this.lastModifiedDate = Instant.now();
     }

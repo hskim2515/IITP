@@ -1,6 +1,6 @@
 package com.iitp.iitp_rest.repository;
 
-import com.iitp.iitp_rest.model.Network;
+import com.iitp.iitp_rest.model.network.Network;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.util.List;

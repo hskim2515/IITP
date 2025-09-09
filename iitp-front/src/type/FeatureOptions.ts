@@ -1,9 +1,3 @@
-export interface FetchFeatureDataType<T = Record<string, unknown>> {
-    id: string | number;
-    json: T
-    name: string;
-}
-
 export enum GeometryType {
     POINT = 'Point',
     LINE_STRING = 'LineString',

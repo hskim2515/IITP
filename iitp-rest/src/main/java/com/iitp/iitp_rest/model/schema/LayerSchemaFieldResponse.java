@@ -16,6 +16,7 @@ public class LayerSchemaFieldResponse {
     private String name;
 //    private Integer sortOrder;
     private String inputType;
+    private String defaultValue;
     private boolean readOnly;
     private boolean nullable;
     private String status;

@@ -62,6 +62,9 @@ const useLayerInit = (): void => {
     }, [layerGroups, olMap, cesiumViewer]);
 
     const init = async () => {
+
+        if(!olMap || !cesiumViewer) return;
+
         for (const menuCode of menuCodes) {
             const store = menuCodeToStoreMap[menuCode];
             if (!store) continue;

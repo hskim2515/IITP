@@ -3,22 +3,21 @@ import Style from 'ol/style/Style';
 
 import BaseLayer from 'ol/layer/Base';
 import { isVectorLayer, isWebGLVectorLayer, matchesCustomKeyValue } from "@utils/olLayer";
+import WebGLVectorLayer from "ol/layer/WebGLVector";
+import VectorLayer from "ol/layer/Vector";
+import HeatMapLayer from "@primitives/HeatMapLayer";
 
 class VectorLayerManager {
     private id;
-    private olMap: OLMap;
-    private onAdd;
-    private onRemove;
+    private readonly olMap: OLMap;
 
     private layerStore;
 
-    private layerGroups: {[key: string]: BaseLayer[]} = {};
+    private layerGroups: {[key: string]: (VectorLayer | WebGLVectorLayer)[]} = {};
 
     constructor(olMap: OLMap, layerStore) {
         this.id = "vectorLayerManager";
         this.olMap = olMap;
-        this.onAdd = null;
-        this.onRemove = null;
         this.layerStore = layerStore;
     }
 
@@ -30,7 +29,7 @@ class VectorLayerManager {
         return this.olMap;
     }
 
-    getLayerByName(layerName: string): BaseLayer | null {
+    getLayerByName(layerName: string): VectorLayer | WebGLVectorLayer | null {
         for (const groupName in this.layerGroups) {
             const group = this.layerGroups[groupName];
             for (const layer of group) {
@@ -70,9 +69,6 @@ class VectorLayerManager {
             this.olMap.addLayer(layer);
         }
 
-        if (typeof this.onAdd === 'function') {
-            this.onAdd(layer, groupName, layerName);
-        }
         return group;
     }
 
@@ -160,14 +156,6 @@ class VectorLayerManager {
         });
     }
 
-    // 이벤트 훅 설정
-    setOnAddCallback(callback) {
-        this.onAdd = callback;
-    }
-
-    setOnRemoveCallback(callback) {
-        this.onRemove = callback;
-    }
 }
 
 export default VectorLayerManager;

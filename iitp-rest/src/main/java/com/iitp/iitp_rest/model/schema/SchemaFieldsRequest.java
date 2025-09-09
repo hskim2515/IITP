@@ -15,6 +15,7 @@ public class SchemaFieldsRequest {
     public static class CreateFieldRequestDto {
         private String name;
         private Boolean nullable;
+        private String defaultValue;
         private Boolean readOnly;
         private String status;
         private String inputType;
@@ -32,6 +33,7 @@ public class SchemaFieldsRequest {
 
         private String name;
         private Boolean nullable;
+        private String defaultValue;
         private Boolean readOnly;
         private String status;
         private String inputType;

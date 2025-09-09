@@ -1,6 +1,6 @@
 package com.iitp.iitp_rest.controller;
 
-import com.iitp.iitp_rest.model.vehicle.VehicleTypeModel;
+import com.iitp.iitp_rest.model.vehicle.type.VehicleTypeModel;
 import com.iitp.iitp_rest.repository.VehicleTypeModelRepository;
 import com.iitp.iitp_rest.util.SftpFileManager;
 import com.jcraft.jsch.JSchException;

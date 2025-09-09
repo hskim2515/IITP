@@ -15,8 +15,8 @@ import useDefaultMoveMouse from "@hooks/sync/move/useDefaultMoveMouse";
 
 const Maps = () => {
 
-    const openlayersMapRef = useRef(null);
-    const cesiumMapRef = useRef(null);
+    const openlayersMapRef = useRef<HTMLElement|null>(null);
+    const cesiumMapRef = useRef<Element | null>(null);
     const containerRef = useRef(null);
 
     const activeSubmenu = useMenuStore.state.activeSubmenu()

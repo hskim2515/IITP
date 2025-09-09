@@ -2,19 +2,20 @@ import { GeoJsonDataSource, Viewer } from "cesium";
 import * as Cesium from "cesium";
 import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
 import {useScenarioStore} from "@stores/useScenarioStore";
+import { Network } from "@type/Network";
+import { fromLonLat } from "ol/proj";
 
 export default class NetworkDataSourceLayer {
     private readonly LAYER_NAME = "network";
-    private dataSource: GeoJsonDataSource;
+    private dataSource: GeoJsonDataSource | undefined;
 
     constructor(private viewer: Viewer) {
         this.load()
     }
 
-    public async load(): Promise<GeoJsonDataSource> {
+    public async load(): Promise<GeoJsonDataSource | undefined> {
 
         const store = layerNameToStoreMap[this.LAYER_NAME]
-        const selectedScenario = useScenarioStore.getState().selectedScenario;
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
 
         const createCorridorAlongLane = ({
@@ -56,31 +57,22 @@ export default class NetworkDataSourceLayer {
 
         try {
 
-            const { nodes, links} = store.getState().originData;
-            const baseLng = selectedScenario.longitude;
-            const baseLat = selectedScenario.latitude;
+            const network: Network | undefined = store.getState().originData;
+            if (!network) return;
+            const nodes = network.nodes;
+            const links = network.links;
 
-            nodes.forEach(node => {
-                const [xCoord, yCoord] = node.center.split(" ");
-                node.lng = baseLng + (xCoord/ 88000);
-                node.lat = baseLat + (yCoord/ 111000);
-            });
-
-            let lanes = links.lanes;
 
             // 링크 그리기
             for (const link of links) {
-                const [firstPointStr, lastPointStr] = link.shape.split(" ");
-                const [x1, y1] = firstPointStr.split(",").map(parseFloat);
-                const [x2, y2] = lastPointStr.split(",").map(parseFloat);
 
-                const source = nodes.find(n => n.id === link.fromNode);
-                const target = nodes.find(n => n.id === link.toNode);
+                const source = nodes.find(n => n.id == link.fromNode);
+                const target = nodes.find(n => n.id == link.toNode);
                 if (!source || !target || !link.lanes) continue;
 
                 // WGS84 좌표 → Cartesian3
-                const p1 = Cesium.Cartesian3.fromDegrees(baseLng + x1/ 88000, baseLat + y1/ 111000);
-                const p2 = Cesium.Cartesian3.fromDegrees(baseLng + x2/ 88000, baseLat + y2/ 111000);
+                const p1 = Cesium.Cartesian3.fromDegrees(link.coordinates[0].lng, link.coordinates[0].lat);
+                const p2 = Cesium.Cartesian3.fromDegrees(link.coordinates[1].lng, link.coordinates[1].lat);
 
                 // 방향 벡터 계산 (ENU 상)
                 const direction = Cesium.Cartesian3.subtract(p1, p2, new Cesium.Cartesian3());
@@ -180,7 +172,7 @@ export default class NetworkDataSourceLayer {
 
             for (const node of nodes) {
 
-                const position = Cesium.Cartesian3.fromDegrees(node.lng, node.lat);
+                const position = Cesium.Cartesian3.fromDegrees(node.coordinates.lng, node.coordinates.lat);
 
                 const nodeEntity = new Cesium.Entity({
                     id: node.__guid,
@@ -199,25 +191,25 @@ export default class NetworkDataSourceLayer {
                 this.dataSource.entities.add(nodeEntity);
 
                 for (const port of node.ports) {
-                    const link = links.find((l) => l.id === port.linkId);
+                    const link = links.find((l) => l.id == port.linkId);
                     if (!link) continue;
 
-                    const sourceNode = nodes.find((n) => n.id === link.fromNode);
-                    const targetNode = nodes.find((n) => n.id === link.toNode);
+                    const sourceNode = nodes.find((n) => n.id == link.fromNode);
+                    const targetNode = nodes.find((n) => n.id == link.toNode);
                     if (!sourceNode || !targetNode) continue;
 
                     // 링크 중심 위치 (혹은 시작에서 offset 위치도 가능)
-                    const source = Cesium.Cartesian3.fromDegrees(sourceNode.lng, sourceNode.lat);
-                    const target = Cesium.Cartesian3.fromDegrees(targetNode.lng, targetNode.lat);
+                    const source = Cesium.Cartesian3.fromDegrees(sourceNode.coordinates.lng, sourceNode.coordinates.lat);
+                    const target = Cesium.Cartesian3.fromDegrees(targetNode.coordinates.lng, targetNode.coordinates.lat);
 
                     const portEntity = new Cesium.Entity({
                         id: port.__guid,
-                        position:  port.type === 'in' ? source : target,
+                        position:  port.type == 'in' ? source : target,
                         cylinder: {
-                            length: port.type === 'in' ? 2 : 2, // 높이
-                            topRadius: port.type === 'in' ? 1.5 : 0.1,
-                            bottomRadius: port.type === 'in' ? 0.1 : 1.5,
-                            material: port.type === 'in' ? Cesium.Color.CYAN.withAlpha(0.8) : Cesium.Color.MAGENTA.withAlpha(0.8),
+                            length: port.type == 'in' ? 2 : 2, // 높이
+                            topRadius: port.type == 'in' ? 1.5 : 0.1,
+                            bottomRadius: port.type == 'in' ? 0.1 : 1.5,
+                            material: port.type == 'in' ? Cesium.Color.CYAN.withAlpha(0.8) : Cesium.Color.MAGENTA.withAlpha(0.8),
                             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
                         },
                         properties: port,
@@ -230,17 +222,16 @@ export default class NetworkDataSourceLayer {
 
                 if (connections) {
                     for (const conn of node.connections || []) {
-                        const [firstPointStr, lastPointStr] = conn.shape.split(" ");
-                        const [x1, y1] = firstPointStr.split(",").map(parseFloat);
-                        const [x2, y2] = lastPointStr.split(",").map(parseFloat);
+                        const [x1, y1] = [conn.coordinates[0].lng, conn.coordinates[0].lat];
+                        const [x2, y2] = [conn.coordinates[1].lng, conn.coordinates[1].lat];
 
-                        const sourceCart = Cesium.Cartesian3.fromDegrees(baseLng + x1/ 88000, baseLat + y1/ 111000);
-                        const targetCart = Cesium.Cartesian3.fromDegrees(baseLng + x2/ 88000, baseLat + y2/ 111000);
+                        const sourceCart = Cesium.Cartesian3.fromDegrees(x1, y1);
+                        const targetCart = Cesium.Cartesian3.fromDegrees(x2, y2);
 
-                        const fromLink = links.find((l) => l.id === conn.fromLink);
-                        const toLink = links.find((l) => l.id === conn.toLink);
+                        const fromLink = links.find((l) => l.id == conn.fromLink);
+                        const toLink = links.find((l) => l.id == conn.toLink);
 
-                        if (!fromLink && !toLink) continue;
+                        if (!fromLink || !toLink) continue;
 
                         const fromLane = fromLink.lanes[conn.fromLane];
                         const toLane = toLink.lanes[conn.toLane];
@@ -251,8 +242,8 @@ export default class NetworkDataSourceLayer {
 
                         if(conn.turning != 'S'){
 
-                            const nodeLon = node.lng;
-                            const nodeLat = node.lat;
+                            const nodeLon = node.coordinates.lng;
+                            const nodeLat = node.coordinates.lat;
                             const nodeHeight = 0;
                             const nodePos = Cesium.Cartesian3.fromDegrees(nodeLon, nodeLat, nodeHeight);
 
@@ -292,9 +283,6 @@ export default class NetworkDataSourceLayer {
                             },
                             properties: conn
                         });
-
-                        conn.from = sourceCart
-                        conn.to = targetCart
                     }
                 }
             }
@@ -310,7 +298,7 @@ export default class NetworkDataSourceLayer {
                     signalNodes.forEach(node => {
                         node.turns.forEach(turn => {
                             turn.connList.forEach(connId => {
-                                const targetNode = nodes.find(t => t.id === node.id)
+                                const targetNode = nodes.find(t => t.id == node.id)
                                 const conn = this.findConnectionById(targetNode, connId); // conn에서 from → to 좌표 구함
                                 if (!conn) return;
 
@@ -333,7 +321,7 @@ export default class NetworkDataSourceLayer {
     }
 
     private findConnectionById = (node, connId) => {
-        return node.connections?.find(conn => conn.id === connId);
+        return node.connections?.find(conn => conn.id == connId);
     }
 
 }

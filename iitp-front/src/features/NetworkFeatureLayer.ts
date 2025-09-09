@@ -2,19 +2,24 @@ import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import { useLayerStore } from "@stores/useLayerStore";
 import { Feature } from "ol";
-import { Fill, Stroke, Style, } from "ol/style";
+import { Circle as CircleStyle, Fill, Stroke, Style, } from "ol/style";
 import { LineString, Point, Polygon } from "ol/geom";
 import { fromLonLat } from "ol/proj";
-import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
-import { useScenarioStore } from "@stores/useScenarioStore";
+import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { Coordinate } from "ol/coordinate";
-import { SNAP_FEATURE_TYPE } from "@type/Station";
+import { Network } from "@type/Network";
+import { getTriangleConnectionPoints } from "@utils/network";
+import { FeatureLike } from "ol/Feature";
 
 export default class NetworkFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "network"
 
+    private static readonly BEZIER_POINTS = 15;
+    private styleCache: Map<string, Style[]> = new Map();
+
     private unsubscribe: () => void;
+
     private zIndexMap: Record<string, number> = {
         "link": 10,
         "link-edit": 110,
@@ -22,7 +27,34 @@ export default class NetworkFeatureLayer extends VectorLayer {
         "lane-edit": 120,
         "connection": 30,
         "connection-edit": 130,
+        "node": 150,
+        "port": 160
     };
+
+    private static readonly BASE_STYLES = {
+        LINK: new Style({
+            fill: new Fill({ color: "#000000" }),
+            zIndex: 10
+        }),
+        LANE: new Style({
+            fill: new Fill({ color: "#7f7f7f" }),
+            stroke: new Stroke({ color: "#ffffff", width: 2 }),
+            zIndex: 20
+        }),
+        CONNECTION: new Style({
+            fill: new Fill({ color: "rgba(0,0,0,0.3)" }),
+            zIndex: 30
+        }),
+        NODE_POINT: new Style({
+            image: new CircleStyle({
+                radius: 3,
+                fill: new Fill({ color: "rgba(255, 255, 0, 1)" }),
+                stroke: new Stroke({ color: "rgba(0, 0, 0, 1)", width: 2 }),
+            }),
+            zIndex: 150
+        })
+    };
+
 
     constructor() {
         const source = new VectorSource();
@@ -55,7 +87,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
     }
 
-    public styleFunction(feature: Feature, resolution: number): Style[] {
+    public styleFunction(feature: FeatureLike, resolution: number): Style[] {
         const props = feature.getProperties() ?? {};
         const geom = feature.getGeometry();
         const styles: Style[] = [];
@@ -151,76 +183,106 @@ export default class NetworkFeatureLayer extends VectorLayer {
         // node 임시 비활성화
         // if (geom instanceof Point && props.featureType === "node") {
         //     styles.push(new Style({
-        //         image: new RegularShape({
-        //             points: 4,
-        //             radius: 4,
-        //             angle: Math.PI / 4,
-        //             fill: new Fill({ color: "#000000" }),
-        //             stroke: new Stroke({ color: "#ffffff", width: 1 }),
+        //         image: new CircleStyle({
+        //             radius: 3,
+        //             fill: new Fill({color: "rgba(255, 255, 0, 1)"}), // 노란색
+        //             stroke: new Stroke({color: "rgba(0, 0, 0, 1)", width: 2}),
         //         }),
+        //         zIndex
         //     }));
         // }
-
+        if (geom instanceof Point && props.featureType === "port") {
+            // if(props.type === 'in') {
+            //     styles.push(new Style({
+            //         image: new RegularShape({
+            //             fill: new Fill({ color: 'rgba(0,255,255,0.8)' }),
+            //             stroke: new Stroke({ color: 'rgba(0,128,128,1)' }),
+            //             points: 3,
+            //             radius: 8,
+            //             angle: Math.PI / 2
+            //         }),
+            //         zIndex: zIndex + 1
+            //     }))
+            // } else if (props.type === 'out') {
+            //     styles.push(new Style({
+            //         image: new RegularShape({
+            //             fill: new Fill({ color: 'rgba(255, 0,255,0.8)' }),
+            //             stroke: new Stroke({ color: 'rgba(128, 0,128,1)' }),
+            //             points: 3,
+            //             radius: 10,
+            //             angle: Math.PI / 4
+            //         }),
+            //         zIndex
+            //     }))
+            // }
+        }
         return styles;
     }
 
-    private getRatioBasedBezierPoints(
+    /**
+     * 세 점(시작, 제어, 끝)을 이용해 2차 베지에 곡선을 생성합니다.
+     * pullScale을 통해 곡률을 조정할 수 있습니다.
+     * @param from 시작점
+     * @param p3 제어점 (삼각형의 교점)
+     * @param to 끝점
+     * @param numberOfPoints 곡선의 부드러움을 결정하는 점의 개수
+     * @param pullScale 곡선을 제어점으로 당기는 강도 (0: 직선, 1: 최대 곡률)
+     * @returns 곡선을 구성하는 좌표 배열
+     */
+    private generateQuadraticBezierCurve(
         from: Coordinate,
+        p3: Coordinate,
         to: Coordinate,
-        node: Coordinate,
-        segmentCount: number = 100,
-        ratioAlongLine: number = 0.15,
-        nodePullScale: number = 0.5
-    ): [ number, number ][] {
-        // from → to 선분 상의 점 P
-        const px = from[0] + (to[0] - from[0]) * ratioAlongLine;
-        const py = from[1] + (to[1] - from[1]) * ratioAlongLine;
+        numberOfPoints: number = 15,
+        pullScale: number = 0.9 // 기본값을 70% 정도로 설정
+    ): Coordinate[] {
+        // 1. 'from'과 'to'를 잇는 직선 위의 기준점(여기서는 중점)을 계산합니다.
+        // 이 점이 pullScale이 0일 때의 제어점 위치가 됩니다.
+        const basePoint: Coordinate = [
+            (from[0] + to[0]) / 2,
+            (from[1] + to[1]) / 2,
+        ];
 
-        // P → node 방향 벡터에 scale 적용
-        const dx = node[0] - px;
-        const dy = node[1] - py;
-        const cx = px + dx * nodePullScale;
-        const cy = py + dy * nodePullScale;
-        const control: [ number, number ] = [ cx, cy ];
+        // 2. pullScale을 이용해 실제 사용할 제어점(effectiveControlPoint)의 위치를 보간(interpolate)합니다.
+        // basePoint에서 p3 방향으로 pullScale 비율만큼 이동시킵니다.
+        const effectiveControlPoint: Coordinate = [
+            basePoint[0] + (p3[0] - basePoint[0]) * pullScale,
+            basePoint[1] + (p3[1] - basePoint[1]) * pullScale,
+        ];
 
-        // Quadratic Bezier 보간
-        const points: [ number, number ][] = [];
-        for (let i = 0; i <= segmentCount; i++) {
-            const t = i / segmentCount;
-            const x = (1 - t) ** 2 * from[0] + 2 * (1 - t) * t * control[0] + t ** 2 * to[0];
-            const y = (1 - t) ** 2 * from[1] + 2 * (1 - t) * t * control[1] + t ** 2 * to[1];
-            points.push([ x, y ]);
+        const curvePoints: Coordinate[] = [];
+        for (let i = 0; i <= numberOfPoints; i++) {
+            const t = i / numberOfPoints;
+            const tInv = 1 - t;
+
+            // 3. 계산된 effectiveControlPoint를 베지에 곡선 공식에 사용합니다.
+            const x = (tInv ** 2) * from[0] + 2 * tInv * t * effectiveControlPoint[0] + (t ** 2) * to[0];
+            const y = (tInv ** 2) * from[1] + 2 * tInv * t * effectiveControlPoint[1] + (t ** 2) * to[1];
+
+            curvePoints.push([x, y]);
         }
-
-        return points;
+        return curvePoints;
     }
-
 
     public async load(): Promise<void> {
 
-        const store = layerNameToStoreMap[this.LAYER_NAME]
+        const store = layerNameToStoreMap[this.LAYER_NAME];
 
         try {
-            const { nodes, links, lanes, cells, segments } = store.getState().originData;
-            const selectedScenario = useScenarioStore.getState().selectedScenario;
-
-            const baseLng = selectedScenario.longitude;
-            const baseLat = selectedScenario.latitude;
-            const scaleX = 1 / 88000;
-            const scaleY = 1 / 111000;
-
-            const toCoord = (x: number, y: number) =>
-                fromLonLat([ baseLng + x * scaleX, baseLat + y * scaleY ]);
+            const network: Network | undefined = store.getState().originData;
+            if (!network) return;
+            const nodes = network.nodes;
+            const links = network.links;
 
             const featureBuffer: Feature[] = [];
-            const laneMap = new Map<string, Feature>();
+            const laneMap = new Map<string | number, Feature>();
+            const linkMap = new Map<string | number, any>();
 
             for (const link of links) {
-                const [ firstPt, lastPt ] = link.shape.split(" ");
-                const [ x1, y1 ] = firstPt.split(",").map(parseFloat);
-                const [ x2, y2 ] = lastPt.split(",").map(parseFloat);
-                const p1 = toCoord(x1, y1);
-                const p2 = toCoord(x2, y2);
+                linkMap.set(link.id, link);
+
+                const p1 = fromLonLat([ link.coordinates[0].lng, link.coordinates[0].lat ]);
+                const p2 = fromLonLat([ link.coordinates[1].lng, link.coordinates[1].lat ]);
 
                 const dx = p2[0] - p1[0];
                 const dy = p2[1] - p1[1];
@@ -228,22 +290,22 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 const unitNormal: [ number, number ] = len > 0 ? [ -dy / len, dx / len ] : [ 0, 0 ];
 
                 const linkLine = new LineString([ p1, p2 ]);
-                const linkLineFeature = new Feature(linkLine)
-                linkLineFeature.setProperties({ ...link, featureType: "link-edit", linkRef: link.id })
+                const linkLineFeature = new Feature(linkLine);
+                linkLineFeature.setProperties({ ...link, featureType: "link-edit", linkRef: link.id });
                 featureBuffer.push(linkLineFeature);
 
                 const half = link.width / 2;
                 const left = [ p1, p2 ].map(([ x, y ]) => [ x - unitNormal[0] * half, y - unitNormal[1] * half ]);
                 const right = [ p2, p1 ].map(([ x, y ]) => [ x + unitNormal[0] * half, y + unitNormal[1] * half ]);
                 const linkPolygon = new Polygon([ [ ...left, ...right, left[0] ] ]);
-                const linkPolygonFeature = new Feature(linkPolygon)
-                linkPolygonFeature.setProperties({ ...link, featureType: "link" })
+                const linkPolygonFeature = new Feature(linkPolygon);
+                linkPolygonFeature.setProperties({ ...link, featureType: "link" });
                 featureBuffer.push(linkPolygonFeature);
 
-                const laneCount = link.lanes?.length ?? 1;
+                const laneCount = link.lanes?.length ?? 2;
                 for (let i = 0; i < laneCount; i++) {
                     const lane = link.lanes[i];
-                    const laneWidth = lane.width ?? 3.5;
+                    const laneWidth = 3.5; // lane.width 부재
                     const offset = ((laneCount - 1) / 2 - i) * laneWidth;
                     const centerP1 = [ p1[0] + unitNormal[0] * offset, p1[1] + unitNormal[1] * offset ];
                     const centerP2 = [ p2[0] + unitNormal[0] * offset, p2[1] + unitNormal[1] * offset ];
@@ -272,15 +334,22 @@ export default class NetworkFeatureLayer extends VectorLayer {
                     const laneLineFeature = new Feature(new LineString([ centerP1, centerP2 ]));
                     laneLineFeature.setProperties({ ...laneProps, featureType: "lane-edit" });
                     featureBuffer.push(laneLineFeature);
+                    if (lane.cells?.length > 0) {
+                        for (const cell of lane.cells) {
+                            // const cooridor = createCorridorAlongLane({
+                            //     id: cell.__guid,
+                            //     so
+                            // })
+                        }
+                    }
                 }
             }
 
             for (const node of nodes) {
-                const [ xCoord, yCoord ] = node.center.split(" ");
-                node.lng = baseLng + (xCoord / 88000);
-                node.lat = baseLat + (yCoord / 111000);
 
-                const point = new Point(fromLonLat([ node.lng, node.lat ]));
+                const nodePt = fromLonLat([ node.coordinates.lng, node.coordinates.lat ]);
+
+                const point = new Point(nodePt);
                 const nodeFeature = new Feature(point);
                 nodeFeature.setProperties({ ...node, featureType: "node" });
                 featureBuffer.push(nodeFeature);
@@ -293,22 +362,38 @@ export default class NetworkFeatureLayer extends VectorLayer {
                     if (!from || !to) continue;
                     const fromPt = from.get("laneTarget");
                     const toPt = to.get("laneSource");
-                    const nodePt = fromLonLat([ node.lng, node.lat ]);
-                    const bezierPoints = this.getRatioBasedBezierPoints(
-                        fromPt, toPt, nodePt,
-                        100,       // 점 개수
-                        0.5,      // from - to 중간 지점
-                        0.15       // node 방향으로 당기는 정도
-                    );
 
-                    if (!bezierPoints || bezierPoints.length < 2) continue;
-
-                    let coord: [ number, number ][];
-                    if (conn.turning === "S") {
-                        coord = [ fromPt, toPt ]
+                    let coord: Coordinate[];
+                    if (conn.turning === "Straight") {
+                        coord = [ fromPt, toPt ];
                     } else {
-                        coord = bezierPoints;
+                        const fromLink = linkMap.get(conn.fromLink);
+                        const toLink = linkMap.get(conn.toLink);
+
+                        if (!fromLink || !toLink) {
+                            coord = [ fromPt, toPt ];
+                        } else {
+                            const fromLinkP1 = fromLonLat([ fromLink.coordinates[0].lng, fromLink.coordinates[0].lat ]);
+                            const fromLinkP2 = fromLonLat([ fromLink.coordinates[1].lng, fromLink.coordinates[1].lat ]);
+                            const fromVector = [ fromLinkP2[0] - fromLinkP1[0], fromLinkP2[1] - fromLinkP1[1] ];
+
+                            const toLinkP1 = fromLonLat([ toLink.coordinates[0].lng, toLink.coordinates[0].lat ]);
+                            const toLinkP2 = fromLonLat([ toLink.coordinates[1].lng, toLink.coordinates[1].lat ]);
+                            const toVector = [ toLinkP2[0] - toLinkP1[0], toLinkP2[1] - toLinkP1[1] ];
+
+                            const triangleVertices = getTriangleConnectionPoints(fromPt, toPt, fromVector, toVector);
+
+                            if (triangleVertices) {
+                                const [p1, p3, p2] = triangleVertices;
+                                coord = this.generateQuadraticBezierCurve(fromPt, p3, toPt);
+                            } else {
+                                coord = [ fromPt, toPt ];
+                            }
+                        }
                     }
+
+                    if (!coord || coord.length < 2) continue;
+
                     const connLine = new LineString(coord);
                     const connLineFeature = new Feature(connLine);
                     connLineFeature.setProperties({
@@ -319,9 +404,31 @@ export default class NetworkFeatureLayer extends VectorLayer {
                     });
                     featureBuffer.push(connLineFeature);
                 }
+
+                if (!node.ports) continue;
+                for (const port of node.ports) {
+                    const link = links.find((l) => l.id == port.linkId);
+                    if (!link) continue;
+
+                    const sourceNode = nodes.find((n) => n.id == link.fromNode);
+                    const targetNode = nodes.find((n) => n.id == link.toNode);
+                    if (!sourceNode || !targetNode) continue;
+
+                    const source = fromLonLat([sourceNode.coordinates.lng, sourceNode.coordinates.lat]);
+                    const target = fromLonLat([targetNode.coordinates.lng, targetNode.coordinates.lat]);
+
+                    const position = port.type === 'in' ? source : target;
+
+                    const portFeature = new Feature({
+                        ...port,
+                        geometry: new Point(position),
+                        featureType: "port",
+                    });
+                    featureBuffer.push(portFeature);
+                }
             }
 
-            this.source.clear()
+            this.source.clear();
             this.source.addFeatures(featureBuffer);
             console.log("NetworkLayer: 로드 완료");
         } catch (e) {

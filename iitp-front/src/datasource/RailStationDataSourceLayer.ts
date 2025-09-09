@@ -39,7 +39,7 @@ export default class RailStationDataSourceLayer {
         for(const railStation of railStations) {
 
 
-            const coord = railStation.coordinates[0];
+            const coord = railStation.coordinates;
             const stationPosition = Cartesian3.fromDegrees(coord.lng, coord.lat);
 
             this.dataSource.entities.add(
@@ -59,7 +59,7 @@ export default class RailStationDataSourceLayer {
                 })
             );
             for(const exit of railStation.exits){
-                const exitCoord = exit.coordinates?.[0];
+                const exitCoord = exit.coordinates;
                 if (!exitCoord || exitCoord.lng == null || exitCoord.lat == null) {
                     // console.warn("[load] exit 좌표가 유효하지 않습니다:", exit);
                     continue;

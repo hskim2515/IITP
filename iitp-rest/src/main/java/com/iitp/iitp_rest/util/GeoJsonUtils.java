@@ -1,7 +1,7 @@
 package com.iitp.iitp_rest.util;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.iitp.iitp_rest.model.Road;
+import com.iitp.iitp_rest.model.network.RoadResponse;
 import com.iitp.iitp_rest.model.geometry.Cartesian3;
 import com.iitp.iitp_rest.model.geometry.Polyline;
 import org.w3c.dom.Document;
@@ -18,8 +18,8 @@ public class GeoJsonUtils {
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
 
-    public static List<Road> parseGeoJsonToRoads(JsonNode geoJson) {
-        List<Road> roads = new ArrayList<>();
+    public static List<RoadResponse.Road> parseGeoJsonToRoads(JsonNode geoJson) {
+        List<RoadResponse.Road> roads = new ArrayList<>();
 
         if (geoJson.has("features") && geoJson.get("features").isArray()) {
             for (JsonNode feature : geoJson.get("features")) {
@@ -69,8 +69,8 @@ public class GeoJsonUtils {
         }
         return roads;
     }
-    public static List<Road> parseXmlToRoads(InputStream xmlInputStream) {
-        List<Road> roads = new ArrayList<>();
+    public static List<RoadResponse.Road> parseXmlToRoads(InputStream xmlInputStream) {
+        List<RoadResponse.Road> roads = new ArrayList<>();
 
         try {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -127,7 +127,7 @@ public class GeoJsonUtils {
 
                     if (!positions.isEmpty()) {
                         Polyline polyline = new Polyline(positions);
-                        Road road = new Road(linkId, laneId, polyline, baseEasting, baseNorthing, targetEasting, targetNorthing);
+                        RoadResponse.Road road = new RoadResponse.Road(linkId, laneId, polyline, baseEasting, baseNorthing, targetEasting, targetNorthing);
                         roads.add(road);
                     }
                 }

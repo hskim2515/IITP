@@ -1,6 +1,5 @@
 package com.iitp.iitp_rest.model.pavementMarking;
 
-import com.iitp.iitp_rest.model.publicTransit.station.BusStationData;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;

@@ -20,6 +20,7 @@ export interface Field {
     id: number;
     name: string;
     inputType: InputType;
+    defaultValue: string | number | undefined;
     readOnly: boolean;
     nullable: boolean;
     status: Status;
@@ -28,7 +29,7 @@ export interface Field {
 
 // 기본값 schemaColumns 배열의 요소 타입
 export interface SchemaColumn {
-    configKey: 'name' | 'inputType' | 'readOnly' | 'nullable' | 'status' | 'options'
+    configKey: 'name' | 'inputType' | 'readOnly' | 'nullable' | 'status' | 'options' | 'defaultValue'
     inputType: InputType | 'tags';
     options: SchemaColumnOption[];
 }
@@ -58,6 +59,7 @@ export interface CreateFieldOptionRequest {
 
 export type CreateFieldRequest = {
     name: Field['name'];
+    defaultValue: Field['defaultValue']
     nullable: Field['nullable'];
     readOnly: Field['readOnly'];
     status: Field['status'];
@@ -79,6 +81,7 @@ export type UpdateFieldRequest = {
     // 시나리오 1: inputType을 'select'로 명시적으로 변경/설정하는 경우
     {
         inputType: 'select';
+        defaultValue?: Field['defaultValue']
         name?: Field['name'];
         nullable?: Field['nullable'];
         readOnly?: Field['readOnly'];
@@ -92,6 +95,7 @@ export type UpdateFieldRequest = {
     // 시나리오 2: inputType을 'select'가 아닌 다른 것으로 명시적으로 변경하는 경우
     {
         inputType: Exclude<InputType, 'select'>;
+        defaultValue?: Field['defaultValue']
         name?: Field['name'];
         nullable?: Field['nullable'];
         readOnly?: Field['readOnly'];
@@ -103,6 +107,7 @@ export type UpdateFieldRequest = {
     // 시나리오 3: inputType을 변경하지 않고 다른 속성만 변경하는 경우
     {
         inputType?: never;
+        defaultValue?: Field['defaultValue']
         name?: Field['name'];
         nullable?: Field['nullable'];
         readOnly?: Field['readOnly'];
@@ -120,4 +125,11 @@ export interface SchemaFieldsRequest {
     fieldsToCreate?: CreateFieldRequest[];
     fieldsToUpdate?: UpdateFieldRequest[];
     fieldIdsToDelete?: Field['id'][];
+}
+
+export interface GenerateTemplateOptions {
+    /** 템플릿에 추가할 기본 속성들 */
+    additionalProps?: Record<string, any>;
+    /** 스키마 필드 중에서 템플릿에 포함하지 않을 필드 이름 목록 */
+    exclude?: string[];
 }
