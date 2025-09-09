@@ -26,66 +26,72 @@ export default class RailStationDataSourceLayer {
     }
 
     private async load(railStations: Record<string, any>[]): Promise<void> {
-        // 기존 데이터 제거 후 초기화
-        this.viewer.dataSources.remove(this.dataSource, true);
-        this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
-        console.log("railStations:::", railStations)
+        if (!this.dataSource) return;
+        this.dataSource.entities.suspendEvents();
+        try {
+            this.viewer.dataSources.remove(this.dataSource, true);
+            this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
+            console.log("railStations:::", railStations)
 
 
-        const store = layerNameToStoreMap[this.LAYER_NAME];
-        console.log("store.getState().currentJsonData:::", store.getState().currentJsonData)
+            const store = layerNameToStoreMap[this.LAYER_NAME];
+            console.log("store.getState().currentJsonData:::", store.getState().currentJsonData)
 
+            for (const railStation of railStations) {
 
-        for(const railStation of railStations) {
-
-
-            const coord = railStation.coordinates;
-            const stationPosition = Cartesian3.fromDegrees(coord.lng, coord.lat);
-
-            this.dataSource.entities.add(
-                new Entity({
-                    position: stationPosition,
-                    point: {
-                        pixelSize: 6,
-                        color: Color.BLUE,
-                        outlineWidth: 1,
-                        outlineColor: Color.TRANSPARENT,
-                    },
-                    properties: {
-                        ...railStation,
-                        transitMode: railStation.transitMode ?? TRANSIT_MODE.SUBWAY,
-                        featureType: FEATURE_TYPE.RAIL_STATION,
-                    },
-                })
-            );
-            for(const exit of railStation.exits){
-                const exitCoord = exit.coordinates;
-                if (!exitCoord || exitCoord.lng == null || exitCoord.lat == null) {
-                    // console.warn("[load] exit 좌표가 유효하지 않습니다:", exit);
-                    continue;
-                }
-                const exitPosition = Cartesian3.fromDegrees(exitCoord.lng, exitCoord.lat);
+                const coord = railStation.coordinates;
+                const stationPosition = Cartesian3.fromDegrees(coord.lng, coord.lat);
 
                 this.dataSource.entities.add(
                     new Entity({
-                        position: exitPosition,
+                        position: stationPosition,
                         point: {
                             pixelSize: 6,
-                            color: Color.PURPLE,
+                            color: Color.BLUE,
                             outlineWidth: 1,
                             outlineColor: Color.TRANSPARENT,
                         },
                         properties: {
-                            ...exit,
-                            featureType: FEATURE_TYPE.RAIL_STATION_EXIT,
+                            ...railStation,
+                            transitMode: railStation.transitMode ?? TRANSIT_MODE.SUBWAY,
+                            featureType: FEATURE_TYPE.RAIL_STATION,
                         },
                     })
                 );
-            }
-        }
+                for (const exit of railStation.exits) {
+                    const exitCoord = exit.coordinates;
+                    if (!exitCoord || exitCoord.lng == null || exitCoord.lat == null) {
+                        // console.warn("[load] exit 좌표가 유효하지 않습니다:", exit);
+                        continue;
+                    }
+                    const exitPosition = Cartesian3.fromDegrees(exitCoord.lng, exitCoord.lat);
 
-        await this.viewer.dataSources.add(this.dataSource);
-        console.log("[RailStationDataSourceLayer] 로드 완료: ", this.dataSource.entities.values.length);
+                    this.dataSource.entities.add(
+                        new Entity({
+                            position: exitPosition,
+                            point: {
+                                pixelSize: 6,
+                                color: Color.PURPLE,
+                                outlineWidth: 1,
+                                outlineColor: Color.TRANSPARENT,
+                            },
+                            properties: {
+                                ...exit,
+                                featureType: FEATURE_TYPE.RAIL_STATION_EXIT,
+                            },
+                        })
+                    );
+                }
+            }
+
+            await this.viewer.dataSources.add(this.dataSource);
+
+            console.log("RailStationDataSourceLayer: 모든 Feature가 추가됨");
+        } catch (error) {
+            console.error("RailStationDataSourceLayer.load() 중 에러 발생:", error);
+        } finally {
+            this.dataSource.entities.resumeEvents();
+        }
     }
 
     public destroy(): void {

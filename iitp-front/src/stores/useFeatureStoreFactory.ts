@@ -13,8 +13,6 @@ export interface State<T> {
     // fetch 한 data
     originData: T | undefined
     currentJsonData: T | undefined
-    // 변경 확인
-    isChanged: boolean
 }
 
 export interface Actions<T> {
@@ -22,7 +20,6 @@ export interface Actions<T> {
     setCurrentJsonData: (data: T) => void;
     updateCurrentJsonData: (data: T, historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
     removeRecordsByGuid: (guids: (string | number)[], historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
-    setChange: (changed: boolean) => void;
     initCurrentData: () => void;
 }
 
@@ -32,7 +29,6 @@ const createFeatureStore = <T>() => {
     const initialState: State<T> = {
         originData: undefined,
         currentJsonData: undefined,
-        isChanged: false
     };
     return createSelectors(
         create(
@@ -102,7 +98,7 @@ const createFeatureStore = <T>() => {
                             let updatedJson = deepUpdateByGuid(cloned, record);
 
                             if (updatedFlag.updated) {
-                                set({currentJsonData: updatedJson, isChanged: true});
+                                set({currentJsonData: updatedJson});
                                 return;
                             }
 
@@ -119,7 +115,6 @@ const createFeatureStore = <T>() => {
 
                                 set({
                                     currentJsonData: updatedJson,
-                                    isChanged: true,
                                 });
 
                                 if (historyStore) {
@@ -155,7 +150,6 @@ const createFeatureStore = <T>() => {
                                     ...current,
                                     [key]: newItems,
                                 } as T,
-                                isChanged: true,
                             });
 
                             if (historyStore) {
@@ -225,11 +219,9 @@ const createFeatureStore = <T>() => {
                             if (hasChanges) {
                                 set({
                                     currentJsonData: updated,
-                                    isChanged: true,
                                 });
                             }
                         },
-                        setChange: (changed: boolean) => set({isChanged: changed}),
                         initCurrentData: () => {
                             if (origin) set({
                                 currentJsonData: get().originData,

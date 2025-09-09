@@ -4,7 +4,7 @@ import VectorSource from 'ol/source/Vector';
 import VectorLayer from 'ol/layer/Vector';
 import { Draw, Modify, Select, Snap } from 'ol/interaction';
 import { unByKey } from 'ol/Observable';
-import { EventOptions } from "@type/EventOptions";
+import { OLEventOptions } from "@type/EventOptions";
 import GeometryType from "@type/FeatureOptions";
 import { Circle as CircleStyle, Fill, Stroke, Style } from "ol/style";
 import Collection from "ol/Collection";
@@ -23,7 +23,7 @@ export class OLEventAdapter implements EventAdapter {
         this.map = map;
     }
 
-    register(eventType: string, callback: (event: any) => void, options?: EventOptions): void {
+    register(eventType: string, callback: (event: any) => void, options?: OLEventOptions): void {
         const interactionType = this.getInteractionType(eventType);
 
         if (!interactionType) {
@@ -79,7 +79,7 @@ export class OLEventAdapter implements EventAdapter {
         return null;
     }
 
-    private getOrCreateInteraction(type: InteractionType, options: EventOptions): OLInteraction {
+    private getOrCreateInteraction(type: InteractionType, options: OLEventOptions): OLInteraction {
         if (this.interactionMap.has(type)) return this.interactionMap.get(type)!;
         let interaction: OLInteraction;
         switch (type) {

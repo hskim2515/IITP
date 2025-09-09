@@ -276,7 +276,7 @@ export function buildLayerSchemaRequestsUsingPresence(
 export function generateTemplate(
     schema: Schema | null,
     options: GenerateTemplateOptions = {}
-): Record<string, any> | undefined {
+): Record<string, string | number | undefined> | undefined {
     if (schema == null) return;
 
     const { additionalProps = {}, exclude = [] } = options;
@@ -288,7 +288,7 @@ export function generateTemplate(
                 : undefined;
         }
         return acc;
-    }, {} as Record<string, any>);
+    }, {} as Record<string, string | number | undefined>);
     const template = {
         ...baseTemplate,
         ...additionalProps,

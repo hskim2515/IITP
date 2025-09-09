@@ -437,3 +437,10 @@ export function getSnapFeature(input: FeatureInput | undefined | null , targetCo
 export function isFeature(input: Feature | FeatureLike): input is Feature {
     return input instanceof Feature;
 }
+
+export function deleteFeatureWithGuids(layer: VectorLayer, guid: string[]) {
+    const features = filterFeaturesByKey(layer, guid);
+    const source = layer.getSource();
+    if(!source) return;
+    features.forEach(feature => source.removeFeature(feature))
+}

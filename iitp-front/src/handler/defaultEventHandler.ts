@@ -10,7 +10,7 @@ import {Layer} from "ol/layer";
 import {isVectorLayer, matchesCustomKeyValue} from "@utils/olLayer";
 import {isFeature} from "@utils/feature";
 import {StyleFunction, StyleLike} from "ol/style/Style";
-import {Icon, Style} from "ol/style";
+import { Icon, RegularShape, Style } from "ol/style";
 import CircleStyle from "ol/style/Circle";
 import {useEventStore} from "@stores/useEventStore";
 import {propertyFormSchema} from "@schema/propertyFormSchema";
@@ -91,7 +91,12 @@ export const defaultEventHandlers ={
         }
         let isFeatureExist = false
         olMap.forEachFeatureAtPixel(e.pixel, function (feature) {
-            const layerName = propertyFormSchema[activeSubmenu.menuCode].layer
+            const layerName = activeSubmenu
+                ? propertyFormSchema[
+                layerOverrideMap[activeSubmenu.menuCode] ?? activeSubmenu.menuCode
+                    ]?.layer
+                : undefined;
+
             const guid =
                 layerName === FEATURE_TYPE.SIGNAL
                     ? getSignalGuid(layerManager, feature.get("__guid"))
@@ -136,60 +141,61 @@ export const defaultEventHandlers ={
     },
 
     handleOlHover : (e: MapBrowserEvent<UIEvent>) => {
-        const olMap = useOpenLayersStore.getState().map;
-        const activeSubmenu = useMenuStore.getState().activeSubmenu
-
-        //const hoverLayerName = activeSubmenu ? propertyFormSchema[activeSubmenu?.menuCode].layer : undefined;
-        const hoverLayerName = activeSubmenu
-            ? propertyFormSchema[
-            layerOverrideMap[activeSubmenu.menuCode] ?? activeSubmenu.menuCode
-                ]?.layer
-            : undefined;
-
-        if (!olMap) return;
-
-        const featureInfo = olMap.forEachFeatureAtPixel(
-            e.pixel,
-            (feature: FeatureLike, layer: Layer) => {
-                const isTargetLayer = !hoverLayerName || (hoverLayerName && matchesCustomKeyValue(layer, 'layer', hoverLayerName));
-
-                if (isTargetLayer
-                    && isVectorLayer(layer)
-                    && isFeature(feature)
-                    && feature.get("__guid")
-                ) {
-                    if (selectedGuid.includes(feature.get("__guid"))) {
-                        return undefined;
-                    }
-                    return {feature, layer};
-                }
-                return undefined;
-            },
-            {hitTolerance: 10}
-        );
-
-        if (!featureInfo) {
-            if (highlightedFeature) {
-                clearOlHighlight(highlightedFeature);
-            }
-            highlightedFeature = undefined;
-            return;
-        }
-
-        const {feature, layer} = featureInfo;
-        const layerStyleFunction = layer.getStyleFunction();
-
-        if (highlightedFeature === feature) return;
-
-        if (highlightedFeature) {
-            clearOlHighlight(highlightedFeature);
-        }
-
-        if (feature && layerStyleFunction) {
-            highlightFeature(feature, layerStyleFunction);
-        } else {
-            highlightedFeature = undefined;
-        }
+        // const olMap = useOpenLayersStore.getState().map;
+        // const activeSubmenu = useMenuStore.getState().activeSubmenu
+        //
+        // //const hoverLayerName = activeSubmenu ? propertyFormSchema[activeSubmenu?.menuCode].layer : undefined;
+        // const hoverLayerName = activeSubmenu
+        //     ? propertyFormSchema[
+        //     layerOverrideMap[activeSubmenu.menuCode] ?? activeSubmenu.menuCode
+        //         ]?.layer
+        //     : undefined;
+        //
+        // if (!olMap) return;
+        //
+        // // forEachFeatureAtPixel 최적화 필요 -> 마우스 주변에만
+        // const featureInfo = olMap.forEachFeatureAtPixel(
+        //     e.pixel,
+        //     (feature: FeatureLike, layer: Layer) => {
+        //         const isTargetLayer = !hoverLayerName || (hoverLayerName && matchesCustomKeyValue(layer, 'layer', hoverLayerName));
+        //
+        //         if (isTargetLayer
+        //             && isVectorLayer(layer)
+        //             && isFeature(feature)
+        //             && feature.get("__guid")
+        //         ) {
+        //             if (selectedGuid.includes(feature.get("__guid"))) {
+        //                 return undefined;
+        //             }
+        //             return {feature, layer};
+        //         }
+        //         return undefined;
+        //     },
+        //     {hitTolerance: 10}
+        // );
+        //
+        // if (!featureInfo) {
+        //     if (highlightedFeature) {
+        //         clearOlHighlight(highlightedFeature);
+        //     }
+        //     highlightedFeature = undefined;
+        //     return;
+        // }
+        //
+        // const {feature, layer} = featureInfo;
+        // const layerStyleFunction = layer.getStyleFunction();
+        //
+        // if (highlightedFeature === feature) return;
+        //
+        // if (highlightedFeature) {
+        //     clearOlHighlight(highlightedFeature);
+        // }
+        //
+        // if (feature && layerStyleFunction) {
+        //     highlightFeature(feature, layerStyleFunction);
+        // } else {
+        //     highlightedFeature = undefined;
+        // }
     },
 
 
@@ -331,6 +337,13 @@ const getHighlightedOlStyle = (baseStyle: Style | Style[] | null | undefined, sc
 
         } else if (image instanceof CircleStyle) {
             image.setRadius(image.getRadius() * scale);
+        } else if (image instanceof RegularShape) {
+            const s = (image as any).getScale?.() ?? 1;
+            if (Array.isArray(s)) {
+                image.setScale([s[0] * scale, s[1] * scale]);
+            } else {
+                image.setScale(s * scale);
+            }
         }
 
 

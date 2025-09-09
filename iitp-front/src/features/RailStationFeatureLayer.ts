@@ -24,156 +24,38 @@ import { findFeatureByProperties, getCoordinateByOffset, getOffsetByCoordinate }
 import { Coordinate } from "ol/coordinate";
 import Geometry from "ol/geom/Geometry";
 import { generateGUIDWithType } from "@utils/guid";
-import { collectGuidsOfTargetAndChildren } from "@utils/json";
 import { FeatureLayerAPI } from "@features/FeatureLayerAPI";
 import CircleStyle from "ol/style/Circle";
 import { FeatureLike } from "ol/Feature";
-import deepEqual from "deep-equal";
+import { diff } from "deep-object-diff";
 
 export default class RailStationFeatureLayer extends VectorLayer implements FeatureLayerAPI {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "railStation"
-
-    private unsubscribe: () => void;
+    private unsubscribe: (() => void) | undefined;
 
     constructor() {
         const source = new VectorSource();
-        const layerManager = useLayerStore.getState().layerManager
         super({
             source,
             visible: false,
-            style: (feature, resolution) => this.styleFunction(feature, resolution),
             zIndex: 400,
+            style: (feature, resolution) => this.styleFunction(feature, resolution),
         });
-        const store = layerNameToStoreMap[this.LAYER_NAME];
+
         this.source = source;
-        const listener = (
-            state: RailPublicStationResponse,
-            prevState: RailPublicStationResponse
-        ) => {
-            if (!state) {
-                return;
-            }
-            const updatedData = state.railStations ?? [];
-            const prevData = prevState.railStations ?? [];
-            const updatedMap = new Map<string, RailStationData>();
-            const originMap = new Map<string, RailStationData>();
-
-
-            updatedData.forEach((item) => {
-                if (item.__guid) updatedMap.set(item.__guid, item);
-            });
-            prevData.forEach((item) => {
-                if (item.__guid) originMap.set(item.__guid, item);
-            });
-
-            const src = this.source;
-            const existing = src.getFeatures();
-
-            // 역 삭제 + 하위 exit도 함께 삭제
-            originMap.forEach((originItem, guid) => {
-                const updatedItem = updatedMap.get(guid);
-
-                if (!updatedItem) {
-                    // originList에서 자신 + 하위 객체의 guid들을 모두 수집
-                    collectGuidsOfTargetAndChildren(originItem, guid)
-                        // 해당 guid를 가진 모든 feature를 삭제
-                        .forEach(guidToDelete => {
-                            const feature = existing.find(f => f.get("__guid") === guidToDelete);
-                            if (feature) {
-                                src.removeFeature(feature);
-                            }
-                        });
-                }
-            });
-
-            // 역 수정
-            originMap.forEach((originItem, guid) => {
-                const updatedItem = updatedMap.get(guid);
-                if (updatedItem && !deepEqual(originItem, updatedItem)) {
-                    const feature = existing.find(f => f.get("__guid") === guid);
-                    if (feature) {
-                        const dto = this.recordToDto(updatedItem, FEATURE_TYPE.RAIL_STATION);
-                        if (!dto) return;
-                        const coord = dto.coordinates;
-                        if (coord?.lng != null && coord?.lat != null) {
-                            feature.setGeometry(new Point(fromLonLat([coord.lng, coord.lat])));
-                        }
-                        feature.setProperties(dto);
-                    }
-                }
-            });
-
-            // 역 추가
-            updatedMap.forEach((item, guid) => {
-                const existsInOrigin = originMap.has(guid);
-                const existsInSource = existing.some(f => f.get("__guid") === guid);
-                if (!existsInOrigin && !existsInSource) {
-                    const feature = this.createFeature(item);
-                    if (feature) src.addFeature(feature);
-                }
-            });
-
-            // exits 비교
-            updatedData.forEach((station) => {
-                const originStation = prevData.find(prev => prev.__guid === station.__guid);
-                const updatedExits = station.exits ?? [];
-                const originExits = originStation?.exits ?? [];
-
-                const updatedExitMap = new Map<string, RailStationExitData>();
-                const originExitMap = new Map<string, RailStationExitData>();
-
-                updatedExits.forEach((exit) => {
-                    if (exit.__guid) updatedExitMap.set(exit.__guid, exit);
-                });
-                originExits.forEach((exit) => {
-                    if (exit.__guid) originExitMap.set(exit.__guid, exit);
-                });
-
-                // exit 삭제
-                originExitMap.forEach((oldExit, guid) => {
-                    if (!updatedExitMap.has(guid)) {
-                        const feature = existing.find(f => f.get("__guid") === guid);
-                        if (feature) src.removeFeature(feature);
-                    }
-                });
-
-                // exit 수정
-                originExitMap.forEach((oldExit, guid) => {
-                    const newExit = updatedExitMap.get(guid);
-                    if (newExit && !deepEqual(oldExit, newExit)) {
-                        const feature = existing.find(f => f.get("__guid") === guid);
-                        if (feature) {
-                            const updated = this.createRailStationExitFeature(newExit);
-                            if (updated?.getGeometry()) {
-                                feature.setGeometry(updated.getGeometry());
-                                feature.setProperties(updated.getProperties());
-                            }
-                        }
-                    }
-                });
-
-                // exit 추가
-                updatedExitMap.forEach((newExit, guid) => {
-                    const existsInOrigin = originExitMap.has(guid);
-                    const existsInSource = existing.some(f => f.get("__guid") === guid);
-                    if (!existsInOrigin && !existsInSource) {
-                        const newFeature = this.createExitFeatureWithContext(newExit, station);
-                        if (newFeature) src.addFeature(newFeature);
-                    }
-                });
-            });
-        };
-
-
-        this.unsubscribe = store.subscribe(
-            // 구독할 값: currentJsonData 배열
-            state => state.currentJsonData,
-            listener,
-            {fireImmediately: true}
-        );
-
-
+        this.load(); // 초기 로드
+        const store = layerNameToStoreMap[this.LAYER_NAME];
+        if (store) {
+            this.unsubscribe = store.subscribe(
+                (state) => state.currentJsonData,
+                () => {
+                    console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
+                    this.load(); // 데이터가 변경되면 레이어를 다시 로드합니다.
+                },
+                { equalityFn: (a, b) => Object.keys(diff(a, b)).length === 0  }
+            );
+        }
     }
 
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
@@ -492,5 +374,12 @@ export default class RailStationFeatureLayer extends VectorLayer implements Feat
 
     getSelectStyle(): Style | undefined {
         return undefined;
+    }
+
+    public dispose(): void {
+        if (this.unsubscribe) {
+            this.unsubscribe();
+        }
+        super.dispose();
     }
 }

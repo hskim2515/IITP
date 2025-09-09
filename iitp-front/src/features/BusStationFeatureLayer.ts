@@ -19,27 +19,26 @@ import {
     TRANSIT_MODE
 } from "@type/Station";
 import { generateGUIDWithType } from "@utils/guid";
-import { findFeatureByProperties, getCoordinateByOffset, getOffsetByCoordinate } from "@utils/feature";
-import { useLayerStore } from "@stores/useLayerStore";
+import { getOffsetByCoordinate } from "@utils/feature";
 import { Coordinate } from "ol/coordinate";
-import GeometryType from "@type/FeatureOptions";
 import Geometry from "ol/geom/Geometry";
 import { FeatureLayerAPI } from "@features/FeatureLayerAPI";
-import deepEqual from "deep-equal";
 import { FeatureLike } from "ol/Feature";
+import { useSchemaStore } from "@stores/useSchemaStore";
+import { diff } from "deep-object-diff";
 
 export default class BusStationFeatureLayer extends VectorLayer implements FeatureLayerAPI {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "busStation";
-    private unsubscribe: () => void;
 
     private readonly defaultStyle: Style;
     private readonly selectStyle: Style;
     private readonly modifyStyle: Style;
 
+    private unsubscribe: (() => void) | undefined;
+
     constructor() {
         const source = new VectorSource();
-        const layerManager = useLayerStore.getState().layerManager
         super({
             source,
             visible: false,
@@ -47,147 +46,53 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
             style: (feature, resolution) => this.styleFunction(feature, resolution),
         });
 
-        this.source = source
+        this.source = source;
 
+        this.load(); // 초기 로드
         const store = layerNameToStoreMap[this.LAYER_NAME];
-        const listener = (
-            state: BusPublicStationResponse,
-            prevState: BusPublicStationResponse
-        ) => {
-            if (!state) {
-                return;
-            }
-            const updatedData = state.busStations ?? [];
-            const prevData = prevState.busStations ?? [];
+        if (store) {
+            this.unsubscribe = store.subscribe(
+                (state) => state.currentJsonData,
+                () => {
+                    console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
+                    this.load(); // 데이터가 변경되면 레이어를 다시 로드합니다.
+                },
+                { equalityFn: (a, b) => Object.keys(diff(a, b)).length === 0  }
+            );
+        }
 
-            const updatedMap = new Map<string, BusStationData>();
-            const prevMap = new Map<string, BusStationData>();
-
-            updatedData.forEach((item) => {
-                const guid = item.__guid;
-                if (guid) updatedMap.set(guid, item);
-            })
-
-            prevData.forEach((item) => {
-                const guid = item.__guid;
-                if (guid) prevMap.set(guid, item);
-            })
-
-            const added: BusStationData[] = []
-            const removed: BusStationData[] = [];
-            const changed: BusStationData[] = [];
-
-            prevMap.forEach((prevItem, guid) => {
-                const updatedItem = updatedMap.get(guid);
-                if (!updatedItem) {
-                    removed.push(prevItem);
-                } else if (!deepEqual(prevItem, updatedItem)) {
-                    changed.push(updatedItem);
-                }
-            })
-            updatedMap.forEach((updatedItem, guid) => {
-                if (!prevMap.has(guid)) {
-                    added.push(updatedItem);
-                }
-            });
-
-            const src = this.source;
-            const existing = src.getFeatures();
-
-            removed.forEach((item) => {
-                const guid = item.__guid;
-                const feature = existing.find(f => f.get("__guid") === guid);
-                if (feature) {
-                    src.removeFeature(feature)
-                }
-            })
-
-            changed.forEach((item) => {
-                const dto = this.recordToDto(item);
-
-                const feature = existing.find(f => f.get("__guid") === dto.__guid);
-                if (feature) {
-                    const baseLayer = layerManager?.getLayerByName(this.getSnapLayerKey())
-                    const baseFeature = findFeatureByProperties(baseLayer, {
-                        featureType: this.getSnapFeatureType(),
-                        linkRef: item.linkRef,
-                        laneRef: item.laneRef ?? 0,
-                    })
-
-                    const offset = item.offset ?? 0
-                    const coord = getCoordinateByOffset(baseFeature, offset)
-                    if (coord) {
-                        const [lng, lat] = toLonLat(coord)
-                        // 계산한 값을 json에 적용
-                        item.coordinates.lng = lng
-                        item.coordinates.lat = lat
-                        feature.setGeometry(new Point(fromLonLat([lng, lat])));
-                    }
-
-                    feature.setProperties(dto);
-                }
-            });
-
-            added.forEach((item) => {
-                const dto = this.recordToDto(item);
-                const feature = this.createFeature(dto);
-                src.addFeature(feature);
-            });
-
-        };
-
-        this.unsubscribe = store.subscribe(
-            // 구독할 값: currentJsonData 배열
-            state => state.currentJsonData,
-            listener,
-            {fireImmediately: true}
-        );
 
         this.defaultStyle = new Style({
             image: new CircleStyle({
                 radius: 6,
-                fill: new Fill({color: "rgba(255, 0, 0, 1)"}), // 빨간색
-                stroke: new Stroke({color: "rgba(0,0,0,0)", width: 1}),
+                fill: new Fill({ color: "rgba(255, 0, 0, 1)" }), // 빨간색
+                stroke: new Stroke({ color: "rgba(0,0,0,0)", width: 1 }),
             }),
         });
 
         this.selectStyle = new Style({
             image: new CircleStyle({
                 radius: 8,
-                fill: new Fill({color: "rgba(0, 255, 0, 1)"}), // 초록색
-                stroke: new Stroke({color: "rgba(255, 0, 0, 1)", width: 2}),
+                fill: new Fill({ color: "rgba(0, 255, 0, 1)" }), // 초록색
+                stroke: new Stroke({ color: "rgba(255, 0, 0, 1)", width: 2 }),
             }),
         });
 
         this.modifyStyle = new Style({
             image: new CircleStyle({
                 radius: 8,
-                fill: new Fill({color: "rgba(255, 255, 0, 1)"}), // 노란색
-                stroke: new Stroke({color: "rgba(0, 0, 0, 1)", width: 2}),
+                fill: new Fill({ color: "rgba(255, 255, 0, 1)" }), // 노란색
+                stroke: new Stroke({ color: "rgba(0, 0, 0, 1)", width: 2 }),
             }),
         });
-
-
     }
 
     public getSelectStyle() {
-        return this.selectStyle
+        return this.selectStyle;
     }
 
     public getDefaultStyle() {
-        return this.defaultStyle
-    }
-
-    public getInteractionStyle(type: "default" | "select" | "modify"): Style {
-        switch (type) {
-            case "select":
-                return this.selectStyle;
-            case "modify":
-                return this.modifyStyle;
-            case "default":
-            default:
-                return this.defaultStyle;
-        }
+        return this.defaultStyle;
     }
 
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
@@ -198,8 +103,8 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
                 new Style({
                     image: new CircleStyle({
                         radius: 6,
-                        fill: new Fill({color: "rgb(255,0,0)"}),
-                        stroke: new Stroke({color: "rgba(0,0,0,0)", width: 1}),
+                        fill: new Fill({ color: "rgb(255,0,0)" }),
+                        stroke: new Stroke({ color: "rgba(0,0,0,0)", width: Math.min(3, 0.5 / resolution) }),
                     }),
                 })
             );
@@ -212,12 +117,21 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
      */
     public async load(): Promise<void> {
         const store = layerNameToStoreMap[this.LAYER_NAME];
+        if (!store) return; // 스토어가 없으면 중단
+
         const busPublicStationResponse: BusPublicStationResponse = store.getState().currentJsonData;
+
+        // 데이터가 없는 경우를 대비한 방어 코드
+        if (!busPublicStationResponse || !busPublicStationResponse.busStations) {
+            this.source.clear();
+            return;
+        }
+
         const busStations = busPublicStationResponse.busStations;
         const featureBuffer: Feature[] = [];
 
         for (const busStation of busStations) {
-            const stationFeature = this.createFeature(busStation)
+            const stationFeature = this.createFeature(busStation);
             if (stationFeature) featureBuffer.push(stationFeature);
         }
 
@@ -229,7 +143,7 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
      * DTO로부터 Point Feature와 속성을 생성
      */
     public createFeature(data: BusStationData): Feature | undefined {
-        const {lines, ...rest} = data;
+        const { lines, ...rest } = data;
         const props: BusStationFeature = {
             ...rest,
             featureType: data.featureType,
@@ -238,9 +152,9 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
 
         const feature = new Feature();
         feature.setProperties(props);
-        if (props.coordinates.lng && props.coordinates.lat) {
-            const point = new Point(fromLonLat([props.coordinates.lng, props.coordinates.lat] ))
-            feature.setGeometry(point)
+        if (props.coordinates && props.coordinates.lng && props.coordinates.lat) {
+            const point = new Point(fromLonLat([props.coordinates.lng, props.coordinates.lat]));
+            feature.setGeometry(point);
         }
         return feature;
     }
@@ -249,15 +163,15 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
      * 일반 객체를 DTO 로 변환
      */
     public recordToDto(record): BusStationData {
-        const {geometry, ...cleaned} = record;
-        const guid = cleaned.__guid ?? generateGUIDWithType(this.getFeatureType())
+        const { geometry, ...cleaned } = record;
+        const guid = cleaned.__guid ?? generateGUIDWithType(this.getFeatureType());
         const dto = {
             ...(cleaned as Omit<BusStationData, "transitMode" | "featureType" | "__guid">),
             transitMode: TRANSIT_MODE.BUS,
             featureType: FEATURE_TYPE.BUS_STATION,
             __guid: guid
         } as BusStationData;
-        return dto
+        return dto;
     }
 
     /**
@@ -279,7 +193,6 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
             }
         });
 
-        // 아무 필드도 채워지지 않았다면 undefined 반환
         if (Object.keys(properties).length === 0) {
             return undefined;
         }
@@ -295,16 +208,10 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
         snapProperties: BusStationSnapProperties,
         baseDto: BusStationData
     ): BusStationData {
-        const {id: ignored, ...props} = snapProperties
         return {
             ...baseDto,
-            ...props
+            ...snapProperties
         };
-    }
-
-
-    public getBusStationTransitMode(): string {
-        return TRANSIT_MODE.BUS;
     }
 
     /**
@@ -325,15 +232,6 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
         return FEATURE_TYPE.BUS_STATION;
     }
 
-    public getGeometryType(featureType: string): GeometryType {
-        switch (featureType) {
-            case "busStations" :
-                return GeometryType.POINT
-            default:
-                return GeometryType.POINT
-        }
-    }
-
     /**
      * offset 계산 로직
      */
@@ -348,15 +246,16 @@ export default class BusStationFeatureLayer extends VectorLayer implements Featu
         const computeProperties: Record<string, unknown> = {
             ...(basedProperties ?? {}),
             offset: offset ?? null,
-            coordinates: lng != null && lat != null ? [{lat, lng}] : [],
+            coordinates: lng != null && lat != null ? [{ lat, lng }] : [],
         };
 
         return computeProperties;
     }
 
     public dispose(): void {
-        this.unsubscribe();
+        if (this.unsubscribe) {
+            this.unsubscribe();
+        }
         super.dispose();
     }
-
 }
