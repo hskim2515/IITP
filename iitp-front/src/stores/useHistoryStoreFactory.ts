@@ -5,8 +5,6 @@ import {UpdateLogEntry, UpdateLogItem} from "@type/HistoryTypes";
 import {useMessageStore} from "@stores/useMessageStore";
 const setMessage = useMessageStore.getState().setMessage;
 
-
-
 export interface HistoryStoreFactoryType {
     getState: () => State & Actions;
     setState: (partial: Partial<State & Actions>, replace?: boolean) => void;
@@ -20,7 +18,7 @@ export interface FetchHistoryDataType {
 
 export interface State {
     originHistoryData: FetchHistoryDataType | undefined
-    currentIndex: number;
+    currentIndex: number | null;
     updateLogs: [],
 }
 
@@ -38,7 +36,7 @@ export interface Actions {
 
 const initialState: State = {
     originHistoryData: undefined,
-    currentIndex: 0,
+    currentIndex: null,
     updateLogs: [],
 };
 

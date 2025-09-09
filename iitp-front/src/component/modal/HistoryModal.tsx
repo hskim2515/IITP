@@ -52,13 +52,6 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
         setHistorySteps(steps);
     }, [originHistoryData]);
 
-    useEffect(() => {
-        if (selectedIndex === null && historySteps.length > 0) {
-            const currentIdx = historySteps.findIndex(step => step.isCurrent);
-            setCurrentIndex(currentIdx >= 0 ? currentIdx : 0);
-        }
-    }, [historySteps, selectedIndex]);
-
     const handleSelect = (idx: number) => {
         const step = historySteps[idx];
         const confirmed = window.confirm(`${step.message} 시점으로 되돌리시겠습니까?`);
