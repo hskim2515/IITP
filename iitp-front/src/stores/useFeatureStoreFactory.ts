@@ -13,19 +13,21 @@ export interface State<T> {
     // fetch 한 data
     originData: T | undefined
     currentJsonData: T | undefined
+    originHistoryData: T | undefined
+    currentJsonData: T
     // 변경 확인
     isChanged: boolean
 }
 
 export interface Actions<T> {
     setOriginData: (data: T) => void;
+    setOriginHistoryData: (data: T) => void;
     setCurrentJsonData: (data: T) => void;
     updateCurrentJsonData: (data: T, historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
     removeRecordsByGuid: (guids: (string | number)[], historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
     setChange: (changed: boolean) => void;
     initCurrentData: () => void;
 }
-
 
 
 const createFeatureStore = <T>() => {
@@ -39,6 +41,7 @@ const createFeatureStore = <T>() => {
             subscribeWithSelector(
                 combine(initialState, (set, get) => ({
                         setOriginData: (data: T) => set({originData: data}),
+                        setOriginHistoryData: (data: T) => set({originHistoryData: data}),
                         setCurrentJsonData: (data: T) => {
                             set({
                                 currentJsonData: structuredClone(data)

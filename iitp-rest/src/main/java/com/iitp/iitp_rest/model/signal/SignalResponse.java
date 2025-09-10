@@ -10,6 +10,5 @@ public class SignalResponse {
     private String type;
     //private List<String> connList = new ArrayList<>();
     private String connectionId;
-    private String __guid;
 }
 

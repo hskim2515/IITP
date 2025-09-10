@@ -54,7 +54,7 @@ public class RailStationService {
         railStationVersionsRepository.save(entity);
         List<RailStationLogs> existingLogs = railStationLogsRepository.findByVersionIdOrderByCreatedAtAsc(versionId);
 
-        int maxLogs = 20;
+        int maxLogs = 10;
         if (existingLogs.size() >= maxLogs) {
             int removeCount = existingLogs.size() - maxLogs + 1;
             List<RailStationLogs> toDelete = existingLogs.subList(0, removeCount);

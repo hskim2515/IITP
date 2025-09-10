@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.controller;
 
+import com.iitp.iitp_rest.model.BaseVersion;
 import com.iitp.iitp_rest.model.signal.*;
 import com.iitp.iitp_rest.repository.SignalVersionsRepository;
 import com.iitp.iitp_rest.service.signal.SignalService;
@@ -28,14 +29,14 @@ public ResponseEntity<SignalNodeResponseData> getSignal(@PathVariable String ver
     try {
         SignalNodeResponseData result = new SignalNodeResponseData();
 
-        Optional<SignalVersion> signalVersionOpt = signalVersionsRepository.findByVersionId(versionId);
+        Optional<SignalVersion> signalVersionOpt = signalVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST);
         List<SignalResponse> signalResponseList;
 
         if (signalVersionOpt.isPresent()) {
-            SignalVersion signalVersion = signalService.getSignalFromDatabase(versionId);
+            SignalVersion signalVersion = signalService.getDataFromDatabase(versionId);
             result.setSignals(signalVersion.getData());
         } else {
-            signalResponseList = signalService.getSignalDataFromXml(versionId);
+            signalResponseList = signalService.getDataFromXml(versionId);
             result.setSignals(signalResponseList);
         }
         return ResponseEntity.ok(result);
@@ -65,6 +66,23 @@ public ResponseEntity<SignalNodeResponseData> getSignal(@PathVariable String ver
             signalService.saveSignal(request, versionId);
             return ResponseEntity.ok().build();
         } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @GetMapping("/origin/{versionId}")
+    public ResponseEntity<SignalNodeResponseData> getOriginSignal(@PathVariable String versionId) {
+        try {
+            SignalNodeResponseData result = new SignalNodeResponseData();
+            Optional<SignalVersion> signalVersionOpt = signalVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.ORIGIN);
+
+            if (signalVersionOpt.isPresent()) {
+                SignalVersion signalVersion = signalService.getOriginData(versionId);
+                result.setSignals(signalVersion.getData());
+            }
+
+            return ResponseEntity.ok(result);
+        }  catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
