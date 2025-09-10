@@ -14,7 +14,6 @@ export interface State<T> {
     originData: T | undefined
     currentJsonData: T | undefined
     originHistoryData: T | undefined
-    currentJsonData: T
     // 변경 확인
     isChanged: boolean
 }
@@ -33,6 +32,7 @@ export interface Actions<T> {
 const createFeatureStore = <T>() => {
     const initialState: State<T> = {
         originData: undefined,
+        originHistoryData: undefined,
         currentJsonData: undefined,
         isChanged: false
     };
