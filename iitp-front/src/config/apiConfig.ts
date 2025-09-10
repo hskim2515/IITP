@@ -61,6 +61,7 @@ export const apiConfig:ApiConfig = {
         update:  { url: '/signal', method: 'POST', useFormData: false },
         create:  { url: '/signal', method: 'POST', useFormData: false },
         historyList: { url: '/signal/histories', method: 'GET', useFormData: false },
+        origin: {url: '/signal/origin', method: 'GET', useFormData: false},
     }
 
 } as const;

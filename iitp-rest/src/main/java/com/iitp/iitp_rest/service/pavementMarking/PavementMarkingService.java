@@ -38,7 +38,7 @@ public class PavementMarkingService {
 
         List<PavementMarkingLogs> existingLogs = pavementMarkingLogsRepository.findByVersionIdOrderByCreatedAtAsc(versionId);
 
-        int maxLogs = 20;
+        int maxLogs = 10;
         if (existingLogs.size() >= maxLogs) {
             int removeCount = existingLogs.size() - maxLogs + 1;
             List<PavementMarkingLogs> toDelete = existingLogs.subList(0, removeCount);

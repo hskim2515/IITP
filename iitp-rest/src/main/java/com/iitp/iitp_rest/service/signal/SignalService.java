@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.service.signal;
 
+import com.iitp.iitp_rest.model.BaseVersion;
 import com.iitp.iitp_rest.model.signal.*;
 import com.iitp.iitp_rest.repository.SignalLogsRepository;
 import com.iitp.iitp_rest.repository.SignalVersionsRepository;
@@ -28,16 +29,16 @@ public class SignalService {
 
     @Transactional
     public void saveSignal(SignalSaveRequest request, String versionId) {
-        SignalVersion version = signalVersionsRepository.findByVersionId(versionId)
-                .orElse(new SignalVersion());
+        SignalVersion version = signalVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST).orElse(new SignalVersion());
 
         version.setVersionId(versionId);
+        version.setVersionRole(BaseVersion.VersionRole.LATEST);
         version.setData(request.getData());
         signalVersionsRepository.save(version);
 
         List<SignalLogs> existingLogs = signalLogsRepository.findByVersionIdOrderByCreatedAtAsc(versionId);
 
-        int maxLogs = 20;
+        int maxLogs = 10;
         if (existingLogs.size() >= maxLogs) {
             int removeCount = existingLogs.size() - maxLogs + 1;
             List<SignalLogs> toDelete = existingLogs.subList(0, removeCount);
@@ -52,7 +53,7 @@ public class SignalService {
         signalLogsRepository.save(logs);
     }
 
-    public List<SignalResponse> getSignalDataFromXml(String versionId) throws Exception {
+    public List<SignalResponse> getDataFromXml(String versionId) throws Exception {
         List<SignalResponse> signalResponses = new ArrayList<>();
 
         try (InputStream is = getClass().getClassLoader().getResourceAsStream(versionId + "/signal.xml")) {
@@ -91,11 +92,29 @@ public class SignalService {
             }
         }
 
+        Optional<SignalVersion> originOpt = signalVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.ORIGIN);
+        if (originOpt.isEmpty()) {
+            SignalVersion originVersion = new SignalVersion();
+            originVersion.setVersionId(versionId);
+            originVersion.setVersionRole(BaseVersion.VersionRole.ORIGIN);
+            originVersion.setData(signalResponses);
+            signalVersionsRepository.save(originVersion);
+
+            SignalVersion latestVersion = new SignalVersion();
+            latestVersion.setVersionId(versionId);
+            latestVersion.setVersionRole(BaseVersion.VersionRole.LATEST);
+            latestVersion.setData(signalResponses);
+            signalVersionsRepository.save(latestVersion);
+        }
         return signalResponses;
     }
 
-    public SignalVersion getSignalFromDatabase(String versionId) {
-        return signalVersionsRepository.findByVersionId(versionId).orElse(new SignalVersion());
+    public SignalVersion getDataFromDatabase(String versionId) {
+        return signalVersionsRepository.findByVersionIdAndVersionRole(versionId,BaseVersion.VersionRole.LATEST).orElse(new SignalVersion());
+    }
+
+    public SignalVersion getOriginData(String versionId) {
+        return signalVersionsRepository.findByVersionIdAndVersionRole(versionId,BaseVersion.VersionRole.ORIGIN).orElse(new SignalVersion());
     }
 
 }

@@ -175,8 +175,8 @@ export class SignalFeatureLayer extends VectorLayer {
             __guid: guid,
             featureType: FEATURE_TYPE.SIGNAL,
             nodeId: undefined,
-            turnning: undefined,
-            type: undefined,
+            turning: null,
+            type: null,
             connectionId: undefined,
         };
 

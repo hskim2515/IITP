@@ -5,8 +5,12 @@ import {
 } from 'react-vertical-timeline-component';
 import 'react-vertical-timeline-component/style.min.css';
 import { menuCodeToHistoryStoreMap } from '@hooks/useHistoryInit';
-import { buildMergedDataFromLogs} from "@utils/history";
+import {buildMergedDataFromLogs, featureReverseLogs} from "@utils/history";
 import {menuCodeToStoreMap} from "@hooks/useLayerInit";
+import {apiConfig, ApiMenuKey} from "@config/apiConfig";
+import axiosInstance from "@api/axiosInstance";
+import {assignPropertyToResponseData} from "@utils/guid";
+import {useScenarioStore} from "@stores/useScenarioStore";
 
 interface Props {
     historySteps: HistoryStep[];
@@ -29,16 +33,15 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
     const historyStore = menuCodeToHistoryStoreMap[menuCode];
     const featureStore = menuCodeToStoreMap[menuCode];
 
+    const selectedScenario = useScenarioStore.getState().selectedScenario;
     const originData = featureStore.getState().originData;
     const firstKey = Object.keys(originData)[0] as keyof typeof originData;
-    const originItem = originData[firstKey];
-    const originHistoryData = historyStore.getState().originHistoryData;
-    const selectedIndex = historyStore.getState().currentIndex;
-    const setCurrentIndex = historyStore.getState().setCurrentIndex;
+    const originHistoryLogData = historyStore.getState().originHistoryData;
+    const setCurrentSnapshotIndex = historyStore.getState().setCurrentSnapshotIndex;
 
     useEffect(() => {
-        if (!originHistoryData) return;
-        const steps: HistoryStep[] = originHistoryData
+        if (!originHistoryLogData) return;
+        const steps: HistoryStep[] = originHistoryLogData
             .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
             .map((item) => ({
                 id: item.id,
@@ -50,25 +53,56 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
             }));
 
         setHistorySteps(steps);
-    }, [originHistoryData]);
+
+        getOriginHistoryData();
+    }, [originHistoryLogData]);
+
+    const getOriginHistoryData = async () => {
+        const store = menuCodeToStoreMap[menuCode];
+        if (!store) return;
+
+        const originHistoryData = store.getState().originHistoryData;
+        if (originHistoryData) return;
+
+        try {
+            const api = apiConfig[menuCode as ApiMenuKey].origin;
+            const response = await axiosInstance({
+                method: api.method,
+                url: api.url + '/' + selectedScenario.key,
+            });
+
+            store.getState().setOriginHistoryData(response.data);
+            assignPropertyToResponseData(response.data, menuCode);
+
+        } catch (err) {
+            console.error(`[${menuCode}] 데이터 불러오기 실패`, err);
+        } finally {
+            console.log(`[${menuCode}] originHistoryData:::`, store.getState().originHistoryData);
+        }
+    };
 
     const handleSelect = (idx: number) => {
         const step = historySteps[idx];
-        const confirmed = window.confirm(`${step.message} 시점으로 되돌리시겠습니까?`);
-        if (confirmed) {
-            setCurrentIndex(idx);
+        const currentSnapshotIndex = historyStore.getState().currentSnapshotIndex;
 
+        if (idx === currentSnapshotIndex) return;
+
+        const confirmed = window.confirm(`${step.message} 시점으로 되돌리겠습니까?`);
+        if (confirmed) {
+            setCurrentSnapshotIndex(idx);
             const logsToApply = historySteps.slice(0, idx + 1);
 
             if (logsToApply.length === 0) {
                 alert('변경할 데이터가 없습니다.');
                 return;
             }
-            const mergeData = buildMergedDataFromLogs(originItem, logsToApply, /*isUndo=*/true);
+            const originHistoryData = featureStore.getState().originHistoryData;
+            const mergeData = buildMergedDataFromLogs(originHistoryData[firstKey], logsToApply, /*isUndo=*/true);
             featureStore.getState().setCurrentJsonData({
                 //...currentData,
                 [firstKey]: mergeData,
             });
+            featureReverseLogs(historyStore,historySteps.slice(0, idx + 1));
         }
     };
 
@@ -82,8 +116,7 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
                 <div className="modal-content">
                     <VerticalTimeline layout="1-column-left">
                         {historySteps.map((step, idx) => {
-                            const isSelected = selectedIndex === idx;
-
+                            const isSelected = historyStore.getState().currentSnapshotIndex === idx;
                             return (
                                 <VerticalTimelineElement
                                     key={step.id}

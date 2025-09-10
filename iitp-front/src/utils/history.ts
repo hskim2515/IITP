@@ -1,6 +1,6 @@
 import Feature from 'ol/Feature'
 import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
-import { UpdateLogEntry, UpdateType } from "@type/HistoryTypes";
+import {UpdateLogEntry, UpdateLogItem, UpdateType} from "@type/HistoryTypes";
 import { Feature as OLFeature } from "ol";
 import { Point } from "ol/geom";
 import {fromLonLat} from "ol/proj";
@@ -52,7 +52,6 @@ export function mergeJsonWithLogRecursive(
     isUndo: boolean
 ): any {
     const { added, modified, deleted } = updateLog;
-
     if (isUndo) {
         // Undo: 삭제 → 다시 추가
         deleted?.forEach(change => {
@@ -171,17 +170,69 @@ export const featureUpdateLogs = (
     }
 
     if (Object.keys(updates).length > 0) {
-        store.getState().addFieldUpdate(updates);
+        store.getState().setUpdateLogs(updates);
     }
 
     console.log("[updateLogs]", store.getState().updateLogs);
 };
+export const featureReverseLogs = (
+    store: ReturnType<typeof useHistoryStoreFactory>,
+    logs: any
+) => {
+    if(store.getState().snapshotUpdateLogs){
+        store.getState().resetSnapshotUpdateLogs();
+    }
+    if(store.getState().updateLogs){
+        store.getState().resetUpdateLogs();
+    }
+    const sortLogs = logs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    const reversedLogs = sortLogs.map((log) => {
+        const timestamp = new Date().toISOString();
+        return {
+            added: log.data.deleted.map((item) => ({
+                ...item,
+                guid: item.guid,
+                field: item.field,
+                oldValue: null,
+                newValue: item.oldValue,
+                timestamp: timestamp,
+            })),
+            deleted: log.data.added.map((item) => ({
+                ...item,
+                guid: item.guid,
+                field: item.field,
+                oldValue: item.newValue,
+                newValue: null,
+                timestamp: timestamp,
+            })),
+            modified: log.data.modified.map((item) => ({
+                ...item,
+                guid: item.guid,
+                field: item.field,
+                oldValue: item.newValue,
+                newValue: item.oldValue,
+                timestamp: timestamp,
+            })),
+        };
+    });
 
-export function mergeUpdateLogs(logs: any[]): UpdateLogEntry {
+    reversedLogs.forEach((updates) => {
+        if (Object.keys(updates).length > 0) {
+            store.getState().setSnapshotUpdateLogs(updates);
+        }
+    });
+
+    console.log("[snapshotUpdateLogs]", store.getState().snapshotUpdateLogs);
+};
+
+export function mergeUpdateLogs(logs: UpdateLogItem[], snapshotLogs: UpdateLogItem[]): UpdateLogEntry {
+    const allLogs = [...snapshotLogs, ...logs];
+
+    allLogs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
     const merged: UpdateLogEntry = { added: [], modified: [], deleted: [] };
 
-    for (const log of logs) {
+    for (const log of allLogs) {
         log.json.added?.forEach(change => merged.added!.push(change));
         log.json.modified?.forEach(change => merged.modified!.push(change));
         log.json.deleted?.forEach(change => merged.deleted!.push(change));
@@ -190,9 +241,10 @@ export function mergeUpdateLogs(logs: any[]): UpdateLogEntry {
     return merged;
 }
 
-export function getValueAtPath(obj: any, path: string[]) {
-    return path.reduce((acc, key) => (acc && acc[key] !== undefined) ? acc[key] : undefined, obj);
-}
+
+// export function getValueAtPath(obj: any, path: string[]) {
+//     return path.reduce((acc, key) => (acc && acc[key] !== undefined) ? acc[key] : undefined, obj);
+// }
 
 // export function findPath(obj, guid, currentPath = ''): string | null {
 //     if (Array.isArray(obj)) {

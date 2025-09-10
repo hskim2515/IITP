@@ -1,6 +1,5 @@
 import {create} from 'zustand';
-import {combine, subscribeWithSelector} from 'zustand/middleware';
-import {createSelectors} from './createSelectors';
+import {subscribeWithSelector} from 'zustand/middleware';
 import {UpdateLogEntry, UpdateLogItem} from "@type/HistoryTypes";
 import {useMessageStore} from "@stores/useMessageStore";
 const setMessage = useMessageStore.getState().setMessage;
@@ -19,25 +18,33 @@ export interface FetchHistoryDataType {
 export interface State {
     originHistoryData: FetchHistoryDataType | undefined
     currentIndex: number | null;
-    updateLogs: [],
+    currentSnapshotIndex: number | null;
+    snapshotUpdateLogs: UpdateLogItem[],
+    updateLogs: UpdateLogItem[],
+    undoStack: UpdateLogItem[],
+    redoStack: UpdateLogItem[],
 }
 
 export interface Actions {
     setOriginHistoryData: (data: FetchHistoryDataType) => void;
-
     undo: () => UpdateLogEntry | null;
     redo: () => UpdateLogEntry | null;
-
-    addFieldUpdate: (updateJson: JSON) => void;
-    resetAllUpdates: () => void;
-
+    setUpdateLogs: (updateJson: UpdateLogEntry) => void;
+    setSnapshotUpdateLogs: (updateJson: UpdateLogEntry) => void;
+    resetUpdateLogs: () => void;
+    resetSnapshotUpdateLogs: () => void;
     setCurrentIndex: (index:number) => void;
+    setCurrentSnapshotIndex: (index:number) => void;
 }
 
 const initialState: State = {
     originHistoryData: undefined,
     currentIndex: null,
+    currentSnapshotIndex: null,
+    snapshotUpdateLogs: [],
     updateLogs: [],
+    undoStack: [],
+    redoStack: [],
 };
 
 const createHistoryStore = () =>
@@ -48,10 +55,8 @@ const createHistoryStore = () =>
                     setOriginHistoryData: (data: FetchHistoryDataType) => set({ originHistoryData: data }),
 
                     undo: () => {
-                        const logs = get().updateLogs;
-                        const idx = get().currentIndex;
-
-                        if (!logs || idx >= logs.length) {
+                        const undoStack = [...get().undoStack];
+                        if (!undoStack.length) {
                             setMessage({
                                 type: 'warn',
                                 text: "되돌릴 수 있는 작업이 없습니다.",
@@ -59,55 +64,61 @@ const createHistoryStore = () =>
                             return null;
                         }
 
-                        const logIndex = logs.length - 1 - idx;
+                        const last = undoStack.pop()!;
+                        set({
+                            undoStack,
+                            redoStack: [...get().redoStack, last]
+                        });
 
-                        set({ currentIndex: idx + 1 });
-                        return logs[logIndex];
+                        console.log("[UNDO] undoStack:", get().undoStack);
+                        console.log("[UNDO] redoStack:", get().redoStack);
+                        console.log("[UNDO] updateLogs:", get().updateLogs);
+                        return last.json;
                     },
-                    redo: () => {
-                        const logs = get().updateLogs;
-                        const idx = get().currentIndex;
 
-                        if (!logs || idx <= 0) {
+                    redo: () => {
+                        const redoStack = [...get().redoStack];
+                        if (!redoStack.length) {
                             setMessage({
                                 type: 'warn',
-                                text: "앞으로 돌릴 수 있는 작업이 없습니다.",
+                                text: "앞으로 되돌릴 수 있는 작업이 없습니다.",
                             });
                             return null;
                         }
 
-                        const newIndex = idx - 1;
-                        const logIndex = logs.length - 1 - newIndex;
+                        const last = redoStack.pop()!;
+                        set({
+                            redoStack,
+                            undoStack: [...get().undoStack, last]
+                        });
 
-                        set({ currentIndex: newIndex });
-                        return logs[logIndex];
+                        console.log("[REDO] undoStack:", get().undoStack);
+                        console.log("[REDO] redoStack:", get().redoStack);
+                        console.log("[REDO] updateLogs:", get().updateLogs);
+                        return last.json;
                     },
 
-                    addFieldUpdate: (updateJson) => {
-                        let prevLogs = get().updateLogs;
-                        if (!Array.isArray(prevLogs)) prevLogs = [];
-
-                        let idx = get().currentIndex;
-
-                        // Undo 상태라면 redo 로그 삭제
-                        if (idx > 0) {
-                            prevLogs = prevLogs.slice(0, prevLogs.length - idx);
-                            idx = 0;
-                            set({ currentIndex: 0 });
-                        }
-
-                        const newLog: UpdateLogItem = {
-                            timestamp: new Date().toISOString(),
-                            json: updateJson,
-                        };
+                    setUpdateLogs: (updateJson) => {
+                        const newLog: UpdateLogItem = { timestamp: new Date().toISOString(), json: updateJson };
 
                         set({
-                            updateLogs: [...prevLogs, newLog],
-                            currentIndex: idx,
+                            updateLogs: [...get().updateLogs, newLog],
+                            undoStack: [...get().undoStack, newLog],
+                            redoStack: [],
                         });
                     },
-                    resetAllUpdates: () => set({ updateLogs: [] }),
-                    setCurrentIndex: (index:number) => set({ currentIndex: index})
+
+                    setSnapshotUpdateLogs: (updateJson) => {
+                        const newLog: UpdateLogItem = { timestamp: new Date().toISOString(), json: updateJson };
+                        set({
+                            snapshotUpdateLogs: [...get().snapshotUpdateLogs, newLog],
+                        });
+                    },
+
+                    resetUpdateLogs: () => set({ updateLogs: [] }),
+                    resetSnapshotUpdateLogs: () => set({ snapshotUpdateLogs: [] }),
+                    setCurrentIndex: (index:number) => set({ currentIndex: index}),
+                    setCurrentSnapshotIndex: (index:number) => set({ currentSnapshotIndex: index})
 
                 }))
     );

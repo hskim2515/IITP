@@ -29,4 +29,14 @@ public abstract class BaseVersion {
     @Column(name = "updated_at", nullable = false, updatable = false)
     @UpdateTimestamp
     private LocalDateTime updatedAt;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "version_role", nullable = false)
+    private VersionRole versionRole;
+
+    public enum VersionRole {
+        ORIGIN,
+        LATEST
+    }
 }
+
