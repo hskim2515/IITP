@@ -25,10 +25,10 @@ export const useEventStore = create<EventStore>((set, get) => ({
     setOlManager: (manager) => set({ olEventManager: manager }),
     setActiveMap: (map) => set({ activeMap: map }),
 
-    bind: (type, cb) => {
+    bind: (type, cb, options) => {
         const { activeMap, cesiumEventManager, olEventManager } = get();
         const manager = activeMap === 'cesium' ? cesiumEventManager : olEventManager;
-        manager?.bind(type, cb);
+        manager?.bind(type, cb, options);
     },
     unbind: (type, cb) => {
         const { activeMap, cesiumEventManager, olEventManager } = get();

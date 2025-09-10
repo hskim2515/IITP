@@ -1,5 +1,5 @@
-import { GeoJsonDataSource, Viewer } from "cesium";
 import * as Cesium from "cesium";
+import { GeoJsonDataSource, Viewer } from "cesium";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { Network } from "@type/Network";
 import { diff } from "deep-object-diff";
@@ -17,12 +17,12 @@ export default class NetworkDataSourceLayer {
         const store = layerNameToStoreMap[this.LAYER_NAME];
         if (store) {
             this.unsubscribe = store.subscribe(
-                (state) => state.currentJsonData,
+                (state: {currentJsonData: Network}) => state.currentJsonData,
                 () => {
                     console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
                     this.load();
                 },
-                {equalityFn: (a, b) => Object.keys(diff(a, b)).length === 0}
+                {equalityFn: (a: Network, b: Network) => Object.keys(diff(a, b)).length === 0}
             );
         }
     }

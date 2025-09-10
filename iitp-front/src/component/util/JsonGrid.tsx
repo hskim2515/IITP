@@ -335,10 +335,10 @@ const JsonGrid = ({
             }
         },
     }));
+
     const nestedFields = getNestedArrayField(rowData?.[0]);
+
     const handleAddBtn = () => {
-        console.log(parentGuid)
-        let newRecord;
         let targetFeatureType = levelName;
         if (!targetFeatureType) {
             console.error("새 레코드를 추가할 FeatureType을 알 수 없습니다.");
@@ -348,36 +348,53 @@ const JsonGrid = ({
             });
             return;
         }
+
         const schema = useSchemaStore.getState().getSchemaByNames(layerName, levelName);
+        const template = generateTemplate(schema);
 
-        const template = generateTemplate(schema)
-
-        if (template) {
-            console.log(template)
-            newRecord = {
-                ...template,
-                featureType: targetFeatureType,
-                id: Date.now(),
-                __guid: generateGUIDWithType(targetFeatureType), // __guid 생성
-                parentGuid: parentGuid
-            };
-
-            store.getState().updateCurrentJsonData(newRecord, historyStore);
-            setSelectedGuid([newRecord.__guid]);
-            console.log("newRecord:::", newRecord)
-            featureTypeEventHandlers(newRecord)
-        } else {
+        if (!template) {
             console.error("레이어에 스키마가 정의되어 있지 않습니다.");
             setMessage({
                 type: 'error',
                 text: '레이어에 스키마가 정의되어 있지 않습니다.',
             });
+            return;
         }
-    }
-    const handleDeleteBtn = () => {
-        store.getState().removeRecordsByGuid(selectedGuid, historyStore)
 
-    }
+        // 좌표가 필요한 featureType인지 확인
+
+        const tempRecord = {
+            ...template,
+            featureType: targetFeatureType,
+            id: Date.now(),
+            __guid: generateGUIDWithType(targetFeatureType),
+            parentGuid: parentGuid || [],
+            // 좌표 정보는 아직 없음 - featureTypeEventHandlers에서 처리될 예정
+        };
+
+        // 지도에서 좌표 선택 시작
+        featureTypeEventHandlers(tempRecord);
+
+    };
+
+    const handleDeleteBtn = () => {
+        if (selectedGuid.length === 0) {
+            setMessage({
+                type: 'warn',
+                text: '삭제할 항목을 선택해주세요.',
+            });
+            return;
+        }
+
+        store.getState().removeRecordsByGuid(selectedGuid, historyStore);
+
+        setMessage({
+            type: 'info',
+            text: `${selectedGuid.length}개 항목이 삭제되었습니다.`,
+        });
+
+        clearSelected();
+    };
 
     const toggleGrid = (key: string | undefined) => {
         if (!key) return;
@@ -446,7 +463,7 @@ const JsonGrid = ({
                                             Array.isArray(record[field]) &&
                                             record[field].length > 0
                                     ),
-                                expandedRowKeys: expandedRowKeys,  // 👈 추가
+                                expandedRowKeys: expandedRowKeys,
                                 onExpand: (expanded, record) => {
                                     const key = record.__guid;
                                     setExpandedRowKeys(prev =>

@@ -1,41 +1,39 @@
 import { Cartesian3, Color, Entity, GeoJsonDataSource, Viewer } from "cesium";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
-import { FEATURE_TYPE, RailStationData, TRANSIT_MODE } from "@type/Station";
+import { FEATURE_TYPE, RailPublicStationResponse, TRANSIT_MODE } from "@type/Station";
+import { diff } from "deep-object-diff";
 
 export default class RailStationDataSourceLayer {
     private readonly LAYER_NAME = "railStation";
     private dataSource: GeoJsonDataSource;
-    private unsubscribe: () => void;
+    private unsubscribe: (() => void) | undefined;
 
     constructor(private viewer: Viewer) {
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
+        this.viewer.dataSources.add(this.dataSource);
 
+        this.load();
         const store = layerNameToStoreMap[this.LAYER_NAME];
-        this.unsubscribe = store.subscribe(
-            (state) => state.currentJsonData,
-            async (currentJsonData) => {
-                if (!currentJsonData?.railStations) return;
-                try {
-                    await this.load(currentJsonData.railStations);
-                } catch (error) {
-                    console.error("[RailStationDataSourceLayer] railStations 로드 실패:", error);
-                }
-            },
-            {fireImmediately: true}
-        );
+        if (store) {
+            this.unsubscribe = store.subscribe(
+                (state: {currentJsonData: RailPublicStationResponse}) => state.currentJsonData,
+                () => {
+                    console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
+                    this.load();
+                },
+                {equalityFn: (a: RailPublicStationResponse, b: RailPublicStationResponse) => Object.keys(diff(a, b)).length === 0}
+            );
+        }
     }
 
-    private async load(railStations: Record<string, any>[]): Promise<void> {
+    public load(): void {
         if (!this.dataSource) return;
         this.dataSource.entities.suspendEvents();
         try {
-            this.viewer.dataSources.remove(this.dataSource, true);
-            this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
-            console.log("railStations:::", railStations)
-
+            this.dataSource.entities.removeAll();
 
             const store = layerNameToStoreMap[this.LAYER_NAME];
-            console.log("store.getState().currentJsonData:::", store.getState().currentJsonData)
+            const railStations = store.getState().currentJsonData?.railStations;
 
             for (const railStation of railStations) {
 
@@ -83,8 +81,6 @@ export default class RailStationDataSourceLayer {
                     );
                 }
             }
-
-            await this.viewer.dataSources.add(this.dataSource);
 
             console.log("RailStationDataSourceLayer: 모든 Feature가 추가됨");
         } catch (error) {

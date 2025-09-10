@@ -55,12 +55,12 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const store = layerNameToStoreMap[this.LAYER_NAME];
         if (store) {
             this.unsubscribe = store.subscribe(
-                (state) => state.currentJsonData,
+                (state: { currentJsonData: Network; }) => state.currentJsonData,
                 () => {
                     console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
                     this.load(); // 데이터가 변경되면 레이어를 다시 로드합니다.
                 },
-                { equalityFn: (a, b) => Object.keys(diff(a, b)).length === 0  }
+                { equalityFn: (a:Network, b:Network) => Object.keys(diff(a, b)).length === 0  }
             );
         }
     }
@@ -595,5 +595,12 @@ export default class NetworkFeatureLayer extends VectorLayer {
     }
     public getConnectionFeatureType(): string {
         return "connection-edit";
+    }
+
+    public dispose(): void {
+        if (this.unsubscribe) {
+            this.unsubscribe();
+        }
+        super.dispose();
     }
 }

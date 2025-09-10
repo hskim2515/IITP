@@ -1,6 +1,6 @@
 import createFeatureStore from "@stores/useFeatureStoreFactory";
 import createHistoryStore from "@stores/useHistoryStoreFactory";
-import { RailStationData } from "@type/Station";
+import { RailPublicStationResponse } from "@type/Station";
 
-export const useRailStationStore = createFeatureStore<RailStationData>();
+export const useRailStationStore = createFeatureStore<RailPublicStationResponse>();
 export const useRailStationHistoryStore = createHistoryStore();

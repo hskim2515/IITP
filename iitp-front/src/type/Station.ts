@@ -32,8 +32,8 @@ export const FEATURE_TYPE = {
 export type TransitMode = typeof TRANSIT_MODE[keyof typeof TRANSIT_MODE];
 
 export interface Coordinates {
-    lng: number | null,
-    lat: number | null,
+    lng: number,
+    lat: number,
 }
 
 export interface BusStationData {
@@ -73,7 +73,6 @@ export interface RailStationData {
     center: string | null;
     exits: RailStationExitData[] | null
 
-    linkRef: string | undefined;
     coordinates: Coordinates;
     menuCode: string
 }
@@ -85,43 +84,14 @@ export interface RailStationExitData {
     featureType: typeof FEATURE_TYPE.RAIL_STATION_EXIT;
     id: number | undefined;
     linkRef: string | null;
-    exitRef: number | undefined;
     offset: number | null;
     coordinates: Coordinates;
     accessTime: number | null;
     menuCode: string
 }
 
-export const defaultRailStationExitData = {
-    __guid: null,
-    featureType: FEATURE_TYPE.RAIL_STATION_EXIT,
-    id: undefined,
-    linkRef: null,
-    exitRef: undefined,
-    offset: null,
-    accessTime: null,
-    coordinates: {
-        lng: null,
-        lat: null,
-    },
-    menuCode: "RAIL_STATION",
-} as RailStationExitData
-
 export type RailStationExitFeature = RailStationExitData;
-export const defaultRailStationExitFeature = {
-    __guid: null,
-    featureType: FEATURE_TYPE.RAIL_STATION_EXIT,
-    id: undefined,
-    linkRef: null,
-    exitRef: undefined,
-    offset: null,
-    accessTime: null,
-    coordinates: {
-        lng: null,
-        lat: null,
-    },
-    menuCode: "RAIL_STATION",
-} as RailStationExitFeature
+
 
 export type BusStationSnapProperties = Pick<BusStationData, BusStationSnapFields>;
 export type RailStationSnapProperties = Pick<RailStationFeature, RailStationSnapFields>;

@@ -10,6 +10,7 @@ import { Coordinate } from "ol/coordinate";
 import { getDistance } from "ol/sphere";
 import {fromLonLat, toLonLat} from "ol/proj";
 import { FeatureLike } from "ol/Feature";
+import React from "react";
 
 export interface PositionOnGeometry {
     coordinate: Coordinate; // 최적 위치 좌표
@@ -343,7 +344,7 @@ export function getFeaturesByProperties(
 
 export function filterFeaturesByKey(
     input: FeatureInput | undefined,
-    ids: Array<string | number>,
+    ids: Array<string | number | React.Key>,
     key: string = "__guid"
 ): Collection<Feature> {
     if (!Array.isArray(ids) || ids.length === 0 || !input) {

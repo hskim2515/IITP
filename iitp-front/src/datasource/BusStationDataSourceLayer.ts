@@ -1,6 +1,6 @@
-import { Viewer, GeoJsonDataSource, Cartesian3, Entity, Color } from "cesium";
+import { Cartesian3, Color, Entity, GeoJsonDataSource, Viewer } from "cesium";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
-import { BusStationData, FEATURE_TYPE, TRANSIT_MODE } from "@type/Station";
+import { BusPublicStationResponse, BusStationData, FEATURE_TYPE, TRANSIT_MODE } from "@type/Station";
 import { diff } from "deep-object-diff";
 
 export default class BusStationDataSourceLayer {
@@ -16,12 +16,12 @@ export default class BusStationDataSourceLayer {
         const store = layerNameToStoreMap[this.LAYER_NAME];
         if (store) {
             this.unsubscribe = store.subscribe(
-                (state) => state.currentJsonData,
+                (state: {currentJsonData: BusPublicStationResponse}) => state.currentJsonData,
                 () => {
                     console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
                     this.load();
                 },
-                {equalityFn: (a, b) => Object.keys(diff(a, b)).length === 0}
+                {equalityFn: (a: BusPublicStationResponse, b: BusPublicStationResponse) => Object.keys(diff(a, b)).length === 0}
             );
         }
     }
@@ -33,7 +33,7 @@ export default class BusStationDataSourceLayer {
             this.dataSource.entities.removeAll();
 
             const store = layerNameToStoreMap[this.LAYER_NAME];
-            const busStations = store.getState().currentJsonData?.busStations;
+            const busStations: BusStationData[] = store.getState().currentJsonData?.busStations;
 
             if (!busStations) {
                 console.log("[BusStationDataSourceLayer] No bus stations data to load.");
@@ -42,9 +42,7 @@ export default class BusStationDataSourceLayer {
 
             busStations.forEach((data) => {
                 const props: BusStationData = {
-                    ...data,
-                    transitMode: data.transitMode ?? TRANSIT_MODE.BUS,
-                    featureType: data.featureType ?? FEATURE_TYPE.BUS_STATION,
+                    ...data
                 };
                 const coord = data.coordinates;
 
@@ -61,6 +59,7 @@ export default class BusStationDataSourceLayer {
                             color: Color.RED,
                             outlineWidth: 1,
                             outlineColor: Color.TRANSPARENT,
+                            heightReference: 1,
                         },
                         properties: props,
                     })
