@@ -65,14 +65,20 @@ const createHistoryStore = () =>
                         }
 
                         const last = undoStack.pop()!;
+
+                        // updateLogs에서 제거
+                        const newUpdateLogs = get().updateLogs.filter(log => log.timestamp !== last.timestamp);
+
                         set({
                             undoStack,
-                            redoStack: [...get().redoStack, last]
+                            redoStack: [...get().redoStack, last],
+                            updateLogs: newUpdateLogs,
                         });
 
                         console.log("[UNDO] undoStack:", get().undoStack);
                         console.log("[UNDO] redoStack:", get().redoStack);
                         console.log("[UNDO] updateLogs:", get().updateLogs);
+
                         return last.json;
                     },
 
@@ -87,20 +93,25 @@ const createHistoryStore = () =>
                         }
 
                         const last = redoStack.pop()!;
+
+                        // updateLogs에 다시 추가
+                        const newUpdateLogs = [...get().updateLogs, last];
+
                         set({
                             redoStack,
-                            undoStack: [...get().undoStack, last]
+                            undoStack: [...get().undoStack, last],
+                            updateLogs: newUpdateLogs,
                         });
 
                         console.log("[REDO] undoStack:", get().undoStack);
                         console.log("[REDO] redoStack:", get().redoStack);
                         console.log("[REDO] updateLogs:", get().updateLogs);
+
                         return last.json;
                     },
 
                     setUpdateLogs: (updateJson) => {
                         const newLog: UpdateLogItem = { timestamp: new Date().toISOString(), json: updateJson };
-
                         set({
                             updateLogs: [...get().updateLogs, newLog],
                             undoStack: [...get().undoStack, newLog],
