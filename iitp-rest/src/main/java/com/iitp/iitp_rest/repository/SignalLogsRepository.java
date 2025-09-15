@@ -1,6 +1,5 @@
 package com.iitp.iitp_rest.repository;
 
-import com.iitp.iitp_rest.model.pavementMarking.PavementMarkingLogs;
 import com.iitp.iitp_rest.model.signal.SignalLogs;
 import jakarta.transaction.Transactional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -14,5 +13,6 @@ public interface SignalLogsRepository extends JpaRepository<SignalLogs, Long> {
     @Transactional
     List<SignalLogs> findByVersionId(String versionId);
     List<SignalLogs> findByVersionIdOrderByCreatedAtAsc(String versionId);
+    void deleteByVersionId(String versionId);
 }
 

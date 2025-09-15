@@ -29,30 +29,42 @@ public class SignalService {
 
     @Transactional
     public void saveSignal(SignalSaveRequest request, String versionId) {
-        SignalVersion version = signalVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST).orElse(new SignalVersion());
+        SignalVersion latest = signalVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST).orElse(new SignalVersion());
 
-        version.setVersionId(versionId);
-        version.setVersionRole(BaseVersion.VersionRole.LATEST);
-        version.setData(request.getData());
-        signalVersionsRepository.save(version);
+        latest.setVersionId(versionId);
+        latest.setVersionRole(BaseVersion.VersionRole.LATEST);
+        latest.setData(request.getData());
+        signalVersionsRepository.save(latest);
 
         List<SignalLogs> existingLogs = signalLogsRepository.findByVersionIdOrderByCreatedAtAsc(versionId);
 
         int maxLogs = 10;
         if (existingLogs.size() >= maxLogs) {
-            int removeCount = existingLogs.size() - maxLogs + 1;
-            List<SignalLogs> toDelete = existingLogs.subList(0, removeCount);
-            signalLogsRepository.deleteAll(toDelete);
+            SignalVersion origin = signalVersionsRepository
+                    .findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.ORIGIN)
+                    .orElse(new SignalVersion());
+
+            origin.setVersionId(versionId);
+            origin.setVersionRole(BaseVersion.VersionRole.ORIGIN);
+            origin.setData(latest.getData());
+            signalVersionsRepository.save(origin);
+
+            int removeCount = existingLogs.size() - (maxLogs - 1);
+            if (removeCount > 0) {
+                List<SignalLogs> toDelete = existingLogs.subList(0, removeCount);
+                signalLogsRepository.deleteAll(toDelete);
+            }
         }
 
-        SignalLogs logs = SignalLogs.builder()
+        SignalLogs newLog = SignalLogs.builder()
                 .versionId(versionId)
                 .data(request.getLogs())
                 .build();
 
-        signalLogsRepository.save(logs);
+        signalLogsRepository.save(newLog);
     }
 
+    @Transactional
     public List<SignalResponse> getDataFromXml(String versionId) throws Exception {
         List<SignalResponse> signalResponses = new ArrayList<>();
 
@@ -94,6 +106,8 @@ public class SignalService {
 
         Optional<SignalVersion> originOpt = signalVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.ORIGIN);
         if (originOpt.isEmpty()) {
+            signalLogsRepository.deleteByVersionId(versionId);
+
             SignalVersion originVersion = new SignalVersion();
             originVersion.setVersionId(versionId);
             originVersion.setVersionRole(BaseVersion.VersionRole.ORIGIN);

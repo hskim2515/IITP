@@ -127,7 +127,7 @@ const createFeatureStore = <T>() => {
 
                                 if (historyStore) {
                                     featureUpdateLogs(historyStore, {
-                                        guid: record.id,
+                                        guid: record.__guid,
                                         updateType: "added",
                                         properties: record,
                                     });
