@@ -15,9 +15,6 @@ import CircleStyle from "ol/style/Circle";
 import {useEventStore} from "@stores/useEventStore";
 import {propertyFormSchema} from "@schema/propertyFormSchema";
 import {useMenuStore} from "@stores/useMenuStore";
-import {getSignalGuid} from "@utils/signal";
-import {FEATURE_TYPE} from "@type/Signal";
-import {useLayerStore} from "@stores/useLayerStore";
 
 
 const selectedGuid = useSelectionStore.getState().selectedGuid;
@@ -32,10 +29,6 @@ const originalFeatureStyles =new WeakMap()
 
 const HIGHLIGHT_SCALE = 3;
 
-const layerOverrideMap: Record<string, string> = {
-    SIGNAL: 'NETWORK',
-};
-
 export const defaultEventHandlers ={
 
 
@@ -44,8 +37,7 @@ export const defaultEventHandlers ={
         const viewer = useCesiumStore.getState().viewer;
 
         if (!viewer) return
-        const activeSubmenu = useMenuStore.getState().activeSubmenu;
-        const layerManager = useLayerStore.getState().layerManager;
+
         const picked = viewer.scene.pick(e.position);
 
         if (Cesium.defined(picked) && picked.id?.properties) {
@@ -67,22 +59,16 @@ export const defaultEventHandlers ={
             });
             setSelectedProps(props);
 
-            const layerName = propertyFormSchema[activeSubmenu.menuCode].layer
-            const guid =
-                layerName === FEATURE_TYPE.SIGNAL
-                    ? getSignalGuid(layerManager, props.__guid)
-                    : props.__guid;
+            setSelectedGuid([props.__guid])
 
-            setSelectedGuid([guid]);
         } else {
             setSelectedProps(null);
         }
     },
 
     handleOLSelect : (e: MapBrowserEvent<UIEvent>) => {
+
         const olMap = useOpenLayersStore.getState().map;
-        const activeSubmenu = useMenuStore.getState().activeSubmenu;
-        const layerManager = useLayerStore.getState().layerManager;
 
         if (!olMap) {
             setSelectedProps(null);
@@ -91,17 +77,13 @@ export const defaultEventHandlers ={
         }
         let isFeatureExist = false
         olMap.forEachFeatureAtPixel(e.pixel, function (feature) {
-            const layerName = propertyFormSchema[activeSubmenu.menuCode].layer
-            const guid =
-                layerName === FEATURE_TYPE.SIGNAL
-                    ? getSignalGuid(layerManager, feature.get("__guid"))
-                    : feature.get("__guid");
-
-            setSelectedGuid([guid]);
-            isFeatureExist = true;
-            setSelectedProps(feature.getProperties())
-
-            return true
+            const guid = feature.get("__guid");
+            if (guid) {
+                isFeatureExist = true;
+                setSelectedProps(feature.getProperties())
+                setSelectedGuid([feature.get("__guid")])
+                return true
+            }
         });
         if (!isFeatureExist) {
             setSelectedProps(null)
@@ -139,12 +121,7 @@ export const defaultEventHandlers ={
         const olMap = useOpenLayersStore.getState().map;
         const activeSubmenu = useMenuStore.getState().activeSubmenu
 
-        //const hoverLayerName = activeSubmenu ? propertyFormSchema[activeSubmenu?.menuCode].layer : undefined;
-        const hoverLayerName = activeSubmenu
-            ? propertyFormSchema[
-            layerOverrideMap[activeSubmenu.menuCode] ?? activeSubmenu.menuCode
-                ]?.layer
-            : undefined;
+        const hoverLayerName = activeSubmenu ? propertyFormSchema[activeSubmenu?.menuCode].layer : undefined;
 
         if (!olMap) return;
 

@@ -8,6 +8,7 @@ import { fromLonLat } from "ol/proj";
 export default class NetworkDataSourceLayer {
     private readonly LAYER_NAME = "network";
     private dataSource: GeoJsonDataSource | undefined;
+    private selectedScenario = useScenarioStore.getState().selectedScenario
 
     constructor(private viewer: Viewer) {
         this.load()
@@ -286,8 +287,8 @@ export default class NetworkDataSourceLayer {
                     }
                 }
             }
-
-            fetch(process.env.VITE_API_URL + "/signal", {
+            console.log(this.selectedScenario)
+            fetch(process.env.VITE_API_URL + "/signal/" + this.selectedScenario.key, {
                 method: "GET",
                 headers: { "Content-Type": "application/json" },
             })
@@ -295,7 +296,7 @@ export default class NetworkDataSourceLayer {
                     return response.json();
                 })
                 .then(({nodes : signalNodes}) => {
-                    signalNodes.forEach(node => {
+                    signalNodes?.forEach(node => {
                         node.turns.forEach(turn => {
                             turn.connList.forEach(connId => {
                                 const targetNode = nodes.find(t => t.id == node.id)
