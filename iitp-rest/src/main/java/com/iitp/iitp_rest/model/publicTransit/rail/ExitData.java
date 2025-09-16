@@ -15,6 +15,7 @@ public class ExitData {
     private int linkRef;
     private double offset;
     private double accessTime;
+    @Builder.Default
     private List<Coordinates> coordinates = new ArrayList<>();
     private String coord;
 

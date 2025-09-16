@@ -1,6 +1,6 @@
 package com.iitp.iitp_rest.model.network.connection;
 
-import com.iitp.iitp_rest.model.converter.AbstractEnumConverter;
+import com.iitp.iitp_rest.mapper.AbstractEnumConverter;
 import jakarta.persistence.Converter;
 
 @Converter(autoApply = true)

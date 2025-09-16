@@ -18,9 +18,13 @@ public class RailStationData {
     private String transitMode;
     private String address;
     private String center;
+    @Builder.Default
     private List<ExitData> exits = new ArrayList<>();
+    @Builder.Default
     private List<TimetableData> timetables = new ArrayList<>();
+    @Builder.Default
     private List<String> lineList = new ArrayList<>();
+    @Builder.Default
     private List<Coordinates> coordinates = new ArrayList<>();
 
     @Data // 임시

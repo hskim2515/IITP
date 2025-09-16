@@ -28,8 +28,8 @@ public class LayerSchema {
     @Column(name = "sort_order", nullable = false)
     private Integer sortOrder;
 
-    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
+    @Builder.Default
     private Status status = Status.ACTIVE;
 
 }

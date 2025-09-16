@@ -1,6 +1,8 @@
 package com.iitp.iitp_rest.model.network.node;
 
 import com.iitp.iitp_rest.model.geometry.Coordinates;
+import com.iitp.iitp_rest.model.network.connection.ConnectionResponse;
+import com.iitp.iitp_rest.model.network.port.PortResponse;
 import lombok.Data;
 
 import java.util.ArrayList;
@@ -14,6 +16,10 @@ public class NodeResponse {
     private int numConnection;
     private V2x v2x;
     private String center;
+
+    private List<PortResponse> ports = new ArrayList<>();
+    private List<ConnectionResponse> connections = new ArrayList<>();
+
     private Coordinates coordinates;
     private List<String> portLinkIds = new ArrayList<>();
 }

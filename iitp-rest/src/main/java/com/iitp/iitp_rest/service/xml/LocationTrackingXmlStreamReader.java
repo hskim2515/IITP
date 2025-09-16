@@ -20,7 +20,7 @@ public class LocationTrackingXmlStreamReader extends StreamReaderDelegate {
     private String getCurrentElementName() {
         if (this.isStartElement() || this.isEndElement()) {
             QName name = this.getName();
-            return name.getLocalPart();
+            return name != null ? name.getLocalPart() : null;
         }
         return null;
     }
@@ -40,14 +40,22 @@ public class LocationTrackingXmlStreamReader extends StreamReaderDelegate {
     }
 
     private void trackLocation(int event) {
-        if (event == START_ELEMENT) {
-            this.lastElementName = getCurrentElementName();
-            int attributeCount = this.getAttributeCount();
-            if (attributeCount > 0) {
-                for (int i = 0; i < attributeCount; i++) {
-                    this.lastAttributeName = this.getAttributeLocalName(i);
+        switch (event) {
+            case START_ELEMENT:
+                this.lastElementName = getCurrentElementName();
+                int attributeCount = this.getAttributeCount();
+                if (attributeCount > 0) {
+                    this.lastAttributeName = this.getAttributeLocalName(attributeCount - 1);
+                } else {
+                    this.lastAttributeName = null;
                 }
-            }
+                break;
+            case END_ELEMENT:
+                this.lastElementName = getCurrentElementName();
+                this.lastAttributeName = null;
+                break;
+            default:
+                // no-op
         }
     }
 }

@@ -7,44 +7,44 @@ import java.util.List;
 @Data
 public class SchemaFieldsRequest {
     private Long id;
-    private List<CreateFieldRequestDto> fieldsToCreate;
-    private List<UpdateFieldRequestDto> fieldsToUpdate;
+    private List<CreateFieldRequest> fieldsToCreate;
+    private List<UpdateFieldRequest> fieldsToUpdate;
     private List<Long> fieldIdsToDelete;
 
     @Data
-    public static class CreateFieldRequestDto {
+    public static class CreateFieldRequest {
         private String name;
         private Boolean nullable;
         private String defaultValue;
         private Boolean readOnly;
-        private String status;
+        private Status status;
         private String inputType;
-        private List<CreateFieldOptionRequestDto> options;
+        private List<CreateFieldOptionRequest> options;
     }
 
     @Data
-    public static class CreateFieldOptionRequestDto {
+    public static class CreateFieldOptionRequest {
         private String value;
     }
 
     @Data
-    public static class UpdateFieldRequestDto {
+    public static class UpdateFieldRequest {
         private Long id;
 
         private String name;
         private Boolean nullable;
         private String defaultValue;
         private Boolean readOnly;
-        private String status;
+        private Status status;
         private String inputType;
-        private List<UpdateFieldOptionDto> options;
+        private List<UpdateFieldOption> options;
 
-        private List<CreateFieldOptionRequestDto> optionsToCreate;
+        private List<CreateFieldOptionRequest> optionsToCreate;
         private List<Long> optionIdsToDelete;
     }
 
     @Data
-    public static class UpdateFieldOptionDto {
+    public static class UpdateFieldOption {
         private Long id;
         private String value;
     }

@@ -1,10 +1,13 @@
 package com.iitp.iitp_rest.model.network.link;
 
 import com.iitp.iitp_rest.model.geometry.Coordinates;
+import com.iitp.iitp_rest.model.network.lane.LaneResponse;
+import com.iitp.iitp_rest.model.network.section.SectionResponse;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Data
@@ -28,6 +31,8 @@ public class LinkResponse {
     private String layer;
     private double stopLine;
     private String shape;
-    private List<Coordinates> coordinates;
+    private List<LaneResponse> lanes = new ArrayList<>();
+    private List<SectionResponse> sections = new ArrayList<>();
+    private List<Coordinates> coordinates = new ArrayList<>();
 }
 

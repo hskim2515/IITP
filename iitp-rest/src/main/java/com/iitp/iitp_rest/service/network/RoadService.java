@@ -1,6 +1,6 @@
 package com.iitp.iitp_rest.service.network;
 
-import com.iitp.iitp_rest.model.network.RoadResponse;
+import com.iitp.iitp_rest.model.network.road.RoadResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;

@@ -31,12 +31,13 @@ public class LayerSchemaField {
     @Column(nullable=false)
     private boolean nullable;
     @Column(nullable = false)
-    private Status status = Status.ACTIVE;
+    private Status status;
 
     @OneToMany(
             mappedBy = "field",
             cascade = {CascadeType.PERSIST, CascadeType.MERGE},
             fetch = FetchType.LAZY
     )
+    @Builder.Default
     private List<LayerSchemaOption> options = new ArrayList<>();
 }

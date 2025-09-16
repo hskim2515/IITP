@@ -1,6 +1,5 @@
 package com.iitp.iitp_rest.model.menu;
 
-
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.iitp.iitp_rest.model.BaseEntity;
 import com.iitp.iitp_rest.model.role.Role;
@@ -10,6 +9,7 @@ import org.hibernate.annotations.OnDelete;
 import org.hibernate.annotations.OnDeleteAction;
 import java.util.List;
 
+@EqualsAndHashCode(callSuper = true)
 @Entity
 @Data
 @NoArgsConstructor
@@ -63,7 +63,7 @@ public class Menu extends BaseEntity {
     private Integer sortOrder;
 
     /** 메뉴 활성화 여부 */
-    private Character available;
+    private String available;
 
     /** 메뉴 접근 권한 */
     /** 메뉴 접근 권한 (ENUM으로 매핑하되, DB에는 문자열로 저장) */

@@ -1,6 +1,6 @@
 package com.iitp.iitp_rest.model.vehicle.route;
 
-import com.iitp.iitp_rest.model.network.RoadResponse;
+import com.iitp.iitp_rest.model.network.road.RoadResponse;
 import lombok.Data;
 
 

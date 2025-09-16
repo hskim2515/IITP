@@ -2,7 +2,7 @@ package com.iitp.iitp_rest.service.network;
 
 import com.iitp.iitp_rest.model.geometry.Cartesian3;
 import com.iitp.iitp_rest.model.geometry.Polyline;
-import com.iitp.iitp_rest.model.network.RoadResponse;
+import com.iitp.iitp_rest.model.network.road.RoadResponse;
 import com.iitp.iitp_rest.service.xml.XmlParser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;

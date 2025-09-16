@@ -9,7 +9,8 @@
     "jsx": "react",
     "allowSyntheticDefaultImports": true,
     "baseUrl": "./",  // src 디렉토리를 기준으로 경로 설정
-    "moduleResolution": "node",
+    "moduleResolution": "Bundler",
+    "noUncheckedIndexedAccess": true,
     "moduleDetection": "force",
     "skipLibCheck": true,
     "paths": {

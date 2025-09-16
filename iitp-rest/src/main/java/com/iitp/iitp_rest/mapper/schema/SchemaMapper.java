@@ -1,198 +1,120 @@
 package com.iitp.iitp_rest.mapper.schema;
 
+import com.iitp.iitp_rest.config.GlobalMapperConfig;
 import com.iitp.iitp_rest.model.schema.*;
-import com.iitp.iitp_rest.model.schema.LayerSchemaConfig;
-import com.iitp.iitp_rest.model.schema.LayerSchemaConfigOption;
-import org.springframework.stereotype.Component;
+import org.mapstruct.*;
 
-import java.util.*;
-import java.util.stream.Collectors;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 
-@Component
-public class SchemaMapper {
+@Mapper(config = GlobalMapperConfig.class)
+public interface SchemaMapper {
 
-    /**
-     * 조회된 모든 엔티티 데이터를 받아 최종 LayerSchemaResponse DTO로 조립
-     */
-    public LayerSchemaResponse toLayerSchemaResponse(Long layerId, String layerKey, List<LayerSchema> schemata, List<LayerSchemaField> fields, List<LayerSchemaOption> options, List<LayerSchemaConfig> columns, List<LayerSchemaConfigOption> columnOptions) {
+    @Mappings({
+            @Mapping(target = "layerId",       source = "layerId"),
+            @Mapping(target = "layerName",     source = "layerKey"),
+            @Mapping(target = "schemata",      source = "schemata"),
+            @Mapping(target = "schemaColumns", source = "columns")
+    })
+    LayerSchemaResponse toLayerSchemaResponse(
+            Long layerId,
+            String layerKey,
+            List<LayerSchema> schemata,
+            List<LayerSchemaConfig> columns,
+            @Context Map<Long, List<LayerSchemaField>> fieldsBySchemaId,
+            @Context Map<Long, List<LayerSchemaOption>> optionsByFieldId,
+            @Context Map<Long, List<LayerSchemaConfigOption>> columnOptionsByColumnId
+    );
 
-        // 데이터를 구조화하기 위해 ID를 기준으로 Map으로 변환
-        Map<Long, List<LayerSchemaField>> fieldsBySchemaId = fields.stream()
-                .collect(Collectors.groupingBy(field -> field.getLayerSchema().getId()));
-        Map<Long, List<LayerSchemaOption>> optionsByFieldId = options.stream()
-                .collect(Collectors.groupingBy(option -> option.getField().getId()));
-        Map<Long, List<LayerSchemaConfigOption>> columnOptionsByColumnId = columnOptions.stream()
-                .collect(Collectors.groupingBy(option -> option.getDefinition().getId()));
+    @Mapping(target = "fields", expression =
+            "java( mapFields(schema.getId(), fieldsBySchemaId, optionsByFieldId) )")
+    LayerSchemaResponse.Schema toSchemaDto(
+            LayerSchema schema,
+            @Context Map<Long, List<LayerSchemaField>> fieldsBySchemaId,
+            @Context Map<Long, List<LayerSchemaOption>> optionsByFieldId
+    );
 
-        // 각 엔티티를 DTO로 변환
-        List<LayerSchemaResponse.Schema> schemaDtos = schemata.stream()
-                .map(schema -> toSchemaDto(schema, fieldsBySchemaId, optionsByFieldId))
-                .toList();
+    List<LayerSchemaResponse.Schema> toSchemaDtoList(
+            List<LayerSchema> schemata,
+            @Context Map<Long, List<LayerSchemaField>> fieldsBySchemaId,
+            @Context Map<Long, List<LayerSchemaOption>> optionsByFieldId
+    );
 
-        List<LayerSchemaResponse.SchemaColumn> schemaColumnDtos = columns.stream()
-                .map(column -> toSchemaColumnDto(column, columnOptionsByColumnId))
-                .toList();
-
-        return LayerSchemaResponse.builder()
-                .layerId(layerId)
-                .layerName(layerKey)
-                .schemata(schemaDtos)
-                .schemaColumns(schemaColumnDtos)
-                .build();
-    }
-
-    /**
-     * LayerSchema 엔티티를 Schema DTO로 변환
-     */
-    private LayerSchemaResponse.Schema toSchemaDto(LayerSchema schema, Map<Long, List<LayerSchemaField>> fieldsBySchemaId, Map<Long, List<LayerSchemaOption>> optionsByFieldId) {
-        List<LayerSchemaField> fieldsForThisSchema = fieldsBySchemaId.getOrDefault(schema.getId(), Collections.emptyList());
-
-        List<LayerSchemaFieldResponse> fieldDtos = fieldsForThisSchema.stream()
-                .map(field -> toSchemaFieldDto(field, optionsByFieldId))
-                .toList();
-
-        return LayerSchemaResponse.Schema.builder()
-                .id(schema.getId())
-                .name(schema.getName())
-                .status(getEnumNameSafe(schema.getStatus()))
-                .fields(fieldDtos)
-                .build();
-    }
-
-    /**
-     * LayerSchemaField 엔티티를 SchemaField DTO로 변환
-     */
-    private LayerSchemaFieldResponse toSchemaFieldDto(LayerSchemaField field, Map<Long, List<LayerSchemaOption>> optionsByFieldId) {
-        List<LayerSchemaOption> optionsForThisField = optionsByFieldId.getOrDefault(field.getId(), Collections.emptyList());
-
-        List<LayerSchemaOptionResponse> optionDtos = optionsForThisField.stream()
-                .map(this::toSchemaOptionDto)
-                .toList();
-
-        return LayerSchemaFieldResponse.builder()
-                .id(field.getId())
-                .name(field.getName())
-                .inputType(field.getInputType())
-                .defaultValue(field.getDefaultValue())
-                .readOnly(field.isReadOnly())
-                .status(getEnumNameSafe(field.getStatus()))
-                .options(optionDtos)
-                .build();
-    }
-
-    /**
-     * LayerSchemaOption 엔티티를 SchemaOption DTO로 변환
-     */
-    private LayerSchemaOptionResponse toSchemaOptionDto(LayerSchemaOption option) {
-        return LayerSchemaOptionResponse.builder()
-                .id(option.getId())
-                .value(option.getValue())
-                .build();
-    }
-
-    /**
-     * LayerSchemaColumn 엔티티를 SchemaColumn DTO로 변환
-     */
-    private LayerSchemaResponse.SchemaColumn toSchemaColumnDto(LayerSchemaConfig column, Map<Long, List<LayerSchemaConfigOption>> columnOptionsByColumnId) {
-        List<LayerSchemaConfigOption> optionsForThisColumn = columnOptionsByColumnId.getOrDefault(column.getId(), Collections.emptyList());
-
-        List<LayerSchemaResponse.ColumnOption> optionDtos = optionsForThisColumn.stream()
-                .map(this::toColumnOptionDto)
-                .toList();
-
-        return LayerSchemaResponse.SchemaColumn.builder()
-                .configKey(column.getConfigKey())
-                .inputType(column.getInputType())
-                .options(optionDtos)
-                .build();
-    }
-
-    /**
-     * LayerSchemaColumnOption 엔티티를 ColumnOption DTO로 변환
-     */
-    private LayerSchemaResponse.ColumnOption toColumnOptionDto(LayerSchemaConfigOption option) {
-        return LayerSchemaResponse.ColumnOption.builder()
-                .value(option.getValue())
-                .build();
-    }
-
-    private String getEnumNameSafe(Enum<?> e) {
-        return (Objects.nonNull(e)) ? e.name() : null;
-    }
-
-
-    /**
-     * CreateFieldRequestDto를 LayerSchemaField Entity로 변환
-     */
-    public LayerSchemaField toLayerSchemaField(LayerSchema schema, SchemaFieldsRequest.CreateFieldRequestDto dto) {
-        return LayerSchemaField.builder()
-                .layerSchema(schema)
-                .name(dto.getName())
-                .inputType(dto.getInputType())
-                .defaultValue(dto.getDefaultValue())
-                .readOnly(dto.getReadOnly())
-                .nullable(dto.getNullable())
-                .status(parseStatus(dto.getStatus()))
-                .options(new ArrayList<>())
-                .build();
-    }
-
-    /**
-     * CreateFieldOptionRequestDto를 LayerSchemaOption Entity로 변환
-     */
-    public LayerSchemaOption toLayerSchemaOption(LayerSchemaField field, SchemaFieldsRequest.CreateFieldOptionRequestDto dto) {
-        return LayerSchemaOption.builder()
-                .field(field)
-                .value(dto.getValue())
-                .build();
-    }
-
-    /**
-     * UpdateFieldRequestDto의 데이터로 기존 LayerSchemaField를 업데이트
-     */
-    public void updateLayerSchemaField(LayerSchemaField field, SchemaFieldsRequest.UpdateFieldRequestDto dto) {
-        if (dto.getName() != null) {
-            field.setName(dto.getName());
+    default List<LayerSchemaFieldResponse> mapFields(
+            Long schemaId,
+            @Context Map<Long, List<LayerSchemaField>> fieldsBySchemaId,
+            @Context Map<Long, List<LayerSchemaOption>> optionsByFieldId
+    ) {
+        List<LayerSchemaField> fields = fieldsBySchemaId.getOrDefault(schemaId, Collections.emptyList());
+        if (fields.isEmpty()) return List.of();
+        List<LayerSchemaFieldResponse> out = new ArrayList<>(fields.size());
+        for (LayerSchemaField f : fields) {
+            out.add(toSchemaFieldDto(f, optionsByFieldId));
         }
-        if (dto.getReadOnly() != null) {
-            field.setReadOnly(dto.getReadOnly());
-        }
-        if (dto.getNullable() != null) {
-            field.setNullable(dto.getNullable());
-        }
-        if (dto.getStatus() != null) {
-            field.setStatus(parseStatus(dto.getStatus()));
-        }
-        if (dto.getInputType() != null) {
-            field.setInputType(dto.getInputType());
-        }
-        if (dto.getDefaultValue() != null) {
-            field.setDefaultValue(dto.getDefaultValue());
-        }
+        return out;
     }
 
-    /**
-     * UpdateFieldOptionDto의 데이터로 기존 LayerSchemaOption을 업데이트
-     */
-    public void updateLayerSchemaOption(LayerSchemaOption option, SchemaFieldsRequest.UpdateFieldOptionDto dto) {
-        if (dto.getValue() != null) {
-            option.setValue(dto.getValue());
-        }
+    @Mapping(target = "options", expression = "java( mapOptions(field.getId(), optionsByFieldId) )")
+    LayerSchemaFieldResponse toSchemaFieldDto(
+            LayerSchemaField field,
+            @Context Map<Long, List<LayerSchemaOption>> optionsByFieldId
+    );
+
+    default List<LayerSchemaOptionResponse> mapOptions(
+            Long fieldId,
+            @Context Map<Long, List<LayerSchemaOption>> optionsByFieldId
+    ) {
+        List<LayerSchemaOption> opts = optionsByFieldId.getOrDefault(fieldId, Collections.emptyList());
+        return toSchemaOptionDtoList(opts);
     }
 
-    /**
-     * String을 Status enum으로 변환
-     */
-    private Status parseStatus(String status) {
-        if (status == null) {
-            return null;
-        }
-        try {
-            return Status.valueOf(status.toUpperCase());
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Invalid status value: " + status, e);
-        }
+    List<LayerSchemaOptionResponse> toSchemaOptionDtoList(List<LayerSchemaOption> options);
+    LayerSchemaOptionResponse toSchemaOptionDto(LayerSchemaOption option);
+
+    @Mapping(target = "options", expression =
+            "java( toColumnOptionDtoList(columnOptionsByColumnId.getOrDefault(column.getId(), java.util.Collections.emptyList())) )")
+    LayerSchemaResponse.SchemaColumn toSchemaColumnDto(
+            LayerSchemaConfig column,
+            @Context Map<Long, List<LayerSchemaConfigOption>> columnOptionsByColumnId
+    );
+
+    List<LayerSchemaResponse.SchemaColumn> toSchemaColumnDtoList(
+            List<LayerSchemaConfig> columns,
+            @Context Map<Long, List<LayerSchemaConfigOption>> columnOptionsByColumnId
+    );
+
+    List<LayerSchemaResponse.ColumnOption> toColumnOptionDtoList(List<LayerSchemaConfigOption> options);
+    LayerSchemaResponse.ColumnOption toColumnOptionDto(LayerSchemaConfigOption option);
+
+    @Mapping(target = "id",          ignore = true)
+    @Mapping(target = "layerSchema", ignore = true)
+    @Mapping(target = "options",     ignore = true)
+    LayerSchemaField toLayerSchemaField(SchemaFieldsRequest.CreateFieldRequest dto);
+
+    @Mapping(target = "id",    ignore = true)
+    @Mapping(target = "field", ignore = true)
+    LayerSchemaOption toLayerSchemaOption(SchemaFieldsRequest.CreateFieldOptionRequest dto);
+
+    default LayerSchemaField toLayerSchemaField(LayerSchema schema, SchemaFieldsRequest.CreateFieldRequest dto) {
+        LayerSchemaField f = toLayerSchemaField(dto);
+        f.setLayerSchema(schema);
+        if (f.getOptions() == null) f.setOptions(new ArrayList<>());
+        return f;
     }
 
+    default LayerSchemaOption toLayerSchemaOption(LayerSchemaField field, SchemaFieldsRequest.CreateFieldOptionRequest dto) {
+        LayerSchemaOption o = toLayerSchemaOption(dto);
+        o.setField(field);
+        return o;
+    }
 
+    @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
+    @Mapping(target = "id", ignore = true)
+    void updateLayerSchemaField(@MappingTarget LayerSchemaField target, SchemaFieldsRequest.UpdateFieldRequest dto);
+
+    @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
+    @Mapping(target = "id", ignore = true)
+    void updateLayerSchemaOption(@MappingTarget LayerSchemaOption target, SchemaFieldsRequest.UpdateFieldOption dto);
 }

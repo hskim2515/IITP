@@ -2,9 +2,7 @@ package com.iitp.iitp_rest.model.schema;
 
 
 import com.fasterxml.jackson.annotation.JsonCreator;
-import com.iitp.iitp_rest.model.common.DbMappedEnum;
-
-import java.util.stream.Stream;
+import com.iitp.iitp_rest.mapper.DbMappedEnum;
 
 public enum Status implements DbMappedEnum<String> {
 
@@ -25,9 +23,6 @@ public enum Status implements DbMappedEnum<String> {
 
     @JsonCreator
     public static Status fromValue(String value) {
-        return Stream.of(Status.values())
-                .filter(type -> type.getValue().equals(value))
-                .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("Unsupported value: " + value));
+        return DbMappedEnum.fromValue(Status.class, value);
     }
 }

@@ -3,15 +3,12 @@ package com.iitp.iitp_rest.service.schema;
 import com.iitp.iitp_rest.mapper.schema.SchemaMapper;
 import com.iitp.iitp_rest.model.layer.Layer;
 import com.iitp.iitp_rest.model.schema.*;
-import com.iitp.iitp_rest.model.schema.LayerSchemaConfig;
-import com.iitp.iitp_rest.model.schema.LayerSchemaConfigOption;
 import com.iitp.iitp_rest.repository.LayerRepository;
-import com.iitp.iitp_rest.repository.LayerSchemaColumnRepository;
 import com.iitp.iitp_rest.repository.LayerSchemaColumnOptionRepository;
+import com.iitp.iitp_rest.repository.LayerSchemaColumnRepository;
 import com.iitp.iitp_rest.repository.LayerSchemaFieldRepository;
 import com.iitp.iitp_rest.repository.LayerSchemaOptionRepository;
 import com.iitp.iitp_rest.repository.LayerSchemaRepository;
-
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -25,6 +22,7 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class SchemaService {
+
     private final LayerRepository layerRepository;
     private final LayerSchemaRepository layerSchemaRepository;
     private final LayerSchemaFieldRepository fieldRepository;
@@ -53,39 +51,50 @@ public class SchemaService {
         }
         return createSchemaResponseForLayers(layerIds);
     }
+
     private List<LayerSchemaResponse> createSchemaResponseForLayers(List<Long> layerIds) {
 
+        // 공용 컬럼/컬럼옵션(정렬 포함)
         List<LayerSchemaConfig> allColumns = columnRepository.findAll(Sort.by(Sort.Direction.ASC, "sortOrder"));
         List<LayerSchemaConfigOption> allColumnOptions = columnOptionRepository.findAll();
 
+        // 레이어 키 조회
         Map<Long, String> layerKeyById = layerRepository.findAllById(layerIds).stream()
                 .collect(Collectors.toMap(Layer::getId, Layer::getKey));
 
+        // 스키마/필드/옵션 전체 조회
         List<LayerSchema> allSchemata = schemaService.findAllByLayerIdIn(layerIds);
         List<LayerSchemaField> allFields = fieldService.findAllByLayerSchema_Layer_IdIn(layerIds);
         List<LayerSchemaOption> allOptions = optionService.findAllByField_LayerSchema_Layer_IdIn(layerIds);
 
-        Map<Long, List<LayerSchema>> schemataByLayerId = allSchemata.stream()
-                .collect(Collectors.groupingBy(node -> node.getLayer().getId()));
-        Map<Long, List<LayerSchemaField>> fieldsByLayerId = allFields.stream()
-                .collect(Collectors.groupingBy(field -> field.getLayerSchema().getLayer().getId()));
-        Map<Long, List<LayerSchemaOption>> optionsByLayerId = allOptions.stream()
-                .collect(Collectors.groupingBy(option -> option.getField().getLayerSchema().getLayer().getId()));
+        // === Service의 책임: 컨텍스트 맵 생성 (id 기반) ===
+        Map<Long, List<LayerSchemaField>> fieldsBySchemaId = allFields.stream()
+                .collect(Collectors.groupingBy(f -> f.getLayerSchema().getId()));
 
+        Map<Long, List<LayerSchemaOption>> optionsByFieldId = allOptions.stream()
+                .collect(Collectors.groupingBy(o -> o.getField().getId()));
+
+        Map<Long, List<LayerSchemaConfigOption>> columnOptionsByColumnId = allColumnOptions.stream()
+                .collect(Collectors.groupingBy(co -> co.getDefinition().getId()));
+
+        // 레이어별 스키마 묶음 (schemata만 레이어 id로 필터링)
+        Map<Long, List<LayerSchema>> schemataByLayerId = allSchemata.stream()
+                .collect(Collectors.groupingBy(s -> s.getLayer().getId()));
+
+        // === Mapper 호출: 순수 매핑 + @Context 전달 ===
         return layerIds.stream()
                 .map(layerId -> {
-                    List<LayerSchema> schemataForLayer = schemataByLayerId.getOrDefault(layerId, Collections.emptyList());
-                    List<LayerSchemaField> fieldsForLayer = fieldsByLayerId.getOrDefault(layerId, Collections.emptyList());
-                    List<LayerSchemaOption> optionsForLayer = optionsByLayerId.getOrDefault(layerId, Collections.emptyList());
+                    List<LayerSchema> schemataForLayer =
+                            schemataByLayerId.getOrDefault(layerId, Collections.emptyList());
 
                     return schemaMapper.toLayerSchemaResponse(
                             layerId,
                             layerKeyById.get(layerId),
                             schemataForLayer,
-                            fieldsForLayer,
-                            optionsForLayer,
                             allColumns,
-                            allColumnOptions
+                            fieldsBySchemaId,
+                            optionsByFieldId,
+                            columnOptionsByColumnId
                     );
                 })
                 .toList();
@@ -119,7 +128,7 @@ public class SchemaService {
         }
     }
 
-    private void createNewFields(LayerSchema schema, List<SchemaFieldsRequest.CreateFieldRequestDto> fieldsToCreate) {
+    private void createNewFields(LayerSchema schema, List<SchemaFieldsRequest.CreateFieldRequest> fieldsToCreate) {
         if (CollectionUtils.isEmpty(fieldsToCreate)) {
             return;
         }
@@ -131,37 +140,33 @@ public class SchemaService {
         fieldRepository.saveAll(newFields);
     }
 
-    private LayerSchemaField createField(LayerSchema schema, SchemaFieldsRequest.CreateFieldRequestDto dto) {
+    private LayerSchemaField createField(LayerSchema schema, SchemaFieldsRequest.CreateFieldRequest dto) {
         // Mapper를 사용하여 Entity 생성
         LayerSchemaField field = schemaMapper.toLayerSchemaField(schema, dto);
 
         // select 타입인 경우 옵션 생성
         if ("select".equalsIgnoreCase(dto.getInputType()) && !CollectionUtils.isEmpty(dto.getOptions())) {
-            // options 컬렉션 초기화
             if (field.getOptions() == null) {
                 field.setOptions(new ArrayList<>());
             }
-
             List<LayerSchemaOption> options = dto.getOptions().stream()
                     .map(optionDto -> schemaMapper.toLayerSchemaOption(field, optionDto))
-                    .collect(Collectors.toList());
+                    .toList();
             field.getOptions().addAll(options);
         }
-
         return field;
     }
 
-    private void updateExistingFields(List<SchemaFieldsRequest.UpdateFieldRequestDto> fieldsToUpdate) {
+    private void updateExistingFields(List<SchemaFieldsRequest.UpdateFieldRequest> fieldsToUpdate) {
         if (CollectionUtils.isEmpty(fieldsToUpdate)) {
             return;
         }
-
-        for (SchemaFieldsRequest.UpdateFieldRequestDto dto : fieldsToUpdate) {
+        for (SchemaFieldsRequest.UpdateFieldRequest dto : fieldsToUpdate) {
             updateField(dto);
         }
     }
 
-    private void updateField(SchemaFieldsRequest.UpdateFieldRequestDto dto) {
+    private void updateField(SchemaFieldsRequest.UpdateFieldRequest dto) {
         if (dto == null || dto.getId() == null) {
             throw new IllegalArgumentException("UpdateFieldRequestDto.id is required");
         }
@@ -175,15 +180,14 @@ public class SchemaService {
         // 옵션 업데이트 (select 타입인 경우)
         updateFieldOptions(field, dto);
 
-        // JPA Cascade 덕분에 field 저장 시 변경된 options도 자동으로 저장됨
+        // JPA Cascade 저장
         fieldRepository.save(field);
     }
 
-    private void updateFieldBasicInfo(LayerSchemaField field, SchemaFieldsRequest.UpdateFieldRequestDto dto) {
-        // Mapper를 사용하여 기본 정보 업데이트
+    private void updateFieldBasicInfo(LayerSchemaField field, SchemaFieldsRequest.UpdateFieldRequest dto) {
         schemaMapper.updateLayerSchemaField(field, dto);
 
-        // 입력 타입이 변경되어 select가 아니게 된 경우 기존 옵션들 삭제
+        // 입력 타입이 select가 아니면 기존 옵션 삭제
         if (dto.getInputType() != null && !"select".equalsIgnoreCase(dto.getInputType())) {
             deleteFieldOptionsIfExists(field);
         }
@@ -194,7 +198,7 @@ public class SchemaService {
             List<Long> optionIds = field.getOptions().stream()
                     .map(LayerSchemaOption::getId)
                     .filter(Objects::nonNull)
-                    .collect(Collectors.toList());
+                    .toList();
 
             if (!optionIds.isEmpty()) {
                 optionRepository.deleteAllByIdInBatch(optionIds);
@@ -203,7 +207,7 @@ public class SchemaService {
         }
     }
 
-    private void updateFieldOptions(LayerSchemaField field, SchemaFieldsRequest.UpdateFieldRequestDto dto) {
+    private void updateFieldOptions(LayerSchemaField field, SchemaFieldsRequest.UpdateFieldRequest dto) {
         if (!"select".equalsIgnoreCase(field.getInputType())) {
             return; // 비-select 필드는 옵션 없음
         }
@@ -218,18 +222,17 @@ public class SchemaService {
         deleteOptions(field, dto.getOptionIdsToDelete());
     }
 
-    private void createNewOptions(LayerSchemaField field, List<SchemaFieldsRequest.CreateFieldOptionRequestDto> optionsToCreate) {
+    private void createNewOptions(LayerSchemaField field, List<SchemaFieldsRequest.CreateFieldOptionRequest> optionsToCreate) {
         if (CollectionUtils.isEmpty(optionsToCreate)) {
             return;
         }
-
-        for (SchemaFieldsRequest.CreateFieldOptionRequestDto dto : optionsToCreate) {
+        for (SchemaFieldsRequest.CreateFieldOptionRequest dto : optionsToCreate) {
             LayerSchemaOption option = schemaMapper.toLayerSchemaOption(field, dto);
-            field.getOptions().add(option);  // 기존 컬렉션에 추가만
+            field.getOptions().add(option);
         }
     }
 
-    private void updateExistingOptions(LayerSchemaField field, List<SchemaFieldsRequest.UpdateFieldOptionDto> optionsToUpdate) {
+    private void updateExistingOptions(LayerSchemaField field, List<SchemaFieldsRequest.UpdateFieldOption> optionsToUpdate) {
         if (CollectionUtils.isEmpty(optionsToUpdate)) {
             return;
         }
@@ -240,7 +243,7 @@ public class SchemaService {
                 .filter(o -> o.getId() != null)
                 .collect(Collectors.toMap(LayerSchemaOption::getId, Function.identity()));
 
-        for (SchemaFieldsRequest.UpdateFieldOptionDto dto : optionsToUpdate) {
+        for (SchemaFieldsRequest.UpdateFieldOption dto : optionsToUpdate) {
             LayerSchemaOption option = optionIndex.get(dto.getId());
             if (option == null) {
                 throw new IllegalArgumentException("Option not found: id=" + dto.getId() + " for field=" + field.getId());
@@ -253,15 +256,8 @@ public class SchemaService {
         if (CollectionUtils.isEmpty(optionIdsToDelete)) {
             return;
         }
-
         Set<Long> idsToDelete = new HashSet<>(optionIdsToDelete);
-
-        // OrphanRemoval이 없으므로 명시적으로 DB에서 먼저 삭제
         optionRepository.deleteAllByIdInBatch(idsToDelete);
-
-        // 그 다음 컬렉션에서도 제거 (메모리 동기화)
-        field.getOptions().removeIf(option ->
-                option.getId() != null && idsToDelete.contains(option.getId()));
+        field.getOptions().removeIf(option -> option.getId() != null && idsToDelete.contains(option.getId()));
     }
-
 }

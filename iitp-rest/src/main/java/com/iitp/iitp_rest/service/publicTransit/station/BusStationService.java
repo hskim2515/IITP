@@ -4,12 +4,11 @@ import com.iitp.iitp_rest.model.geometry.Coordinates;
 import com.iitp.iitp_rest.model.publicTransit.bus.BusStationLogs;
 import com.iitp.iitp_rest.model.publicTransit.bus.BusStationSaveRequest;
 import com.iitp.iitp_rest.model.publicTransit.bus.BusStationVersion;
-import com.iitp.iitp_rest.model.publicTransit.bus.PublicTransitXmlResponse;
+import com.iitp.iitp_rest.model.publicTransit.bus.PublicTransitXml;
 import com.iitp.iitp_rest.model.scenario.Scenario;
 import com.iitp.iitp_rest.repository.BusStationLogsRepository;
 import com.iitp.iitp_rest.repository.BusStationVersionsRepository;
 import com.iitp.iitp_rest.repository.ScenarioRepository;
-import com.iitp.iitp_rest.service.network.RoadService;
 import com.iitp.iitp_rest.util.CoordinateUtils;
 import com.iitp.iitp_rest.util.XmlUtils;
 import lombok.RequiredArgsConstructor;
@@ -29,19 +28,19 @@ public class BusStationService {
     private final BusStationVersionsRepository busStationVersionsRepository;
     private final BusStationLogsRepository busStationLogsRepository;
     private final BusStationJaxbParser busStationJaxbParser;
-    private final RoadService roadService;
+
     private final ScenarioRepository scenarioRepository;
 
-    public BusStationVersion getByVersionId(String id) {
-        return busStationVersionsRepository.findByVersionId(id).orElse(new BusStationVersion());
+    public BusStationVersion getByVersionId(String versionId) {
+        return busStationVersionsRepository.findByVersionId(versionId).orElse(new BusStationVersion());
     }
 
-    public List<BusStationLogs> getLogsByVersion(String id) {
-        return busStationLogsRepository.findByVersionId(id);
+    public List<BusStationLogs> getBusStationLogsByVersionId(String versionId) {
+        return busStationLogsRepository.findByVersionId(versionId);
     }
 
     @Transactional
-    public void saveBusStation(BusStationSaveRequest request, String versionId) {
+    public void saveBusStationsByVersionId(BusStationSaveRequest request, String versionId) {
         BusStationVersion entity = busStationVersionsRepository.findByVersionId(versionId)
                 .orElse(new BusStationVersion());
         entity.setVersionId(versionId);
@@ -64,23 +63,23 @@ public class BusStationService {
         busStationLogsRepository.save(entityLog);
     }
 
-    public PublicTransitXmlResponse getBusStation(String key) throws XMLStreamException {
-        String path = key + "/publicTransit.xml";
+    public PublicTransitXml getBusStationXmlByScenarioKey(String scenarioKey) {
+        String path = scenarioKey + "/publicTransit.xml";
         InputStream is = XmlUtils.loadXmlAsStream(path);
-        PublicTransitXmlResponse busPublicTransitDto = streamToDto(is);
-        return transformBusPublicTransitCoordinates(key, busPublicTransitDto);
+        PublicTransitXml busPublicTransitDto = streamToDto(is);
+        return transformBusPublicTransitCoordinates(scenarioKey, busPublicTransitDto);
     }
 
 
-    public PublicTransitXmlResponse streamToDto(InputStream is) {
+    public PublicTransitXml streamToDto(InputStream is) {
         final long totalStart = System.nanoTime();
-        PublicTransitXmlResponse dto = busStationJaxbParser.parse(is);
+        PublicTransitXml dto = busStationJaxbParser.parse(is);
         final long totalEnd = System.nanoTime();
         log.info("BusPublicTransitXmlResponse streamToDto total:{}", totalEnd - totalStart);
         return dto;
     }
 
-    public PublicTransitXmlResponse transformBusPublicTransitCoordinates (String key, PublicTransitXmlResponse dto) {
+    public PublicTransitXml transformBusPublicTransitCoordinates(String key, PublicTransitXml dto) {
         Scenario scenario = scenarioRepository.findByKey(key).orElse(new Scenario());
         double baseLatitude = scenario.getLatitude();
         double baseLongitude = scenario.getLongitude();

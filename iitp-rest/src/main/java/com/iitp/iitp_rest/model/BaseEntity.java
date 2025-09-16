@@ -25,8 +25,7 @@ public abstract class BaseEntity {
     @Column(
             name = "created_date",
             nullable = false,
-            updatable = false,
-            columnDefinition = "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"
+            updatable = false
     )
     private Instant createdDate;
 
@@ -37,8 +36,7 @@ public abstract class BaseEntity {
     @LastModifiedDate
     @Column(
             name = "last_modified_date",
-            nullable = false,
-            columnDefinition = "TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP"
+            nullable = false
     )
     private Instant lastModifiedDate;
 
@@ -48,7 +46,6 @@ public abstract class BaseEntity {
         this.createdDate = now;
         this.lastModifiedDate = now;
     }
-
 
     @PreUpdate
     protected void onUpdate() {
