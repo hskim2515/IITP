@@ -11,6 +11,7 @@ export const FEATURE_TYPE = {
 } as const;
 
 export interface Network {
+    id: number
     name: string | null
     links: Link[]
     nodes: Node[]

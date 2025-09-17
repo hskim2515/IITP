@@ -13,12 +13,13 @@ import { faChevronDown, faChevronUp } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useSchemaStore } from "@stores/useSchemaStore";
 import debounce from "lodash.debounce";
-import { featureTypeEventHandlers } from "@handler/featureTypeEventHandlers";
+import { createEventHandlers } from "@handler/createEventHandlers";
 import { matchesCustomKeyValue } from "@utils/olLayer";
 import { useMessageStore } from "@stores/useMessageStore";
 import { Field, Schema } from "@type/Schema";
 import { useShallow } from "zustand/react/shallow";
 import { generateTemplate } from "@utils/schema";
+import { modifyFeatureEventHandlers } from "@handler/modifyFeatureEventHandlers";
 
 // 중첩 배열로 생성하지 않을 필드 지정
 const EXCLUDED_NESTED_FIELDS = ["coordinates"];
@@ -42,7 +43,6 @@ function generateColumnsFromSchema(
                 dataIndex: field.name,
                 key: field.name,
                 filters: getFilters(field, uniqueValues), // 필드 타입에 따른 필터
-                onFilter: (value, record) => record[field.name] === value,
                 fieldSchema: field,
             };
         });
@@ -140,12 +140,6 @@ const JsonGrid = ({
         }
     }, [currentSchema, isLoading, fetchSchema]);
 
-    const olMap = useOpenLayersStore.state.map()
-
-    const layer = useMemo(() => {
-        return olMap?.getLayers().getArray()
-            .find((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => matchesCustomKeyValue(layer, 'layer', layerName));
-    }, [olMap, layerName]);
 
     const handleSelect = (selectedRowKeys: React.Key[], selectedRows: any[]) => {
         if (selectedRows.length > 0) {
@@ -157,16 +151,20 @@ const JsonGrid = ({
         }
     };
 
-
     useEffect(() => {
         setRowEditValues({}); // 외부 currentJsonData 변경 시 내부 수정 상태 초기화
     }, [rowData]);
 
     useEffect(() => {
-        scrollToGuid(selectedGuid[0])
-    }, [selectedGuid]);
+        if(!levelName) return;
+        // 최신 선택 반영 (features 내용 갱신)
+        const cleanup = modifyFeatureEventHandlers(levelName);
+        return () => {
+            if(cleanup) cleanup()
+        }
+    }, [selectedGuid, levelName]);
 
-    function scrollToGuid(targetGuid: string) {
+    function scrollToGuid(targetGuid: string | React.Key) {
 
         const path = findGuidPath(rowData, targetGuid);
         if (!path) return;
@@ -177,10 +175,9 @@ const JsonGrid = ({
         if (rowElement) {
             rowElement.scrollIntoView({behavior: "smooth", block: "center"});
         }
-
     }
 
-    function findGuidPath(data: any[], targetGuid: string, path: string[] = []): string[] | null {
+    function findGuidPath(data: any[], targetGuid: string | React.Key, path: string[] = []): string[] | null {
         for (const row of data) {
             if (row.__guid === targetGuid) return [...path, row.__guid];
 
@@ -373,7 +370,7 @@ const JsonGrid = ({
         };
 
         // 지도에서 좌표 선택 시작
-        featureTypeEventHandlers(tempRecord);
+        createEventHandlers(tempRecord);
 
     };
 

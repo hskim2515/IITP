@@ -1,16 +1,4 @@
-import { generateGUIDWithType } from "@utils/guid";
-
-export const SNAP_LAYER = "network" as const
-export const SNAP_FEATURE_TYPE = "lane-edit" as const
-export const RAIL_SNAP_FEATURE_TYPE = "link-edit" as const
-
-export const BUS_STATION_SNAP_FIELDS = ['linkRef', 'laneRef', 'offset', 'coordinates'] as const;
-export const RAIL_STATION_SNAP_FIELDS = ['linkRef', 'address', 'coordinates'] as const;
-export const RAIL_STATION_EXIT_SNAP_FIELDS = ['linkRef', 'exitRef', 'offset', 'accessTime', 'coordinates'] as const;
-
-export type BusStationSnapFields = typeof BUS_STATION_SNAP_FIELDS[number];
-export type RailStationSnapFields = typeof RAIL_STATION_SNAP_FIELDS[number];
-export type RailStationExitSnapFields = typeof RAIL_STATION_EXIT_SNAP_FIELDS[number];
+import { BusStationResponse, ExitResponse, RailStationResponse } from "@type/openapi.gen";
 
 export const MENU_CODE = {
     BUS_STATION: 'BUS_STATION',
@@ -31,28 +19,11 @@ export const FEATURE_TYPE = {
 
 export type TransitMode = typeof TRANSIT_MODE[keyof typeof TRANSIT_MODE];
 
-export interface Coordinates {
-    lng: number,
-    lat: number,
-}
-
-export interface BusStationData {
+export interface BusStationData extends BusStationResponse{
     __guid: string;
     featureType: string;
-    id: string | undefined;
-    transitMode: string;
-    linkRef: number | null;
-    laneRef: number | null;
-    offset: number | null;
-    type: string | null;
-    address: string | null;
-    coordinates: Coordinates,
-    parkingLots: number | null;
     menuCode: string
-    lines: unknown[]
 }
-
-export type BusStationFeature = Omit<BusStationData, 'lines'>;
 
 export interface BusPublicStationResponse {
     busStations: BusStationData[]
@@ -62,38 +33,15 @@ export interface RailPublicStationResponse {
     railStations: RailStationData[]
 }
 
-export interface RailStationData {
+export interface RailStationData extends RailStationResponse {
     __guid: string;
     featureType: typeof FEATURE_TYPE.RAIL_STATION;
-    id: string | undefined;
-    transitMode: TransitMode;
-    lineList: string | null;
-    type: string | null;
-    address: string | null;
-    center: string | null;
-    exits: RailStationExitData[] | null
-
-    coordinates: Coordinates;
     menuCode: string
 }
 
-export type RailStationFeature = Omit<RailStationData, 'exits'>
-
-export interface RailStationExitData {
+export interface RailStationExitData extends ExitResponse{
     __guid: string | null;
     featureType: typeof FEATURE_TYPE.RAIL_STATION_EXIT;
-    id: number | undefined;
-    linkRef: string | null;
-    offset: number | null;
-    coordinates: Coordinates;
-    accessTime: number | null;
     menuCode: string
 }
-
-export type RailStationExitFeature = RailStationExitData;
-
-
-export type BusStationSnapProperties = Pick<BusStationData, BusStationSnapFields>;
-export type RailStationSnapProperties = Pick<RailStationFeature, RailStationSnapFields>;
-export type RailStationExitSnapProperties = Pick<RailStationExitFeature, RailStationExitSnapFields>;
 

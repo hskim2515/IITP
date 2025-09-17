@@ -330,7 +330,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         try {
             const network: Network | undefined = store.getState().currentJsonData;
             if (!network) return;
-
+            console.log("network:::", network)
             const nodes = network.nodes ?? [];
             const links = network.links ?? [];
 
