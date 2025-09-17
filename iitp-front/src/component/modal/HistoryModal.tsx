@@ -11,6 +11,7 @@ import {apiConfig, ApiMenuKey} from "@config/apiConfig";
 import axiosInstance from "@api/axiosInstance";
 import {assignPropertyToResponseData} from "@utils/guid";
 import {useScenarioStore} from "@stores/useScenarioStore";
+import {useMessageStore} from "@stores/useMessageStore";
 
 interface Props {
     historySteps: HistoryStep[];
@@ -38,6 +39,7 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
     const firstKey = Object.keys(originData)[0] as keyof typeof originData;
     const originHistoryLogData = historyStore.getState().originHistoryData;
     const setCurrentSnapshotIndex = historyStore.getState().setCurrentSnapshotIndex;
+    const setMessage = useMessageStore.getState().setMessage;
 
     useEffect(() => {
         if (!originHistoryLogData) return;
@@ -87,23 +89,28 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
 
         if (idx === currentSnapshotIndex) return;
 
-        const confirmed = window.confirm(`${step.message} 시점으로 되돌리겠습니까?`);
-        if (confirmed) {
-            setCurrentSnapshotIndex(idx);
-            const logsToApply = historySteps.slice(0, idx + 1);
+        setMessage({
+            type: 'confirm',
+            text: `${step.message} 시점으로 되돌리겠습니까?`,
+            onConfirm: () => {
+                setCurrentSnapshotIndex(idx);
+                const logsToApply = historySteps.slice(0, idx + 1);
 
-            if (logsToApply.length === 0) {
-                alert('변경할 데이터가 없습니다.');
-                return;
-            }
-            const originHistoryData = featureStore.getState().originHistoryData;
-            const mergeData = buildMergedDataFromLogs(originHistoryData[firstKey], logsToApply, /*isUndo=*/true);
-            featureStore.getState().setCurrentJsonData({
-                //...currentData,
-                [firstKey]: mergeData,
-            });
-            featureReverseLogs(historyStore,historySteps.slice(0, idx + 1));
-        }
+                if (logsToApply.length === 0) {
+                    alert('변경할 데이터가 없습니다.');
+                    return;
+                }
+                const originHistoryData = featureStore.getState().originHistoryData;
+                const mergeData = buildMergedDataFromLogs(originHistoryData[firstKey], logsToApply, /*isUndo=*/true);
+                featureStore.getState().setCurrentJsonData({
+                    //...currentData,
+                    [firstKey]: mergeData,
+                });
+                featureReverseLogs(historyStore,historySteps.slice(0, idx + 1));
+            },
+            onCancel: () => {
+            },
+        });
     };
 
     return (
