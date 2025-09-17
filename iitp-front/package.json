@@ -9,9 +9,10 @@
     "build": "vite build",
     "build:dev": "vite build --mode develop",
     "preview": "vite preview",
-    "gen:types": "openapi-typescript ../api-specs/openapi.json -o src/type/openapi.gen.d.ts --export-type --root-types --root-types-no-schema-prefix"
+    "gen:types:local": "node scripts/gen-types.cjs local",
+    "gen:types:develop": "node scripts/gen-types.cjs develop"
   },
-  "dependencies": {
+    "dependencies": {
     "@deck.gl/aggregation-layers": "^9.1.8",
     "@deck.gl/core": "^9.1.8",
     "@fortawesome/fontawesome-svg-core": "^6.7.2",
@@ -65,6 +66,7 @@
     "@typescript-eslint/parser": "8.18.0",
     "@vitejs/plugin-react": "^4.3.4",
     "@vitejs/plugin-react-swc": "^3.7.2",
+    "dotenv": "^17.2.2",
     "eslint": "^9.15.0",
     "eslint-plugin-react-hooks": "^5.0.0",
     "eslint-plugin-react-refresh": "^0.4.14",

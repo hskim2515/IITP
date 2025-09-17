@@ -764,7 +764,7 @@ export type components = {
             /** Format: int32 */
             laneRef?: number;
             /** Format: double */
-            pos?: number;
+            offset?: number;
             /** @enum {string} */
             type?: "island" | "side" | "face_to_face" | "staggered";
             /** Format: int32 */
