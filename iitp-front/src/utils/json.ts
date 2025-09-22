@@ -35,9 +35,9 @@ export function findParentRecordByFeatureType(
 
 export function findParentRecordByGuid(
     json: any,
-    record: { __guid: string; parentGuid: string }
+    record: { __guid: string; parentGuid: string, featureType: string }
 ): { parent: any; key: string } | null {
-    const { __guid, parentGuid } = record;
+    const { __guid, parentGuid, featureType } = record;
     if (!parentGuid || !__guid) return null;
 
     function search(obj: any): { parent: any; key: string } | null {
@@ -57,6 +57,13 @@ export function findParentRecordByGuid(
                         return { parent: obj, key };
                     }
                 }
+                const childKey = featureType;
+                if (!childKey || typeof childKey !== "string") return null;
+
+                if (!Array.isArray(obj[childKey])) {
+                    obj[childKey] = [];
+                }
+                return { parent: obj, key: childKey };
             }
 
             // 재귀 탐색
