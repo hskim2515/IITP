@@ -145,8 +145,9 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
             const coordinates = geom.getCoordinates();
             if (coordinates.length >= 2) {
-                const start = coordinates[0]
-                const end = coordinates[1]
+                // [수정] 라인의 마지막 두 점을 사용하여 화살표의 방향과 위치를 계산합니다.
+                const end = coordinates[coordinates.length - 1];
+                const start = coordinates[coordinates.length - 2];
 
                 const dx = end[0] - start[0];
                 const dy = end[1] - start[1];
@@ -157,7 +158,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                     const nx = -uy;
                     const ny = ux;
 
-                    // 화살표는 고정 픽셀 대신 지면단위로 유지(원 코드 유지)
+                    // 화살표 크기는 지면 단위를 유지합니다.
                     const arrowLength = 1.8;
                     const baseWidth = 0.8;
 

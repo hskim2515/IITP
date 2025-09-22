@@ -8,6 +8,7 @@ export default class NetworkDataSourceLayer {
     private readonly LAYER_NAME = "network";
     private dataSource: GeoJsonDataSource;
     private unsubscribe: (() => void) | undefined;
+    private static readonly EPSILON = 1e-9;
 
     constructor(private viewer: Viewer) {
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
@@ -27,6 +28,43 @@ export default class NetworkDataSourceLayer {
         }
     }
 
+    private getLineIntersectionPoint(p1: Cesium.Cartesian3, v1: Cesium.Cartesian3, p2: Cesium.Cartesian3, v2: Cesium.Cartesian3): Cesium.Cartesian3 | null {
+        const p1p2 = Cesium.Cartesian3.subtract(p1, p2, new Cesium.Cartesian3());
+
+        const v1_dot_v1 = Cesium.Cartesian3.dot(v1, v1);
+        const v2_dot_v2 = Cesium.Cartesian3.dot(v2, v2);
+        const v1_dot_v2 = Cesium.Cartesian3.dot(v1, v2);
+
+        const denominator = v1_dot_v2 * v1_dot_v2 - v1_dot_v1 * v2_dot_v2;
+
+        if (Math.abs(denominator) < NetworkDataSourceLayer.EPSILON) {
+            return null;
+        }
+
+        const p1p2_dot_v1 = Cesium.Cartesian3.dot(p1p2, v1);
+        const p1p2_dot_v2 = Cesium.Cartesian3.dot(p1p2, v2);
+
+        const t = (p1p2_dot_v1 * v2_dot_v2 - p1p2_dot_v2 * v1_dot_v2) / denominator;
+
+        return Cesium.Cartesian3.add(p1, Cesium.Cartesian3.multiplyByScalar(v1, t, new Cesium.Cartesian3()), new Cesium.Cartesian3());
+    }
+    private generateQuadraticBezierCurve(p0: Cesium.Cartesian3, p1: Cesium.Cartesian3, p2: Cesium.Cartesian3, numPoints: number = 15): Cesium.Cartesian3[] {
+        const points: Cesium.Cartesian3[] = [];
+        for (let i = 0; i <= numPoints; i++) {
+            const t = i / numPoints;
+            const tInv = 1 - t;
+
+            const p0_scaled = Cesium.Cartesian3.multiplyByScalar(p0, tInv * tInv, new Cesium.Cartesian3());
+            const p1_scaled = Cesium.Cartesian3.multiplyByScalar(p1, 2 * tInv * t, new Cesium.Cartesian3());
+            const p2_scaled = Cesium.Cartesian3.multiplyByScalar(p2, t * t, new Cesium.Cartesian3());
+
+            const pointOnCurve = Cesium.Cartesian3.add(p0_scaled, p1_scaled, new Cesium.Cartesian3());
+            Cesium.Cartesian3.add(pointOnCurve, p2_scaled, pointOnCurve);
+
+            points.push(pointOnCurve);
+        }
+        return points;
+    }
     public async load(): Promise<void> {
         this.dataSource.entities.suspendEvents();
         try {
@@ -214,45 +252,47 @@ export default class NetworkDataSourceLayer {
                         const toLink = links.find((l) => l.id == conn.toLink);
                         if (!fromLink || !toLink) continue;
 
-                        const fromLane = fromLink.lanes[conn.fromLane];
-                        const toLane = toLink.lanes[conn.toLane];
-                        if (!fromLane || !toLane) continue;
+                        const fromLane = fromLink.lanes?.[conn.fromLane];
+                        const toLane = toLink.lanes?.[conn.toLane];
+                        // Ensure laneSource/laneTarget were calculated and attached
+                        if (!fromLane || !toLane || !fromLane.laneTarget || !toLane.laneSource) continue;
 
-                        const position = [fromLane.laneTarget];
+                        const fromPt = fromLane.laneTarget;
+                        const toPt = toLane.laneSource;
+                        let positions: Cesium.Cartesian3[];
 
-                        if (conn.turning != 'Straight') {
-                            const nodeLon = node.coordinates.lng;
-                            const nodeLat = node.coordinates.lat;
-                            const nodeHeight = 0;
-                            const nodePos = Cesium.Cartesian3.fromDegrees(nodeLon, nodeLat, nodeHeight);
-
-                            const midpoint = Cesium.Cartesian3.midpoint(fromLane.laneTarget, toLane.laneSource, new Cesium.Cartesian3());
-                            const direction = Cesium.Cartesian3.subtract(nodePos, midpoint, new Cesium.Cartesian3());
-                            Cesium.Cartesian3.multiplyByScalar(direction, 1 / 10, direction);
-                            const adjustedMid = Cesium.Cartesian3.add(midpoint, direction, new Cesium.Cartesian3());
-
-                            const points = [fromLane.laneTarget, adjustedMid, toLane.laneSource];
-                            const spline = new Cesium.CatmullRomSpline({
-                                times: [0.0, 0.5, 1.0],
-                                points
-                            });
-
-                            for (let i = 1; i <= 10; i++) { // Start from 1 to avoid duplicating start point
-                                position.push(spline.evaluate(i / 10));
-                            }
+                        if (conn.turning === 'Straight') {
+                            positions = [fromPt, toPt];
                         } else {
-                            position.push(toLane.laneSource);
+                            // Calculate vectors for the parent links
+                            const fromLinkP1 = Cesium.Cartesian3.fromDegrees(fromLink.coordinates[0].lng, fromLink.coordinates[0].lat);
+                            const fromLinkP2 = Cesium.Cartesian3.fromDegrees(fromLink.coordinates[1].lng, fromLink.coordinates[1].lat);
+                            const fromVector = Cesium.Cartesian3.subtract(fromLinkP2, fromLinkP1, new Cesium.Cartesian3());
+
+                            const toLinkP1 = Cesium.Cartesian3.fromDegrees(toLink.coordinates[0].lng, toLink.coordinates[0].lat);
+                            const toLinkP2 = Cesium.Cartesian3.fromDegrees(toLink.coordinates[1].lng, toLink.coordinates[1].lat);
+                            const toVector = Cesium.Cartesian3.subtract(toLinkP2, toLinkP1, new Cesium.Cartesian3());
+
+                            // Find the intersection point to use as a Bezier control point
+                            const controlPoint = this.getLineIntersectionPoint(fromPt, fromVector, toPt, toVector);
+
+                            if (controlPoint) {
+                                positions = this.generateQuadraticBezierCurve(fromPt, controlPoint, toPt);
+                            } else {
+                                // Fallback for parallel lines
+                                positions = [fromPt, toPt];
+                            }
                         }
 
                         this.dataSource.entities.add({
                             id: conn.__guid,
                             polyline: {
-                                positions: position,
+                                positions: positions,
                                 width: 5,
                                 material: new Cesium.PolylineArrowMaterialProperty(
                                     Cesium.Color.WHITE.withAlpha(0.8)
                                 ),
-                                clampToGround: true,
+                                clampToGround: true, // Assuming connections should be clamped
                             },
                             properties: conn
                         });
