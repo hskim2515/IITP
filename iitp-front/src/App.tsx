@@ -75,7 +75,14 @@ function App() {
                             activeSubmenu={activeSubmenu}
                             onClose={() => setActiveSubmenu(null)}
                         />
-                    ) : activeDropdownMenu.menuCode === 'VEHICLE' ? (
+                    ) : activeSubmenu.menuCode === 'VEHICLE_TYPE' ? (
+                        <PropertyForm
+                            activePopupMenu={activeSubmenu}
+                            open={true}
+                            config={propertyFormSchema['VEHICLE_TYPE']}
+                            onClose={() => setActiveSubmenu(null)}
+                        />
+                    ) : activeSubmenu.menuCode === 'VEHICLE_MODEL' ? (
                         <PropertyForm
                             activePopupMenu={activeSubmenu}
                             open={true}
