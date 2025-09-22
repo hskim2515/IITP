@@ -49,12 +49,6 @@ public class RailStationService {
             if (!transformedStationCoords.isEmpty()) {
                 railStation.setCoordinates(transformedStationCoords.getFirst());
             }
-            railStation.getExits().forEach(exit -> {
-                List<Coordinates> coordinates = CoordinateUtils.parseAndTransform(
-                        exit.getCoord(), baseLongitude, baseLatitude
-                );
-                exit.setCoordinates(coordinates.getFirst());
-            });
         });
 
         return dto;

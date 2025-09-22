@@ -1,6 +1,5 @@
 package com.iitp.iitp_rest.model.publicTransit.rail;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.iitp.iitp_rest.model.geometry.Coordinates;
 import com.iitp.iitp_rest.model.publicTransit.StationType;
 import com.iitp.iitp_rest.model.publicTransit.StationTypeAdapter;
@@ -32,8 +31,8 @@ public class RailStationXml {
     private String center;
     @XmlElement(name = "exit")
     private List<ExitXml> exits = new ArrayList<>();
-    @XmlElement(name = "timetable")
-    @JsonIgnore
+//    @XmlElement(name = "timetable")
+    @XmlTransient
     private List<TimetableXml> timetables = new ArrayList<>();
     @XmlTransient
     private Coordinates coordinates;

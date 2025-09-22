@@ -1,12 +1,7 @@
 package com.iitp.iitp_rest.model.publicTransit.bus;
 
-import com.iitp.iitp_rest.model.geometry.Coordinates;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
 import lombok.Data;
-import lombok.NoArgsConstructor;
 
-import java.util.ArrayList;
 import java.util.List;
 
 @Data
@@ -21,6 +16,4 @@ public class BusStationData {
     private String address;
     private String center;
     private List<String> lines;
-    private List<Coordinates> coordinates = new ArrayList<>();
-
 }

@@ -9,8 +9,6 @@ import java.util.List;
 
 @Data
 public class NetworkResponse {
-    private String name;
-    private Long id;
     private List<NodeResponse> nodes = new ArrayList<>();
     private List<LinkResponse> links = new ArrayList<>();
 }

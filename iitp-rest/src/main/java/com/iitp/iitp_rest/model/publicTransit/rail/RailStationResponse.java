@@ -16,7 +16,7 @@ public class RailStationResponse {
     private String address;
     private String center;
     private List<ExitResponse> exits;
-    private List<TimetableResponse> timetables;
+//    private List<TimetableResponse> timetables;
     private Coordinates coordinates;
 
 }

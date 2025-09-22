@@ -1,22 +1,18 @@
 package com.iitp.iitp_rest.service.publicTransit.station;
 
-import com.iitp.iitp_rest.model.geometry.Coordinates;
 import com.iitp.iitp_rest.model.publicTransit.bus.BusStationLogs;
 import com.iitp.iitp_rest.model.publicTransit.bus.BusStationSaveRequest;
 import com.iitp.iitp_rest.model.publicTransit.bus.BusStationVersion;
 import com.iitp.iitp_rest.model.publicTransit.bus.PublicTransitXml;
-import com.iitp.iitp_rest.model.scenario.Scenario;
 import com.iitp.iitp_rest.repository.BusStationLogsRepository;
 import com.iitp.iitp_rest.repository.BusStationVersionsRepository;
 import com.iitp.iitp_rest.repository.ScenarioRepository;
-import com.iitp.iitp_rest.util.CoordinateUtils;
 import com.iitp.iitp_rest.util.XmlUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import javax.xml.stream.XMLStreamException;
 import java.io.InputStream;
 import java.util.List;
 
@@ -66,8 +62,7 @@ public class BusStationService {
     public PublicTransitXml getBusStationXmlByScenarioKey(String scenarioKey) {
         String path = scenarioKey + "/publicTransit.xml";
         InputStream is = XmlUtils.loadXmlAsStream(path);
-        PublicTransitXml busPublicTransitDto = streamToDto(is);
-        return transformBusPublicTransitCoordinates(scenarioKey, busPublicTransitDto);
+        return streamToDto(is);
     }
 
 
@@ -79,20 +74,4 @@ public class BusStationService {
         return dto;
     }
 
-    public PublicTransitXml transformBusPublicTransitCoordinates(String key, PublicTransitXml dto) {
-        Scenario scenario = scenarioRepository.findByKey(key).orElse(new Scenario());
-        double baseLatitude = scenario.getLatitude();
-        double baseLongitude = scenario.getLongitude();
-
-        dto.getBusStations().forEach(busStation -> {
-            List<Coordinates> transformedStationCoords = CoordinateUtils.parseAndTransform(
-                    busStation.getCenter(), baseLongitude, baseLatitude
-            );
-            if (!transformedStationCoords.isEmpty()) {
-                busStation.setCoordinates(transformedStationCoords.getFirst());
-            }
-        });
-
-        return dto;
-    }
 }

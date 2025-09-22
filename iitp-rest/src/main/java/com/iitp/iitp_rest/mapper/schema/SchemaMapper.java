@@ -13,34 +13,69 @@ import java.util.Map;
 public interface SchemaMapper {
 
     @Mappings({
-            @Mapping(target = "layerId",       source = "layerId"),
-            @Mapping(target = "layerName",     source = "layerKey"),
-            @Mapping(target = "schemata",      source = "schemata"),
-            @Mapping(target = "schemaColumns", source = "columns")
+            @Mapping(target = "layerId", source = "layerId"),
+            @Mapping(target = "layerName", source = "layerKey"),
+            @Mapping(target = "definition", source = "schemata"),
+            @Mapping(target = "schemaColumns", source = "columns"),
+            @Mapping(target = "structure", expression = "java( buildStructure(rootSchemaNames, structureMap) )")
     })
     LayerSchemaResponse toLayerSchemaResponse(
             Long layerId,
             String layerKey,
             List<LayerSchema> schemata,
             List<LayerSchemaConfig> columns,
+            List<String> rootSchemaNames,
+            Map<String, List<String>> structureMap,
             @Context Map<Long, List<LayerSchemaField>> fieldsBySchemaId,
             @Context Map<Long, List<LayerSchemaOption>> optionsByFieldId,
             @Context Map<Long, List<LayerSchemaConfigOption>> columnOptionsByColumnId
     );
 
-    @Mapping(target = "fields", expression =
-            "java( mapFields(schema.getId(), fieldsBySchemaId, optionsByFieldId) )")
-    LayerSchemaResponse.Schema toSchemaDto(
+    @Mapping(target = "fields", expression = "java( mapFields(schema.getId(), fieldsBySchemaId, optionsByFieldId) )")
+    LayerSchemaResponse.SchemaDefinition toSchemaDefinition(
             LayerSchema schema,
             @Context Map<Long, List<LayerSchemaField>> fieldsBySchemaId,
             @Context Map<Long, List<LayerSchemaOption>> optionsByFieldId
     );
 
-    List<LayerSchemaResponse.Schema> toSchemaDtoList(
+    List<LayerSchemaResponse.SchemaDefinition> toSchemaDefinitionList(
             List<LayerSchema> schemata,
             @Context Map<Long, List<LayerSchemaField>> fieldsBySchemaId,
             @Context Map<Long, List<LayerSchemaOption>> optionsByFieldId
     );
+
+    default List<LayerSchemaResponse.SchemaStructure> buildStructure(
+            List<String> rootSchemaNames,
+            Map<String, List<String>> structureMap
+    ) {
+        if (rootSchemaNames == null || rootSchemaNames.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<LayerSchemaResponse.SchemaStructure> structure = new ArrayList<>();
+        for (String rootName : rootSchemaNames) {
+            structure.add(buildDefinition(rootName, structureMap));
+        }
+        return structure;
+    }
+
+    default LayerSchemaResponse.SchemaStructure buildDefinition(
+            String name,
+            Map<String, List<String>> structureMap
+    ) {
+        List<String> childNames = structureMap.getOrDefault(name, Collections.emptyList());
+        List<LayerSchemaResponse.SchemaStructure> children = new ArrayList<>();
+
+        if (!childNames.isEmpty()) {
+            for (String childName : childNames) {
+                children.add(buildDefinition(childName, structureMap));
+            }
+        }
+
+        return LayerSchemaResponse.SchemaStructure.builder()
+                .name(name)
+                .children(children)
+                .build();
+    }
 
     default List<LayerSchemaFieldResponse> mapFields(
             Long schemaId,
@@ -71,6 +106,7 @@ public interface SchemaMapper {
     }
 
     List<LayerSchemaOptionResponse> toSchemaOptionDtoList(List<LayerSchemaOption> options);
+
     LayerSchemaOptionResponse toSchemaOptionDto(LayerSchemaOption option);
 
     @Mapping(target = "options", expression =
@@ -86,14 +122,15 @@ public interface SchemaMapper {
     );
 
     List<LayerSchemaResponse.ColumnOption> toColumnOptionDtoList(List<LayerSchemaConfigOption> options);
+
     LayerSchemaResponse.ColumnOption toColumnOptionDto(LayerSchemaConfigOption option);
 
-    @Mapping(target = "id",          ignore = true)
+    @Mapping(target = "id", ignore = true)
     @Mapping(target = "layerSchema", ignore = true)
-    @Mapping(target = "options",     ignore = true)
+    @Mapping(target = "options", ignore = true)
     LayerSchemaField toLayerSchemaField(SchemaFieldsRequest.CreateFieldRequest dto);
 
-    @Mapping(target = "id",    ignore = true)
+    @Mapping(target = "id", ignore = true)
     @Mapping(target = "field", ignore = true)
     LayerSchemaOption toLayerSchemaOption(SchemaFieldsRequest.CreateFieldOptionRequest dto);
 

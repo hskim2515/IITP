@@ -1,14 +1,10 @@
 package com.iitp.iitp_rest.model.network.connection;
 
-import com.iitp.iitp_rest.model.geometry.Coordinates;
 import jakarta.xml.bind.annotation.XmlAccessType;
 import jakarta.xml.bind.annotation.XmlAccessorType;
 import jakarta.xml.bind.annotation.XmlAttribute;
-import jakarta.xml.bind.annotation.XmlTransient;
 import jakarta.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 import lombok.Data;
-
-import java.util.List;
 
 @Data
 @XmlAccessorType(XmlAccessType.NONE)
@@ -34,11 +30,4 @@ public class ConnectionXml {
     private double ffSpd;
     @XmlAttribute
     private String shape;
-
-    @XmlTransient
-    private Coordinates fromLaneCoordinates;
-    @XmlTransient
-    private Coordinates toLaneCoordinates;
-    @XmlTransient
-    private List<Coordinates> coordinates;
 }

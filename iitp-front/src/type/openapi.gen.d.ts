@@ -686,19 +686,24 @@ export type components = {
             layerId?: number;
             layerName?: string;
             schemaColumns?: components["schemas"]["SchemaColumn"][];
-            schemata?: components["schemas"]["Schema"][];
+            definition?: components["schemas"]["SchemaDefinition"][];
+            structure?: components["schemas"]["SchemaStructure"][];
         };
-        Schema: {
+        SchemaColumn: {
+            configKey?: string;
+            inputType?: string;
+            options?: components["schemas"]["ColumnOption"][];
+        };
+        SchemaDefinition: {
             /** Format: int64 */
             id?: number;
             name?: string;
             status?: string;
             fields?: components["schemas"]["LayerSchemaFieldResponse"][];
         };
-        SchemaColumn: {
-            configKey?: string;
-            inputType?: string;
-            options?: components["schemas"]["ColumnOption"][];
+        SchemaStructure: {
+            name?: string;
+            children?: components["schemas"]["SchemaStructure"][];
         };
         Scenario: {
             /** Format: int64 */
@@ -729,7 +734,6 @@ export type components = {
             offset?: number;
             accessTime?: string;
             coord?: string;
-            coordinates?: components["schemas"]["Coordinates"];
         };
         RailPublicTransitResponse: {
             railStations?: components["schemas"]["RailStationResponse"][];
@@ -744,13 +748,7 @@ export type components = {
             address?: string;
             center?: string;
             exits?: components["schemas"]["ExitResponse"][];
-            timetables?: components["schemas"]["TimetableResponse"][];
             coordinates?: components["schemas"]["Coordinates"];
-        };
-        TimetableResponse: {
-            dayOfWeek?: string;
-            lineId?: string;
-            times?: string[];
         };
         BusLineResponse: {
             list?: string;
@@ -759,9 +757,9 @@ export type components = {
             id?: string;
             /** @enum {string} */
             transitMode?: "subway" | "bus";
-            /** Format: int32 */
+            /** Format: int64 */
             linkRef?: number;
-            /** Format: int32 */
+            /** Format: int64 */
             laneRef?: number;
             /** Format: double */
             offset?: number;
@@ -772,7 +770,6 @@ export type components = {
             address?: string;
             center?: string;
             line?: components["schemas"]["BusLineResponse"];
-            coordinates?: components["schemas"]["Coordinates"];
         };
         PublicTransitResponse: {
             busStations?: components["schemas"]["BusStationResponse"][];
@@ -803,12 +800,10 @@ export type components = {
             fromLink?: number;
             /** Format: int64 */
             fromLane?: number;
-            fromLaneCoordinates?: components["schemas"]["Coordinates"];
             /** Format: int64 */
             toLink?: number;
             /** Format: int64 */
             toLane?: number;
-            toLaneCoordinates?: components["schemas"]["Coordinates"];
             /** @enum {string} */
             turning?: "Straight" | "Right_Turn" | "Left_Turn";
             /** Format: double */
@@ -818,7 +813,6 @@ export type components = {
             /** Format: double */
             ffSpd?: number;
             shape?: string;
-            coordinates?: components["schemas"]["Coordinates"][];
         };
         LaneResponse: {
             /** Format: int64 */
@@ -833,7 +827,6 @@ export type components = {
             shape?: string;
             segments?: components["schemas"]["SegmentResponse"][];
             cells?: components["schemas"]["CellResponse"][];
-            coordinates?: components["schemas"]["Coordinates"][];
         };
         LinkResponse: {
             /** Format: int64 */
@@ -873,9 +866,6 @@ export type components = {
             coordinates?: components["schemas"]["Coordinates"][];
         };
         NetworkResponse: {
-            name?: string;
-            /** Format: int64 */
-            id?: number;
             nodes?: components["schemas"]["NodeResponse"][];
             links?: components["schemas"]["LinkResponse"][];
         };
@@ -994,14 +984,14 @@ export type ColumnOption = components['schemas']['ColumnOption'];
 export type LayerSchemaFieldResponse = components['schemas']['LayerSchemaFieldResponse'];
 export type LayerSchemaOptionResponse = components['schemas']['LayerSchemaOptionResponse'];
 export type LayerSchemaResponse = components['schemas']['LayerSchemaResponse'];
-export type Schema = components['schemas']['Schema'];
 export type SchemaColumn = components['schemas']['SchemaColumn'];
+export type SchemaDefinition = components['schemas']['SchemaDefinition'];
+export type SchemaStructure = components['schemas']['SchemaStructure'];
 export type Scenario = components['schemas']['Scenario'];
 export type ScenarioVersion = components['schemas']['ScenarioVersion'];
 export type ExitResponse = components['schemas']['ExitResponse'];
 export type RailPublicTransitResponse = components['schemas']['RailPublicTransitResponse'];
 export type RailStationResponse = components['schemas']['RailStationResponse'];
-export type TimetableResponse = components['schemas']['TimetableResponse'];
 export type BusLineResponse = components['schemas']['BusLineResponse'];
 export type BusStationResponse = components['schemas']['BusStationResponse'];
 export type PublicTransitResponse = components['schemas']['PublicTransitResponse'];

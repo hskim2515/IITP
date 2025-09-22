@@ -1,75 +1,8 @@
-/**
- * JSON 객체 내에서 주어진 guid를 가진 객체를 찾아,
- * 해당 객체 자신과 모든 하위 객체의 __guid를 수집.
- */
-export function collectGuidsOfTargetAndChildren(data: unknown, targetGuid: string): Set<string> {
-    const guidSet = new Set<string>();
-
-    // 타겟 객체를 먼저 찾는 함수
-    function findTarget(obj: any): any | null {
-        if (Array.isArray(obj)) {
-            for (const item of obj) {
-                const found = findTarget(item);
-                if (found) return found;
-            }
-        } else if (obj && typeof obj === "object") {
-            if (obj.__guid === targetGuid) return obj;
-
-            for (const value of Object.values(obj)) {
-                const found = findTarget(value);
-                if (found) return found;
-            }
-        }
-        return null;
-    }
-
-    // guid 수집용 함수 (자기 자신 + 자식)
-    function traverse(obj: any) {
-        if (Array.isArray(obj)) {
-            obj.forEach(traverse);
-        } else if (obj && typeof obj === "object") {
-            if (obj.__guid) guidSet.add(obj.__guid);
-            Object.values(obj).forEach(traverse);
-        }
-    }
-
-    const target = findTarget(data);
-    if (target) {
-        traverse(target);
-    }
-
-    return guidSet;
-}
-
-/**
- * JSON 트리에서 특정 guid를 가진 객체를 찾아,
- * 그 상위 부모 객체(guid를 포함하고 있는 객체)를 반환
- */
-export function findParentObjectOfGuid(data: unknown, targetGuid: string): unknown | null {
-    function recurse(obj: any, parent: any = null): any | null {
-        if (Array.isArray(obj)) {
-            for (const item of obj) {
-                const found = recurse(item, parent);
-                if (found) return found;
-            }
-        } else if (obj && typeof obj === "object") {
-            if (obj.__guid === targetGuid) return parent;
-
-            for (const val of Object.values(obj)) {
-                const found = recurse(val, obj);
-                if (found) return found;
-            }
-        }
-        return null;
-    }
-
-    return recurse(data, null);
-}
-
 export function findParentRecordByFeatureType(
     json: any,
     record: { __guid: string, featureType: string }
 ): { parent: any; key: string } | null {
+    console.log("findParentRecordByFeatureType")
     const { __guid, featureType } = record;
     if (!featureType || !__guid) return null;
 

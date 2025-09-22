@@ -1,6 +1,5 @@
 package com.iitp.iitp_rest.model.network.lane;
 
-import com.iitp.iitp_rest.model.geometry.Coordinates;
 import com.iitp.iitp_rest.model.network.cell.CellXml;
 import com.iitp.iitp_rest.model.network.segment.SegmentXml;
 import jakarta.xml.bind.annotation.*;
@@ -32,8 +31,5 @@ public class LaneXml {
     private List<SegmentXml> segments = new ArrayList<>();
     @XmlElement(name = "cell")
     private List<CellXml> cells = new ArrayList<>();
-
-    @XmlTransient
-    private List<Coordinates> coordinates;
 }
 

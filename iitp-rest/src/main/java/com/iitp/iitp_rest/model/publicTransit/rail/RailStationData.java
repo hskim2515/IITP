@@ -24,8 +24,7 @@ public class RailStationData {
     private List<TimetableData> timetables = new ArrayList<>();
     @Builder.Default
     private List<String> lineList = new ArrayList<>();
-    @Builder.Default
-    private List<Coordinates> coordinates = new ArrayList<>();
+    private Coordinates coordinates;
 
     @Data // 임시
     public static class TimetableData {

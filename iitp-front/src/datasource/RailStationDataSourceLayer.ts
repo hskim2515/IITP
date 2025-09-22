@@ -2,6 +2,7 @@ import { Cartesian3, Color, Entity, GeoJsonDataSource, Viewer } from "cesium";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { FEATURE_TYPE, RailPublicStationResponse, TRANSIT_MODE } from "@type/Station";
 import { diff } from "deep-object-diff";
+import { computePositionAtOffsetCesium } from "@utils/offset";
 
 export default class RailStationDataSourceLayer {
     private readonly LAYER_NAME = "railStation";
@@ -21,7 +22,7 @@ export default class RailStationDataSourceLayer {
                     console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
                     this.load();
                 },
-                {equalityFn: (a: RailPublicStationResponse, b: RailPublicStationResponse) => Object.keys(diff(a, b)).length === 0}
+                {equalityFn: (a: RailPublicStationResponse, b: RailPublicStationResponse) => diff(a, b) === undefined}
             );
         }
     }
@@ -34,6 +35,8 @@ export default class RailStationDataSourceLayer {
 
             const store = layerNameToStoreMap[this.LAYER_NAME];
             const railStations = store.getState().currentJsonData?.railStations;
+            const networkDataSource = this.viewer.dataSources.getByName("network")[0];
+            if (!networkDataSource) return;
 
             for (const railStation of railStations) {
 
@@ -57,16 +60,19 @@ export default class RailStationDataSourceLayer {
                     })
                 );
                 for (const exit of railStation.exits) {
-                    const exitCoord = exit.coordinates;
-                    if (!exitCoord || exitCoord.lng == null || exitCoord.lat == null) {
-                        // console.warn("[load] exit 좌표가 유효하지 않습니다:", exit);
-                        continue;
-                    }
-                    const exitPosition = Cartesian3.fromDegrees(exitCoord.lng, exitCoord.lat);
+
+                    const linkEntity = networkDataSource.entities.values.find(
+                        (e) =>
+                            e.properties?.featureType == "links" &&
+                            e.properties?.id == exit.linkRef
+                    );
+                    const [linkStart, linkEnd] = linkEntity?.corridor?.positions?.getValue()
+
+                    const { offsetPosition } = computePositionAtOffsetCesium(linkStart, linkEnd, exit.offset)
 
                     this.dataSource.entities.add(
                         new Entity({
-                            position: exitPosition,
+                            position: offsetPosition,
                             point: {
                                 pixelSize: 6,
                                 color: Color.PURPLE,

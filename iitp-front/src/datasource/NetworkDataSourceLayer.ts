@@ -22,7 +22,7 @@ export default class NetworkDataSourceLayer {
                     console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
                     this.load();
                 },
-                {equalityFn: (a: Network, b: Network) => Object.keys(diff(a, b)).length === 0}
+                {equalityFn: (a: Network, b: Network) => diff(a, b) === undefined}
             );
         }
     }
@@ -66,7 +66,6 @@ export default class NetworkDataSourceLayer {
                 });
             };
 
-            // originData가 아닌 currentJsonData를 사용합니다.
             const network: Network | undefined = store.getState().currentJsonData;
             if (!network || !network.nodes || !network.links) {
                 console.log("[NetworkDataSourceLayer] No network data to load.");
@@ -108,13 +107,14 @@ export default class NetworkDataSourceLayer {
 
                 for (let i = 0; i < n; i++) {
                     const lane = link.lanes[i];
+                    if(!lane) continue;
                     const laneWidth = link.width / laneCount;
                     const offset = ((laneCount - 1) / 2 - i) * laneWidth;
 
                     const offsetVec = Cesium.Cartesian3.multiplyByScalar(right, offset, new Cesium.Cartesian3());
                     const shiftedP1 = Cesium.Cartesian3.add(p1, offsetVec, new Cesium.Cartesian3());
                     const shiftedP2 = Cesium.Cartesian3.add(p2, offsetVec, new Cesium.Cartesian3());
-
+                    lane.linkRef = link.id
                     lane.laneSource = shiftedP1;
                     lane.laneTarget = shiftedP2;
 
@@ -220,7 +220,7 @@ export default class NetworkDataSourceLayer {
 
                         const position = [fromLane.laneTarget];
 
-                        if (conn.turning != 'S') {
+                        if (conn.turning != 'Straight') {
                             const nodeLon = node.coordinates.lng;
                             const nodeLat = node.coordinates.lat;
                             const nodeHeight = 0;
@@ -266,7 +266,7 @@ export default class NetworkDataSourceLayer {
             });
             const {nodes: signalNodes} = await response.json();
 
-            signalNodes.forEach(node => {
+            signalNodes?.forEach(node => {
                 node.turns.forEach(turn => {
                     turn.connList.forEach(connId => {
                         const targetNode = nodes.find(t => t.id == node.id);

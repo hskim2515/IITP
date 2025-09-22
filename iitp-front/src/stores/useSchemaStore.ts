@@ -1,14 +1,18 @@
 import { create } from 'zustand';
-import { Field, LayerSchema, LayerSchemaResponse, Schema, SchemaColumn, SchemaFieldsRequest } from "@type/Schema";
-import { apiConfig, ApiMenuKey } from "@config/apiConfig";
-import axiosInstance from "@api/axiosInstance";
-import { useMessageStore } from "@stores/useMessageStore";
-import { diff } from "deep-object-diff";
-import { buildLayerSchemaRequestsUsingPresence, generateTemplate } from "@utils/schema";
-import { subscribeWithSelector } from "zustand/middleware";
+import { subscribeWithSelector } from 'zustand/middleware';
+import axiosInstance from '@api/axiosInstance';
+import { apiConfig, ApiMenuKey } from '@config/apiConfig';
+import { useMessageStore } from '@stores/useMessageStore';
+import { buildLayerSchemaRequests, generateTemplate } from '@utils/schema';
+import {
+    LayerSchemaFieldResponse,
+    LayerSchemaResponse, SchemaColumn,
+    SchemaDefinition,
+    SchemaFieldsRequest, SchemaStructure
+} from "@type/openapi.gen";
 
 interface SchemaState {
-    currentSchema: LayerSchemaResponse | null;
+    currentSchema: LayerSchemaResponse[] | null;
     updated: SchemaFieldsRequest[] | null;
     isLoading: boolean;
     error: string | null;
@@ -16,14 +20,19 @@ interface SchemaState {
 
 interface SchemaActions {
     fetchSchema: () => Promise<void>;
-    updateSchema: (layerName: string | undefined) => Promise<void>;
-    setCurrentSchema: (layerName: string | undefined, layerSchema: LayerSchema) => SchemaFieldsRequest[] | null
+    updateSchema: (layerName: string) => Promise<void>;
+    setCurrentSchema: (layerName: string, layerSchema: LayerSchemaResponse) => SchemaFieldsRequest[] | null
     clearUpdates: () => void;
-    getLayerSchemaByLayerName: (layerName: string | undefined) => LayerSchema | null
-    getSchemaByNames: (layerName: string | undefined, schemaName: string | undefined) => Schema | null;
-    getFieldByNames: (layerName: string | undefined, schemaName: string | undefined, fieldName: string | undefined) => Field | null;
-    getSchemaColumns: (layerName: string | undefined, schemaName: string | undefined) => SchemaColumn[] | null;
-    generateTemplateWithLayerNameAndFeatureType: (layerName: string | undefined, featureType: string | undefined) => Record<string, unknown> | undefined;
+
+    getLayerSchemaByLayerName: (layerName: string) => LayerSchemaResponse | null
+    getSchemaDefinitionByNames: (layerName: string, schemaName: string) => SchemaDefinition | null;
+    getFieldByNames: (layerName: string, schemaName: string, fieldName: string) => LayerSchemaFieldResponse | null;
+    getSchemaColumnSpecByLayerName: (layerName: string) => SchemaColumn[] | null;
+
+    getStructureByLayerName: (layerName: string) => SchemaStructure[] | null;
+    getStructureByNames: (layerName: string, structureName: string) => SchemaStructure | null;
+
+    generateTemplateWithLayerNameAndFeatureType: (layerName: string, featureType: string) => Record<string, unknown> | undefined;
     clearSchema: () => void;
 }
 
@@ -39,40 +48,39 @@ export const useSchemaStore = create<SchemaState & SchemaActions>()(
         (set, get) => ({
                 ...initialState,
                 fetchSchema: async () => {
-                    set({
-                        isLoading: true,
-                        error: null
-                    });
+                    set({ isLoading: true, error: null });
                     try {
-                        const config = apiConfig["SCHEMA_SETTING" as ApiMenuKey].list;
+                        const config = apiConfig["SCHEMA_SETTING" as ApiMenuKey]?.list;
                         const response = await axiosInstance({
-                            method: config.method,
-                            url: config.url
+                            method: config?.method,
+                            url: config?.url
                         });
-                        const data = response.data;
-                        console.log("schema response:::", data)
+                        const data: LayerSchemaResponse[] = response.data;
+                        console.log("schema response:::", data);
                         set({
                             currentSchema: structuredClone(data),
                             updated: null
                         });
-
                     } catch (e) {
-                        set({error: 'An unknown error occurred'});
+                        set({ error: 'An unknown error occurred' });
                     } finally {
-                        set({isLoading: false});
+                        set({ isLoading: false });
                     }
                 },
-
                 updateSchema: async (layerKey) => {
-                    const config = apiConfig["SCHEMA_SETTING" as ApiMenuKey].update;
                     const setMessage = useMessageStore.getState().setMessage;
+                    const payload = get().updated;
 
-                    const payload: SchemaFieldsRequest[] | null = get().updated;
+                    if (!payload || payload.length === 0) {
+                        setMessage({ type: 'info', text: '저장할 변경 사항이 없습니다.' });
+                        return;
+                    }
 
                     try {
+                        const config = apiConfig["SCHEMA_SETTING" as ApiMenuKey]?.update;
                         await axiosInstance({
-                            method: config.method,
-                            url: config.url.replace('{layer-key}', `${layerKey}`),
+                            method: config?.method,
+                            url: config?.url.replace('{layer-key}', `${layerKey}`),
                             data: payload,
                         });
                         setMessage({
@@ -87,56 +95,58 @@ export const useSchemaStore = create<SchemaState & SchemaActions>()(
                         });
                     }
                 },
-
-                setCurrentSchema: (layerName, editedLayer) => {
+                setCurrentSchema: (layerName, layerSchema) => {
                     if (!layerName) return null;
                     const baselineLayer = get().getLayerSchemaByLayerName(layerName);
-                    if (!baselineLayer || !editedLayer) return null;
+                    if (!baselineLayer) return null;
 
-                    const differences = diff(baselineLayer, editedLayer);
-                    console.debug("[diff] baseline vs edited:", differences);
+                    const payload = buildLayerSchemaRequests(baselineLayer, layerSchema);
 
-                    const dtos = buildLayerSchemaRequestsUsingPresence(baselineLayer, editedLayer);
-                    const payload = dtos.length > 0 ? dtos : null;
 
-                    set({updated: payload});
-                    console.log("payload:", payload);
-                    return payload;
+                    const hasUpdates = payload.length > 0;
+                    set({ updated: hasUpdates ? payload : null });
+
+                    return hasUpdates ? payload : null;
                 },
-
                 clearUpdates: () => {
-                    set({updated: null});
+                    set({ updated: null });
                 },
-
                 getLayerSchemaByLayerName: (layerName) => {
-                    if (!layerName) return null;
+                    if (!layerName || !get().currentSchema) return null;
                     return get().currentSchema?.find(item => item.layerName === layerName) || null;
                 },
-
-                getSchemaByNames: (layerName, schemaName) => {
+                getSchemaDefinitionByNames: (layerName, schemaName) => {
                     if (!schemaName) return null;
                     const layerSchema = get().getLayerSchemaByLayerName(layerName);
-                    return layerSchema?.schemata.find(schema => schema.name === schemaName) || null
+                    return layerSchema?.definition?.find((schema: SchemaDefinition) => schema.name === schemaName) || null
                 },
-
                 getFieldByNames: (layerName, schemaName, fieldName) => {
                     if (!fieldName) return null;
-                    const schema = get().getSchemaByNames(layerName, schemaName);
-                    return schema?.fields.find(field => field.name === fieldName) || null;
+                    const schema = get().getSchemaDefinitionByNames(layerName, schemaName);
+                    return schema?.fields?.find((field:LayerSchemaFieldResponse) => field.name === fieldName) || null;
+                },
+                getSchemaColumnSpecByLayerName: (layerName) => {
+                    if (!layerName) return null;
+                    const layerSchema = get().getLayerSchemaByLayerName(layerName);
+                    return layerSchema?.schemaColumns || null;
                 },
 
-                getSchemaColumns: (layerName) => {
+                getStructureByLayerName: (layerName) => {
                     if (!layerName) return null;
-                    const layerSchema: LayerSchema | null = get().getLayerSchemaByLayerName(layerName);
-                    return layerSchema?.schemaColumns || null;
+                    const layerSchema = get().getLayerSchemaByLayerName(layerName);
+                    return layerSchema?.structure || null;
+                },
+                getStructureByNames: (layerName, structureName) => {
+                    if (!structureName) return null;
+                    const structures = get().getStructureByLayerName(layerName);
+                    return structures?.find((structure: SchemaStructure) => structure.name === structureName) || null;
                 },
 
                 generateTemplateWithLayerNameAndFeatureType: (layerName, featureType) => {
                     if(!layerName || !featureType) return;
-                    const schema = get().getSchemaByNames(layerName ,featureType)
+                    const schema = get().getSchemaDefinitionByNames(layerName ,featureType)
                     return generateTemplate(schema);
                 },
-
                 clearSchema: () => {
                     set(initialState);
                 },

@@ -6,7 +6,7 @@ import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import { BusStationData, RailStationData, RailStationExitData } from "@type/Station";
 import { useNetworkStore } from "@stores/useNetworkStore";
 import { useBusStationHistoryStore, useBusStationStore } from "@stores/useBusStationStore";
-import { fromLonLat, toLonLat } from "ol/proj";
+import { fromLonLat } from "ol/proj";
 import { useRailStationHistoryStore, useRailStationStore } from "@stores/useRailStationStore";
 import { Coordinates } from "@type/openapi.gen";
 import { projectPointOntoSegmentCesium, projectPointOntoSegmentOl } from "@utils/offset";
@@ -145,13 +145,13 @@ const featureTypeHandlersInternal = {
             const olMap = useOpenLayersStore.getState().map;
             if (!olMap) return;
 
-            // geom 이 필요할까? e 객체로 받아온 geometry만 있으면 될 듯 함.
-            // 해당 coordiates 에 snap feature가 있는지,
             const geom = e.feature.getGeometry();
             if (!(geom instanceof Point)) {
                 setMessage({type: "error", text: "정류장 Point가 없습니다."});
                 return;
             }
+
+            // coord 를 저장하는 것이 아니라 offset을 계산하여 저장함.
 
             const coord = geom.getCoordinates();
             const pixel = olMap.getPixelFromCoordinate(coord)
@@ -165,10 +165,10 @@ const featureTypeHandlersInternal = {
                 setMessage({type: "warn", text: "정류장은 차선 위에만 추가할 수 있습니다."});
                 return;
             }
-
             const laneData = laneFeature.getProperties();
-            const laneStart = fromLonLat([laneData.coordinates[0].lng, laneData.coordinates[0].lat]);
-            const laneEnd = fromLonLat([laneData.coordinates[1].lng, laneData.coordinates[1].lat]);
+
+            const laneStart = laneData.laneSource;
+            const laneEnd = laneData.laneTarget;
             const parentLink = network.links.find(link => link.lanes.some(lane => lane.__guid === laneData.__guid));
 
             if (!parentLink) {
@@ -286,8 +286,7 @@ const featureTypeHandlersInternal = {
                 return;
             }
             const coord = geom.getCoordinates();
-            const lonLat = toLonLat(coord);
-            const coordinates = createCoordinatesFromOl(lonLat)
+            const coordinates = createCoordinatesFromOl(coord)
             if (!coordinates) return;
             processAndStoreStation(coordinates);
 
@@ -469,6 +468,7 @@ const featureTypeHandlersInternal = {
 };
 
 export const createEventHandlers = (record) => {
+    console.log("createEventHandlers:::", record)
     const featureType: keyof typeof featureTypeHandlersInternal = record.featureType;
     if (!record.featureType) {
         console.warn("featureType 인자:", record.featureType)
@@ -480,5 +480,5 @@ export const createEventHandlers = (record) => {
         return;
     }
 
-    handler(record);
+    return handler(record);
 };

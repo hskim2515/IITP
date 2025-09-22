@@ -46,6 +46,7 @@ export const defaultEventHandlers ={
         if (!viewer) return
         const activeSubmenu = useMenuStore.getState().activeSubmenu;
         const layerManager = useLayerStore.getState().layerManager;
+        if (!layerManager) return;
         const picked = viewer.scene.pick(e.position);
 
         if (Cesium.defined(picked) && picked.id?.properties) {
@@ -67,7 +68,9 @@ export const defaultEventHandlers ={
             });
             setSelectedProps(props);
 
-            const layerName = propertyFormSchema[activeSubmenu.menuCode].layer
+            const layerName = activeSubmenu
+                ? propertyFormSchema[activeSubmenu.menuCode].layer
+                : undefined; // 메뉴에 진입하지 않은 상황에서 객체 클릭 시, 객체 정보 창 띄우기 위한 undefined
             const guid =
                 layerName === FEATURE_TYPE.SIGNAL
                     ? getSignalGuid(layerManager, props.__guid)
@@ -84,7 +87,7 @@ export const defaultEventHandlers ={
         const activeSubmenu = useMenuStore.getState().activeSubmenu;
         const layerManager = useLayerStore.getState().layerManager;
 
-        if (!olMap) {
+        if (!olMap || !layerManager) {
             setSelectedProps(null);
             setSelectedGuid([]);
             return;
@@ -141,61 +144,60 @@ export const defaultEventHandlers ={
     },
 
     handleOlHover : (e: MapBrowserEvent<UIEvent>) => {
-        // const olMap = useOpenLayersStore.getState().map;
-        // const activeSubmenu = useMenuStore.getState().activeSubmenu
-        //
-        // //const hoverLayerName = activeSubmenu ? propertyFormSchema[activeSubmenu?.menuCode].layer : undefined;
-        // const hoverLayerName = activeSubmenu
-        //     ? propertyFormSchema[
-        //     layerOverrideMap[activeSubmenu.menuCode] ?? activeSubmenu.menuCode
-        //         ]?.layer
-        //     : undefined;
-        //
-        // if (!olMap) return;
-        //
-        // // forEachFeatureAtPixel 최적화 필요 -> 마우스 주변에만
-        // const featureInfo = olMap.forEachFeatureAtPixel(
-        //     e.pixel,
-        //     (feature: FeatureLike, layer: Layer) => {
-        //         const isTargetLayer = !hoverLayerName || (hoverLayerName && matchesCustomKeyValue(layer, 'layer', hoverLayerName));
-        //
-        //         if (isTargetLayer
-        //             && isVectorLayer(layer)
-        //             && isFeature(feature)
-        //             && feature.get("__guid")
-        //         ) {
-        //             if (selectedGuid.includes(feature.get("__guid"))) {
-        //                 return undefined;
-        //             }
-        //             return {feature, layer};
-        //         }
-        //         return undefined;
-        //     },
-        //     {hitTolerance: 10}
-        // );
-        //
-        // if (!featureInfo) {
-        //     if (highlightedFeature) {
-        //         clearOlHighlight(highlightedFeature);
-        //     }
-        //     highlightedFeature = undefined;
-        //     return;
-        // }
-        //
-        // const {feature, layer} = featureInfo;
-        // const layerStyleFunction = layer.getStyleFunction();
-        //
-        // if (highlightedFeature === feature) return;
-        //
-        // if (highlightedFeature) {
-        //     clearOlHighlight(highlightedFeature);
-        // }
-        //
-        // if (feature && layerStyleFunction) {
-        //     highlightFeature(feature, layerStyleFunction);
-        // } else {
-        //     highlightedFeature = undefined;
-        // }
+        const olMap = useOpenLayersStore.getState().map;
+        const activeSubmenu = useMenuStore.getState().activeSubmenu
+
+        //const hoverLayerName = activeSubmenu ? propertyFormSchema[activeSubmenu?.menuCode].layer : undefined;
+        const hoverLayerName = activeSubmenu
+            ? propertyFormSchema[
+            layerOverrideMap[activeSubmenu.menuCode] ?? activeSubmenu.menuCode
+                ]?.layer
+            : undefined;
+
+        if (!olMap) return;
+
+        const featureInfo = olMap.forEachFeatureAtPixel(
+            e.pixel,
+            (feature: FeatureLike, layer: Layer) => {
+                const isTargetLayer = !hoverLayerName || (hoverLayerName && matchesCustomKeyValue(layer, 'layer', hoverLayerName));
+
+                if (isTargetLayer
+                    && isVectorLayer(layer)
+                    && isFeature(feature)
+                    && feature.get("__guid")
+                ) {
+                    if (selectedGuid.includes(feature.get("__guid"))) {
+                        return undefined;
+                    }
+                    return {feature, layer};
+                }
+                return undefined;
+            },
+            {hitTolerance: 10}
+        );
+
+        if (!featureInfo) {
+            if (highlightedFeature) {
+                clearOlHighlight(highlightedFeature);
+            }
+            highlightedFeature = undefined;
+            return;
+        }
+
+        const {feature, layer} = featureInfo;
+        const layerStyleFunction = layer.getStyleFunction();
+
+        if (highlightedFeature === feature) return;
+
+        if (highlightedFeature) {
+            clearOlHighlight(highlightedFeature);
+        }
+
+        if (feature && layerStyleFunction) {
+            highlightFeature(feature, layerStyleFunction);
+        } else {
+            highlightedFeature = undefined;
+        }
     },
 
 

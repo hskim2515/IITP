@@ -78,6 +78,7 @@ export interface Link {
 }
 
 export interface Lane {
+    linkRef: number;
     __guid? : string
     id: number | string
     leftLaneId: number | string

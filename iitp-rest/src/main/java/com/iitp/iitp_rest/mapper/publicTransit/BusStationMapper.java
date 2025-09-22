@@ -19,7 +19,6 @@ public interface BusStationMapper {
     List<BusStationResponse> toBusStationResponseList(List<BusStationXml> src);
 
     // Station
-    @Mapping(target = "pos", source = "offset")
     @Mapping(target = "address", ignore = true) // XML에 없으면 무시
     BusStationResponse toBusStationResponse(BusStationXml src);
 }

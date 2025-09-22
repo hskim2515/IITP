@@ -9,6 +9,7 @@ import com.iitp.iitp_rest.repository.LayerSchemaColumnRepository;
 import com.iitp.iitp_rest.repository.LayerSchemaFieldRepository;
 import com.iitp.iitp_rest.repository.LayerSchemaOptionRepository;
 import com.iitp.iitp_rest.repository.LayerSchemaRepository;
+import com.iitp.iitp_rest.schema.SchemaStructureProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,7 @@ public class SchemaService {
     private final LayerSchemaOptionService optionService;
 
     private final SchemaMapper schemaMapper;
+    private final SchemaStructureProvider schemaStructureProvider;
 
     private final LayerSchemaColumnRepository columnRepository;
     private final LayerSchemaColumnOptionRepository columnOptionRepository;
@@ -81,17 +83,23 @@ public class SchemaService {
         Map<Long, List<LayerSchema>> schemataByLayerId = allSchemata.stream()
                 .collect(Collectors.groupingBy(s -> s.getLayer().getId()));
 
+
         // === Mapper 호출: 순수 매핑 + @Context 전달 ===
         return layerIds.stream()
                 .map(layerId -> {
+                    String layerKey = layerKeyById.get(layerId);
                     List<LayerSchema> schemataForLayer =
                             schemataByLayerId.getOrDefault(layerId, Collections.emptyList());
 
+                    List<String> rootSchemaNames = schemaStructureProvider.getRootSchemaNames(layerKey);
+                    Map<String, List<String>> structureMap = schemaStructureProvider.getStructureMap(layerKey);
                     return schemaMapper.toLayerSchemaResponse(
                             layerId,
                             layerKeyById.get(layerId),
                             schemataForLayer,
                             allColumns,
+                            rootSchemaNames,
+                            structureMap,
                             fieldsBySchemaId,
                             optionsByFieldId,
                             columnOptionsByColumnId

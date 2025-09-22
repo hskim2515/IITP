@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.model.schema;
 
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -17,21 +18,22 @@ public class LayerSchemaResponse {
 
     private List<SchemaColumn> schemaColumns;
 
-    private List<Schema> schemata;
+    private List<SchemaDefinition> definition;
+
+    private List<SchemaStructure> structure;
 
     @Data
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
-    public static class Schema {
+    public static class SchemaDefinition {
 
         private Long id;
         private String name;
-//        private Integer sortOrder;
+        //        private Integer sortOrder;
         private String status;
 
         private List<LayerSchemaFieldResponse> fields;
-
     }
 
     @Data
@@ -52,5 +54,15 @@ public class LayerSchemaResponse {
     @AllArgsConstructor
     public static class ColumnOption {
         private String value;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class SchemaStructure {
+        String name;
+        @JsonManagedReference
+        private List<SchemaStructure> children;
     }
 }

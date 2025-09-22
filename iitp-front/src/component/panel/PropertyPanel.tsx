@@ -1,33 +1,31 @@
-import React, {useEffect, useMemo, useRef, useState} from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import "/static/css/styles.css";
-import {MenuTree} from "@stores/useMenuStore";
-import {propertyFormSchema} from "@schema/propertyFormSchema";
-import {menuCodeToStoreMap} from "@hooks/useLayerInit";
-import {useOpenLayersStore} from "@stores/useOpenLayersStore";
+import { MenuTree } from "@stores/useMenuStore";
+import { propertyFormSchema } from "@schema/propertyFormSchema";
+import { menuCodeToStoreMap } from "@hooks/useLayerInit";
+import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import VectorLayer from "ol/layer/Vector";
-import {apiConfig, ApiMenuKey} from "@config/apiConfig";
+import { apiConfig, ApiMenuKey } from "@config/apiConfig";
 import axiosInstance from "@api/axiosInstance";
 import JsonGrid from "@component/util/JsonGrid";
-import {
-    faChevronDown,
-    faChevronUp,
-} from "@fortawesome/free-solid-svg-icons";
-import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
-import useHistoryInit, {menuCodeToHistoryStoreMap} from "@hooks/useHistoryInit";
-import {mergeJsonWithLogRecursive, mergeUpdateLogs} from "@utils/history";
+import { faChevronDown, faChevronUp, } from "@fortawesome/free-solid-svg-icons";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import useHistoryInit, { menuCodeToHistoryStoreMap } from "@hooks/useHistoryInit";
+import { mergeJsonWithLogRecursive, mergeUpdateLogs } from "@utils/history";
 import HistoryController from "@component/modal/HistoryController";
 import HistoryModal from "@component/modal/HistoryModal";
-import {useScenarioStore} from "@stores/useScenarioStore";
-import {useSelectionStore} from "@stores/useSelectionStore";
-import {
-    filterFeaturesByKey
-} from "@utils/feature";
-import {faClose} from "@fortawesome/free-solid-svg-icons/faClose";
+import { useScenarioStore } from "@stores/useScenarioStore";
+import { useSelectionStore } from "@stores/useSelectionStore";
+import { filterFeaturesByKey } from "@utils/feature";
+import { faClose } from "@fortawesome/free-solid-svg-icons/faClose";
 import deepEqual from "deep-equal";
 import { FeatureLayerAPI, isFeatureLayer } from "@features/FeatureLayerAPI";
 import { matchesCustomKeyValue } from "@utils/olLayer";
-import {useMessageStore} from "@stores/useMessageStore";
+import { useMessageStore } from "@stores/useMessageStore";
 import { useShallow } from "zustand/react/shallow";
+import { useEventStore } from "@stores/useEventStore";
+import { modifyFeatureEventHandlers } from "@handler/modifyFeatureEventHandlers";
+import { useLayerStore } from "@stores/useLayerStore";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTree
@@ -43,12 +41,12 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     // 동적 스토어
     const store = menuCodeToStoreMap[submenu.menuCode]
-    const selectedGuid = useSelectionStore((state) => state.selectedGuid)
+    const selectedGuid = useSelectionStore(useShallow((state) => state.selectedGuid))
     const clearSelected = useSelectionStore((state) => state.clearSelected)
-    const selectedGuidRef = useRef<(string | number)[]>([])
+    const selectedGuidRef = useRef<(string | number | React.Key)[]>([])
     const historyStore = menuCodeToHistoryStoreMap[submenu.menuCode];
 
-    const currentJsonData = store(useShallow((state) => state.currentJsonData))
+    const currentJsonData = store(useShallow((state: {currentJsonData: unknown}) => state.currentJsonData))
 
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
@@ -63,7 +61,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         const foundLayer = olMap?.getLayers().getArray()
             .find(layer => matchesCustomKeyValue(layer, 'layer', submenu.item.layer))
 
-            console.log("foundLayer:::", foundLayer)
         if (foundLayer && isFeatureLayer(foundLayer)) {
             console.log("foundLayer:::", foundLayer)
             return foundLayer;
@@ -74,12 +71,12 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     useEffect(() => {
         if (!selectedGuidRef || !layer) return;
 
-        const prevGuids: (string | number)[] = selectedGuidRef.current;
-        const nextGuids: (string | number)[] = selectedGuid;
+        const prevGuids: (string | number | React.Key)[] = selectedGuidRef.current;
+        const nextGuids: (string | number | React.Key)[] = selectedGuid;
 
         if (deepEqual(prevGuids, nextGuids)) return;
         const source = layer.getSource();
-        if(!source) return;
+        if (!source) return;
         const allFeatures = source.getFeatures();
         const deselected = prevGuids.filter((id) => !nextGuids.includes(id));
         const deselectedFeatures = filterFeaturesByKey(allFeatures, deselected);
@@ -100,6 +97,33 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         selectedGuidRef.current = nextGuids;
     }, [selectedGuid]);
 
+    useEffect(() => {
+        console.log("submenu.item.layer", submenu.item.layer);
+        if (!submenu.item.layer) return;
+
+        const featureTypeSet = new Set<string>(
+            (selectedGuid ?? []).map((k) => {
+                const s = String(k);
+                const i = s.indexOf("-");
+                return i === -1 ? s : s.slice(0, i);
+            })
+        );
+        console.log("featureTypeSet:::",featureTypeSet)
+        // 각 featureType에 대해 modifyFeatureEventHandlers 실행
+        const disposers: Array<() => void> = [];
+        featureTypeSet.forEach((featureType) => {
+            const dispose = modifyFeatureEventHandlers(featureType);
+            if (typeof dispose === "function") {
+                disposers.push(dispose);
+            }
+        });
+
+        return () => {
+            for (let i = disposers.length - 1; i >= 0; i--) {
+                try { disposers[i](); } catch {}
+            }
+        };
+    }, [selectedGuid, submenu.item.layer]);
 
     useEffect(() => {
         clearSelected()
@@ -132,6 +156,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             logs: mergedLog,
         };
         try {
+            if (!selectedScenario) return;
             await axiosInstance({
                 method: api.method,
                 url: api.url + '/' + selectedScenario.key,
@@ -201,8 +226,8 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     return (
         <>
-            <div className={`popup-overlay${submenu.item.type ? `-${submenu.item.type}` : ''}`}>
-                <div className={`popup-container${submenu.item.type ? `-${submenu.item.type}` : ''}`}>
+            <div className={`popup-overlay${submenu?.item?.type ? `-${submenu.item.type}` : ''}`}>
+                <div className={`popup-container${submenu?.item?.type ? `-${submenu.item.type}` : ''}`}>
                     <div className="popup-header">
                         <span>{submenu.title}</span>
                         <div className="popup-header-actions">
@@ -217,13 +242,13 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                         <div>
 
                             <FontAwesomeIcon className="close-btn" icon={faClose} onClick={onClose}/>
-                            {(bodySize !== "full") &&(<FontAwesomeIcon
+                            {(bodySize !== "full") && (<FontAwesomeIcon
                                 className="expand-btn"
                                 icon={faChevronUp} // ⬆️ 확대 아이콘
                                 onClick={increaseSize}
                                 title="확장"
                             />)}
-                            {(bodySize !== "mini") &&(<FontAwesomeIcon
+                            {(bodySize !== "mini") && (<FontAwesomeIcon
                                 className="collapse-btn"
                                 icon={faChevronDown} // ⬇️ 축소 아이콘
                                 onClick={decreaseSize}
@@ -246,18 +271,17 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                                 menuCode={activeSubmenu.menuCode}
                             />
                         )}
-                        {submenu.item &&
-                            <div style={{width:"99%"}}>
+                        {submenu.item && submenu.item.layer &&
+                            <div style={{width: "99%"}}>
                                 {Object.entries(currentJsonData).map(([key, value]) => (
-                                    Array.isArray(value) && value.length > 0 && (
-                                        <div key={key} className="grid-container">
-
-                                            <JsonGrid rowData={value} levelName={key} parentGuid={selectedGuidRef.current}
-                                                      layerName={submenu.item.layer}
-                                                      layerGroupName={"facility"}
-                                            />
-                                        </div>
-                                    )
+                                    <div key={key} className="grid-container">
+                                        <JsonGrid
+                                            layerName={submenu.item.layer}
+                                            layerGroupName={"facility"}
+                                            rowData={value}
+                                            levelName={key}
+                                        />
+                                    </div>
                                 ))}
                             </div>
                         }

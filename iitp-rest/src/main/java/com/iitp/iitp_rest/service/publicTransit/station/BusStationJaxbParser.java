@@ -3,6 +3,7 @@ package com.iitp.iitp_rest.service.publicTransit.station;
 import com.iitp.iitp_rest.handler.XmlValidationEventHandler;
 import com.iitp.iitp_rest.model.publicTransit.bus.PublicTransitXml;
 import com.iitp.iitp_rest.service.xml.LocationTrackingXmlStreamReader;
+import com.iitp.iitp_rest.service.xml.TransientAwareXmlStreamReader;
 import com.iitp.iitp_rest.service.xml.XmlParser;
 import jakarta.xml.bind.JAXBContext;
 import jakarta.xml.bind.JAXBException;
@@ -34,7 +35,10 @@ public class BusStationJaxbParser implements XmlParser<PublicTransitXml> {
         try {
             XMLStreamReader reader = xmlInputFactory.createXMLStreamReader(inputStream);
 
-            locationTracker = new LocationTrackingXmlStreamReader(reader);
+            TransientAwareXmlStreamReader transientAwareReader =
+                    new TransientAwareXmlStreamReader(reader, PublicTransitXml.class);
+
+            locationTracker = new LocationTrackingXmlStreamReader(transientAwareReader);
 
             Unmarshaller unmarshaller = jaxbContext.createUnmarshaller();
             unmarshaller.setEventHandler(new XmlValidationEventHandler());

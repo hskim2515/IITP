@@ -41,11 +41,9 @@ const modifyFeatureHandlersInternal = {
             linkRef: number | string,
             laneRef: number | string,
             offset: number,
-            coordinates: Coordinates
         ) {
             const newStation: BusStationData = {
                 ...record,
-                coordinates,
                 linkRef,
                 laneRef,
                 offset,
@@ -87,7 +85,7 @@ const modifyFeatureHandlersInternal = {
             const laneFeature = pickFromOpenLayers(
                 olMap,
                 pixel,
-                (feature) => feature.get('__guid')?.startsWith('lanes-')
+                (feature) => feature.get('featureType')=='lane'
             );
 
             if (!laneFeature) {
@@ -95,8 +93,9 @@ const modifyFeatureHandlersInternal = {
                 return;
             }
             const laneData = laneFeature.getProperties();
-            const laneStart = fromLonLat([laneData.coordinates[0].lng, laneData.coordinates[0].lat]);
-            const laneEnd = fromLonLat([laneData.coordinates[1].lng, laneData.coordinates[1].lat]);
+            const laneStart = laneData.laneSource
+            const laneEnd = laneData.laneTarget
+
             const parentLink = network.links.find(link => link.lanes.some(lane => lane.__guid === laneData.__guid));
 
             if (!parentLink) {
@@ -105,10 +104,9 @@ const modifyFeatureHandlersInternal = {
             }
 
             const {offset, offsetPosition} = projectPointOntoSegmentOl(laneStart, laneEnd, coord);
-            const coordinates = createCoordinatesFromOl(offsetPosition)
-            if (!coordinates) return;
+
             geom.setCoordinates(offsetPosition)
-            processAndStoreStation(<BusStationData>record, parentLink.id, laneData.id, offset, coordinates);
+            processAndStoreStation(<BusStationData>record, parentLink.id, laneData.id, offset);
         }
 
         const {olEventManager, cesiumEventManager} = useEventStore.getState();
@@ -160,9 +158,6 @@ const modifyFeatureHandlersInternal = {
             return;
         }
 
-
-        // coordinates: Coordinates;
-
         function processAndStoreStation(
             record: RailStationData,
             coordinates: Coordinates
@@ -192,9 +187,7 @@ const modifyFeatureHandlersInternal = {
             if (!olMap) return;
 
             const modified = e.features.item(0);
-            console.log("modified:::", modified)
             const {geometry, ...record} = modified.getProperties();
-            console.log("modified properties:::", record)
 
             const geom = modified.getGeometry()
             if (!(geom instanceof Point)) {
@@ -260,11 +253,9 @@ const modifyFeatureHandlersInternal = {
             record: RailStationExitData,
             linkRef: number | string,
             offset: number,
-            coordinates: Coordinates
         ) {
             const newStation: RailStationExitData = {
                 ...record,
-                coordinates,
                 linkRef,
                 offset,
             } as RailStationExitData;
@@ -299,15 +290,13 @@ const modifyFeatureHandlersInternal = {
                 setMessage({type: "error", text: "출구 Point가 없습니다."});
                 return;
             }
-
             const coord = geom.getCoordinates();
             const pixel = olMap.getPixelFromCoordinate(coord)
             const linkFeature = pickFromOpenLayers(
                 olMap,
                 pixel,
-                (feature) => feature.get('__guid')?.startsWith('links-')
+                (feature) => feature.get('featureType') === 'link'
             );
-
             if (!linkFeature) {
                 setMessage({type: "warn", text: "출구는 link 위에만 위치할 수 있습니다."});
                 return;
@@ -317,10 +306,9 @@ const modifyFeatureHandlersInternal = {
             const linkEnd = fromLonLat([linkData.coordinates[1].lng, linkData.coordinates[1].lat]);
 
             const {offset, offsetPosition} = projectPointOntoSegmentOl(linkStart, linkEnd, coord);
-            const coordinates = createCoordinatesFromOl(offsetPosition)
-            if (!coordinates) return;
+
             geom.setCoordinates(offsetPosition)
-            processAndStoreStation(<RailStationExitData>record, linkData.id, offset, coordinates);
+            processAndStoreStation(<RailStationExitData>record, linkData.id, offset);
         }
 
         const {olEventManager, cesiumEventManager} = useEventStore.getState();
@@ -370,13 +358,12 @@ const modifyFeatureHandlersInternal = {
  * @param featureType 수정할 피처의 타입
  */
 export const modifyFeatureEventHandlers = (
-    featureType: keyof typeof modifyFeatureHandlersInternal
+    featureType: keyof typeof modifyFeatureHandlersInternal | string
 ) => {
     if (!featureType) {
         console.warn("`featureType` 인자는 필수입니다.");
         return;
     }
-
     const handler = modifyFeatureHandlersInternal[featureType];
     if (!handler) {
         console.warn("등록되지 않은 featureType:", featureType);

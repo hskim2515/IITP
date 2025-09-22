@@ -1,7 +1,7 @@
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import { Feature } from "ol";
-import { Circle as CircleStyle, Fill, RegularShape, Stroke, Style } from "ol/style";
+import { Circle as CircleStyle, Fill, Stroke, Style } from "ol/style";
 import { LineString, Point, Polygon } from "ol/geom";
 import { fromLonLat } from "ol/proj";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
@@ -60,7 +60,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                     console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
                     this.load(); // 데이터가 변경되면 레이어를 다시 로드합니다.
                 },
-                { equalityFn: (a:Network, b:Network) => Object.keys(diff(a, b)).length === 0  }
+                { equalityFn: (a:Network, b:Network) => diff(a, b) === undefined}
             );
         }
     }
@@ -77,7 +77,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         // LINK (polygon)
         if (geom instanceof Polygon && featureType === "link") {
             styles.push(new Style({
-                fill: new Fill({ color: "#000000" }),
+                fill: new Fill({ color: "rgb(255,255,255,0.7)" }),
                 zIndex
             }));
         }
@@ -85,7 +85,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         // LINK-EDIT (center line)
         if (geom instanceof LineString && featureType === "link-edit") {
             styles.push(new Style({
-                stroke: new Stroke({ color: "#ffea00", width: Math.min(3, 0.5 / res) }),
+                stroke: new Stroke({ color: "rgba(200,0,0,0.75)", width: Math.min(2, 0.3 / res) }),
                 zIndex
             }));
         }
@@ -93,8 +93,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
         // LANE (polygon)
         if (geom instanceof Polygon && featureType === "lane") {
             styles.push(new Style({
-                fill: new Fill({ color: "#7f7f7f" }),
-                stroke: new Stroke({ color: "#ffffff", width: Math.min(2, 0.5 / res) }),
+                fill: new Fill({ color: "rgb(100,100,100, 0.8)" }),
+                stroke: new Stroke({ color: "rgb(255,255,255,0.7)", width: Math.min(2, 0.5 / res) }),
                 zIndex
             }));
         }
@@ -102,7 +102,6 @@ export default class NetworkFeatureLayer extends VectorLayer {
         // LANE-EDIT (center line)
         if (geom instanceof LineString && featureType === "lane-edit") {
             styles.push(new Style({
-                stroke: new Stroke({ color: "#003cff", width: Math.min(3, 0.5 / res) }),
                 zIndex
             }));
         }
@@ -110,8 +109,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
         // CELL (polygon) — 빨강 분할 폴리곤
         if (geom instanceof Polygon && featureType === "cell") {
             styles.push(new Style({
-                fill: new Fill({ color: "rgba(255,0,0,0.6)" }),
-                stroke: new Stroke({ color: "rgba(153,0,0,0.9)", width: Math.min(2, 0.3 / res) }),
+                fill: new Fill({ color: "rgba(200,0,0,0.75)" }),
+                stroke: new Stroke({ color: "rgba(200,0,0,0.75)", width: Math.min(2, 0.3 / res) }),
                 zIndex
             }));
         }
@@ -146,7 +145,9 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
             const coordinates = geom.getCoordinates();
             if (coordinates.length >= 2) {
-                const [start, end] = [coordinates[coordinates.length - 2], coordinates[coordinates.length - 1]];
+                const start = coordinates[0]
+                const end = coordinates[1]
+
                 const dx = end[0] - start[0];
                 const dy = end[1] - start[1];
                 const len = Math.hypot(dx, dy);
@@ -195,26 +196,34 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 zIndex
             }));
         }
-
         if (geom instanceof Point && featureType === "port") {
-            const portType: "in" | "out" = props.type;
-            const angle: number = props.angle ?? 0; // 사전 계산된 각도 사용
-            const r = NetworkFeatureLayer.PORT_ICON_SCALE / res; // **상/하한 없이 커짐**
+            const portType = props.type; // 피처에 설정된 'in' 또는 'out'
+            const r = NetworkFeatureLayer.PORT_ICON_SCALE / res;
             const strokeW = (0.2 * 0.2) / res;
 
-            const fill = portType === "in" ? "rgba(0,255,255,0.85)" : "rgba(255,0,255,0.85)";
-            const stroke = portType === "in" ? "rgba(0,128,128,1)" : "rgba(128,0,128,1)";
+            // 'out' 타입일 경우: 크고, zIndex가 낮은 원 (아래쪽)
+            if (portType === "out") {
+                const outFill = "rgba(0,200,200,0.5)";
+                styles.push(new Style({
+                    image: new CircleStyle({
+                        radius: r * 0.75,
+                        fill: new Fill({ color: outFill }),
+                    }),
+                    zIndex: zIndex + 1 // 예: 160
+                }));
+            }
+            // 'in' 타입일 경우: 작고, zIndex가 높은 원 (위쪽)
+            else if (portType === "in") {
+                const inFill = "rgba(200,0,200,0.5)";
 
-            styles.push(new Style({
-                image: new RegularShape({
-                    points: 3,
-                    radius: r,
-                    angle, // 방향성
-                    fill: new Fill({ color: fill }),
-                    stroke: new Stroke({ color: stroke, width: strokeW }),
-                }),
-                zIndex
-            }));
+                styles.push(new Style({
+                    image: new CircleStyle({
+                        radius: r,
+                        fill: new Fill({ color: inFill }),
+                    }),
+                    zIndex: zIndex
+                }));
+            }
         }
 
         return styles;
@@ -330,7 +339,6 @@ export default class NetworkFeatureLayer extends VectorLayer {
         try {
             const network: Network | undefined = store.getState().currentJsonData;
             if (!network) return;
-            console.log("network:::", network)
             const nodes = network.nodes ?? [];
             const links = network.links ?? [];
 
@@ -345,9 +353,11 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
                 linkMap.set(link.id, link);
 
+                if(!link.coordinates || !link.coordinates[0] || !link.coordinates[1]) continue
                 const p1 = fromLonLat([link.coordinates[0].lng, link.coordinates[0].lat]);
                 const p2 = fromLonLat([link.coordinates[1].lng, link.coordinates[1].lat]);
 
+                if(!p1 || !p2 || !p1[0] || !p1[1] || !p2[0] || !p2[1]) continue
                 const dx = p2[0] - p1[0];
                 const dy = p2[1] - p1[1];
                 const len = Math.hypot(dx, dy);
@@ -359,28 +369,37 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 featureBuffer.push(linkLineFeature);
 
                 const half = (link.width ?? 0) / 2;
-                const left = [p1, p2].map(([x, y]) => [x - unitNormal[0] * half, y - unitNormal[1] * half]);
-                const right = [p2, p1].map(([x, y]) => [x + unitNormal[0] * half, y + unitNormal[1] * half]);
-                const linkPolygon = new Polygon([[...left, ...right, left[0] as Coordinate]]);
+                const left = [p1, p2].map(([x, y]) => {
+                    if(!x || !y) return;
+                    return [x - unitNormal[0] * half, y - unitNormal[1] * half]
+                });
+                const right = [p2, p1].map(([x, y]) => {
+                    if(!x || !y) return;
+                    return [x + unitNormal[0] * half, y + unitNormal[1] * half]
+                });
+
+                const linkPolygon = new Polygon([[...left, ...right, left[0]]]);
                 const linkPolygonFeature = new Feature(linkPolygon);
                 linkPolygonFeature.setProperties({ ...link, featureType: "link" });
                 featureBuffer.push(linkPolygonFeature);
 
-                const laneCount = link.lanes?.length ?? 2;
-                const laneWidth = (link.width && laneCount > 0) ? link.width / laneCount : 3.5;
+                const laneCount = link.lanes?.length;
+                const laneWidth = link.width / laneCount
 
                 for (let i = 0; i < laneCount; i++) {
                     const lane = link.lanes[i];
+                    if(!lane) continue;
                     const offsetCenter = ((laneCount - 1) / 2 - i) * laneWidth;
 
-                    const centerP1: Coordinate = [p1[0] + unitNormal[0] * offsetCenter, p1[1] + unitNormal[1] * offsetCenter];
-                    const centerP2: Coordinate = [p2[0] + unitNormal[0] * offsetCenter, p2[1] + unitNormal[1] * offsetCenter];
+
+                    const centerP1 = [p1[0] + unitNormal[0] * offsetCenter, p1[1] + unitNormal[1] * offsetCenter];
+                    const centerP2 = [p2[0] + unitNormal[0] * offsetCenter, p2[1] + unitNormal[1] * offsetCenter];
 
                     const halfWidth = laneWidth / 2;
-                    const outerP1: Coordinate = [centerP1[0] + unitNormal[0] * halfWidth, centerP1[1] + unitNormal[1] * halfWidth];
-                    const outerP2: Coordinate = [centerP2[0] + unitNormal[0] * halfWidth, centerP2[1] + unitNormal[1] * halfWidth];
-                    const innerP1: Coordinate = [centerP1[0] - unitNormal[0] * halfWidth, centerP1[1] - unitNormal[1] * halfWidth];
-                    const innerP2: Coordinate = [centerP2[0] - unitNormal[0] * halfWidth, centerP2[1] - unitNormal[1] * halfWidth];
+                    const outerP1 = [centerP1[0] + unitNormal[0] * halfWidth, centerP1[1] + unitNormal[1] * halfWidth];
+                    const outerP2 = [centerP2[0] + unitNormal[0] * halfWidth, centerP2[1] + unitNormal[1] * halfWidth];
+                    const innerP1 = [centerP1[0] - unitNormal[0] * halfWidth, centerP1[1] - unitNormal[1] * halfWidth];
+                    const innerP2 = [centerP2[0] - unitNormal[0] * halfWidth, centerP2[1] - unitNormal[1] * halfWidth];
 
                     const laneProps = {
                         ...lane,
@@ -500,11 +519,11 @@ export default class NetworkFeatureLayer extends VectorLayer {
                         } else {
                             const fromLinkP1 = fromLonLat([fromLink.coordinates[0].lng, fromLink.coordinates[0].lat]);
                             const fromLinkP2 = fromLonLat([fromLink.coordinates[1].lng, fromLink.coordinates[1].lat]);
-                            const fromVector: Coordinate = [fromLinkP2[0] - fromLinkP1[0], fromLinkP2[1] - fromLinkP1[1]];
+                            const fromVector = [fromLinkP2[0] - fromLinkP1[0], fromLinkP2[1] - fromLinkP1[1]];
 
                             const toLinkP1 = fromLonLat([toLink.coordinates[0].lng, toLink.coordinates[0].lat]);
                             const toLinkP2 = fromLonLat([toLink.coordinates[1].lng, toLink.coordinates[1].lat]);
-                            const toVector: Coordinate = [toLinkP2[0] - toLinkP1[0], toLinkP2[1] - toLinkP1[1]];
+                            const toVector = [toLinkP2[0] - toLinkP1[0], toLinkP2[1] - toLinkP1[1]];
 
                             const triangleVertices = getTriangleConnectionPoints(fromPt, toPt, fromVector, toVector);
                             if (triangleVertices) {
@@ -534,31 +553,10 @@ export default class NetworkFeatureLayer extends VectorLayer {
                     const link = links.find((l) => l.id == port.linkId);
                     if (!link) continue;
 
-                    const sourceNode = nodes.find((n) => n.id == link.fromNode);
-                    const targetNode = nodes.find((n) => n.id == link.toNode);
-                    if (!sourceNode || !targetNode) continue;
-
-                    const source = fromLonLat([sourceNode.coordinates.lng, sourceNode.coordinates.lat]);
-                    const target = fromLonLat([targetNode.coordinates.lng, targetNode.coordinates.lat]);
-
-                    const dx = target[0] - source[0];
-                    const dy = target[1] - source[1];
-                    const len = Math.hypot(dx, dy) || 1;
-                    const ux = dx / len;
-                    const uy = dy / len;
-
-                    let angle = Math.atan2(uy, ux); // radians
-                    if (port.type === "out") {
-                        angle += Math.PI;
-                    }
-
-                    const position = port.type === "in" ? source : target;
-
                     const portFeature = new Feature({
                         ...port,
-                        geometry: new Point(position),
+                        geometry: new Point(nodePt),
                         featureType: "port",
-                        angle, // 스타일에서 회전 사용
                     });
                     featureBuffer.push(portFeature);
                 }
@@ -579,22 +577,12 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const rightEnd = ring[2];
         const rightStart = ring[3];
 
-        const midStart: Coordinate = [(leftStart[0] + rightStart[0]) / 2, (leftStart[1] + rightStart[1]) / 2];
-        const midEnd: Coordinate = [(leftEnd[0] + rightEnd[0]) / 2, (leftEnd[1] + rightEnd[1]) / 2];
+        const midStart = [(leftStart[0] + rightStart[0]) / 2, (leftStart[1] + rightStart[1]) / 2];
+        const midEnd = [(leftEnd[0] + rightEnd[0]) / 2, (leftEnd[1] + rightEnd[1]) / 2];
 
         const dx = midEnd[0] - midStart[0];
         const dy = midEnd[1] - midStart[1];
         return Math.hypot(dx, dy);
-    }
-
-    public getSnapLayerKey(): string {
-        return "network";
-    }
-    public getSnapFeatureType(): string {
-        return "link-edit";
-    }
-    public getConnectionFeatureType(): string {
-        return "connection-edit";
     }
 
     public dispose(): void {

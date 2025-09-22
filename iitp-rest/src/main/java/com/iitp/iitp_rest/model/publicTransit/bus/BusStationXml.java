@@ -1,7 +1,5 @@
 package com.iitp.iitp_rest.model.publicTransit.bus;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.iitp.iitp_rest.model.geometry.Coordinates;
 import com.iitp.iitp_rest.model.publicTransit.StationType;
 import com.iitp.iitp_rest.model.publicTransit.StationTypeAdapter;
 import com.iitp.iitp_rest.model.publicTransit.TransitMode;
@@ -9,8 +7,6 @@ import com.iitp.iitp_rest.model.publicTransit.TransitModeAdapter;
 import jakarta.xml.bind.annotation.*;
 import jakarta.xml.bind.annotation.adapters.XmlJavaTypeAdapter;
 import lombok.Data;
-
-import java.util.List;
 
 @Data
 @XmlAccessorType(XmlAccessType.NONE)
@@ -33,10 +29,7 @@ public class BusStationXml {
     private String parkingLots;
     @XmlAttribute
     private String center;
-    @XmlElement(name = "line")
-    @JsonIgnore
-    private BusLineXml line;
-
+//    @XmlElement(name = "line")
     @XmlTransient
-    private Coordinates coordinates;
+    private BusLineXml line;
 }

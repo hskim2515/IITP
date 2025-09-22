@@ -1,5 +1,4 @@
 import React, { useCallback, memo } from 'react';
-import type { Field, SchemaColumn } from "@type/Schema";
 import {
     TextEditor,
     NumberEditor,
@@ -10,12 +9,13 @@ import {
 } from './CellEditors';
 import { useMessageStore } from "@stores/useMessageStore";
 import { useEditableCellLogic } from "@hooks/useEditableCellLogic";
+import { LayerSchemaFieldResponse, SchemaColumn } from "@type/openapi.gen";
 
 interface EditableCellProps {
-    field: Field;
+    field: LayerSchemaFieldResponse;
     column: SchemaColumn;
     value: any;
-    onUpdate: (updates: Partial<Field>) => void;
+    onUpdate: (updates: Partial<LayerSchemaFieldResponse>) => void;
 }
 
 export const EditableCell = memo<EditableCellProps>(function EditableCell({
@@ -25,7 +25,8 @@ export const EditableCell = memo<EditableCellProps>(function EditableCell({
                                                                               onUpdate
                                                                           }) {
     const setMessage = useMessageStore.getState().setMessage;
-    const dataKey = column.configKey as keyof Field;
+
+    const dataKey = column.configKey as keyof LayerSchemaFieldResponse;
 
     const isOptionsColumn =
         (column.configKey as string) === 'options' || column.inputType === 'tags';

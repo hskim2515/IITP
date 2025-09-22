@@ -1,6 +1,5 @@
 package com.iitp.iitp_rest.model.publicTransit.bus;
 
-import com.iitp.iitp_rest.model.geometry.Coordinates;
 import com.iitp.iitp_rest.model.publicTransit.StationType;
 import com.iitp.iitp_rest.model.publicTransit.TransitMode;
 import lombok.Data;
@@ -11,11 +10,11 @@ public class BusStationResponse {
 
     private TransitMode transitMode;
 
-    private Integer linkRef;
+    private Long linkRef;
 
-    private Integer laneRef;
+    private Long laneRef;
 
-    private Double pos;
+    private Double offset;
 
     private StationType type;
 
@@ -26,6 +25,4 @@ public class BusStationResponse {
     private String center;
 
     private BusLineResponse line;
-
-    private Coordinates coordinates;
 }

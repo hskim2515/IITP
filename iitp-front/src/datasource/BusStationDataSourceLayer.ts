@@ -1,7 +1,8 @@
-import { Cartesian3, Color, Entity, GeoJsonDataSource, Viewer } from "cesium";
+import { Color, Entity, GeoJsonDataSource, HeightReference, Viewer } from "cesium";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
-import { BusPublicStationResponse, BusStationData, FEATURE_TYPE, TRANSIT_MODE } from "@type/Station";
-import { diff } from "deep-object-diff";
+import { BusPublicStationResponse, BusStationData } from "@type/Station";
+import { diff } from 'deep-diff';
+import { computePositionAtOffsetCesium } from "@utils/offset";
 
 export default class BusStationDataSourceLayer {
     private readonly LAYER_NAME = "busStation";
@@ -21,7 +22,9 @@ export default class BusStationDataSourceLayer {
                     console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
                     this.load();
                 },
-                {equalityFn: (a: BusPublicStationResponse, b: BusPublicStationResponse) => Object.keys(diff(a, b)).length === 0}
+                {
+                    equalityFn: (a: BusPublicStationResponse, b: BusPublicStationResponse) => diff(a, b) === undefined
+                }
             );
         }
     }
@@ -40,26 +43,36 @@ export default class BusStationDataSourceLayer {
                 return;
             }
 
+            const networkDataSource = this.viewer.dataSources.getByName("network")[0];
+            if (!networkDataSource) return;
             busStations.forEach((data) => {
                 const props: BusStationData = {
                     ...data
                 };
-                const coord = data.coordinates;
 
-                if (!coord || coord.lng == null || coord.lat == null) return;
+                const laneEntity = networkDataSource.entities.values.find(
+                    (e) =>
+                        e.properties?.featureType == "lanes" &&
+                        e.properties?.linkRef == data.linkRef &&
+                        e.properties?.id == data.laneRef
+                );
 
-                const position = Cartesian3.fromDegrees(coord.lng, coord.lat);
+                const laneSource = laneEntity?.properties?.laneSource.getValue()
+                const laneTarget = laneEntity?.properties?.laneTarget.getValue()
+
+                const {offsetPosition} = computePositionAtOffsetCesium(laneSource, laneTarget, data.offset)
+
 
                 this.dataSource.entities.add(
                     new Entity({
                         id: data.__guid,
-                        position,
+                        position: offsetPosition,
                         point: {
                             pixelSize: 6,
                             color: Color.RED,
                             outlineWidth: 1,
                             outlineColor: Color.TRANSPARENT,
-                            heightReference: 1,
+                            heightReference: HeightReference.CLAMP_TO_GROUND,
                         },
                         properties: props,
                     })
@@ -70,6 +83,7 @@ export default class BusStationDataSourceLayer {
         } catch (error) {
             console.error("BusStationDataSourceLayer.load() 중 에러 발생:", error);
         } finally {
+            console.log("this.dataSource.entities:::", this.dataSource.entities)
             this.dataSource.entities.resumeEvents();
         }
     }
