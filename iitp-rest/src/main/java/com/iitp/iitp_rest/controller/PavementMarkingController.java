@@ -1,5 +1,10 @@
 package com.iitp.iitp_rest.controller;
+import com.iitp.iitp_rest.model.BaseVersion;
 import com.iitp.iitp_rest.model.pavementMarking.*;
+import com.iitp.iitp_rest.model.signal.SignalNodeResponseData;
+import com.iitp.iitp_rest.model.signal.SignalResponse;
+import com.iitp.iitp_rest.model.signal.SignalVersion;
+import com.iitp.iitp_rest.repository.PavementMarkingVersionsRepository;
 import com.iitp.iitp_rest.service.pavementMarking.PavementMarkingService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,21 +19,35 @@ import java.util.*;
 public class PavementMarkingController {
     private final Logger logger = LoggerFactory.getLogger(this.getClass());
     private final PavementMarkingService pavementMarkingService;
+    private final PavementMarkingVersionsRepository pavementMarkingVersionsRepository;
 
-    public PavementMarkingController(PavementMarkingService pavementMarkingService) {
+    public PavementMarkingController(PavementMarkingService pavementMarkingService, PavementMarkingVersionsRepository pavementMarkingVersionsRepository) {
         this.pavementMarkingService = pavementMarkingService;
+        this.pavementMarkingVersionsRepository = pavementMarkingVersionsRepository;
     }
 
     @GetMapping("/{versionId}")
-    public ResponseEntity<RoadAssetData> getPavementMarkingByVersion(@PathVariable String versionId) {
-        logger.info("[getPavementMarkingByVersion] versionId: {}", versionId);
-        RoadAssetData result = new RoadAssetData();
-        PavementMarkingVersion pavementMarking = pavementMarkingService.getPavementMarking(versionId);
-        logger.info("[getPavementMarkingByVersion] pavementMarking.getData(): {}", pavementMarking.getData());
-        result.setPavementMarkings(pavementMarking.getData());
-        return ResponseEntity.ok(result);
-    }
+    public ResponseEntity<RoadAssetData> getPavementMarking(@PathVariable String versionId) {
+        try {
+            RoadAssetData result = new RoadAssetData();
 
+            Optional<PavementMarkingVersion> pavementMarkingVersionOpt = pavementMarkingVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST);
+            List<PavementMarkingData> pavementMarkingData;
+
+            if (pavementMarkingVersionOpt.isPresent()) {
+                PavementMarkingVersion pavementMarkingVersion = pavementMarkingService.getDataFromDatabase(versionId);
+                result.setPavementMarkings(pavementMarkingVersion.getData());
+            } else {
+                pavementMarkingData = pavementMarkingService.getDataFromXml(versionId);
+                result.setPavementMarkings(pavementMarkingData);
+            }
+            return ResponseEntity.ok(result);
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
     @GetMapping("/histories/{versionId}")
     public ResponseEntity<List<PavementMarkingLogs>> getLogsByVersion(@PathVariable String versionId) {
         logger.info("[getLogsByVersion] versionId: {}", versionId);
