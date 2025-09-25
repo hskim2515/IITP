@@ -6,7 +6,7 @@ export function MessagePopup() {
     const clearMessage = useMessageStore((state) => state.clearMessage);
 
     useEffect(() => {
-        if (!message) return;
+        if (!message || message.type === 'confirm') return;
 
         const timer = setTimeout(() => {
             clearMessage();
@@ -17,6 +17,33 @@ export function MessagePopup() {
 
     if (!message) return null;
 
+    if (message.type === 'confirm') {
+        return (
+            <div className={`messagePopup ${message.type}`}>
+                <p>{message.text}</p>
+                <div className="buttons">
+                    <button
+                        onClick={() => {
+                            message.onConfirm();
+                            clearMessage();
+                        }}
+                    >
+                        확인
+                    </button>
+                    <button
+                        onClick={() => {
+                            message.onCancel?.();
+                            clearMessage();
+                        }}
+                    >
+                        취소
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    // info/warn/error
     return (
         <div className={`messagePopup ${message.type}`}>
             {message.text}

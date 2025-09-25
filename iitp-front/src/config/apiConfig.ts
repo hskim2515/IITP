@@ -24,7 +24,6 @@ export const apiConfig:ApiConfig = {
         detail:  { url: '/vehicle-models/{id}',  method: 'GET', useFormData: false },
         create:  { url: '/vehicle-models',       method: 'POST', useFormData: true },
         update:  { url: '/vehicle-models/{id}',  method: 'PUT', useFormData: true  },
-        //delete:  { url: '/vehicle-models/{id}',  method: 'DELETE' },
         delete:  { url: '/vehicle-models/delete',  method: 'POST', useFormData: false },
     },
     BUS_STATION: {

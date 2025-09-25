@@ -354,4 +354,39 @@ body {
   background-color: #dc3545;
 }
 
+.messagePopup.confirm {
+  background-color: #ffffff;
+  color: #000;
+}
+.messagePopup.confirm .buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* confirm type*/
+.messagePopup.confirm .buttons button {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+/* 확인 버튼 */
+.messagePopup.confirm .buttons button:nth-child(1) {
+  background-color: #007bff;
+  color: white;
+}
+.messagePopup.confirm .buttons button:nth-child(1):hover {
+  background-color: #0056b3;
+}
+/* 취소 버튼 */
+.messagePopup.confirm .buttons button:nth-child(2) {
+  background-color: #6c757d;
+  color: white;
+}
+.messagePopup.confirm .buttons button:nth-child(2):hover {
+  background-color: #5a6268;
+}
 

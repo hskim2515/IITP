@@ -13,6 +13,8 @@ import { MessagePopup } from "@component/message/MessagePopup";
 import { useSchemaStore } from "@stores/useSchemaStore";
 import SchemaSetting from "@component/schema/SchemaSetting";
 import ScenarioSelector from "@component/scenario/ScenarioSelector";
+import PropertyForm, {PropertyPopup} from "@component/popup/PropertyPopup";
+import {propertyFormSchema} from "@schema/propertyFormSchema";
 
 function App() {
 
@@ -68,16 +70,33 @@ function App() {
                 <ToolsPanel/>
                 <PropertyModal/>
                 {activeDropdownMenu && activeSubmenu && (
-                    activeDropdownMenu.menuCode === 'SCHEMA_SETTING'
-                        ? <SchemaSetting
+                    activeDropdownMenu.menuCode === 'SCHEMA_SETTING' ? (
+                        <SchemaSetting
                             activeSubmenu={activeSubmenu}
                             onClose={() => setActiveSubmenu(null)}
                         />
-                        : <PropertyPanel
+                    ) : activeSubmenu.menuCode === 'VEHICLE_TYPE' ? (
+                        <PropertyForm
+                            activePopupMenu={activeSubmenu}
+                            open={true}
+                            config={propertyFormSchema['VEHICLE_TYPE']}
+                            onClose={() => setActiveSubmenu(null)}
+                        />
+                    ) : activeSubmenu.menuCode === 'VEHICLE_MODEL' ? (
+                        <PropertyForm
+                            activePopupMenu={activeSubmenu}
+                            open={true}
+                            config={propertyFormSchema['VEHICLE_MODEL']}
+                            onClose={() => setActiveSubmenu(null)}
+                        />
+                    ) : (
+                        <PropertyPanel
                             activeSubmenu={activeSubmenu}
                             onClose={() => setActiveSubmenu(null)}
                         />
+                    )
                 )}
+
             </div>
         </>
     )
