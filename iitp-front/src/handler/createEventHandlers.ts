@@ -158,7 +158,7 @@ const featureTypeHandlersInternal = {
             const laneFeature = pickFromOpenLayers(
                 olMap,
                 pixel,
-                (feature) => feature.get('featureType')===('lane')
+                (feature) => feature.get('featureType')===('lanes')
             );
 
             if (!laneFeature) {
@@ -347,7 +347,11 @@ const featureTypeHandlersInternal = {
             return;
         }
 
-        const processAndStoreExit = (linkRef: string | number, offset: number, coordinates: Coordinates) => {
+        const processAndStoreExit = (
+            linkRef: string | number,
+            offset: number,
+            coordinates: Coordinates
+        ) => {
             const {updateCurrentJsonData} = useRailStationStore.getState();
             const newExit: RailStationExitData = {...record, linkRef, offset, coordinates} as RailStationExitData;
             updateCurrentJsonData(newExit, useRailStationHistoryStore);
@@ -373,7 +377,7 @@ const featureTypeHandlersInternal = {
             const linkFeature = pickFromOpenLayers(
                 olMap,
                 pixel,
-                (feature) => feature.get('featureType')?.startsWith('link')
+                (feature) => feature.get('featureType')===('links')
             );
             if (!linkFeature) {
                 setMessage({type: "warn", text: "정류장은 링크 위에만 추가할 수 있습니다."});

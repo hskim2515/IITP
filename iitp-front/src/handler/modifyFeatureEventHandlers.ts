@@ -83,7 +83,7 @@ const modifyFeatureHandlersInternal = {
             const laneFeature = pickFromOpenLayers(
                 olMap,
                 pixel,
-                (feature) => feature.get('featureType')=='lane'
+                (feature) => feature.get('featureType')=='lanes'
             );
 
             if (!laneFeature) {
@@ -115,7 +115,6 @@ const modifyFeatureHandlersInternal = {
 
         const olModifyHandler = (e: ModifyEvent) => {
             olModifyend(e);
-
         }
         const cleanup = () => {
             try {
@@ -279,9 +278,7 @@ const modifyFeatureHandlersInternal = {
             if (!olMap) return;
 
             const modified = e.features.item(0);
-            console.log("modified:::", modified)
             const {geometry, ...record} = modified.getProperties();
-            console.log("modified properties:::", record)
 
             const geom = modified.getGeometry()
             if (!(geom instanceof Point)) {
@@ -293,7 +290,7 @@ const modifyFeatureHandlersInternal = {
             const linkFeature = pickFromOpenLayers(
                 olMap,
                 pixel,
-                (feature) => feature.get('featureType') === 'link'
+                (feature) => feature.get('featureType') === 'links'
             );
             if (!linkFeature) {
                 setMessage({type: "warn", text: "출구는 link 위에만 위치할 수 있습니다."});

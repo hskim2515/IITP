@@ -1,7 +1,7 @@
 import { Color, Entity, GeoJsonDataSource, HeightReference, Viewer } from "cesium";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { BusPublicStationResponse, BusStationData } from "@type/Station";
-import { diff } from 'deep-diff';
+import { diff } from "deep-object-diff";
 import { computePositionAtOffsetCesium } from "@utils/offset";
 
 export default class BusStationDataSourceLayer {
@@ -37,35 +37,32 @@ export default class BusStationDataSourceLayer {
 
             const store = layerNameToStoreMap[this.LAYER_NAME];
             const busStations: BusStationData[] = store.getState().currentJsonData?.busStations;
-
+            const networkDataSource = this.viewer.dataSources.getByName("network")[0];
+            if (!networkDataSource) return;
             if (!busStations) {
                 console.log("[BusStationDataSourceLayer] No bus stations data to load.");
                 return;
             }
 
-            const networkDataSource = this.viewer.dataSources.getByName("network")[0];
-            if (!networkDataSource) return;
-            busStations.forEach((data) => {
+            busStations.forEach((busStation) => {
                 const props: BusStationData = {
-                    ...data
+                    ...busStation
                 };
 
                 const laneEntity = networkDataSource.entities.values.find(
                     (e) =>
                         e.properties?.featureType == "lanes" &&
-                        e.properties?.linkRef == data.linkRef &&
-                        e.properties?.id == data.laneRef
+                        e.properties?.linkRef == busStation.linkRef &&
+                        e.properties?.id == busStation.laneRef
                 );
 
                 const laneSource = laneEntity?.properties?.laneSource.getValue()
                 const laneTarget = laneEntity?.properties?.laneTarget.getValue()
 
-                const {offsetPosition} = computePositionAtOffsetCesium(laneSource, laneTarget, data.offset)
-
+                const {offsetPosition} = computePositionAtOffsetCesium(laneSource, laneTarget, busStation.offset)
 
                 this.dataSource.entities.add(
                     new Entity({
-                        id: data.__guid,
                         position: offsetPosition,
                         point: {
                             pixelSize: 6,

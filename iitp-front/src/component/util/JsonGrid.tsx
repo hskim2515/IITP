@@ -208,7 +208,7 @@ const JsonGrid = ({
         [setSelectedGuid]
     );
 
-    const handleAddBtn = useCallback(() => {
+    const handleAddBtn = () => {
         const targetFeatureType = levelName;
         if (!targetFeatureType) {
             setMessage({type: "error", text: "새 레코드를 추가할 FeatureType을 알 수 없습니다."});
@@ -238,7 +238,7 @@ const JsonGrid = ({
         return () => {
             if (cleanup) cleanup()
         }
-    }, [levelName, parentGuid, layerName, setMessage]);
+    };
 
     const handleDeleteBtn = useCallback(() => {
         if (!selectedGuid || selectedGuid.length === 0) {

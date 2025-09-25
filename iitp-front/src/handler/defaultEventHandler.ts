@@ -4,20 +4,16 @@ import {usePropertyStore} from "@stores/usePropertyStore";
 import {useSelectionStore} from "@stores/useSelectionStore";
 import {useCesiumStore} from "@stores/useCesiumStore";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
-import {useRef} from "react";
 import Feature, {FeatureLike} from "ol/Feature";
 import {Layer} from "ol/layer";
 import {isVectorLayer, matchesCustomKeyValue} from "@utils/olLayer";
 import {isFeature} from "@utils/feature";
-import {StyleFunction, StyleLike} from "ol/style/Style";
+import {StyleFunction} from "ol/style/Style";
 import { Icon, RegularShape, Style } from "ol/style";
 import CircleStyle from "ol/style/Circle";
 import {useEventStore} from "@stores/useEventStore";
 import {propertyFormSchema} from "@schema/propertyFormSchema";
 import {useMenuStore} from "@stores/useMenuStore";
-import {getSignalGuid} from "@utils/signal";
-import {FEATURE_TYPE} from "@type/Signal";
-import {useLayerStore} from "@stores/useLayerStore";
 
 
 const selectedGuid = useSelectionStore.getState().selectedGuid;
@@ -57,9 +53,13 @@ export const defaultEventHandlers ={
                 props.height = height; // 높이도 함께 포함
             }
             const propBag = picked.id.properties;
-            propBag.propertyNames.forEach((key: string) => {
-                props[key] = propBag[key].getValue(Cesium.JulianDate.now());
-            });
+            const time = Cesium.JulianDate.now();
+            const flat = propBag.getValue(time) ?? {};
+            Object.assign(props, flat);
+
+            // propBag.propertyNames.forEach((key: string) => {
+            //     props[key] = propBag[key].getValue(Cesium.JulianDate.now());
+            // });
             setSelectedProps(props);
 
             setSelectedGuid([props.__guid])

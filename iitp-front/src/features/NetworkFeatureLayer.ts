@@ -28,16 +28,16 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
     // zIndex 맵
     private zIndexMap: Record<string, number> = {
-        "link": 10,
+        "links": 10,
         "link-edit": 110,
-        "lane": 20,
+        "lanes": 20,
         "lane-edit": 120,
-        "cell": 25,
-        "segment": 26,
-        "connection": 30,
+        "cells": 25,
+        "segments": 26,
+        "connections": 30,
         "connection-edit": 130,
-        "port": 160,
-        "node": 200,
+        "ports": 160,
+        "nodes": 200,
     };
 
     constructor() {
@@ -75,7 +75,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const res = Math.max(resolution, NetworkFeatureLayer.EPS);
 
         // LINK (polygon)
-        if (geom instanceof Polygon && featureType === "link") {
+        if (geom instanceof Polygon && featureType === "links") {
             styles.push(new Style({
                 fill: new Fill({ color: "rgb(255,255,255,0.7)" }),
                 zIndex
@@ -91,7 +91,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         }
 
         // LANE (polygon)
-        if (geom instanceof Polygon && featureType === "lane") {
+        if (geom instanceof Polygon && featureType === "lanes") {
             styles.push(new Style({
                 fill: new Fill({ color: "rgb(100,100,100, 0.8)" }),
                 stroke: new Stroke({ color: "rgb(255,255,255,0.7)", width: Math.min(2, 0.5 / res) }),
@@ -107,7 +107,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         }
 
         // CELL (polygon) — 빨강 분할 폴리곤
-        if (geom instanceof Polygon && featureType === "cell") {
+        if (geom instanceof Polygon && featureType === "cells") {
             styles.push(new Style({
                 fill: new Fill({ color: "rgba(200,0,0,0.75)" }),
                 stroke: new Stroke({ color: "rgba(200,0,0,0.75)", width: Math.min(2, 0.3 / res) }),
@@ -116,7 +116,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         }
 
         // SEGMENT (polygon)
-        if (geom instanceof Polygon && featureType === "segment") {
+        if (geom instanceof Polygon && featureType === "segments") {
             const isBlocked = !!props.block;
             const fillColor = isBlocked ? "rgba(255,255,0,0.8)" : "rgba(0,0,255,0.5)";
             const strokeColor = isBlocked ? "rgba(128,128,0,0.9)" : "rgba(0,0,128,0.9)";
@@ -128,7 +128,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         }
 
         // CONNECTION (polygon shading)
-        if (geom instanceof Polygon && featureType === "connection") {
+        if (geom instanceof Polygon && featureType === "connections") {
             styles.push(new Style({
                 fill: new Fill({ color: "rgba(0,0,0,0.3)" }),
                 zIndex
@@ -183,7 +183,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
             }
         }
 
-        if (geom instanceof Point && featureType === "node") {
+        if (geom instanceof Point && featureType === "nodes") {
             const radius = NetworkFeatureLayer.NODE_RADIUS_SCALE / res;  // 무제한 확대
             const strokeWidth = NetworkFeatureLayer.NODE_STROKE_SCALE / res;
             styles.push(new Style({
@@ -195,7 +195,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 zIndex
             }));
         }
-        if (geom instanceof Point && featureType === "port") {
+        if (geom instanceof Point && featureType === "ports") {
             const portType = props.type; // 피처에 설정된 'in' 또는 'out'
             const r = NetworkFeatureLayer.PORT_ICON_SCALE / res;
             const strokeW = (0.2 * 0.2) / res;
@@ -377,7 +377,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
                 const linkPolygon = new Polygon([[...left, ...right, left[0]]]);
                 const linkPolygonFeature = new Feature(linkPolygon);
-                linkPolygonFeature.setProperties({ ...link, featureType: "link" });
+                linkPolygonFeature.setProperties({ ...link, featureType: "links" });
                 featureBuffer.push(linkPolygonFeature);
 
                 const laneCount = link.lanes?.length;
@@ -401,7 +401,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                     const laneProps = {
                         ...lane,
                         linkRef: link.id,
-                        featureType: "lane",
+                        featureType: "lanes",
                         length: link.length,
                         laneRef: i,
                         laneSource: centerP1,
@@ -438,7 +438,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                                 const cellFeature = new Feature(new Polygon([ring]));
                                 cellFeature.setProperties({
                                     ...cell,
-                                    featureType: "cell",
+                                    featureType: "cells",
                                     linkRef: link.id,
                                     laneRef: i,
                                     offset: startOffset + unitLen * idx,
@@ -470,7 +470,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                             const segmentFeature = new Feature(new Polygon([ring]));
                             segmentFeature.setProperties({
                                 ...segment,
-                                featureType: "segment",
+                                featureType: "segments",
                                 linkRef: link.id,
                                 laneRef: i,
                                 offset,
@@ -487,7 +487,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
                 const point = new Point(nodePt);
                 const nodeFeature = new Feature(point);
-                nodeFeature.setProperties({ ...node, featureType: "node" });
+                nodeFeature.setProperties({ ...node, featureType: "nodes" });
                 featureBuffer.push(nodeFeature);
 
                 if (!node.connections) continue;
@@ -553,7 +553,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                     const portFeature = new Feature({
                         ...port,
                         geometry: new Point(nodePt),
-                        featureType: "port",
+                        featureType: "ports",
                     });
                     featureBuffer.push(portFeature);
                 }

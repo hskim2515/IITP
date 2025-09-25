@@ -39,7 +39,6 @@ export default class RailStationDataSourceLayer {
             if (!networkDataSource) return;
 
             for (const railStation of railStations) {
-
                 const coord = railStation.coordinates;
                 const stationPosition = Cartesian3.fromDegrees(coord.lng, coord.lat);
 

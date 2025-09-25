@@ -52,7 +52,7 @@ export function assignPropertyToResponseData<T extends Record<string, unknown>>(
 }
 
 // 새로운 객체를 그릴 때, guid 부여
-export function generateGuidWithParentGuid<T extends Record<string, unknown>, U extends Record<string, unknown>>(parentGuid: React.Key, data: T, rowData: U) {
+export function generateGuidWithParentGuid<T extends Record<string, unknown>, U extends Record<string, unknown>>(parentGuid: React.Key | null, data: T, rowData: U) {
     const prefix = parentGuid ? parentGuid + "." : "";
     const newIndex = rowData.length
 
