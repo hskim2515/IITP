@@ -141,9 +141,14 @@ const JsonGrid = ({
     const setSelectedGuid = useSelectionStore((s) => s.setSelectedGuid);
     const clearSelected = useSelectionStore((s) => s.clearSelected);
 
+    const [expandedRowKeys, setExpandedRowKeys] = useState<React.Key[]>([]);
+    const lastScrollGuidRef = useRef<string | React.Key | undefined>(undefined);
+    const [topToggled, setTopToggled] = useState<boolean>(false);
+
     useEffect(() => {
         if (depth === 0) {
             clearSelected();
+            setExpandedRowKeys([])
         }
     }, []);
 
@@ -157,32 +162,23 @@ const JsonGrid = ({
     // 현재 레벨의 schema/structure 조회
     const definition = useMemo<SchemaDefinition | null>(() => {
         if (!levelName) return null;
-        const schemaDefinition = getSchemaDefinitionByNames(layerName, levelName)
-        console.log("JsonGrid schemaDefinition:::", schemaDefinition)
-        return schemaDefinition;
-    }, [getSchemaDefinitionByNames, layerName, levelName]);
+        return getSchemaDefinitionByNames(layerName, levelName);
+    }, [layerName, levelName]);
 
     const columnSpec = useMemo<SchemaColumn[] | null>(() => {
         if (!levelName) return null;
-        const schemaColumns = getSchemaColumnSpecByLayerName(layerName)
-        console.log("JsonGrid schemaColumnSpec:::", schemaColumns)
-        return schemaColumns;
-    }, [getSchemaColumnSpecByLayerName, layerName]);
+        return getSchemaColumnSpecByLayerName(layerName);
+    }, [layerName]);
 
     const layerStructure = useMemo<SchemaStructure[] | null>(() => {
-        const structure = getStructureByLayerName(layerName)
-        console.log("JsonGrid structure:::", structure)
-        return structure;
-    }, [getStructureByLayerName, layerName]);
+        return getStructureByLayerName(layerName);
+    }, [layerName]);
 
     const currentStructure = useMemo<SchemaStructure | null>(() => {
-        console.log("JsonGrid build structure:::", getStructureByFeatureType(layerStructure, levelName))
         return getStructureByFeatureType(layerStructure, levelName);
     }, [layerStructure, levelName]);
 
     const childrenStructure = useMemo<string[]>(() => {
-        const childrenStructure = getChildrenStructure(currentStructure)
-        console.log("JsonGrid childrenStructure:::", childrenStructure)
         return getChildrenStructure(currentStructure);
     }, [currentStructure]);
 
@@ -192,14 +188,12 @@ const JsonGrid = ({
             const merged = {...record, ...partial};
             dataStore.getState().updateCurrentJsonData(merged, historyStore);
         },
-        [dataStore, historyStore]
+        [layerName]
     );
 
     // 컬럼 생성 (structure → definition 기반)
     const columns = useMemo<ColumnsType>(() => {
-        const buildColumn = buildColumnsFromDefinition(definition, columnSpec, handleCellUpdate)
-        console.log("JsonGrid buildColumn:::", buildColumn)
-        return buildColumn;
+        return buildColumnsFromDefinition(definition, columnSpec, handleCellUpdate);
     }, [definition, columnSpec, handleCellUpdate]);
 
     // 행 선택
@@ -255,10 +249,8 @@ const JsonGrid = ({
         clearSelected();
     }, [selectedGuid, dataStore, historyStore, clearSelected, setMessage]);
 
-    const [expandedRowKeys, setExpandedRowKeys] = useState<React.Key[]>([]);
-    const lastScrollGuidRef = useRef<string | React.Key | undefined>(undefined);
-
     const scrollToGuid = useCallback(
+
         (targetGuid: string | React.Key | undefined) => {
             if (!targetGuid) return;
 
@@ -293,9 +285,6 @@ const JsonGrid = ({
             scrollToGuid(selectedGuid[0]);
         }
     }, [selectedGuid, scrollToGuid]);
-
-    // 최상단 토글 (옵션)
-    const [topToggled, setTopToggled] = useState<boolean>(true);
 
     return (
         <div style={{paddingLeft: depth * 24}}>
