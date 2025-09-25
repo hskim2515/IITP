@@ -1,6 +1,6 @@
 import Feature from 'ol/Feature'
 import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
-import { UpdateLogEntry, UpdateType } from "@type/HistoryTypes";
+import {UpdateLogEntry, UpdateLogItem, UpdateType} from "@type/HistoryTypes";
 import { Feature as OLFeature } from "ol";
 import { Point } from "ol/geom";
 import {fromLonLat} from "ol/proj";
@@ -46,55 +46,178 @@ function updateFeatureByGuid(obj: any, guid: string, updater: (feature: any) => 
     return false;
 }
 
+// export function mergeJsonWithLogRecursive(
+//     currentJsonData: unknown,
+//     updateLog: UpdateLogEntry,
+//     isUndo: boolean
+// ): any {
+//     const { added, modified, deleted } = updateLog;
+//     if (isUndo) {
+//         // Undo: 삭제 → 다시 추가
+//         deleted?.forEach(change => {
+//             updateFeatureByGuid(currentJsonData, change.guid, feature => {
+//                 feature[change.field!] = change.oldValue;
+//             });
+//         });
+//
+//         // Undo: 수정 → 원래 값으로 복원
+//         modified?.forEach(change => {
+//             updateFeatureByGuid(currentJsonData, change.guid, feature => {
+//                 feature[change.field!] = change.oldValue;
+//             });
+//         });
+//
+//         // Undo: 추가 → 제거
+//         added?.forEach(change => {
+//             updateFeatureByGuid(currentJsonData, change.guid, feature => {
+//                 Object.keys(feature).forEach(k => delete feature[k]);
+//             });
+//         });
+//
+//     } else {
+//         // Redo: 삭제 → 제거
+//         deleted?.forEach(change => {
+//             updateFeatureByGuid(currentJsonData, change.guid, feature => {
+//                 Object.keys(feature).forEach(k => delete feature[k]);
+//             });
+//         });
+//
+//         // Redo: 수정 → 새로운 값 반영
+//         modified?.forEach(change => {
+//             updateFeatureByGuid(currentJsonData, change.guid, feature => {
+//                 feature[change.field!] = change.newValue;
+//             });
+//         });
+//
+//         // Redo: 추가 → 다시 생성
+//         added?.forEach(change => {
+//             updateFeatureByGuid(currentJsonData, change.guid, feature => {
+//                 Object.assign(feature, { id: change.guid, ...change.properties });
+//             });
+//         });
+//     }
+//
+//     return currentJsonData;
+// }
 export function mergeJsonWithLogRecursive(
-    currentJsonData: unknown,
+    currentJsonData: any,
     updateLog: UpdateLogEntry,
     isUndo: boolean
 ): any {
     const { added, modified, deleted } = updateLog;
 
+    // guid로 객체 찾기 (중첩 객체도 탐색)
+    function findByGuid(obj: any, guid: string): any | null {
+        if (Array.isArray(obj)) {
+            for (const item of obj) {
+                const found = findByGuid(item, guid);
+                if (found) return found;
+            }
+        } else if (obj && typeof obj === "object") {
+            if (obj.__guid === guid || obj.id === guid) return obj;
+            for (const val of Object.values(obj)) {
+                const found = findByGuid(val, guid);
+                if (found) return found;
+            }
+        }
+        return null;
+    }
+
+    // 같은 guid + timestamp 기준으로 묶기
+    function groupByGuidAndTimestamp(changes: any[]): any[][] {
+        const map = new Map<string, any[]>();
+        changes.forEach(change => {
+            const key = `${change.guid}|${change.timestamp}`;
+            if (!map.has(key)) map.set(key, []);
+            map.get(key)!.push(change);
+        });
+        return Array.from(map.values());
+    }
+
     if (isUndo) {
         // Undo: 삭제 → 다시 추가
-        deleted?.forEach(change => {
-            updateFeatureByGuid(currentJsonData, change.guid, feature => {
-                feature[change.field!] = change.oldValue;
+        groupByGuidAndTimestamp(deleted || []).forEach(group => {
+            const change = group[0];
+            const parts = change.guid.split(".");
+            const parentGuid = parts.slice(0, -1).join(".");
+            const childKeyWithIndex = parts[parts.length - 1];
+            const [childKey, indexStr] = childKeyWithIndex.split("-");
+            const index = parseInt(indexStr, 10);
+
+            const parentObj = parentGuid ? findByGuid(currentJsonData, parentGuid) : currentJsonData;
+            if (!parentObj) return;
+            if (!Array.isArray(parentObj[childKey])) parentObj[childKey] = [];
+
+            // 삭제된 행 복원
+            const restoredObj: any = {};
+            group.forEach(f => {
+                restoredObj[f.field!] = f.oldValue;
             });
+            parentObj[childKey].splice(index, 0, restoredObj);
         });
 
         // Undo: 수정 → 원래 값으로 복원
         modified?.forEach(change => {
-            updateFeatureByGuid(currentJsonData, change.guid, feature => {
-                feature[change.field!] = change.oldValue;
-            });
+            const target = findByGuid(currentJsonData, change.guid);
+            if (target) target[change.field!] = change.oldValue;
         });
 
-        // Undo: 추가 → 제거
-        added?.forEach(change => {
-            updateFeatureByGuid(currentJsonData, change.guid, feature => {
-                Object.keys(feature).forEach(k => delete feature[k]);
-            });
+        // Undo: 추가 → 배열에서 제거
+        groupByGuidAndTimestamp(added || []).forEach(group => {
+            const change = group[0];
+            const parts = change.guid.split(".");
+            const parentGuid = parts.slice(0, -1).join(".");
+            const childKeyWithIndex = parts[parts.length - 1];
+            const [childKey, indexStr] = childKeyWithIndex.split("-");
+            const index = parseInt(indexStr, 10);
+
+            const parentObj = parentGuid ? findByGuid(currentJsonData, parentGuid) : currentJsonData;
+            if (!parentObj || !Array.isArray(parentObj[childKey])) return;
+
+            parentObj[childKey].splice(index, 1);
         });
 
     } else {
-        // Redo: 삭제 → 제거
-        deleted?.forEach(change => {
-            updateFeatureByGuid(currentJsonData, change.guid, feature => {
-                Object.keys(feature).forEach(k => delete feature[k]);
-            });
+        // Redo: 삭제 → 배열에서 제거
+        groupByGuidAndTimestamp(deleted || []).forEach(group => {
+            const change = group[0];
+            const parts = change.guid.split(".");
+            const parentGuid = parts.slice(0, -1).join(".");
+            const childKeyWithIndex = parts[parts.length - 1];
+            const [childKey, indexStr] = childKeyWithIndex.split("-");
+            const index = parseInt(indexStr, 10);
+
+            const parentObj = parentGuid ? findByGuid(currentJsonData, parentGuid) : currentJsonData;
+            if (!parentObj || !Array.isArray(parentObj[childKey])) return;
+
+            parentObj[childKey].splice(index, 1);
         });
 
         // Redo: 수정 → 새로운 값 반영
         modified?.forEach(change => {
-            updateFeatureByGuid(currentJsonData, change.guid, feature => {
-                feature[change.field!] = change.newValue;
-            });
+            const target = findByGuid(currentJsonData, change.guid);
+            if (target) target[change.field!] = change.newValue;
         });
 
         // Redo: 추가 → 다시 생성
-        added?.forEach(change => {
-            updateFeatureByGuid(currentJsonData, change.guid, feature => {
-                Object.assign(feature, { id: change.guid, ...change.properties });
+        groupByGuidAndTimestamp(added || []).forEach(group => {
+            const change = group[0];
+            const parts = change.guid.split(".");
+            const parentGuid = parts.slice(0, -1).join(".");
+            const childKeyWithIndex = parts[parts.length - 1];
+            const [childKey, indexStr] = childKeyWithIndex.split("-");
+            const index = parseInt(indexStr, 10);
+
+            const parentObj = parentGuid ? findByGuid(currentJsonData, parentGuid) : currentJsonData;
+            if (!parentObj) return;
+            if (!Array.isArray(parentObj[childKey])) parentObj[childKey] = [];
+
+            const newObj: any = {};
+            group.forEach(f => {
+                newObj[f.field!] = f.newValue;
             });
+
+            parentObj[childKey].splice(index, 0, newObj);
         });
     }
 
@@ -171,17 +294,69 @@ export const featureUpdateLogs = (
     }
 
     if (Object.keys(updates).length > 0) {
-        store.getState().addFieldUpdate(updates);
+        store.getState().setUpdateLogs(updates);
     }
 
     console.log("[updateLogs]", store.getState().updateLogs);
 };
+export const featureReverseLogs = (
+    store: ReturnType<typeof useHistoryStoreFactory>,
+    logs: any
+) => {
+    if(store.getState().snapshotUpdateLogs){
+        store.getState().resetSnapshotUpdateLogs();
+    }
+    if(store.getState().updateLogs){
+        store.getState().resetUpdateLogs();
+    }
+    const sortLogs = logs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    const reversedLogs = sortLogs.map((log) => {
+        const timestamp = new Date().toISOString();
+        return {
+            added: log.data.deleted.map((item) => ({
+                ...item,
+                guid: item.guid,
+                field: item.field,
+                oldValue: null,
+                newValue: item.oldValue,
+                timestamp: timestamp,
+            })),
+            deleted: log.data.added.map((item) => ({
+                ...item,
+                guid: item.guid,
+                field: item.field,
+                oldValue: item.newValue,
+                newValue: null,
+                timestamp: timestamp,
+            })),
+            modified: log.data.modified.map((item) => ({
+                ...item,
+                guid: item.guid,
+                field: item.field,
+                oldValue: item.newValue,
+                newValue: item.oldValue,
+                timestamp: timestamp,
+            })),
+        };
+    });
 
-export function mergeUpdateLogs(logs: any[]): UpdateLogEntry {
+    reversedLogs.forEach((updates) => {
+        if (Object.keys(updates).length > 0) {
+            store.getState().setSnapshotUpdateLogs(updates);
+        }
+    });
+
+    console.log("[snapshotUpdateLogs]", store.getState().snapshotUpdateLogs);
+};
+
+export function mergeUpdateLogs(logs: UpdateLogItem[], snapshotLogs: UpdateLogItem[]): UpdateLogEntry {
+    const allLogs = [...snapshotLogs, ...logs];
+
+    allLogs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
     const merged: UpdateLogEntry = { added: [], modified: [], deleted: [] };
 
-    for (const log of logs) {
+    for (const log of allLogs) {
         log.json.added?.forEach(change => merged.added!.push(change));
         log.json.modified?.forEach(change => merged.modified!.push(change));
         log.json.deleted?.forEach(change => merged.deleted!.push(change));
@@ -189,23 +364,3 @@ export function mergeUpdateLogs(logs: any[]): UpdateLogEntry {
 
     return merged;
 }
-
-export function getValueAtPath(obj: any, path: string[]) {
-    return path.reduce((acc, key) => (acc && acc[key] !== undefined) ? acc[key] : undefined, obj);
-}
-
-// export function findPath(obj, guid, currentPath = ''): string | null {
-//     if (Array.isArray(obj)) {
-//         for (const [i, item] of obj.entries()) {
-//             const result = findPath(item, guid, `${currentPath}[${i}]`);
-//             if (result) return result;
-//         }
-//     } else if (typeof obj === 'object' && obj !== null) {
-//         if (obj.__guid === guid) return currentPath;
-//         for (const [key, value] of Object.entries(obj)) {
-//             const result = findPath(value, guid, currentPath ? `${currentPath}.${key}` : key);
-//             if (result) return result;
-//         }
-//     }
-//     return null;
-// }

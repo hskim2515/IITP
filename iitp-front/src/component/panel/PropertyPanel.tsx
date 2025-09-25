@@ -50,6 +50,8 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
+    const setCurrentIndex = historyStore.getState().setCurrentIndex;
+
     const selectedScenario = useScenarioStore.getState().selectedScenario;
 
     const olMap = useOpenLayersStore.state.map()
@@ -142,6 +144,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         const api = apiConfig[submenu.menuCode as ApiMenuKey].update;
         const currentJson = store.getState().currentJsonData;
         const logJson = historyStore.getState().updateLogs;
+        const snapshotLogJson = historyStore.getState().snapshotUpdateLogs;
         if (!logJson) {
             setMessage({
                 type: 'warn',
@@ -149,7 +152,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
             });
             return
         }
-        const mergedLog = mergeUpdateLogs(logJson);
+        const mergedLog = mergeUpdateLogs(logJson,snapshotLogJson);
         const extractedArray = Object.values(currentJson)[0];
         const payload = {
             data:extractedArray,
@@ -163,7 +166,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                 data: payload,
             });
 
-            historyStore.getState().resetAllUpdates();
+            historyStore.getState().resetUpdateLogs();
             setReloadFlag(prev => !prev);
             setMessage({
                 type: 'info',
@@ -179,6 +182,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
     const handleInitBtn = () => {
         store.getState().initCurrentData()
+        historyStore.getState().setCurrentSnapshotIndex(null);
     }
 
     const handleShowHistory = () => {
@@ -197,7 +201,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
 
         const currentJsonData = store.getState().currentJsonData;
 
-        const mergeJsonData = mergeJsonWithLogRecursive(currentJsonData, updateHistory.json, isUndo);
+        const mergeJsonData = mergeJsonWithLogRecursive(currentJsonData, updateHistory, isUndo);
 
         store.getState().setCurrentJsonData(mergeJsonData);
 

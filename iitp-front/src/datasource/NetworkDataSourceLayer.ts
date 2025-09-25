@@ -1,6 +1,7 @@
-import * as Cesium from "cesium";
 import { GeoJsonDataSource, Viewer } from "cesium";
-import { layerNameToStoreMap } from "@hooks/useLayerInit";
+import * as Cesium from "cesium";
+import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
+import {useScenarioStore} from "@stores/useScenarioStore";
 import { Network } from "@type/Network";
 import { diff } from "deep-object-diff";
 
@@ -9,6 +10,7 @@ export default class NetworkDataSourceLayer {
     private dataSource: GeoJsonDataSource;
     private unsubscribe: (() => void) | undefined;
     private static readonly EPSILON = 1e-9;
+    private selectedScenario = useScenarioStore.getState().selectedScenario
 
     constructor(private viewer: Viewer) {
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
@@ -126,18 +128,23 @@ export default class NetworkDataSourceLayer {
             const nodes = network.nodes;
             const links = network.links;
 
+
             // 링크 그리기
             for (const link of links) {
+
                 const source = nodes.find(n => n.id == link.fromNode);
                 const target = nodes.find(n => n.id == link.toNode);
                 if (!source || !target || !link.lanes) continue;
 
+                // WGS84 좌표 → Cartesian3
                 const p1 = Cesium.Cartesian3.fromDegrees(link.coordinates[0].lng, link.coordinates[0].lat);
                 const p2 = Cesium.Cartesian3.fromDegrees(link.coordinates[1].lng, link.coordinates[1].lat);
 
+                // 방향 벡터 계산 (ENU 상)
                 const direction = Cesium.Cartesian3.subtract(p1, p2, new Cesium.Cartesian3());
                 Cesium.Cartesian3.normalize(direction, direction);
 
+                // 수직 벡터 계산 (ENU 평면에서 Z 제외한 수직 벡터)
                 const up = Cesium.Cartesian3.UNIT_Z;
                 const right = Cesium.Cartesian3.cross(direction, up, new Cesium.Cartesian3());
                 Cesium.Cartesian3.normalize(right, right);
@@ -190,7 +197,7 @@ export default class NetworkDataSourceLayer {
                                 target: lane.laneTarget,
                                 offset: cell.offset ?? 0,
                                 length: cell.length ?? 5,
-                                width: 0.8,
+                                width: 0.8, // 임의의 cell 폭
                                 material: Cesium.Color.RED.withAlpha(0.6),
                                 properties: cell,
                             });
@@ -219,19 +226,23 @@ export default class NetworkDataSourceLayer {
             }
 
             for (const node of nodes) {
+
                 const position = Cesium.Cartesian3.fromDegrees(node.coordinates.lng, node.coordinates.lat);
+
                 const nodeEntity = new Cesium.Entity({
                     id: node.__guid,
                     position,
                     cylinder: {
-                        length: 5.0,
+                        length: 5.0, // 높이
                         topRadius: 0.5,
                         bottomRadius: 0.5,
                         material: Cesium.Color.YELLOW,
                         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
                     },
+
                     properties: node,
                 });
+
                 this.dataSource.entities.add(nodeEntity);
 
                 for (const port of node.ports) {
@@ -242,6 +253,7 @@ export default class NetworkDataSourceLayer {
                     const targetNode = nodes.find((n) => n.id == link.toNode);
                     if (!sourceNode || !targetNode) continue;
 
+                    // 링크 중심 위치 (혹은 시작에서 offset 위치도 가능)
                     const source = Cesium.Cartesian3.fromDegrees(sourceNode.coordinates.lng, sourceNode.coordinates.lat);
                     const target = Cesium.Cartesian3.fromDegrees(targetNode.coordinates.lng, targetNode.coordinates.lat);
 
@@ -249,7 +261,7 @@ export default class NetworkDataSourceLayer {
                         id: port.__guid,
                         position: port.type == 'in' ? source : target,
                         cylinder: {
-                            length: port.type == 'in' ? 2 : 2,
+                            length: port.type == 'in' ? 2 : 2, // 높이
                             topRadius: port.type == 'in' ? 1.5 : 0.1,
                             bottomRadius: port.type == 'in' ? 0.1 : 1.5,
                             material: port.type == 'in' ? Cesium.Color.CYAN.withAlpha(0.8) : Cesium.Color.MAGENTA.withAlpha(0.8),
@@ -257,6 +269,7 @@ export default class NetworkDataSourceLayer {
                         },
                         properties: port,
                     });
+
                     this.dataSource.entities.add(portEntity);
                 }
 
@@ -264,11 +277,12 @@ export default class NetworkDataSourceLayer {
                     for (const conn of node.connections) {
                         const fromLink = links.find((l) => l.id == conn.fromLink);
                         const toLink = links.find((l) => l.id == conn.toLink);
+
                         if (!fromLink || !toLink) continue;
 
                         const fromLane = fromLink.lanes?.[conn.fromLane];
                         const toLane = toLink.lanes?.[conn.toLane];
-                        // Ensure laneSource/laneTarget were calculated and attached
+
                         if (!fromLane || !toLane || !fromLane.laneTarget || !toLane.laneSource) continue;
 
                         const fromPt = fromLane.laneTarget;
@@ -303,33 +317,41 @@ export default class NetworkDataSourceLayer {
                             polyline: {
                                 positions: positions,
                                 width: 5,
+                                arcType: Cesium.ArcType.GEODESIC,
                                 material: new Cesium.PolylineArrowMaterialProperty(
                                     Cesium.Color.WHITE.withAlpha(0.8)
                                 ),
-                                clampToGround: true, // Assuming connections should be clamped
+                                clampToGround: true,
                             },
                             properties: conn
                         });
                     }
                 }
             }
-
-            const response = await fetch(process.env.VITE_API_URL + "/signal", {
+            console.log(this.selectedScenario)
+            fetch(process.env.VITE_API_URL + "/signal/" + this.selectedScenario.key, {
                 method: "GET",
-                headers: {"Content-Type": "application/json"},
-            });
-            const {nodes: signalNodes} = await response.json();
+                headers: { "Content-Type": "application/json" },
+            })
+                .then((response) => {
+                    return response.json();
+                })
+                .then(({nodes : signalNodes}) => {
+                    signalNodes?.forEach(node => {
+                        node.turns.forEach(turn => {
+                            turn.connList.forEach(connId => {
+                                const targetNode = nodes.find(t => t.id == node.id)
+                                const conn = this.findConnectionById(targetNode, connId); // conn에서 from → to 좌표 구함
+                                if (!conn) return;
 
-            signalNodes?.forEach(node => {
-                node.turns.forEach(turn => {
-                    turn.connList.forEach(connId => {
-                        const targetNode = nodes.find(t => t.id == node.id);
-                        const conn = this.findConnectionById(targetNode, connId);
-                        if (!conn) return;
-                        // ... Signal related entity logic ...
+                            });
+                        });
                     });
-                });
-            });
+
+                })
+
+            this.viewer.dataSources.add(this.dataSource);
+            return this.dataSource;
 
             console.log("NetworkDataSourceLayer: 모든 Feature가 추가됨");
         } catch (error) {
@@ -337,6 +359,9 @@ export default class NetworkDataSourceLayer {
         } finally {
             this.dataSource.entities.resumeEvents();
         }
+
+
+
     }
 
     private findConnectionById = (node, connId) => {

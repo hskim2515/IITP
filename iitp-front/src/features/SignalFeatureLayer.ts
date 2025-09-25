@@ -1,6 +1,5 @@
 import VectorSource from "ol/source/Vector";
 import VectorLayer from "ol/layer/Vector";
-import { Icon, Style } from "ol/style";
 import {layerNameToStoreMap} from "@hooks/useLayerInit";
 import { Feature } from "ol";
 import {
@@ -10,18 +9,14 @@ import {
 } from "@type/Signal";
 import { useLayerStore } from "@stores/useLayerStore";
 import {
-    findFeatureByProperties, getAngleByCoordinate, getCellOffsetRelativeToCell,
+    findFeatureByProperties,
     getCoordinateByOffset,
 } from "@utils/feature";
 import { fromLonLat, toLonLat } from "ol/proj";
 import { Point } from "ol/geom";
-import { Coordinate } from "ol/coordinate";
 import { generateGUIDWithType } from "@utils/guid";
-import {interpolateByOffset, interpolateFeatureByOffset} from "@utils/interpolateByOffset";
-import Geometry from "ol/geom/Geometry";
 import deepEqual from "deep-equal";
 import {SignalData} from "@type/Signal";
-import {PavementMarkingData} from "@type/PavementMarking";
 
 export class SignalFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -34,7 +29,6 @@ export class SignalFeatureLayer extends VectorLayer {
         super({
             source,
             visible: true,
-
             zIndex: 400,
             updateWhileAnimating: true,
             updateWhileInteracting: true,
@@ -175,8 +169,8 @@ export class SignalFeatureLayer extends VectorLayer {
             __guid: guid,
             featureType: FEATURE_TYPE.SIGNAL,
             nodeId: undefined,
-            turnning: undefined,
-            type: undefined,
+            turning: null,
+            type: null,
             connectionId: undefined,
         };
 

@@ -12,8 +12,8 @@ export interface SignalData {
     featureType: string;
     id: string | undefined;
     nodeId: string | undefined;
-    turnning: string | undefined;
-    type: string | undefined;
+    turning: string | null;
+    type: string | null;
     connectionId: string | undefined;
 
 }

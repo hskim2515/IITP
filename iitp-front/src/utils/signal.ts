@@ -28,7 +28,7 @@ export const updateSignalStyles = (layerManager:LayerManager, viewer:Cesium.View
             }
         });
     }
-    signalTimeline.forEach(sig => {
+    signalTimeline?.forEach(sig => {
         sig.turnInfo.forEach(turn => {
             turn.connList.forEach(connIdStr => {
                 const key = `${sig.nodeId}_${connIdStr}`;
@@ -38,7 +38,7 @@ export const updateSignalStyles = (layerManager:LayerManager, viewer:Cesium.View
     });
 
     const activeConnectionsMap = new Map<string, { nodeId: string, connId: number, signalState: string }>();
-    signalTimeline.forEach(sig => {
+    signalTimeline?.forEach(sig => {
         sig.signalTimeline.forEach(timeline => {
             const start = new Date(timeline.startTime).getTime();
             const end = new Date(timeline.endTime).getTime();

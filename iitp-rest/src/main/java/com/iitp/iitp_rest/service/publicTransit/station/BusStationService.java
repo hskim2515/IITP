@@ -44,7 +44,7 @@ public class BusStationService {
         busStationVersionsRepository.save(entity);
         List<BusStationLogs> existingLogs = busStationLogsRepository.findByVersionIdOrderByCreatedAtAsc(versionId);
 
-        int maxLogs = 20;
+        int maxLogs = 10;
         if (existingLogs.size() >= maxLogs) {
             int removeCount = existingLogs.size() - maxLogs + 1;
             List<BusStationLogs> toDelete = existingLogs.subList(0, removeCount);

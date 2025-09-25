@@ -13,13 +13,18 @@ export interface State<T> {
     // fetch 한 data
     originData: T | undefined
     currentJsonData: T | undefined
+    originHistoryData: T | undefined
+    // 변경 확인
+    isChanged: boolean
 }
 
 export interface Actions<T> {
     setOriginData: (data: T) => void;
+    setOriginHistoryData: (data: T) => void;
     setCurrentJsonData: (data: T) => void;
     updateCurrentJsonData: (data: T, historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
     removeRecordsByGuid: (guids: (string | number)[], historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
+    setChange: (changed: boolean) => void;
     initCurrentData: () => void;
 }
 
@@ -28,13 +33,16 @@ export interface Actions<T> {
 const createFeatureStore = <T>() => {
     const initialState: State<T> = {
         originData: undefined,
+        originHistoryData: undefined,
         currentJsonData: undefined,
+        isChanged: false
     };
     return createSelectors(
         create(
             subscribeWithSelector(
                 combine(initialState, (set, get) => ({
                         setOriginData: (data: T) => set({originData: data}),
+                        setOriginHistoryData: (data: T) => set({originHistoryData: data}),
                         setCurrentJsonData: (data: T) => {
                             set({
                                 currentJsonData: structuredClone(data)
@@ -98,13 +106,13 @@ const createFeatureStore = <T>() => {
                             let updatedJson = deepUpdateByGuid(cloned, record);
 
                             if (updatedFlag.updated) {
-                                set({currentJsonData: updatedJson});
+                                set({currentJsonData: updatedJson, isChanged: true});
                                 return;
                             }
 
                             // 구조 기반 부모 찾기
                             let container = null;
-                            if(record.parentGuid?.length > 0){
+                            if(record.parentGuid.length > 0){
                                 container = findParentRecordByGuid(updatedJson, record);
                             }else{
                                 container = findParentRecordByFeatureType(updatedJson, record);
@@ -115,11 +123,12 @@ const createFeatureStore = <T>() => {
 
                                 set({
                                     currentJsonData: updatedJson,
+                                    isChanged: true,
                                 });
 
                                 if (historyStore) {
                                     featureUpdateLogs(historyStore, {
-                                        guid: record.id,
+                                        guid: record.__guid,
                                         updateType: "added",
                                         properties: record,
                                     });
@@ -150,6 +159,7 @@ const createFeatureStore = <T>() => {
                                     ...current,
                                     [key]: newItems,
                                 } as T,
+                                isChanged: true,
                             });
 
                             if (historyStore) {
@@ -219,9 +229,11 @@ const createFeatureStore = <T>() => {
                             if (hasChanges) {
                                 set({
                                     currentJsonData: updated,
+                                    isChanged: true,
                                 });
                             }
                         },
+                        setChange: (changed: boolean) => set({isChanged: changed}),
                         initCurrentData: () => {
                             if (origin) set({
                                 currentJsonData: get().originData,

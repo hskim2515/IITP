@@ -201,7 +201,7 @@ const useSimulation = () => {
                 const newVehicleData = vehicleDataRef.current;
                 const type = 'tick';
                 changeModelWorkerRef.current.postMessage({ type, newVehicleData, cameraPositionWC, cameraDirectionWC });
-                updateSignalStyles(layerManager, viewer, connectionFeatureMapRef.current, signalTimeline, simTime); //신호 커넥션 스타일 변경
+                //updateSignalStyles(layerManager, viewer, connectionFeatureMapRef.current, signalTimeline, simTime); //신호 커넥션 스타일 변경
             }
             const newVehicleRoute = vehicleRouteStartEndRef.current;
             const lastPositions = lastPositionsRef.current;
