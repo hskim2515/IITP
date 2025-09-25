@@ -13,5 +13,6 @@ public interface PavementMarkingLogsRepository extends JpaRepository<PavementMar
     @Transactional
     List<PavementMarkingLogs> findByVersionId(String versionId);
     List<PavementMarkingLogs> findByVersionIdOrderByCreatedAtAsc(String versionId);
+    void deleteByVersionId(String versionId);
 }
 
