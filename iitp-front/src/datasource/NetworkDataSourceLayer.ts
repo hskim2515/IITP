@@ -48,15 +48,29 @@ export default class NetworkDataSourceLayer {
 
         return Cesium.Cartesian3.add(p1, Cesium.Cartesian3.multiplyByScalar(v1, t, new Cesium.Cartesian3()), new Cesium.Cartesian3());
     }
-    private generateQuadraticBezierCurve(p0: Cesium.Cartesian3, p1: Cesium.Cartesian3, p2: Cesium.Cartesian3, numPoints: number = 15): Cesium.Cartesian3[] {
+    private generateQuadraticBezierCurve(
+        start: Cesium.Cartesian3,
+        controlPoint: Cesium.Cartesian3,
+        end: Cesium.Cartesian3,
+        numPoints: number = 15,
+        pullScale: number = 0.9
+    ): Cesium.Cartesian3[] {
+
+        const basePoint = Cesium.Cartesian3.add(start, end, new Cesium.Cartesian3());
+        Cesium.Cartesian3.multiplyByScalar(basePoint, 0.5, basePoint);
+
+        const pullVector = Cesium.Cartesian3.subtract(controlPoint, basePoint, new Cesium.Cartesian3())
+        Cesium.Cartesian3.multiplyByScalar(pullVector, pullScale, pullVector);
+        const effectiveControlPoint = Cesium.Cartesian3.add(basePoint, pullVector, new Cesium.Cartesian3());
+
         const points: Cesium.Cartesian3[] = [];
         for (let i = 0; i <= numPoints; i++) {
             const t = i / numPoints;
             const tInv = 1 - t;
 
-            const p0_scaled = Cesium.Cartesian3.multiplyByScalar(p0, tInv * tInv, new Cesium.Cartesian3());
-            const p1_scaled = Cesium.Cartesian3.multiplyByScalar(p1, 2 * tInv * t, new Cesium.Cartesian3());
-            const p2_scaled = Cesium.Cartesian3.multiplyByScalar(p2, t * t, new Cesium.Cartesian3());
+            const p0_scaled = Cesium.Cartesian3.multiplyByScalar(start, tInv * tInv, new Cesium.Cartesian3());
+            const p1_scaled = Cesium.Cartesian3.multiplyByScalar(effectiveControlPoint, 2 * tInv * t, new Cesium.Cartesian3());
+            const p2_scaled = Cesium.Cartesian3.multiplyByScalar(end, t * t, new Cesium.Cartesian3());
 
             const pointOnCurve = Cesium.Cartesian3.add(p0_scaled, p1_scaled, new Cesium.Cartesian3());
             Cesium.Cartesian3.add(pointOnCurve, p2_scaled, pointOnCurve);

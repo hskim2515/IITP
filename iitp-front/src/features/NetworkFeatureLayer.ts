@@ -145,7 +145,6 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
             const coordinates = geom.getCoordinates();
             if (coordinates.length >= 2) {
-                // [수정] 라인의 마지막 두 점을 사용하여 화살표의 방향과 위치를 계산합니다.
                 const end = coordinates[coordinates.length - 1];
                 const start = coordinates[coordinates.length - 2];
 
@@ -158,7 +157,6 @@ export default class NetworkFeatureLayer extends VectorLayer {
                     const nx = -uy;
                     const ny = ux;
 
-                    // 화살표 크기는 지면 단위를 유지합니다.
                     const arrowLength = 1.8;
                     const baseWidth = 0.8;
 
@@ -202,7 +200,6 @@ export default class NetworkFeatureLayer extends VectorLayer {
             const r = NetworkFeatureLayer.PORT_ICON_SCALE / res;
             const strokeW = (0.2 * 0.2) / res;
 
-            // 'out' 타입일 경우: 크고, zIndex가 낮은 원 (아래쪽)
             if (portType === "out") {
                 const outFill = "rgba(0,200,200,0.5)";
                 styles.push(new Style({
@@ -213,7 +210,6 @@ export default class NetworkFeatureLayer extends VectorLayer {
                     zIndex: zIndex + 1 // 예: 160
                 }));
             }
-            // 'in' 타입일 경우: 작고, zIndex가 높은 원 (위쪽)
             else if (portType === "in") {
                 const inFill = "rgba(200,0,200,0.5)";
 
@@ -232,7 +228,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
     private generateQuadraticBezierCurve(
         from: Coordinate,
-        p3: Coordinate,
+        controlPoint: Coordinate,
         to: Coordinate,
         numberOfPoints: number = 15,
         pullScale: number = 0.9
@@ -243,8 +239,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
         ];
 
         const effectiveControlPoint: Coordinate = [
-            basePoint[0] + (p3[0] - basePoint[0]) * pullScale,
-            basePoint[1] + (p3[1] - basePoint[1]) * pullScale,
+            basePoint[0] + (controlPoint[0] - basePoint[0]) * pullScale,
+            basePoint[1] + (controlPoint[1] - basePoint[1]) * pullScale,
         ];
 
         const curvePoints: Coordinate[] = [];
@@ -528,8 +524,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
                             const triangleVertices = getTriangleConnectionPoints(fromPt, toPt, fromVector, toVector);
                             if (triangleVertices) {
-                                const [p1, p3, p2] = triangleVertices;
-                                coord = this.generateQuadraticBezierCurve(fromPt, p3, toPt);
+                                const [p1, controlPoint, p2] = triangleVertices;
+                                coord = this.generateQuadraticBezierCurve(fromPt, controlPoint, toPt);
                             } else {
                                 coord = [fromPt, toPt];
                             }
