@@ -11,7 +11,7 @@ import { useSchemaStore } from "@stores/useSchemaStore";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { layerNameToHistoryStoreMap } from "@hooks/useHistoryInit";
 
-import { generateGUIDWithType } from "@utils/guid";
+import { generateGuidWithParentGuid } from "@utils/guid";
 import { generateTemplate } from "@utils/schema";
 import { createEventHandlers } from "@handler/createEventHandlers";
 import { findGuidPath } from "@utils/jsonGrid";
@@ -118,7 +118,7 @@ type JsonGridProps = {
     layerGroupName: string;
     rowData?: any[] | undefined;
     levelName?: string;
-    parentGuid?: (string | React.Key)[];
+    parentGuid?: string | React.Key;
     depth?: number;
 };
 
@@ -229,9 +229,10 @@ const JsonGrid = ({
             ...template,
             featureType: targetFeatureType,
             id: Date.now(),
-            __guid: generateGUIDWithType(targetFeatureType),
+            __guid: undefined,
             parentGuid: parentGuid || null,
         };
+        generateGuidWithParentGuid(parentGuid, tempRecord, rowData)
 
         const cleanup = createEventHandlers(tempRecord);
         return () => {
@@ -250,7 +251,6 @@ const JsonGrid = ({
     }, [selectedGuid, dataStore, historyStore, clearSelected, setMessage]);
 
     const scrollToGuid = useCallback(
-
         (targetGuid: string | React.Key | undefined) => {
             if (!targetGuid) return;
 

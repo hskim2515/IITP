@@ -158,7 +158,7 @@ const featureTypeHandlersInternal = {
             const laneFeature = pickFromOpenLayers(
                 olMap,
                 pixel,
-                (feature) => feature.get('__guid')?.startsWith('lanes-')
+                (feature) => feature.get('featureType')===('lane')
             );
 
             if (!laneFeature) {
@@ -189,7 +189,7 @@ const featureTypeHandlersInternal = {
             const laneObject = pickFromCesium(
                 viewer,
                 e.position,
-                (p) => p.id instanceof Cesium.Entity && p.id.id.startsWith("lanes-")
+                (p) => p.id instanceof Cesium.Entity && p.id.properties.getValue().featureType === ("lanes")
             );
 
             if (!laneObject) {
@@ -373,7 +373,7 @@ const featureTypeHandlersInternal = {
             const linkFeature = pickFromOpenLayers(
                 olMap,
                 pixel,
-                (feature) => feature.get('__guid')?.startsWith('links-')
+                (feature) => feature.get('featureType')?.startsWith('link')
             );
             if (!linkFeature) {
                 setMessage({type: "warn", text: "정류장은 링크 위에만 추가할 수 있습니다."});
@@ -468,7 +468,6 @@ const featureTypeHandlersInternal = {
 };
 
 export const createEventHandlers = (record) => {
-    console.log("createEventHandlers:::", record)
     const featureType: keyof typeof featureTypeHandlersInternal = record.featureType;
     if (!record.featureType) {
         console.warn("featureType 인자:", record.featureType)

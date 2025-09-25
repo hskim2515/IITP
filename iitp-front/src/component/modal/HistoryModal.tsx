@@ -74,7 +74,7 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
             });
 
             store.getState().setOriginHistoryData(response.data);
-            assignPropertyToResponseData(response.data, menuCode);
+            assignPropertyToResponseData(response.data);
 
         } catch (err) {
             console.error(`[${menuCode}] 데이터 불러오기 실패`, err);

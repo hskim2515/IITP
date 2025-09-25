@@ -77,7 +77,7 @@ const useLayerInit = (): void => {
                 });
 
                 store.getState().setOriginData(response.data);
-                assignPropertyToResponseData(response.data, menuCode)
+                assignPropertyToResponseData(response.data)
                 store.getState().initCurrentData();
 
                 console.log(`${menuCode} :::`,store.getState().originData)

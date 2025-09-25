@@ -1,15 +1,15 @@
 package com.iitp.iitp_rest.service.publicTransit.station;
 
 import com.iitp.iitp_rest.model.geometry.Coordinates;
-import com.iitp.iitp_rest.model.network.NetworkXmlResponse;
-import com.iitp.iitp_rest.model.network.RoadResponse;
-import com.iitp.iitp_rest.model.publicTransit.rail.*;
+import com.iitp.iitp_rest.model.publicTransit.rail.RailPublicTransitXml;
+import com.iitp.iitp_rest.model.publicTransit.rail.RailStationLogs;
+import com.iitp.iitp_rest.model.publicTransit.rail.RailStationSaveRequest;
+import com.iitp.iitp_rest.model.publicTransit.rail.RailStationVersion;
 import com.iitp.iitp_rest.model.scenario.Scenario;
 import com.iitp.iitp_rest.repository.RailStationLogsRepository;
 import com.iitp.iitp_rest.repository.RailStationVersionsRepository;
 import com.iitp.iitp_rest.repository.ScenarioRepository;
 import com.iitp.iitp_rest.service.network.RoadService;
-import com.iitp.iitp_rest.util.CoordinateConverter;
 import com.iitp.iitp_rest.util.CoordinateUtils;
 import com.iitp.iitp_rest.util.XmlUtils;
 import lombok.RequiredArgsConstructor;
@@ -17,13 +17,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import javax.xml.stream.XMLStreamException;
 import java.io.InputStream;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -33,7 +28,6 @@ public class RailStationService {
     private final ScenarioRepository scenarioRepository;
     private final RailStationVersionsRepository railStationVersionsRepository;
     private final RailStationLogsRepository railStationLogsRepository;
-    private final RailStationXmlParser railStationXmlParser;
     private final RailStationJaxbParser railStationJaxbParser;
     private final RoadService roadService;
 

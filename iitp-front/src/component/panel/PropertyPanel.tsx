@@ -26,6 +26,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useEventStore } from "@stores/useEventStore";
 import { modifyFeatureEventHandlers } from "@handler/modifyFeatureEventHandlers";
 import { useLayerStore } from "@stores/useLayerStore";
+import { extractFeatureTypeFromGuid } from "@utils/guid";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTree
@@ -99,25 +100,21 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         selectedGuidRef.current = nextGuids;
     }, [selectedGuid]);
 
+    // openlayers와 cesium에서 해당 guid 내의 featureType을 추출
+    // 추출한 featureType을 가진 객체를 찾아 이벤트를 생성한다.
     useEffect(() => {
-        console.log("submenu.item.layer", submenu.item.layer);
         if (!submenu.item.layer) return;
 
         const featureTypeSet = new Set<string>(
-            (selectedGuid ?? []).map((k) => {
-                const s = String(k);
-                const i = s.indexOf("-");
-                return i === -1 ? s : s.slice(0, i);
-            })
+            (selectedGuid ?? [])
+                .map(extractFeatureTypeFromGuid)
+                .filter((v): v is string => !!v)
         );
-        console.log("featureTypeSet:::",featureTypeSet)
-        // 각 featureType에 대해 modifyFeatureEventHandlers 실행
+
         const disposers: Array<() => void> = [];
         featureTypeSet.forEach((featureType) => {
             const dispose = modifyFeatureEventHandlers(featureType);
-            if (typeof dispose === "function") {
-                disposers.push(dispose);
-            }
+            if (typeof dispose === "function") disposers.push(dispose);
         });
 
         return () => {
@@ -138,6 +135,8 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const handleCheck = () => {
         console.log("current originData:", store.getState().originData) // 디버깅용
         console.log("current currentJsonData:", store.getState().currentJsonData) // 디버깅용
+        console.log("current event:", useEventStore.getState().olEventManager?.getListenerKey()) // 디버깅용
+        console.log("current selectedGuid:", selectedGuid) // 디버깅용
     };
 
     const handleSaveBtn = async () => {
@@ -277,7 +276,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                         )}
                         {submenu.item && submenu.item.layer &&
                             <div style={{width: "99%"}}>
-                                {Object.entries(currentJsonData).map(([key, value]) => (
+                                {Object.entries(currentJsonData?? []).map(([key, value]) => (
                                     <div key={key} className="grid-container">
                                         <JsonGrid
                                             layerName={submenu.item.layer}

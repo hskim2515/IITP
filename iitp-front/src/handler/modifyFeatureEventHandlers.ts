@@ -70,9 +70,7 @@ const modifyFeatureHandlersInternal = {
             if (!olMap) return;
 
             const modified = e.features.item(0);
-            console.log("modified:::", modified)
             const {geometry, ...record} = modified.getProperties();
-            console.log("modified properties:::", record)
 
             const geom = modified.getGeometry()
             if (!(geom instanceof Point)) {
