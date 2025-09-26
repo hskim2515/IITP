@@ -35,7 +35,6 @@ export default class NetworkFeatureLayer extends VectorLayer {
         "cells": 25,
         "segments": 26,
         "connections": 30,
-        "connection-edit": 130,
         "ports": 160,
         "nodes": 200,
     };
@@ -127,16 +126,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
             }));
         }
 
-        // CONNECTION (polygon shading)
-        if (geom instanceof Polygon && featureType === "connections") {
-            styles.push(new Style({
-                fill: new Fill({ color: "rgba(0,0,0,0.3)" }),
-                zIndex
-            }));
-        }
-
-        // CONNECTION-EDIT (polyline + arrow head)
-        if (geom instanceof LineString && featureType === "connection-edit") {
+        // CONNECTIONS (polyline + arrow head)
+        if (geom instanceof LineString && featureType === "connections") {
             const color = "#ffffff";
             styles.push(new Style({
                 stroke: new Stroke({ color, width: Math.min(3, 0.5 / res) }),
@@ -538,7 +529,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                     const connLineFeature = new Feature(connLine);
                     connLineFeature.setProperties({
                         ...conn,
-                        featureType: "connection-edit",
+                        featureType: "connections",
                         fromNodeType: node.type,
                         nodeId: node.id,
                     });
