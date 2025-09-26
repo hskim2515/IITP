@@ -125,7 +125,7 @@ export const getNetworkGuid = (layerManager: LayerManager, signalGuid: string) =
     const signalFeatures = signalLayer.getSource?.()?.getFeatures?.() || [];
 
     const connectionFeatures = networkFeatures.filter(
-        f => f.get('featureType') === 'connection-edit'
+        f => f.get('featureType') === 'connection'
     );
 
     const targetFeature = signalFeatures.find(
@@ -158,7 +158,7 @@ export const getSignalGuid = (layerManager: LayerManager, connectionGuid: string
     const signalFeatures = signalLayer.getSource?.()?.getFeatures?.() || [];
 
     const connectionFeatures = networkFeatures.filter(
-        f => f.get('featureType') === 'connection-edit'
+        f => f.get('featureType') === 'connection'
     );
 
     const connectionFeature = connectionFeatures.find(
