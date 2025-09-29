@@ -1,9 +1,6 @@
 package com.iitp.iitp_rest.controller;
 import com.iitp.iitp_rest.model.BaseVersion;
 import com.iitp.iitp_rest.model.pavementMarking.*;
-import com.iitp.iitp_rest.model.signal.SignalNodeResponseData;
-import com.iitp.iitp_rest.model.signal.SignalResponse;
-import com.iitp.iitp_rest.model.signal.SignalVersion;
 import com.iitp.iitp_rest.repository.PavementMarkingVersionsRepository;
 import com.iitp.iitp_rest.service.pavementMarking.PavementMarkingService;
 import org.slf4j.Logger;
@@ -67,6 +64,23 @@ public class PavementMarkingController {
             pavementMarkingService.savePavementMarking(request, versionId);
             return ResponseEntity.ok().build();
         } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @GetMapping("/origin/{versionId}")
+    public ResponseEntity<RoadAssetData> getOriginPavementMarking(@PathVariable String versionId) {
+        try {
+            RoadAssetData result = new RoadAssetData();
+            Optional<PavementMarkingVersion> pavementMarkingVersionOpt = pavementMarkingVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.ORIGIN);
+
+            if (pavementMarkingVersionOpt.isPresent()) {
+                PavementMarkingVersion pavementMarkingVersion = pavementMarkingService.getOriginData(versionId);
+                result.setPavementMarkings(pavementMarkingVersion.getData());
+            }
+
+            return ResponseEntity.ok(result);
+        }  catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

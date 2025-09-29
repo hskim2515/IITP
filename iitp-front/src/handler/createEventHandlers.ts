@@ -20,6 +20,8 @@ import { useLayerStore } from "@stores/useLayerStore";
 import { DrawEvent } from "ol/interaction/Draw";
 import Point from "ol/geom/Point";
 import GeometryType from "@type/FeatureOptions";
+import {PavementMarkingData} from "@type/PavementMarking";
+import {usePavementMarkingHistoryStore, usePavementMarkingStore} from "@stores/usePavementMarkingStore";
 
 const setMessage = useMessageStore.getState().setMessage;
 
@@ -469,6 +471,152 @@ const featureTypeHandlersInternal = {
 
         return cleanup;
     },
+    pavementMarkings: (record:PavementMarkingData) => {
+        const network = useNetworkStore.getState().currentJsonData;
+        if (!network) {
+            setMessage({type: "warn", text: "노면마킹을 추가할 네트워크가 존재하지 않습니다."});
+            return;
+        }
+        const processAndStorepavementMarking = (linkRef: number | string, laneRef: number | string, offset: number, coordinates: Coordinates) => {
+            const newPavementMarking: PavementMarkingData = {
+                ...record,
+                coordinates,
+                linkRef,
+                laneRef,
+                offset,
+            } as PavementMarkingData;
+            const {updateCurrentJsonData} = usePavementMarkingStore.getState();
+            updateCurrentJsonData(newPavementMarking, usePavementMarkingHistoryStore);
+            setMessage({type: "info", text: `노면마킹이 추가되었습니다.`});
+        };
+
+        const snapFeatureType = "lane-edit"
+        const snapLayerName = "network"
+
+        setMessage({type: "info", text: "지도 위의 차선을 클릭하여 노면마킹을 추가하세요."});
+
+        const olDrawend = (e: DrawEvent) => {
+            const olMap = useOpenLayersStore.getState().map;
+            if (!olMap) return;
+
+            const geom = e.feature.getGeometry();
+            if (!(geom instanceof Point)) {
+                setMessage({type: "error", text: "정류장 Point가 없습니다."});
+                return;
+            }
+            const coord = geom.getCoordinates();
+            const pixel = olMap.getPixelFromCoordinate(coord)
+            const laneFeature = pickFromOpenLayers(
+                olMap,
+                pixel,
+                (feature) => feature.get('featureType')===('lanes')
+            );
+
+            if (!laneFeature) {
+                setMessage({type: "warn", text: "노면마킹은 차선 위에만 추가할 수 있습니다."});
+                return;
+            }
+            const laneData = laneFeature.getProperties();
+
+            const laneStart = laneData.laneSource;
+            const laneEnd = laneData.laneTarget;
+            const parentLink = network.links.find(link => link.lanes.some(lane => lane.__guid === laneData.__guid));
+
+            if (!parentLink) {
+                setMessage({type: "error", text: "링크 정보를 찾는 데 실패했습니다."});
+                return;
+            }
+
+            const {offset, offsetPosition} = projectPointOntoSegmentOl(laneStart, laneEnd, coord);
+            const coordinates = createCoordinatesFromOl(offsetPosition)
+            if (!coordinates) return;
+            processAndStorepavementMarking(parentLink.id, laneData.id, offset, coordinates);
+            e.target.abortDrawing()
+        }
+        const cesiumSingleClick = (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+            const viewer = useCesiumStore.getState().viewer;
+            if (!viewer) return;
+
+            const laneObject = pickFromCesium(
+                viewer,
+                e.position,
+                (p) => p.id instanceof Cesium.Entity && p.id.properties.getValue().featureType === ("lanes")
+            );
+
+            if (!laneObject) {
+                setMessage({type: "warn", text: "노면마킹은 차선 위에만 추가할 수 있습니다."});
+                return;
+            }
+
+            const userClickPosition = viewer.scene.pickPosition(e.position);
+            if (!userClickPosition) return;
+
+            const entity = laneObject.id;
+            const laneData = entity.properties.getValue(viewer.clock.currentTime);
+            const parentLink = network.links.find(link => link.lanes.some(lane => lane.__guid === laneData.__guid));
+
+            if (!parentLink) {
+                setMessage({type: "error", text: "링크 정보를 찾는 데 실패했습니다."});
+                return;
+            }
+
+            const {
+                offset,
+                offsetPosition
+            } = projectPointOntoSegmentCesium(laneData.laneSource, laneData.laneTarget, userClickPosition);
+            const coordinates = createCoordinatesFromCesium(offsetPosition)
+            if (!coordinates) return;
+
+            processAndStorepavementMarking(parentLink.id, laneData.id, offset, coordinates);
+        }
+
+        const {olEventManager, cesiumEventManager} = useEventStore.getState();
+
+        const olSnap = () => {
+            // snap event 제거 시, 동일한 객체로 매핑하기 위한 참조
+        };
+
+        const olDrawHandler = (e: DrawEvent) => {
+            try {
+                olDrawend(e);
+            } finally {
+                cleanup();
+            }
+        }
+        const cesiumSingleClickHandler = (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+            try {
+                cesiumSingleClick(e)
+            } finally {
+                cleanup();
+            }
+        }
+
+        const cleanup = () => {
+            try {
+                olEventManager?.unbind(`draw:${record.featureType}:end`, olDrawHandler);
+            } catch (error) {
+                console.error(error)
+            }
+            try {
+                olEventManager?.unbind(`snap:${record.featureType}`, olSnap);
+            } catch (error) {
+                console.error(error)
+            }
+            try {
+                cesiumEventManager?.unbind("singleclick", cesiumSingleClickHandler);
+            } catch (error) {
+                console.error(error)
+            }
+        };
+
+        olEventManager?.bind(`draw:${record.featureType}:end`, olDrawHandler, {drawGeometryType: GeometryType.POINT});
+        const snapLayer = useLayerStore.getState().layerManager?.getLayerByName(snapLayerName);
+        const snapFeatures = getFeaturesByProperties(snapLayer ?? undefined, {featureType: snapFeatureType})
+        olEventManager?.bind(`snap:${record.featureType}`, olSnap, {features: snapFeatures ?? new Collection<Feature<Geometry>>});
+        cesiumEventManager?.bind("singleclick", cesiumSingleClickHandler);
+
+        return cleanup;
+    }
 };
 
 export const createEventHandlers = (record) => {

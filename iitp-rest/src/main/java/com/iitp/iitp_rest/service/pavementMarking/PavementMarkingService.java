@@ -39,8 +39,6 @@ public class PavementMarkingService {
 
     @Transactional
     public void savePavementMarking(PavementMarkingSaveRequest request, String versionId) {
-        PavementMarkingVersion version = pavementMarkingVersionsRepository.findByVersionId(versionId).orElse(new PavementMarkingVersion());
-
         PavementMarkingVersion latest = pavementMarkingVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST).orElse(new PavementMarkingVersion());
 
         latest.setVersionId(versionId);
@@ -131,5 +129,8 @@ public class PavementMarkingService {
                 .orElse(new PavementMarkingVersion());
     }
 
+    public PavementMarkingVersion getOriginData(String versionId) {
+        return pavementMarkingVersionsRepository.findByVersionIdAndVersionRole(versionId,BaseVersion.VersionRole.ORIGIN).orElse(new PavementMarkingVersion());
+    }
 
 }

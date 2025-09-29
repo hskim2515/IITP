@@ -51,6 +51,7 @@ export const apiConfig:ApiConfig = {
         update:  { url: '/pavement-marking', method: 'POST', useFormData: false },
         create:  { url: '/pavement-marking', method: 'POST', useFormData: false },
         historyList: { url: '/pavement-marking/histories', method: 'GET', useFormData: false },
+        origin: {url: '/pavement-marking/origin', method: 'GET', useFormData: false},
     },
     SCHEMA_SETTING: {
         list:    { url: '/schema', method: 'GET',   useFormData: false },

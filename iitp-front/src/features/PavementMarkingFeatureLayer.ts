@@ -113,28 +113,46 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
                     }
                 });
 
+                // changed.forEach((item) => {
+                //     const dto = this.recordToDto(item);
+                //
+                //     const feature = existing.find(f => f.get("__guid") === dto.__guid);
+                //     if (feature) {
+                //         const baseLayer = layerManager?.getLayerByName(this.getSnapLayerKey())
+                //         const baseFeature = findFeatureByProperties(baseLayer, {
+                //             featureType: this.getSnapFeatureType(),
+                //             linkRef: item.linkRef,
+                //             laneRef: item.laneRef ?? 0,
+                //         })
+                //
+                //         const offset = item.offset ?? 0
+                //         const coord = getCoordinateByOffset(baseFeature, offset)
+                //         if (coord) {
+                //             const [ lng, lat ] = toLonLat(coord)
+                //             dto.angle = feature.get('angle'); //angle
+                //
+                //             feature.setGeometry(new Point(fromLonLat([ lng, lat ])));
+                //         }
+                //
+                //         feature.setProperties(dto);
+                //     }
+                // });
                 changed.forEach((item) => {
                     const dto = this.recordToDto(item);
 
                     const feature = existing.find(f => f.get("__guid") === dto.__guid);
                     if (feature) {
-                        const baseLayer = layerManager?.getLayerByName(this.getSnapLayerKey())
-                        const baseFeature = findFeatureByProperties(baseLayer, {
-                            featureType: this.getSnapFeatureType(),
-                            linkRef: item.linkRef,
-                            laneRef: item.laneRef ?? 0,
-                        })
+                        // 기존 feature 제거
+                        this.source.removeFeature(feature);
 
-                        const offset = item.offset ?? 0
-                        const coord = getCoordinateByOffset(baseFeature, offset)
-                        if (coord) {
-                            const [ lng, lat ] = toLonLat(coord)
-                            dto.angle = feature.get('angle'); //angle
-
-                            feature.setGeometry(new Point(fromLonLat([ lng, lat ])));
-                        }
-
+                        // DTO 속성 업데이트
                         feature.setProperties(dto);
+
+                        // offset 계산 + geometry 보정
+                        const mergedFeature = interpolateFeatureByOffset(feature);
+
+                        // 다시 source에 추가
+                        this.source.addFeature(mergedFeature);
                     }
                 });
 
@@ -164,7 +182,7 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
 
         const features = pavementMarkings
             .map((data) => this.createFeature(data))
-            .filter((f): f is Feature<Point> => !!f); // undefined 필터링
+            //.filter((f): f is Feature<Point> => !!f); // undefined 필터링
 
         const mergedFeatures = interpolateByOffset(features);
         source.addFeatures(mergedFeatures);
@@ -174,25 +192,15 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
     /**
      * DTO로부터 Point Feature와 속성을 생성
      */
-    public createFeature(data: PavementMarkingData): Feature<Point> | undefined {
-
+    public createFeature(data: PavementMarkingData): Feature<Point> {
         const props: PavementMarkingData = {
             ...data,
             featureType: data.featureType ?? FEATURE_TYPE.PAVEMENT_MARKING,
         };
-        const coord = Array.isArray(data.coordinates) ? data.coordinates[0] : undefined;
-        const hasValidCoordinate =
-            coord &&
-            typeof coord.lng === 'number' &&
-            typeof coord.lat === 'number';
 
-        if (!hasValidCoordinate) {
-            console.warn("Invalid or missing coordinates, skipping feature:", data);
-            return undefined;
-        }
-
-        const geom = new Point(fromLonLat([coord.lng!, coord.lat!]));
+        const geom = new Point([0, 0]); // 임시
         const feature = new Feature<Point>(geom);
+
         feature.setProperties(props);
 
         return feature;

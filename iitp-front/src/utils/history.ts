@@ -45,68 +45,17 @@ function updateFeatureByGuid(obj: any, guid: string, updater: (feature: any) => 
     }
     return false;
 }
-
-// export function mergeJsonWithLogRecursive(
-//     currentJsonData: unknown,
-//     updateLog: UpdateLogEntry,
-//     isUndo: boolean
-// ): any {
-//     const { added, modified, deleted } = updateLog;
-//     if (isUndo) {
-//         // Undo: 삭제 → 다시 추가
-//         deleted?.forEach(change => {
-//             updateFeatureByGuid(currentJsonData, change.guid, feature => {
-//                 feature[change.field!] = change.oldValue;
-//             });
-//         });
-//
-//         // Undo: 수정 → 원래 값으로 복원
-//         modified?.forEach(change => {
-//             updateFeatureByGuid(currentJsonData, change.guid, feature => {
-//                 feature[change.field!] = change.oldValue;
-//             });
-//         });
-//
-//         // Undo: 추가 → 제거
-//         added?.forEach(change => {
-//             updateFeatureByGuid(currentJsonData, change.guid, feature => {
-//                 Object.keys(feature).forEach(k => delete feature[k]);
-//             });
-//         });
-//
-//     } else {
-//         // Redo: 삭제 → 제거
-//         deleted?.forEach(change => {
-//             updateFeatureByGuid(currentJsonData, change.guid, feature => {
-//                 Object.keys(feature).forEach(k => delete feature[k]);
-//             });
-//         });
-//
-//         // Redo: 수정 → 새로운 값 반영
-//         modified?.forEach(change => {
-//             updateFeatureByGuid(currentJsonData, change.guid, feature => {
-//                 feature[change.field!] = change.newValue;
-//             });
-//         });
-//
-//         // Redo: 추가 → 다시 생성
-//         added?.forEach(change => {
-//             updateFeatureByGuid(currentJsonData, change.guid, feature => {
-//                 Object.assign(feature, { id: change.guid, ...change.properties });
-//             });
-//         });
-//     }
-//
-//     return currentJsonData;
-// }
 export function mergeJsonWithLogRecursive(
     currentJsonData: any,
     updateLog: UpdateLogEntry,
     isUndo: boolean
 ): any {
+    // 깊은 복사본 생성
+    const clonedData = structuredClone(currentJsonData);
+
     const { added, modified, deleted } = updateLog;
 
-    // guid로 객체 찾기 (중첩 객체도 탐색)
+    // guid 또는 id로 객체 찾기 (중첩 객체 탐색)
     function findByGuid(obj: any, guid: string): any | null {
         if (Array.isArray(obj)) {
             for (const item of obj) {
@@ -144,11 +93,10 @@ export function mergeJsonWithLogRecursive(
             const [childKey, indexStr] = childKeyWithIndex.split("-");
             const index = parseInt(indexStr, 10);
 
-            const parentObj = parentGuid ? findByGuid(currentJsonData, parentGuid) : currentJsonData;
+            const parentObj = parentGuid ? findByGuid(clonedData, parentGuid) : clonedData;
             if (!parentObj) return;
             if (!Array.isArray(parentObj[childKey])) parentObj[childKey] = [];
 
-            // 삭제된 행 복원
             const restoredObj: any = {};
             group.forEach(f => {
                 restoredObj[f.field!] = f.oldValue;
@@ -158,7 +106,7 @@ export function mergeJsonWithLogRecursive(
 
         // Undo: 수정 → 원래 값으로 복원
         modified?.forEach(change => {
-            const target = findByGuid(currentJsonData, change.guid);
+            const target = findByGuid(clonedData, change.guid);
             if (target) target[change.field!] = change.oldValue;
         });
 
@@ -171,7 +119,7 @@ export function mergeJsonWithLogRecursive(
             const [childKey, indexStr] = childKeyWithIndex.split("-");
             const index = parseInt(indexStr, 10);
 
-            const parentObj = parentGuid ? findByGuid(currentJsonData, parentGuid) : currentJsonData;
+            const parentObj = parentGuid ? findByGuid(clonedData, parentGuid) : clonedData;
             if (!parentObj || !Array.isArray(parentObj[childKey])) return;
 
             parentObj[childKey].splice(index, 1);
@@ -187,7 +135,7 @@ export function mergeJsonWithLogRecursive(
             const [childKey, indexStr] = childKeyWithIndex.split("-");
             const index = parseInt(indexStr, 10);
 
-            const parentObj = parentGuid ? findByGuid(currentJsonData, parentGuid) : currentJsonData;
+            const parentObj = parentGuid ? findByGuid(clonedData, parentGuid) : clonedData;
             if (!parentObj || !Array.isArray(parentObj[childKey])) return;
 
             parentObj[childKey].splice(index, 1);
@@ -195,7 +143,7 @@ export function mergeJsonWithLogRecursive(
 
         // Redo: 수정 → 새로운 값 반영
         modified?.forEach(change => {
-            const target = findByGuid(currentJsonData, change.guid);
+            const target = findByGuid(clonedData, change.guid);
             if (target) target[change.field!] = change.newValue;
         });
 
@@ -208,7 +156,7 @@ export function mergeJsonWithLogRecursive(
             const [childKey, indexStr] = childKeyWithIndex.split("-");
             const index = parseInt(indexStr, 10);
 
-            const parentObj = parentGuid ? findByGuid(currentJsonData, parentGuid) : currentJsonData;
+            const parentObj = parentGuid ? findByGuid(clonedData, parentGuid) : clonedData;
             if (!parentObj) return;
             if (!Array.isArray(parentObj[childKey])) parentObj[childKey] = [];
 
@@ -221,7 +169,7 @@ export function mergeJsonWithLogRecursive(
         });
     }
 
-    return currentJsonData;
+    return clonedData;
 }
 
 export function buildMergedDataFromLogs(
