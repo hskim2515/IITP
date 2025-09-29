@@ -39,20 +39,33 @@ public class PavementMarkingService {
 
     @Transactional
     public void savePavementMarking(PavementMarkingSaveRequest request, String versionId) {
-        PavementMarkingVersion version = pavementMarkingVersionsRepository.findByVersionId(versionId)
-                .orElse(new PavementMarkingVersion());
+        PavementMarkingVersion version = pavementMarkingVersionsRepository.findByVersionId(versionId).orElse(new PavementMarkingVersion());
 
-        version.setVersionId(versionId);
-        version.setData(request.getData());
-        pavementMarkingVersionsRepository.save(version);
+        PavementMarkingVersion latest = pavementMarkingVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST).orElse(new PavementMarkingVersion());
+
+        latest.setVersionId(versionId);
+        latest.setVersionRole(BaseVersion.VersionRole.LATEST);
+        latest.setData(request.getData());
+        pavementMarkingVersionsRepository.save(latest);
 
         List<PavementMarkingLogs> existingLogs = pavementMarkingLogsRepository.findByVersionIdOrderByCreatedAtAsc(versionId);
 
         int maxLogs = 10;
         if (existingLogs.size() >= maxLogs) {
-            int removeCount = existingLogs.size() - maxLogs + 1;
-            List<PavementMarkingLogs> toDelete = existingLogs.subList(0, removeCount);
-            pavementMarkingLogsRepository.deleteAll(toDelete);
+            PavementMarkingVersion origin = pavementMarkingVersionsRepository
+                    .findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.ORIGIN)
+                    .orElse(new PavementMarkingVersion());
+
+            origin.setVersionId(versionId);
+            origin.setVersionRole(BaseVersion.VersionRole.ORIGIN);
+            origin.setData(latest.getData());
+            pavementMarkingVersionsRepository.save(origin);
+
+            int removeCount = existingLogs.size() - (maxLogs - 1);
+            if (removeCount > 0) {
+                List<PavementMarkingLogs> toDelete = existingLogs.subList(0, removeCount);
+                pavementMarkingLogsRepository.deleteAll(toDelete);
+            }
         }
 
         PavementMarkingLogs logs = PavementMarkingLogs.builder()
