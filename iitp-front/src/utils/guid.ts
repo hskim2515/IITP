@@ -6,57 +6,13 @@ export function generateGUID(): string {
     });
 }
 
-// function addMultiplePropertiesRecursively(
-//     obj: any,
-//     type: string,
-//     propertyGenerators: Record<string, (type: string) => any>
-// ) {
-//     if (Array.isArray(obj)) {
-//         obj.forEach(item => addMultiplePropertiesRecursively(item, type, propertyGenerators));
-//     } else if (typeof obj === 'object' && obj !== null) {
-//         for (const [keyName, generator] of Object.entries(propertyGenerators)) {
-//             if (obj[keyName] === undefined || obj[keyName] === null) {
-//                 obj[keyName] = generator(type);
-//             }
-//         }
-//         Object.entries(obj).forEach(([key, value]) => {
-//             if (Array.isArray(value)) {
-//                 addMultiplePropertiesRecursively(value, key, propertyGenerators);
-//             }
-//         });
-//     }
-// }
-
-
-// export function assignPropertyToResponseData(data: any, menuCode: string): any {
-//     const propertyGenerators = {
-//         __guid: generateGUIDWithType,
-//         featureType: generateFeatureTypeWithType,
-//         menuCode: () => menuCode,
-//     };
-//
-//     Object.keys(data).forEach(key => {
-//         addMultiplePropertiesRecursively(data[key], key, propertyGenerators);
-//     });
-//
-//     return data;
-// }
-
-
-
-export function generateGUIDWithType(type:string): string {
-    return `${ type }-${ generateGUID() }`;
+export function generateGUIDWithType(type: string): string {
+    return `${type}-${generateGUID()}`;
 }
 
-export function generateFeatureTypeWithType(type:string): string {
-    return type;
-}
-
-//
 function generatePathGUID(path: string[]): string {
     return path.join(".");
 }
-
 
 function addMultiplePropertiesRecursively(
     obj: any,
@@ -81,16 +37,36 @@ function addMultiplePropertiesRecursively(
     }
 }
 
-export function assignPropertyToResponseData(data: any, menuCode: string): any {
+export function assignPropertyToResponseData<T extends Record<string, unknown>>(data: T): T {
+    console.log("assignPropertyToData:::", data)
     const propertyGenerators = {
         __guid: (path: string[]) => generatePathGUID(path),
         featureType: (path: string[]) => path[path.length - 1]?.split("-")[0] ?? "unknown",
-        menuCode: () => menuCode,
     };
 
     Object.keys(data).forEach(key => {
         addMultiplePropertiesRecursively(data[key], [key], propertyGenerators);
     });
-
+    console.log("assignPropertyToData after :::", data)
     return data;
+}
+
+// 새로운 객체를 그릴 때, guid 부여
+export function generateGuidWithParentGuid<T extends Record<string, unknown>, U extends Record<string, unknown>>(parentGuid: React.Key | null, data: T, rowData: U) {
+    const prefix = parentGuid ? parentGuid + "." : "";
+    const newIndex = rowData.length
+
+    const guid = prefix + data.featureType + "-" + newIndex
+    data.__guid = guid;
+}
+
+export function extractFeatureTypeFromGuid(guid: React.Key): string | null {
+    const s = String(guid);
+    if (!s) return null;
+
+    // guid 예: "railStations-1.exits-1"  → segments: ["railStations-1","exits-1"]
+    const lastSegment = s.split(".").pop() ?? "";
+    // lastSegment 예: "exits-1" → ["exits","1"]
+    const [type] = lastSegment.split("-");
+    return type || null;
 }

@@ -3,63 +3,128 @@ import * as Cesium from "cesium";
 import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
 import {useScenarioStore} from "@stores/useScenarioStore";
 import { Network } from "@type/Network";
-import { fromLonLat } from "ol/proj";
+import { diff } from "deep-object-diff";
 
 export default class NetworkDataSourceLayer {
     private readonly LAYER_NAME = "network";
-    private dataSource: GeoJsonDataSource | undefined;
+    private dataSource: GeoJsonDataSource;
+    private unsubscribe: (() => void) | undefined;
+    private static readonly EPSILON = 1e-9;
     private selectedScenario = useScenarioStore.getState().selectedScenario
 
     constructor(private viewer: Viewer) {
-        this.load()
+        this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
+        this.viewer.dataSources.add(this.dataSource);
+
+        this.load(); // 초기 로드
+        const store = layerNameToStoreMap[this.LAYER_NAME];
+        if (store) {
+            this.unsubscribe = store.subscribe(
+                (state: {currentJsonData: Network}) => state.currentJsonData,
+                () => {
+                    console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
+                    this.load();
+                },
+                {equalityFn: (a: Network, b: Network) => diff(a, b) === undefined}
+            );
+        }
     }
 
-    public async load(): Promise<GeoJsonDataSource | undefined> {
+    private getLineIntersectionPoint(p1: Cesium.Cartesian3, v1: Cesium.Cartesian3, p2: Cesium.Cartesian3, v2: Cesium.Cartesian3): Cesium.Cartesian3 | null {
+        const p1p2 = Cesium.Cartesian3.subtract(p1, p2, new Cesium.Cartesian3());
 
-        const store = layerNameToStoreMap[this.LAYER_NAME]
-        this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
+        const v1_dot_v1 = Cesium.Cartesian3.dot(v1, v1);
+        const v2_dot_v2 = Cesium.Cartesian3.dot(v2, v2);
+        const v1_dot_v2 = Cesium.Cartesian3.dot(v1, v2);
 
-        const createCorridorAlongLane = ({
-                                             id,
-                                             source,
-                                             target,
-                                             offset = 0,
-                                             length = 5,
-                                             width = 1,
-                                             material,
-                                             properties,
-                                         }) => {
-            // 1. 방향 벡터 계산
-            const direction = Cesium.Cartesian3.subtract(target, source, new Cesium.Cartesian3());
-            Cesium.Cartesian3.normalize(direction, direction);
+        const denominator = v1_dot_v2 * v1_dot_v2 - v1_dot_v1 * v2_dot_v2;
 
-            // 2. offset 지점 계산 (source에서 direction으로 offset만큼 이동)
-            const offsetVec = Cesium.Cartesian3.multiplyByScalar(direction, offset, new Cesium.Cartesian3());
-            const start = Cesium.Cartesian3.add(source, offsetVec, new Cesium.Cartesian3());
+        if (Math.abs(denominator) < NetworkDataSourceLayer.EPSILON) {
+            return null;
+        }
 
-            // 3. length 지점 계산 (offset 지점에서 direction으로 length만큼 이동)
-            const lengthVec = Cesium.Cartesian3.multiplyByScalar(direction, length, new Cesium.Cartesian3());
-            const end = Cesium.Cartesian3.add(start, lengthVec, new Cesium.Cartesian3());
+        const p1p2_dot_v1 = Cesium.Cartesian3.dot(p1p2, v1);
+        const p1p2_dot_v2 = Cesium.Cartesian3.dot(p1p2, v2);
 
-            // 4. Corridor 생성
-            return new Cesium.Entity({
-                id,
-                corridor: {
-                    positions: [start, end],
-                    width,
-                    height: 0.05,
-                    material,
-                    cornerType: Cesium.CornerType.MITERED,
-                },
-                properties,
-            });
-        };
+        const t = (p1p2_dot_v1 * v2_dot_v2 - p1p2_dot_v2 * v1_dot_v2) / denominator;
 
+        return Cesium.Cartesian3.add(p1, Cesium.Cartesian3.multiplyByScalar(v1, t, new Cesium.Cartesian3()), new Cesium.Cartesian3());
+    }
+    private generateQuadraticBezierCurve(
+        start: Cesium.Cartesian3,
+        controlPoint: Cesium.Cartesian3,
+        end: Cesium.Cartesian3,
+        numPoints: number = 15,
+        pullScale: number = 0.9
+    ): Cesium.Cartesian3[] {
 
+        const basePoint = Cesium.Cartesian3.add(start, end, new Cesium.Cartesian3());
+        Cesium.Cartesian3.multiplyByScalar(basePoint, 0.5, basePoint);
+
+        const pullVector = Cesium.Cartesian3.subtract(controlPoint, basePoint, new Cesium.Cartesian3())
+        Cesium.Cartesian3.multiplyByScalar(pullVector, pullScale, pullVector);
+        const effectiveControlPoint = Cesium.Cartesian3.add(basePoint, pullVector, new Cesium.Cartesian3());
+
+        const points: Cesium.Cartesian3[] = [];
+        for (let i = 0; i <= numPoints; i++) {
+            const t = i / numPoints;
+            const tInv = 1 - t;
+
+            const p0_scaled = Cesium.Cartesian3.multiplyByScalar(start, tInv * tInv, new Cesium.Cartesian3());
+            const p1_scaled = Cesium.Cartesian3.multiplyByScalar(effectiveControlPoint, 2 * tInv * t, new Cesium.Cartesian3());
+            const p2_scaled = Cesium.Cartesian3.multiplyByScalar(end, t * t, new Cesium.Cartesian3());
+
+            const pointOnCurve = Cesium.Cartesian3.add(p0_scaled, p1_scaled, new Cesium.Cartesian3());
+            Cesium.Cartesian3.add(pointOnCurve, p2_scaled, pointOnCurve);
+
+            points.push(pointOnCurve);
+        }
+        return points;
+    }
+    public async load(): Promise<void> {
+        this.dataSource.entities.suspendEvents();
         try {
+            this.dataSource.entities.removeAll();
 
-            const network: Network | undefined = store.getState().originData;
-            if (!network) return;
+            const store = layerNameToStoreMap[this.LAYER_NAME];
+
+            const createCorridorAlongLane = ({
+                                                 id,
+                                                 source,
+                                                 target,
+                                                 offset = 0,
+                                                 length = 5,
+                                                 width = 1,
+                                                 material,
+                                                 properties,
+                                             }) => {
+                const direction = Cesium.Cartesian3.subtract(target, source, new Cesium.Cartesian3());
+                Cesium.Cartesian3.normalize(direction, direction);
+
+                const offsetVec = Cesium.Cartesian3.multiplyByScalar(direction, offset, new Cesium.Cartesian3());
+                const start = Cesium.Cartesian3.add(source, offsetVec, new Cesium.Cartesian3());
+
+                const lengthVec = Cesium.Cartesian3.multiplyByScalar(direction, length, new Cesium.Cartesian3());
+                const end = Cesium.Cartesian3.add(start, lengthVec, new Cesium.Cartesian3());
+
+                return new Cesium.Entity({
+                    id,
+                    corridor: {
+                        positions: [start, end],
+                        width,
+                        height: 0.05,
+                        material,
+                        cornerType: Cesium.CornerType.MITERED,
+                    },
+                    properties,
+                });
+            };
+
+            const network: Network | undefined = store.getState().currentJsonData;
+            if (!network || !network.nodes || !network.links) {
+                console.log("[NetworkDataSourceLayer] No network data to load.");
+                return;
+            }
             const nodes = network.nodes;
             const links = network.links;
 
@@ -89,37 +154,26 @@ export default class NetworkDataSourceLayer {
                     corridor: {
                         cornerType: Cesium.CornerType.MITERED,
                         positions: [p1, p2],
-                        width: link.width, // 레인별 폭 적용
+                        width: link.width,
                         material: Cesium.Color.SILVER.withAlpha(0.8),
                         height: 0.02,
                     },
-                    properties:link
+                    properties: link
                 }));
 
-                const laneCount = link.lanes.length || 2; // 차선 수
-
+                const laneCount = link.lanes.length || 2;
                 const n = link.lanes.length;
 
                 for (let i = 0; i < n; i++) {
                     const lane = link.lanes[i];
-                    const laneWidth = link.width/laneCount;
+                    if(!lane) continue;
+                    const laneWidth = link.width / laneCount;
                     const offset = ((laneCount - 1) / 2 - i) * laneWidth;
-                    //const offset = ((laneCount - 1) / 2 - i) * laneWidth;
 
-                    // 방향 벡터에서 수직 방향(right)을 따라 offset 벡터 계산
                     const offsetVec = Cesium.Cartesian3.multiplyByScalar(right, offset, new Cesium.Cartesian3());
-
-                    // 평행이동된 좌표 생성
                     const shiftedP1 = Cesium.Cartesian3.add(p1, offsetVec, new Cesium.Cartesian3());
                     const shiftedP2 = Cesium.Cartesian3.add(p2, offsetVec, new Cesium.Cartesian3());
-
-                    // const [firstPointStr, lastPointStr] = lane.shape.split(" ");
-                    // const [x1, y1] = firstPointStr.split(",").map(parseFloat);
-                    // const [x2, y2] = lastPointStr.split(",").map(parseFloat);
-                    //
-                    // const sourceCart = Cesium.Cartesian3.fromDegrees(baseLng + x1/ 88000, baseLat + y1/ 111000);
-                    // const targetCart = Cesium.Cartesian3.fromDegrees(baseLng + x2/ 88000, baseLat + y2/ 111000);
-
+                    lane.linkRef = link.id
                     lane.laneSource = shiftedP1;
                     lane.laneTarget = shiftedP2;
 
@@ -128,11 +182,11 @@ export default class NetworkDataSourceLayer {
                         corridor: {
                             cornerType: Cesium.CornerType.MITERED,
                             positions: [shiftedP1, shiftedP2],
-                            width: laneWidth, // 레인별 폭 적용
+                            width: laneWidth,
                             material: Cesium.Color.BLACK.withAlpha(0.8),
                             height: 0.03,
                         },
-                        properties: link.lanes[i]
+                        properties: lane
                     });
 
                     if (lane.cells?.length > 0) {
@@ -205,7 +259,7 @@ export default class NetworkDataSourceLayer {
 
                     const portEntity = new Cesium.Entity({
                         id: port.__guid,
-                        position:  port.type == 'in' ? source : target,
+                        position: port.type == 'in' ? source : target,
                         cylinder: {
                             length: port.type == 'in' ? 2 : 2, // 높이
                             topRadius: port.type == 'in' ? 1.5 : 0.1,
@@ -219,62 +273,49 @@ export default class NetworkDataSourceLayer {
                     this.dataSource.entities.add(portEntity);
                 }
 
-                const connections = node.connections
-
-                if (connections) {
-                    for (const conn of node.connections || []) {
-                        const [x1, y1] = [conn.coordinates[0].lng, conn.coordinates[0].lat];
-                        const [x2, y2] = [conn.coordinates[1].lng, conn.coordinates[1].lat];
-
-                        const sourceCart = Cesium.Cartesian3.fromDegrees(x1, y1);
-                        const targetCart = Cesium.Cartesian3.fromDegrees(x2, y2);
-
+                if (node.connections) {
+                    for (const conn of node.connections) {
                         const fromLink = links.find((l) => l.id == conn.fromLink);
                         const toLink = links.find((l) => l.id == conn.toLink);
 
                         if (!fromLink || !toLink) continue;
 
-                        const fromLane = fromLink.lanes[conn.fromLane];
-                        const toLane = toLink.lanes[conn.toLane];
+                        const fromLane = fromLink.lanes?.[conn.fromLane];
+                        const toLane = toLink.lanes?.[conn.toLane];
 
-                        if (!fromLane || !toLane) continue;
+                        if (!fromLane || !toLane || !fromLane.laneTarget || !toLane.laneSource) continue;
 
-                        const position = [fromLane.laneTarget]
+                        const fromPt = fromLane.laneTarget;
+                        const toPt = toLane.laneSource;
+                        let positions: Cesium.Cartesian3[];
 
-                        if(conn.turning != 'S'){
+                        if (conn.turning === 'Straight') {
+                            positions = [fromPt, toPt];
+                        } else {
+                            // Calculate vectors for the parent links
+                            const fromLinkP1 = Cesium.Cartesian3.fromDegrees(fromLink.coordinates[0].lng, fromLink.coordinates[0].lat);
+                            const fromLinkP2 = Cesium.Cartesian3.fromDegrees(fromLink.coordinates[1].lng, fromLink.coordinates[1].lat);
+                            const fromVector = Cesium.Cartesian3.subtract(fromLinkP2, fromLinkP1, new Cesium.Cartesian3());
 
-                            const nodeLon = node.coordinates.lng;
-                            const nodeLat = node.coordinates.lat;
-                            const nodeHeight = 0;
-                            const nodePos = Cesium.Cartesian3.fromDegrees(nodeLon, nodeLat, nodeHeight);
+                            const toLinkP1 = Cesium.Cartesian3.fromDegrees(toLink.coordinates[0].lng, toLink.coordinates[0].lat);
+                            const toLinkP2 = Cesium.Cartesian3.fromDegrees(toLink.coordinates[1].lng, toLink.coordinates[1].lat);
+                            const toVector = Cesium.Cartesian3.subtract(toLinkP2, toLinkP1, new Cesium.Cartesian3());
 
-                            const midpoint = Cesium.Cartesian3.midpoint(fromLane.laneTarget, toLane.laneSource, new Cesium.Cartesian3());
+                            // Find the intersection point to use as a Bezier control point
+                            const controlPoint = this.getLineIntersectionPoint(fromPt, fromVector, toPt, toVector);
 
-                            const direction = Cesium.Cartesian3.subtract(nodePos, midpoint, new Cesium.Cartesian3());
-
-                            Cesium.Cartesian3.multiplyByScalar(direction, 1 / 10, direction);
-
-                            const adjustedMid = Cesium.Cartesian3.add(midpoint, direction, new Cesium.Cartesian3());
-
-                            //position.push(adjustedMid)
-                            const points = [fromLane.laneTarget, adjustedMid, toLane.laneSource]
-
-                            const spline = new Cesium.CatmullRomSpline({
-                                times: [0.0, 0.5, 1.0],
-                                points
-                            });
-
-                            for (let i = 0; i <= 10; i++) {
-                                position.push(spline.evaluate(i / 10));
+                            if (controlPoint) {
+                                positions = this.generateQuadraticBezierCurve(fromPt, controlPoint, toPt);
+                            } else {
+                                // Fallback for parallel lines
+                                positions = [fromPt, toPt];
                             }
                         }
-
-                        position.push(toLane.laneSource)
 
                         this.dataSource.entities.add({
                             id: conn.__guid,
                             polyline: {
-                                positions: position,
+                                positions: positions,
                                 width: 5,
                                 arcType: Cesium.ArcType.GEODESIC,
                                 material: new Cesium.PolylineArrowMaterialProperty(
@@ -315,6 +356,8 @@ export default class NetworkDataSourceLayer {
             console.log("NetworkDataSourceLayer: 모든 Feature가 추가됨");
         } catch (error) {
             console.error("NetworkDataSourceLayer.load() 중 에러 발생:", error);
+        } finally {
+            this.dataSource.entities.resumeEvents();
         }
 
 
@@ -322,7 +365,15 @@ export default class NetworkDataSourceLayer {
     }
 
     private findConnectionById = (node, connId) => {
-        return node.connections?.find(conn => conn.id == connId);
+        return node?.connections?.find(conn => conn.id == connId);
     }
 
+    public destroy(): void {
+        if (this.unsubscribe) {
+            this.unsubscribe();
+        }
+        if (this.dataSource) {
+            this.viewer.dataSources.remove(this.dataSource, true);
+        }
+    }
 }

@@ -1,9 +1,9 @@
 import { EventAdapter } from "@adaptor/EventAdapter";
 import { EventOptions } from "@type/EventOptions";
 
-export type EventType = 'select' | 'modify' | 'delete' | 'add' | 'move' | 'click' | 'hover' | 'drag' | 'drop' | 'zoom' | 'pan' | 'rotate' | 'RIGHT_CLICK' | 'LEFT_CLICK';
+export type EventType = 'select' | 'singleclick' | 'drawend' | 'modify' | 'modifystart' | 'modifyend' | 'delete' | 'add' | 'move' | 'click' | 'hover' | 'drag' | 'drop' | 'zoom' | 'pan' | 'rotate' | 'RIGHT_CLICK' | 'LEFT_CLICK';
 
-type EventCallback = (event: any) => void;
+export type EventCallback = (event: any) => void;
 
 export class EventManager {
     private adapter: EventAdapter;

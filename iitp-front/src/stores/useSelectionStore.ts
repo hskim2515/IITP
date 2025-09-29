@@ -1,26 +1,67 @@
 import { create } from 'zustand';
+import React from "react";
+
+type SelectionGroup = Record<string, (string | React.Key)[]>;
 
 type SelectionStore = {
-    selectedGuid: (string) [];
-    setSelectedGuid: (guids: (string)[]) => void;
+    selectedGuid: (string | React.Key)[];
+    groupedByType: SelectionGroup;
 
-    addSelectionId: (guid: string) => void;
-    removeSelectionId: (guid: string) => void;
+    setSelectedGuid: (guids: (string | React.Key)[]) => void;
+    addSelectionId: (guid: string | React.Key) => void;
+    removeSelectionId: (guid: string | React.Key) => void;
     clearSelected: () => void;
 };
 
+function getFeatureTypeFromGuid(guid: string | React.Key): string {
+    if (typeof guid !== "string") return "unknown";
+    const [prefix] = guid.split("-");
+    return prefix || "unknown";
+}
+
+/** guid 배열 → featureType별 그룹 */
+function groupGuidsByType(guids: (string | React.Key)[]): SelectionGroup {
+    return guids.reduce((acc, guid) => {
+        const type = getFeatureTypeFromGuid(guid);
+        if (!acc[type]) acc[type] = [];
+        acc[type].push(guid);
+        return acc;
+    }, {} as SelectionGroup);
+}
+
 export const useSelectionStore = create<SelectionStore>((set, get) => ({
     selectedGuid: [],
-    setSelectedGuid: (guids: (string)[]) => {
-        set({selectedGuid: guids})
+    groupedByType: {},
+
+    setSelectedGuid: (guids) => {
+        set({
+            selectedGuid: guids,
+            groupedByType: groupGuidsByType(guids),
+        });
     },
-    addSelectionId: (guid: string) => {
+
+    addSelectionId: (guid) => {
         const currentSelected = get().selectedGuid;
-        if (!currentSelected.includes(guid)) set({selectedGuid: [...currentSelected, guid]});
+        if (!currentSelected.includes(guid)) {
+            const newGuids = [...currentSelected, guid];
+            set({
+                selectedGuid: newGuids,
+                groupedByType: groupGuidsByType(newGuids),
+            });
+        }
     },
-    removeSelectionId: (guid: string | number) => {
+
+    removeSelectionId: (guid) => {
         const currentSelected = get().selectedGuid;
-        set({selectedGuid: currentSelected.filter((id: string | number) => id !== guid)});
+        const newGuids = currentSelected.filter((id) => id !== guid);
+        set({
+            selectedGuid: newGuids,
+            groupedByType: groupGuidsByType(newGuids),
+        });
     },
-    clearSelected: () => set({selectedGuid: []}),
+
+    clearSelected: () => set({
+        selectedGuid: [],
+        groupedByType: {},
+    }),
 }));

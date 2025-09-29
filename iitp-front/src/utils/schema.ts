@@ -1,298 +1,274 @@
-import { detailedDiff } from "deep-object-diff";
-import type {
-    Field,
-    FieldOption,
-    Schema,
-    LayerSchema,
-    InputType,
-    SchemaFieldsRequest,
+import {
+    CreateFieldOptionRequest,
     CreateFieldRequest,
-    UpdateFieldRequest, GenerateTemplateOptions,
-} from "@type/Schema";
-import { isNil } from "lodash";
+    LayerSchemaFieldResponse,
+    LayerSchemaOptionResponse,
+    LayerSchemaResponse,
+    SchemaDefinition,
+    SchemaFieldsRequest,
+    UpdateFieldOption,
+    UpdateFieldRequest
+} from "@type/openapi.gen";
+import { GenerateTemplateOptions, Template } from "@type/Schema";
 
+/**
+ * 스키마 내에서 ID로 특정 필드 탐색
+ */
 export function findFieldById(
-    schema: Schema | undefined | null,
-    id: Field["id"] | number | string
-): Field | null {
-    if (!schema || !schema.fields || schema.fields.length === 0) return null;
+    schema: SchemaDefinition,
+    id: LayerSchemaFieldResponse["id"]
+): LayerSchemaFieldResponse | null {
+    if (!schema?.fields || id === undefined) return null;
     return schema.fields.find((f) => f.id === id) ?? null;
 }
 
-
-function isEffectivelyDeleted(o: any): boolean {
-    if (o && o.deleted === true) return true;
-    const v = o?.value;
+/**
+ *
+ */
+function isEffectivelyDeleted(option: {value?: any; deleted?: boolean}): boolean {
+    if (option.deleted === true) return true;
+    const v = option.value;
     if (v === null || v === undefined) return true;
-    if (typeof v === "string" && v.trim() === "") return true;
+    if (typeof v === 'string' && v.trim() === '') return true;
     return false;
 }
 
 
-// 비교용 평탄화: select일 때만 options를 id→value 맵으로 치환
-function normalizeFieldForCompare(f: Field) {
-    const optionsMap: Record<string, string> | undefined =
-        f.inputType === "select"
-            ? Object.fromEntries(
-                (f.options ?? [])
-                    .filter((o) => !isNil(o.id))
-                    .map((o) => [String(o.id), o.value])
-            )
-            : undefined;
+/**
+ * 공통 ID를 가진 옵션 중 값이 변경된 항목을 수집
+ */
+function collectUpdatedOptionsByPresence(
+    originField: LayerSchemaFieldResponse,
+    currentField: LayerSchemaFieldResponse
+): UpdateFieldOption[] {
+    if (!originField || !currentField) return [];
+
+    const originOptionsById = (originField.options ?? []).reduce<Map<string, string>>(
+        (map, option) => {
+            if (option.id !== undefined && option.value !== undefined) {
+                map.set(String(option.id), option.value);
+            }
+            return map;
+        }, new Map());
+
+    return (currentField.options ?? []).reduce<UpdateFieldOption[]>(
+        (updates, currentOption) => {
+            const id = currentOption.id;
+            const stringId = id !== undefined ? String(id) : undefined;
+
+            if (
+                stringId &&
+                originOptionsById.has(stringId) &&
+                !isEffectivelyDeleted(currentOption) &&
+                originOptionsById.get(stringId) !== currentOption.value
+            ) {
+                const updated: UpdateFieldOption = {id, value: currentOption.value}
+                updates.push(updated);
+            }
+            return updates;
+        }, []);
+}
+
+/**
+ * 새로 추가된 옵션을 수집
+ */
+function collectCreatedOptionsByPresence(
+    originField: LayerSchemaFieldResponse,
+    currentField: LayerSchemaFieldResponse
+): CreateFieldOptionRequest[] {
+    if (!currentField) return [];
+
+    const originIds = (originField?.options ?? []).reduce<Set<string>>(
+        (set, option) => {
+            if (option.id !== undefined) {
+                set.add(String(option.id));
+            }
+            return set;
+        }, new Set());
+
+    return (currentField.options ?? []).reduce<CreateFieldOptionRequest[]>(
+        (creates, option) => {
+            const isNew = option.id === undefined || !originIds.has(String(option.id));
+
+            if (isNew && option.value !== undefined && !isEffectivelyDeleted(option)) {
+                const created: CreateFieldOptionRequest = {value: option.value}
+                creates.push(created);
+            }
+            return creates;
+        }, []);
+}
+
+/**
+ * 원본에서 삭제된 옵션의 ID를 수집
+ */
+function collectDeletedOptionsByPresence(
+    originField: LayerSchemaFieldResponse,
+    currentField: LayerSchemaFieldResponse
+): number[] | [] {
+    if (!originField || !currentField) return [];
+
+    const editedOptionsById = (currentField.options ?? []).reduce<Map<string, LayerSchemaOptionResponse>>((map, option) => {
+        if (option.id !== undefined) {
+            map.set(String(option.id), option);
+        }
+        return map;
+    }, new Map());
+
+    return (originField.options ?? []).reduce<number[]>((deletes, originOption) => {
+        const id = originOption.id;
+        const stringId = id !== undefined ? String(id) : undefined;
+
+        if (stringId) {
+            const editedOption = editedOptionsById.get(stringId);
+            if (!editedOption || isEffectivelyDeleted(editedOption)) {
+                deletes.push(id!);
+            }
+        }
+        return deletes;
+    }, []);
+}
+
+/**
+ * 두 필드의 기본 속성 변경 사항만 추출
+ */
+function buildBaseChanges(baseField: LayerSchemaFieldResponse, editedField: LayerSchemaFieldResponse): Partial<UpdateFieldRequest> {
+    const changes: Partial<UpdateFieldRequest> = {};
+    if (baseField.name !== editedField.name) changes.name = editedField.name;
+    if (baseField.nullable !== editedField.nullable) changes.nullable = editedField.nullable;
+    if (baseField.defaultValue !== editedField.defaultValue) changes.defaultValue = editedField.defaultValue;
+    if (baseField.readOnly !== editedField.readOnly) changes.readOnly = editedField.readOnly;
+    if (baseField.status !== editedField.status) changes.status = editedField.status;
+    return changes;
+}
+
+/**
+ * 두 필드의 옵션(생성/수정/삭제) 변경 사항을 추출
+ */
+function collectOptionChanges(baseField: LayerSchemaFieldResponse, editedField: LayerSchemaFieldResponse) {
+    const optionsToCreate = collectCreatedOptionsByPresence(baseField, editedField);
+    const options = collectUpdatedOptionsByPresence(baseField, editedField);
+    const optionIdsToDelete = collectDeletedOptionsByPresence(baseField, editedField);
 
     return {
-        name: f.name,
-        nullable: f.nullable,
-        readOnly: f.readOnly,
-        status: f.status,
-        inputType: f.inputType,
-        options: optionsMap,
+        ...(optionsToCreate.length > 0 && {optionsToCreate}),
+        ...(options.length > 0 && {options}),
+        ...(optionIdsToDelete.length > 0 && {optionIdsToDelete}),
     };
 }
 
-/** 공통 id의 옵션 중 value 변경만 Update 로 수집 (삭제 간주는 업데이트에서 제외) */
-function collectUpdatedOptionsByPresence(originField: Field | null, currentField: Field | null) {
-    if (!originField || !currentField) return [];
-    const updates: { id: number; value: string }[] = [];
-
-    const origin = new Map<string, string>(
-        (originField.options ?? [])
-            .filter((o) => !isNil(o.id))
-            .map((o) => [String(o.id), o.value])
-    );
-    const current = new Map<string, any>(
-        (currentField.options ?? [])
-            .filter((o) => !isNil(o.id))
-            .map((o) => [String(o.id), o])
-    );
-
-    for (const [id, editedOption] of current.entries()) {
-        if (!origin.has(id)) continue; // 원본에 없으면 생성 후보 → 업데이트 비교 제외
-        if (isEffectivelyDeleted(editedOption)) continue; // 삭제 취급은 업데이트에서 제외
-        const oldVal = origin.get(id);
-        const newVal = editedOption.value;
-        if (oldVal !== newVal) updates.push({ id: Number(id), value: newVal });
-    }
-    return updates;
-}
-
-/** 원본에 없는 옵션(=생성)만 수집 (빈값/삭제간주 제외) */
-function collectCreatedOptionsByPresence(originField: Field | null, currentField: Field | null) {
-    if (!currentField) return [];
-    const creates: { value: string }[] = [];
-    const originIds = new Set<string>(
-        (originField?.options ?? []).filter((o) => !isNil(o.id)).map((o) => String(o.id))
-    );
-
-    for (const option of currentField.options ?? []) {
-        const isNewById = isNil(option.id) || !originIds.has(String(option.id));
-        if (isNewById && !isEffectivelyDeleted(option)) {
-            creates.push({ value: option.value }); // 서버 생성이므로 id 없이 value만
-        }
-    }
-    return creates;
-}
-
-/** 원본에는 있고 편집본에는 '없거나(실제 제거)' 혹은 '삭제 간주(값 비움/플래그)'인 id를 Delete로 수집 */
-function collectDeletedOptionsByPresence(originField: Field | null, currentField: Field | null) {
-    if (!originField) return [];
-    const deletes: number[] = [];
-
-    const editedById = new Map<string, any>(
-        (currentField?.options ?? [])
-            .filter((o) => !isNil(o.id))
-            .map((o) => [String(o.id), o])
-    );
-
-    for (const option of originField.options ?? []) {
-        if (isNil(option.id)) continue;
-        const id = String(option.id);
-        const editedOption = editedById.get(id);
-
-        // 편집본에 아예 없거나, 값이 비어서 '삭제 간주'면 삭제로 판단
-        if (!editedOption || isEffectivelyDeleted(editedOption)) {
-            deletes.push(Number(option.id));
-        }
-    }
-    return deletes;
-}
-
-export function buildSchemaFieldsRequestUsingPresence(
-    baseline: Schema, // 스토어의 현재 스키마(저장 기준)
-    edited: Schema    // 화면에서 편집된 스키마
+/**
+ * 두 스키마(baseline, edited)를 비교하여 생성, 수정, 삭제될 필드 정보를 담은 요청 객체를 생성합니다.
+ * @param baseline 비교 기준이 되는 원본 스키마
+ * @param edited 사용자가 수정한 새로운 스키마
+ * @returns 변경 사항이 있을 경우 SchemaFieldsRequest 객체, 없으면 null
+ */
+export function buildSchemaFieldsRequest(
+    baseline: SchemaDefinition,
+    edited: SchemaDefinition
 ): SchemaFieldsRequest | null {
-    // A) 필드 삭제: baseline에 있고 edited에 없는 field id
     const fieldIdsToDelete = (baseline.fields ?? [])
-        .filter((f) => !findFieldById(edited, f.id))
-        .map((f) => Number(f.id));
+        .filter((f): f is { id: number } => f.id !== undefined && !findFieldById(edited, f.id))
+        .map((f) => f.id);
 
-    // B) 필드 생성: edited에 있고 baseline에 없는 field
-    const fieldsToCreate: CreateFieldRequest[] = (edited.fields ?? [])
-        .filter((f) => !findFieldById(baseline, f.id))
-        .map((f) => {
-            const base =
-                {
-                    name: f.name,
-                    nullable: f.nullable,
-                    defaultValue: f.defaultValue,
-                    readOnly: f.readOnly,
-                    status: f.status,
-                } as Omit<CreateFieldRequest, "inputType" | "options"> & { inputType?: any; options?: any };
+    const fieldsToCreate = (edited.fields ?? [])
+        .filter((f) => f.id === undefined || !findFieldById(baseline, f.id))
+        .map((f): CreateFieldRequest => ({
+            name: f.name,
+            nullable: f.nullable,
+            defaultValue: f.defaultValue,
+            readOnly: f.readOnly,
+            status: f.status,
+            inputType: f.inputType,
+            ...(f.inputType === 'select' && {
+                options: (f.options ?? []).filter(o => o.value !== undefined).map(o => ({ value: o.value! })),
+            }),
+        }));
 
-            if (f.inputType === "select") {
-                // 새 필드는 옵션 전체가 "생성"으로 취급
-                return {
-                    ...base,
-                    inputType: "select",
-                    options: (f.options ?? []).map((o) => ({ value: o.value })),
-                } as CreateFieldRequest;
+    const fieldsToUpdate = (edited.fields ?? [])
+        .filter((ef) => ef.id !== undefined && !!findFieldById(baseline, ef.id))
+        .map((editedField): UpdateFieldRequest | null => {
+            const baseField = findFieldById(baseline, editedField.id!)!;
+            const baseChanges = buildBaseChanges(baseField, editedField);
+            const optionChanges = collectOptionChanges(baseField, editedField);
+            const inputTypeChanged = baseField.inputType !== editedField.inputType;
+
+            if (!inputTypeChanged && Object.keys(baseChanges).length === 0 && Object.keys(optionChanges).length === 0) {
+                return null;
             }
+
             return {
-                ...base,
-                inputType: f.inputType as Exclude<InputType, "select">,
-            } as CreateFieldRequest;
-        });
+                id: editedField.id!,
+                ...baseChanges,
+                ...(inputTypeChanged && { inputType: editedField.inputType }),
+                ...optionChanges,
+            };
+        })
+        .filter((req): req is UpdateFieldRequest => req !== null);
 
-    // C) 필드 수정: 공통 id에 대해 detailedDiff + presence로 속성/옵션 변경 수집
-    const fieldsToUpdate: UpdateFieldRequest[] = [];
-    const common = (edited.fields ?? []).filter((ef) => !!findFieldById(baseline, ef.id));
-
-    for (const editedField of common) {
-        const baseField = findFieldById(baseline, editedField.id)!;
-
-        // 주로 기본 속성 변화 감지 (options는 presence로 처리)
-        const difference: any = detailedDiff(normalizeFieldForCompare(baseField), normalizeFieldForCompare(editedField));
-
-        const inputTypeChanged =
-            (difference.added?.inputType ?? difference.updated?.inputType) !== undefined ||
-            difference.deleted?.inputType !== undefined ||
-            baseField.inputType !== editedField.inputType;
-
-        // 기본 속성 변경 수집
-        const base: Partial<UpdateFieldRequest> = {
-            ...(baseField.name !== editedField.name ? { name: editedField.name } : {}),
-            ...(baseField.nullable !== editedField.nullable ? { nullable: editedField.nullable } : {}),
-            ...(baseField.defaultValue !== editedField.defaultValue ? { defaultValue: editedField.defaultValue } : {}),
-            ...(baseField.readOnly !== editedField.readOnly ? { readOnly: editedField.readOnly } : {}),
-            ...(baseField.status !== editedField.status ? { status: editedField.status } : {}),
-        };
-
-        if (inputTypeChanged) {
-            if (editedField.inputType === "select") {
-                // 타입이 select로 설정/변경된 경우: 옵션 생성/수정/삭제 모두 허용
-                const creates = collectCreatedOptionsByPresence(baseField, editedField);
-                const updates = collectUpdatedOptionsByPresence(baseField, editedField);
-                const deletes = collectDeletedOptionsByPresence(baseField, editedField);
-
-                const upd: UpdateFieldRequest = {
-                    id: editedField.id!,
-                    inputType: "select",
-                    ...(Object.keys(base).length ? base : {}),
-                    ...(updates.length > 0 ? { options: updates } : {}),
-                    ...(creates.length > 0 ? { optionsToCreate: creates } : {}),
-                    ...(deletes.length > 0 ? { optionIdsToDelete: deletes } : {}),
-                } as UpdateFieldRequest;
-
-                // 아무 것도 담기지 않았고 base도 없으면 스킵
-                if (Object.keys(upd).length > 1) fieldsToUpdate.push(upd);
-            } else {
-                // select가 아닌 타입으로 변경: 옵션 관련 필드는 금지(서버에서 옵션 전부 정리)
-                if (Object.keys(base).length > 0) {
-                    fieldsToUpdate.push({
-                        id: editedField.id!,
-                        inputType: editedField.inputType as Exclude<InputType, "select">,
-                        ...base,
-                    } as UpdateFieldRequest);
-                } else {
-                    // inputType만 바뀐 경우라도 명시
-                    fieldsToUpdate.push({
-                        id: editedField.id!,
-                        inputType: editedField.inputType as Exclude<InputType, "select">,
-                    } as UpdateFieldRequest);
-                }
-            }
-            continue;
-        }
-
-        // inputType 동일
-        if (editedField.inputType === "select") {
-            // 생성/수정/삭제 모두 분리해서 담음
-            const creates = collectCreatedOptionsByPresence(baseField, editedField);
-            const updates = collectUpdatedOptionsByPresence(baseField, editedField);
-            const deletes = collectDeletedOptionsByPresence(baseField, editedField);
-
-            if (
-                Object.keys(base).length > 0 ||
-                creates.length > 0 ||
-                updates.length > 0 ||
-                deletes.length > 0
-            ) {
-                const upd: UpdateFieldRequest = {
-                    id: editedField.id!,
-                    ...(Object.keys(base).length ? base : {}),
-                    ...(updates.length > 0 ? { options: updates } : {}),
-                    ...(creates.length > 0 ? { optionsToCreate: creates } : {}),
-                    ...(deletes.length > 0 ? { optionIdsToDelete: deletes } : {}),
-                } as UpdateFieldRequest;
-                fieldsToUpdate.push(upd);
-            }
-        } else {
-            // select가 아니고 타입 동일: 기본 속성만
-            if (Object.keys(base).length > 0) {
-                fieldsToUpdate.push({ id: editedField.id!, ...(base as any) } as UpdateFieldRequest);
-            }
-        }
+    if (fieldsToCreate.length === 0 && fieldsToUpdate.length === 0 && fieldIdsToDelete.length === 0) {
+        return null;
     }
 
-    const empty =
-        fieldsToCreate.length === 0 &&
-        fieldsToUpdate.length === 0 &&
-        fieldIdsToDelete.length === 0;
-
-    return empty
-        ? null
-        : {
-            id: edited.id,
-            fieldsToCreate: fieldsToCreate.length ? fieldsToCreate : undefined,
-            fieldsToUpdate: fieldsToUpdate.length ? fieldsToUpdate : undefined,
-            fieldIdsToDelete: fieldIdsToDelete.length ? fieldIdsToDelete : undefined,
-        };
+    return {
+        id: edited.id,
+        fieldsToCreate: fieldsToCreate.length ? fieldsToCreate : undefined,
+        fieldsToUpdate: fieldsToUpdate.length ? fieldsToUpdate : undefined,
+        fieldIdsToDelete: fieldIdsToDelete.length ? fieldIdsToDelete : undefined,
+    };
 }
 
-export function buildLayerSchemaRequestsUsingPresence(
-    baselineLayer: LayerSchema,
-    editedLayer: LayerSchema
+/**
+ * 두 레이어 스키마(baselineLayer, editedLayer)를 받아 내부의 모든 스키마에 대한 변경 요청 목록을 생성합니다.
+ * @param baselineLayer 비교 기준 원본 레이어
+ * @param editedLayer 사용자 수정 레이어
+ * @returns 모든 스키마 변경 요청을 담은 배열
+ */
+export function buildLayerSchemaRequests(
+    baselineLayer: LayerSchemaResponse,
+    editedLayer: LayerSchemaResponse
 ): SchemaFieldsRequest[] {
-    const bById = new Map<number, Schema>((baselineLayer.schemata ?? []).map((schema) => [schema.id, schema]));
-    const out: SchemaFieldsRequest[] = [];
-    for (const current of editedLayer.schemata ?? []) {
-        const base = bById.get(current.id) ?? { ...current, fields: [] };
-        const dto = buildSchemaFieldsRequestUsingPresence(base, current);
-        if (dto) out.push(dto);
-    }
-    return out;
+    const baselineSchemasById = (baselineLayer.definition ?? []).reduce<Map<number, SchemaDefinition>>((map, schema) => {
+        if (schema.id !== undefined) {
+            map.set(schema.id, schema);
+        }
+        return map;
+    }, new Map());
+
+    return (editedLayer.definition ?? []).reduce<SchemaFieldsRequest[]>((requests, currentSchema) => {
+        if (currentSchema.id !== undefined) {
+            const baselineSchema = baselineSchemasById.get(currentSchema.id) ?? { ...currentSchema, fields: [] };
+            const requestDto = buildSchemaFieldsRequest(baselineSchema, currentSchema);
+            if (requestDto) {
+                requests.push(requestDto);
+            }
+        }
+        return requests;
+    }, []);
 }
 
+/**
+ * 스키마 정의를 바탕으로 데이터 입력을 위한 기본 템플릿 객체를 생성합니다.
+ * @param schema 템플릿을 생성할 스키마 정의
+ * @param options 추가 속성, 제외할 필드 등을 포함하는 옵션
+ * @returns 생성된 템플릿 객체
+ */
 export function generateTemplate(
-    schema: Schema | null,
+    schema: SchemaDefinition | null,
     options: GenerateTemplateOptions = {}
-): Record<string, any> | undefined {
+): Template | undefined {
     if (schema == null) return;
 
     const { additionalProps = {}, exclude = [] } = options;
 
-    const baseTemplate = schema.fields.reduce((acc, field) => {
-        if (!exclude.includes(field.name)) {
-            acc[field.name] = (field.defaultValue !== undefined && field.defaultValue !== null)
-                ? field.defaultValue
-                : undefined;
+    const baseTemplate = (schema.fields ?? []).reduce<Template>((acc, field) => {
+        if (field.name && !exclude.includes(field.name)) {
+            acc[field.name] = field.defaultValue ?? undefined;
         }
         return acc;
-    }, {} as Record<string, any>);
-    const template = {
+    }, {});
+
+    return {
         ...baseTemplate,
         ...additionalProps,
-    }
-    console.log("template:::", template)
-    return template;
+    };
 }

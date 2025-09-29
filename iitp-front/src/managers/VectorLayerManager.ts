@@ -123,7 +123,7 @@ class VectorLayerManager {
                 const source = layer.getSource();
                 if (!source) return;
                 // featureType 별로 필터링
-                const features = source.getFeatures().filter(f => f.get('__guid')?.split('-')[0] === featureType);
+                const features = source.getFeatures().filter(f => f.get('featureType') === featureType);
                 features.forEach(feature => {
                     if (visible) {
                         feature.setStyle(null);

@@ -9,7 +9,6 @@ import java.util.List;
 @Data
 // 1. 최상위 요청 DTO
 public class BusStationSaveRequest {
-    private Timestamp timestamp;
     private List<BusStationData> data;
     private LogsData logs;
 }

@@ -29,6 +29,7 @@ export interface Actions<T> {
 }
 
 
+
 const createFeatureStore = <T>() => {
     const initialState: State<T> = {
         originData: undefined,
@@ -111,7 +112,7 @@ const createFeatureStore = <T>() => {
 
                             // 구조 기반 부모 찾기
                             let container = null;
-                            if(record.parentGuid.length > 0){
+                            if(record.parentGuid?.length > 0){
                                 container = findParentRecordByGuid(updatedJson, record);
                             }else{
                                 container = findParentRecordByFeatureType(updatedJson, record);

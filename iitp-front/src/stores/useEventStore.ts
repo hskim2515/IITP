@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { EventManager, EventType, EventCallback } from '@managers/EventManager';
+import { EventCallback, EventManager, EventType } from '@managers/EventManager';
+import { EventOptions } from "@type/EventOptions";
 
 type MapType = 'cesium' | 'ol';
 
@@ -10,7 +11,7 @@ type EventStore = {
     setCesiumManager: (manager: EventManager) => void;
     setOlManager: (manager: EventManager) => void;
     setActiveMap: (map: MapType) => void;
-    bind: (type: EventType, cb: EventCallback) => void;
+    bind: (type: EventType, cb: EventCallback, options?: EventOptions) => void;
     unbind: (type: EventType, cb: EventCallback) => void;
     clearAll: () => void;
 };
@@ -24,10 +25,10 @@ export const useEventStore = create<EventStore>((set, get) => ({
     setOlManager: (manager) => set({ olEventManager: manager }),
     setActiveMap: (map) => set({ activeMap: map }),
 
-    bind: (type, cb) => {
+    bind: (type, cb, options) => {
         const { activeMap, cesiumEventManager, olEventManager } = get();
         const manager = activeMap === 'cesium' ? cesiumEventManager : olEventManager;
-        manager?.bind(type, cb);
+        manager?.bind(type, cb, options);
     },
     unbind: (type, cb) => {
         const { activeMap, cesiumEventManager, olEventManager } = get();

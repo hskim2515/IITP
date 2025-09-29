@@ -1,179 +1,46 @@
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
-import { useLayerStore } from "@stores/useLayerStore";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { Feature } from "ol";
 import { Fill, Stroke, Style } from "ol/style";
 import { LineString, Point } from "ol/geom";
-import {
-    FEATURE_TYPE,
-    MENU_CODE,
-    RAIL_STATION_EXIT_SNAP_FIELDS,
-    RAIL_STATION_SNAP_FIELDS,
-    RailPublicStationResponse,
-    RailStationData,
-    RailStationExitData,
-    RailStationExitFeature,
-    RailStationExitSnapProperties,
-    RailStationFeature,
-    RailStationSnapProperties,
-    TRANSIT_MODE
-} from "@type/Station";
-import { fromLonLat, toLonLat } from "ol/proj";
-import { findFeatureByProperties, getCoordinateByOffset, getOffsetByCoordinate } from "@utils/feature";
-import { Coordinate } from "ol/coordinate";
-import Geometry from "ol/geom/Geometry";
-import { generateGUIDWithType } from "@utils/guid";
-import { collectGuidsOfTargetAndChildren } from "@utils/json";
-import { FeatureLayerAPI } from "@features/FeatureLayerAPI";
+import { RailPublicStationResponse } from "@type/Station";
+import { fromLonLat } from "ol/proj";
 import CircleStyle from "ol/style/Circle";
 import { FeatureLike } from "ol/Feature";
-import deepEqual from "deep-equal";
+import { diff } from "deep-object-diff";
+import { useSchemaStore } from "@stores/useSchemaStore";
+import { useLayerStore } from "@stores/useLayerStore";
+import { findFeatureByProperties } from "@utils/feature";
+import { computePositionAtOffsetOl } from "@utils/offset";
 
-export default class RailStationFeatureLayer extends VectorLayer implements FeatureLayerAPI {
+export default class RailStationFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "railStation"
-
-    private unsubscribe: () => void;
+    private unsubscribe: (() => void) | undefined;
 
     constructor() {
         const source = new VectorSource();
-        const layerManager = useLayerStore.getState().layerManager
         super({
             source,
             visible: false,
-            style: (feature, resolution) => this.styleFunction(feature, resolution),
             zIndex: 400,
+            style: (feature, resolution) => this.styleFunction(feature, resolution),
         });
-        const store = layerNameToStoreMap[this.LAYER_NAME];
+
         this.source = source;
-        const listener = (
-            state: RailPublicStationResponse,
-            prevState: RailPublicStationResponse
-        ) => {
-            if (!state) {
-                return;
-            }
-            const updatedData = state.railStations ?? [];
-            const prevData = prevState.railStations ?? [];
-            const updatedMap = new Map<string, RailStationData>();
-            const originMap = new Map<string, RailStationData>();
-
-
-            updatedData.forEach((item) => {
-                if (item.__guid) updatedMap.set(item.__guid, item);
-            });
-            prevData.forEach((item) => {
-                if (item.__guid) originMap.set(item.__guid, item);
-            });
-
-            const src = this.source;
-            const existing = src.getFeatures();
-
-            // 역 삭제 + 하위 exit도 함께 삭제
-            originMap.forEach((originItem, guid) => {
-                const updatedItem = updatedMap.get(guid);
-
-                if (!updatedItem) {
-                    // originList에서 자신 + 하위 객체의 guid들을 모두 수집
-                    collectGuidsOfTargetAndChildren(originItem, guid)
-                        // 해당 guid를 가진 모든 feature를 삭제
-                        .forEach(guidToDelete => {
-                            const feature = existing.find(f => f.get("__guid") === guidToDelete);
-                            if (feature) {
-                                src.removeFeature(feature);
-                            }
-                        });
-                }
-            });
-
-            // 역 수정
-            originMap.forEach((originItem, guid) => {
-                const updatedItem = updatedMap.get(guid);
-                if (updatedItem && !deepEqual(originItem, updatedItem)) {
-                    const feature = existing.find(f => f.get("__guid") === guid);
-                    if (feature) {
-                        const dto = this.recordToDto(updatedItem, FEATURE_TYPE.RAIL_STATION);
-                        if (!dto) return;
-                        const coord = dto.coordinates;
-                        if (coord?.lng != null && coord?.lat != null) {
-                            feature.setGeometry(new Point(fromLonLat([coord.lng, coord.lat])));
-                        }
-                        feature.setProperties(dto);
-                    }
-                }
-            });
-
-            // 역 추가
-            updatedMap.forEach((item, guid) => {
-                const existsInOrigin = originMap.has(guid);
-                const existsInSource = existing.some(f => f.get("__guid") === guid);
-                if (!existsInOrigin && !existsInSource) {
-                    const feature = this.createFeature(item);
-                    if (feature) src.addFeature(feature);
-                }
-            });
-
-            // exits 비교
-            updatedData.forEach((station) => {
-                const originStation = prevData.find(prev => prev.__guid === station.__guid);
-                const updatedExits = station.exits ?? [];
-                const originExits = originStation?.exits ?? [];
-
-                const updatedExitMap = new Map<string, RailStationExitData>();
-                const originExitMap = new Map<string, RailStationExitData>();
-
-                updatedExits.forEach((exit) => {
-                    if (exit.__guid) updatedExitMap.set(exit.__guid, exit);
-                });
-                originExits.forEach((exit) => {
-                    if (exit.__guid) originExitMap.set(exit.__guid, exit);
-                });
-
-                // exit 삭제
-                originExitMap.forEach((oldExit, guid) => {
-                    if (!updatedExitMap.has(guid)) {
-                        const feature = existing.find(f => f.get("__guid") === guid);
-                        if (feature) src.removeFeature(feature);
-                    }
-                });
-
-                // exit 수정
-                originExitMap.forEach((oldExit, guid) => {
-                    const newExit = updatedExitMap.get(guid);
-                    if (newExit && !deepEqual(oldExit, newExit)) {
-                        const feature = existing.find(f => f.get("__guid") === guid);
-                        if (feature) {
-                            const updated = this.createRailStationExitFeature(newExit);
-                            if (updated?.getGeometry()) {
-                                feature.setGeometry(updated.getGeometry());
-                                feature.setProperties(updated.getProperties());
-                            }
-                        }
-                    }
-                });
-
-                // exit 추가
-                updatedExitMap.forEach((newExit, guid) => {
-                    const existsInOrigin = originExitMap.has(guid);
-                    const existsInSource = existing.some(f => f.get("__guid") === guid);
-                    if (!existsInOrigin && !existsInSource) {
-                        const newFeature = this.createExitFeatureWithContext(newExit, station);
-                        if (newFeature) src.addFeature(newFeature);
-                    }
-                });
-            });
-        };
-
-
-        this.unsubscribe = store.subscribe(
-            // 구독할 값: currentJsonData 배열
-            state => state.currentJsonData,
-            listener,
-            {fireImmediately: true}
-        );
-
-
+        this.load(); // 초기 로드
+        const store = layerNameToStoreMap[this.LAYER_NAME];
+        if (store) {
+            this.unsubscribe = store.subscribe(
+                (state: {currentJsonData: RailPublicStationResponse;}) => state.currentJsonData,
+                () => {
+                    console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
+                    this.load(); // 데이터가 변경되면 레이어를 다시 로드합니다.
+                },
+                { equalityFn: (a: RailPublicStationResponse, b: RailPublicStationResponse) => diff(a, b) === undefined}
+            );
+        }
     }
 
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
@@ -219,6 +86,9 @@ export default class RailStationFeatureLayer extends VectorLayer implements Feat
     public async load(): Promise<void> {
 
         const store = layerNameToStoreMap[this.LAYER_NAME]
+        const generateTemplateWithLayerNameAndFeatureType = useSchemaStore.getState().generateTemplateWithLayerNameAndFeatureType
+        const railTemplate = generateTemplateWithLayerNameAndFeatureType('busStation', 'busStations')
+        const exitTemplate = generateTemplateWithLayerNameAndFeatureType('railStation', 'railStations')
 
         try {
             const railPublicStationResponse: RailPublicStationResponse | undefined = store.getState().currentJsonData
@@ -226,16 +96,45 @@ export default class RailStationFeatureLayer extends VectorLayer implements Feat
             const railStations = railPublicStationResponse.railStations
             const featureBuffer: Feature[] = [];
 
+            const networkLayer = useLayerStore.getState().layerManager?.getLayerByName("network")
+            if (!networkLayer) {
+                return;
+            }
+            const networkSource = networkLayer.getSource();
+
             for (const railStation of railStations) {
+
+                if (!railStation.coordinates || !railStation.coordinates.lng || !railStation.coordinates.lat) continue
+                const railStationPoint = new Point(fromLonLat([railStation.coordinates.lng, railStation.coordinates.lat]))
+                const railStationPointFeature = new Feature(railStationPoint);
+                railStationPointFeature.setProperties({...railTemplate, ...railStation})
+                if (railStationPointFeature) featureBuffer.push(railStationPointFeature);
+
                 const exits = railStation.exits;
-                const stationFeature = this.createFeature(railStation);
-                if (stationFeature) featureBuffer.push(stationFeature);
-
-                for (const exit of exits ?? []) {
-                    const exitFeature = this.createExitFeatureWithContext(exit, railStation);
-                    if (exitFeature) {
-                        featureBuffer.push(exitFeature);
-
+                if (!exits) continue;
+                for (const exit of exits) {
+                    const linkRef = exit.linkRef
+                    const link = findFeatureByProperties(networkSource?.getFeatures(), {
+                        featureType: "link-edit",
+                        linkRef,
+                    });
+                    const linkGeom = link?.getGeometry()
+                    if (!(linkGeom instanceof LineString)) continue;
+                    const linkCoord = linkGeom.getCoordinates();
+                    if (!linkCoord || !linkCoord[0] || !linkCoord[1]) continue;
+                    const linkStart = linkCoord[0]
+                    const linkEnd = linkCoord[1]
+                    const offset = exit.offset
+                    if (!offset) {
+                        console.warn(`${exit.id} 의 offset 이 존재하지 않습니다`)
+                        continue;
+                    }
+                    const {offsetPosition} = computePositionAtOffsetOl(linkStart, linkEnd, offset)
+                    const exitPoint = new Point(offsetPosition)
+                    const exitPointFeature = new Feature(exitPoint);
+                    exitPointFeature.setProperties({...exitTemplate, ...exit})
+                    if (exitPointFeature) {
+                        featureBuffer.push(exitPointFeature);
                         // 연결 라인 추가
                         // const stationCoord = station.coordinates?.[0];
                         // const exitCoord = exitFeature.getGeometry()?.getCoordinates();
@@ -264,233 +163,10 @@ export default class RailStationFeatureLayer extends VectorLayer implements Feat
         }
     }
 
-    /**
-     * DTO로부터 Point Feature와 속성을 생성
-     */
-    public createFeature(data: RailStationData | RailStationExitData): Feature<Point> | undefined {
-        switch (data.featureType) {
-            case FEATURE_TYPE.RAIL_STATION:
-                return this.createRailStationFeature(data as RailStationData);
-            case FEATURE_TYPE.RAIL_STATION_EXIT:
-                return this.createRailStationExitFeature(data as RailStationExitData);
-            default:
-                console.warn("[createFeature] 인자로 받은 data의 featureType이 올바르지 않습니다.");
-                return undefined;
+    public dispose(): void {
+        if (this.unsubscribe) {
+            this.unsubscribe();
         }
-    }
-
-    /**
-     * RailStationFeature 생성 (exits 제외)
-     */
-    private createRailStationFeature(data: RailStationData): Feature<Point> | undefined {
-        const {exits, ...rest} = data; // exits 제거
-        const props: RailStationFeature = {
-            ...rest,
-            featureType: FEATURE_TYPE.RAIL_STATION,
-            menuCode: MENU_CODE.RAIL_STATION
-        };
-
-        if (!rest.coordinates.lng || !rest.coordinates.lat) return;
-        const point = fromLonLat([rest.coordinates.lng, rest.coordinates.lat])
-        const geom = new Point(point)
-
-        const feature = new Feature<Point>(geom);
-        feature.setProperties(props);
-        return feature;
-    }
-
-    /**
-     * RailStationExitFeature 생성
-     */
-    private createRailStationExitFeature(data: RailStationExitData): Feature<Point> | undefined {
-        const props: RailStationExitFeature = {
-            ...data,
-            featureType: FEATURE_TYPE.RAIL_STATION_EXIT,
-            exitRef: data.id,
-            menuCode: MENU_CODE.RAIL_STATION
-        };
-
-        // 스냅 기준 레이어에서 링크 기준 feature 찾기
-        const baseLayer = useLayerStore.getState().layerManager?.getLayerByName(this.getSnapLayerKey());
-        const baseFeature = findFeatureByProperties(baseLayer, {
-            featureType: this.getSnapFeatureType(),
-            linkRef: props.linkRef,
-        });
-        const offset = props.offset ?? 0;
-        const coord = getCoordinateByOffset(baseFeature, offset);
-        let geom: Point;
-        if (coord) {
-            const [lng, lat] = toLonLat(coord);
-            props.coordinates = {lng, lat};
-            geom = new Point(fromLonLat([lng, lat]));
-        } else {
-            console.warn("[createRailStationExitFeature] 유효한 offset 좌표를 계산하지 못했습니다.", props);
-            props.coordinates = {lng: null, lat: null};
-            geom = new Point([NaN, NaN]);
-        }
-
-        const feature = new Feature<Point>(geom);
-        feature.setProperties(props);
-        return feature;
-    }
-
-    public createExitFeatureWithContext(
-        exit: RailStationExitData,
-        station: RailStationData
-    ): Feature<Point> | undefined {
-        const enriched: RailStationExitData = {
-            ...exit,
-            exitRef: exit.id,
-            menuCode: MENU_CODE.RAIL_STATION
-        };
-
-        return this.createFeature(enriched);
-    }
-
-
-    /**
-     * Snap 된 일반 객체 Property 추출
-     * @param record Snap 된 객체
-     * @param featureType Snap 객체의 값을 기반으로 변경할 dto
-     */
-    public recordToSnapProperties(record: Record<string, unknown>, featureType: string): RailStationSnapProperties | RailStationExitSnapProperties | undefined {
-
-        if (!featureType) {
-            console.warn("snap한 객체를 FeatureType DTO에 맞게 변경하기 위해 featureType인자를 넣어주세요")
-            return
-        } else {
-            switch (featureType) {
-                case FEATURE_TYPE.RAIL_STATION:
-                    return this.recordToRailStationSnapProperties(record);
-                case FEATURE_TYPE.RAIL_STATION_EXIT:
-                    return this.recordToRailStationExitSnapProperties(record);
-                default:
-                    console.warn("[createFeature] 인자로 받은 data의 featureType이 올바르지 않습니다.");
-                    return undefined;
-            }
-            return
-        }
-    }
-
-    public recordToRailStationSnapProperties(record: Record<string, unknown>): RailStationSnapProperties | undefined {
-        const properties: Partial<RailStationSnapProperties> = {};
-        RAIL_STATION_SNAP_FIELDS.forEach(field => {
-            const v = record[field];
-            if (v != null) {
-                if (field === '__guid' || field === 'id') {
-                    properties[field] = String(v); // string 유지
-                } else {
-                    properties[field] = Number(v); // 나머지는 number로 변환
-                }
-            }
-        });
-        if (Object.keys(properties).length === 0) {
-            return undefined;
-        }
-        return properties as RailStationSnapProperties;
-    }
-
-    public recordToRailStationExitSnapProperties(record: Record<string, unknown>): RailStationExitSnapProperties | undefined {
-        const properties: Partial<RailStationExitSnapProperties> = {};
-        RAIL_STATION_EXIT_SNAP_FIELDS.forEach(field => {
-            const v = record[field];
-            if (v != null) {
-                if (field === '__guid' || field === 'id') {
-                    properties[field] = String(v); // string 유지
-                } else {
-                    properties[field] = Number(v); // 나머지는 number로 변환
-                }
-            }
-        });
-        if (Object.keys(properties).length === 0) {
-            return undefined;
-        }
-        return properties as RailStationExitSnapProperties;
-    }
-
-    public getSnapLayerKey(): string {
-        return "network"
-    }
-
-    public getSnapFeatureType(): string {
-        return "link-edit";
-    }
-
-    public computeMetadata(
-        targetFeature: Feature<Geometry>,
-        basedProperties: Record<string, unknown> | undefined,
-        fromCoord: Coordinate
-    ): Record<string, unknown> {
-        const offset = getOffsetByCoordinate(targetFeature, fromCoord);
-        const [lng, lat] = toLonLat(fromCoord);
-
-        const computeProperties: Record<string, unknown> = {
-            ...(basedProperties ?? {}),
-            offset: offset ?? null,
-            coordinates: lng != null && lat != null ? [{lat, lng}] : [],
-        };
-
-        return computeProperties;
-    }
-
-    public recordToDto(record: RailStationFeature | RailStationExitFeature, featureType: string | undefined): RailStationData | RailStationExitData | undefined {
-        switch (featureType) {
-            case FEATURE_TYPE.RAIL_STATION:
-                return this.recordToRailStationDto(record as RailStationFeature);
-            case FEATURE_TYPE.RAIL_STATION_EXIT:
-                return this.recordToRailStationExitDto(record as RailStationExitFeature);
-            default:
-                console.warn("[createFeature] 인자로 받은 data의 featureType이 올바르지 않습니다.");
-                return undefined;
-        }
-    }
-
-    public recordToRailStationDto(record: RailStationFeature): RailStationData {
-        const {geometry, ...cleaned} = record;
-        const guid = cleaned.__guid ?? generateGUIDWithType(FEATURE_TYPE.RAIL_STATION)
-        const dto = {
-            ...(cleaned as unknown as Omit<RailStationData, "transitMode" | "featureType" | "__guid">),
-            transitMode: TRANSIT_MODE.SUBWAY,
-            featureType: FEATURE_TYPE.RAIL_STATION,
-            __guid: guid
-        } as RailStationData;
-        return dto
-    }
-
-    public recordToRailStationExitDto(record: RailStationExitFeature): RailStationExitData {
-        const {geometry, ...cleaned} = record;
-        const guid = cleaned.__guid ?? generateGUIDWithType(FEATURE_TYPE.RAIL_STATION_EXIT)
-        const dto = {
-            ...(cleaned as unknown as Omit<RailStationExitData, "transitMode" | "featureType" | "__guid">),
-            featureType: FEATURE_TYPE.RAIL_STATION_EXIT,
-            __guid: guid
-        } as RailStationExitData;
-        return dto
-    }
-
-    /**
-     * Snap 속성을 기존 BusStationData에 병합
-     */
-    public snapPropertiesToDto<T extends object>(
-        snapProperties: Omit<T, "id"> & {id?: string | number},
-        baseDto: T
-    ): T {
-        const {id: _ignored, ...props} = snapProperties;
-        return {
-            ...baseDto,
-            ...props,
-        };
-    }
-
-    getDefaultStyle(): Style | undefined {
-        return undefined;
-    }
-
-    getFeatureType(): string | undefined {
-        return undefined;
-    }
-
-    getSelectStyle(): Style | undefined {
-        return undefined;
+        super.dispose();
     }
 }

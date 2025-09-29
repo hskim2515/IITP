@@ -1,8 +1,9 @@
 package com.iitp.iitp_rest.service.publicTransit.station;
 
 import com.iitp.iitp_rest.handler.XmlValidationEventHandler;
-import com.iitp.iitp_rest.model.publicTransit.rail.RailPublicTransitXmlResponse;
+import com.iitp.iitp_rest.model.publicTransit.rail.RailPublicTransitXml;
 import com.iitp.iitp_rest.service.xml.LocationTrackingXmlStreamReader;
+import com.iitp.iitp_rest.service.xml.TransientAwareXmlStreamReader;
 import com.iitp.iitp_rest.service.xml.XmlParser;
 import jakarta.xml.bind.JAXBContext;
 import jakarta.xml.bind.JAXBException;
@@ -14,14 +15,14 @@ import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
 
 @Component("railStationJaxbParser")
-public class RailStationJaxbParser implements XmlParser<RailPublicTransitXmlResponse> {
+public class RailStationJaxbParser implements XmlParser<RailPublicTransitXml> {
 
     private final JAXBContext jaxbContext;
     private final XMLInputFactory xmlInputFactory;
 
     public RailStationJaxbParser() {
         try {
-            this.jaxbContext = JAXBContext.newInstance(RailPublicTransitXmlResponse.class);
+            this.jaxbContext = JAXBContext.newInstance(RailPublicTransitXml.class);
             this.xmlInputFactory = XMLInputFactory.newInstance();
         } catch (JAXBException e) {
             throw new IllegalStateException("JAXBContext 초기화 실패", e);
@@ -29,17 +30,22 @@ public class RailStationJaxbParser implements XmlParser<RailPublicTransitXmlResp
     }
 
     @Override
-    public RailPublicTransitXmlResponse parse(InputStream inputStream) {
+    public RailPublicTransitXml parse(InputStream inputStream) {
         LocationTrackingXmlStreamReader locationTracker = null;
         try {
             XMLStreamReader reader = xmlInputFactory.createXMLStreamReader(inputStream);
 
-            locationTracker = new LocationTrackingXmlStreamReader(reader);
+
+            TransientAwareXmlStreamReader transientAwareReader =
+                    new TransientAwareXmlStreamReader(reader, RailPublicTransitXml.class);
+
+            locationTracker = new LocationTrackingXmlStreamReader(transientAwareReader);
+
 
             Unmarshaller unmarshaller = jaxbContext.createUnmarshaller();
             unmarshaller.setEventHandler(new XmlValidationEventHandler());
 
-            return (RailPublicTransitXmlResponse) unmarshaller.unmarshal(locationTracker);
+            return (RailPublicTransitXml) unmarshaller.unmarshal(locationTracker);
         } catch (Exception e) {
             String errorLocation = "알 수 없는 위치";
             if (locationTracker != null) {

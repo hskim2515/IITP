@@ -19,7 +19,7 @@ public class LayerSchemaFieldResponse {
     private String defaultValue;
     private boolean readOnly;
     private boolean nullable;
-    private String status;
+    private Status status;
 
     private List<LayerSchemaOptionResponse> options;
 }

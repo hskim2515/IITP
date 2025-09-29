@@ -1,7 +1,7 @@
 package com.iitp.iitp_rest.util;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.iitp.iitp_rest.model.network.RoadResponse;
+import com.iitp.iitp_rest.model.network.road.RoadResponse;
 import com.iitp.iitp_rest.model.geometry.Cartesian3;
 import com.iitp.iitp_rest.model.geometry.Polyline;
 import org.w3c.dom.Document;

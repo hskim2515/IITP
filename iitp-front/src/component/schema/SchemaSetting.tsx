@@ -4,9 +4,9 @@ import { MenuTree, useMenuStore } from "@stores/useMenuStore";
 import { propertyFormSchema } from "@schema/propertyFormSchema";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faClose } from "@fortawesome/free-solid-svg-icons/faClose";
-import { Schema, LayerSchema } from "@type/Schema";
 import { SchemaTable } from "@component/schema/SchemaTable";
 import debounce from "lodash.debounce";
+import { LayerSchemaResponse, SchemaDefinition } from "@type/openapi.gen";
 
 export interface Props {
     activeSubmenu: MenuTree;
@@ -15,24 +15,24 @@ export interface Props {
 
 // 스키마 설정 컴포넌트
 const SchemaSetting = ({activeSubmenu, onClose}: Props) => {
-    const submenu = {
-        menuCode: activeSubmenu.menuCode,
-        item: propertyFormSchema[activeSubmenu.menuCode],
-        title: activeSubmenu.nameKor
-    };
+
+    const item = propertyFormSchema[activeSubmenu.menuCode];
+    const layerName = item?.layer
+    if (!item || !layerName) {
+        return null;
+    }
 
     const activeDropdownMenu = useMenuStore((state) => state.activeDropdownMenu);
-
     const getSchemaByLayerName = useSchemaStore((state) => state.getLayerSchemaByLayerName);
     const setCurrentSchema = useSchemaStore((state) => state.setCurrentSchema);
     const updateSchema = useSchemaStore((state) => state.updateSchema);
 
     const initialLayerSchema = useMemo(() => {
-        const schema = getSchemaByLayerName(submenu.item.layer);
-        return schema ? (typeof structuredClone === "function" ? structuredClone(schema) : JSON.parse(JSON.stringify(schema))) : null;
-    }, [getSchemaByLayerName, submenu.item.layer]);
+        const schema = getSchemaByLayerName(layerName);
+        return schema ? structuredClone(schema) : null;
+    }, [getSchemaByLayerName, layerName]);
 
-    const [layerSchema, setLayerSchema] = useState<LayerSchema | null>(initialLayerSchema);
+    const [layerSchema, setLayerSchema] = useState<LayerSchemaResponse | null>(initialLayerSchema);
 
     useEffect(() => {
         setLayerSchema(initialLayerSchema);
@@ -40,36 +40,38 @@ const SchemaSetting = ({activeSubmenu, onClose}: Props) => {
 
     const debouncedSetUpdated = useMemo(
         () =>
-            debounce((nextLayer: LayerSchema) => {
-                setCurrentSchema(submenu.item.layer, nextLayer);
+            debounce((nextLayer: LayerSchemaResponse) => {
+                setCurrentSchema(layerName, nextLayer);
             }, 300),
-        [setCurrentSchema, submenu.item.layer]
+        [setCurrentSchema, layerName]
     );
 
     const handleSetSchema = useCallback(
-        (updatedSchema: Schema) => {
+        (updatedSchema: SchemaDefinition) => {
             setLayerSchema((prev) => {
                 if (!prev) return prev;
 
-                const next: LayerSchema = {
+                const next: LayerSchemaResponse = {
                     ...prev,
-                    schemata: prev.schemata.map((s) => (s.id === updatedSchema.id ? updatedSchema : s)),
+                    definition: (prev.definition ?? []).map((s) =>
+                        s.id === updatedSchema.id ? updatedSchema : s
+                    ),
                 };
 
-                setCurrentSchema(submenu.item.layer, next);
+                setCurrentSchema(layerName, next);
 
                 return next;
             });
-        }, [debouncedSetUpdated,setCurrentSchema,submenu.item.layer]
+        }, [debouncedSetUpdated,setCurrentSchema,layerName]
     );
 
     const handleSaveAll = useCallback(async () => {
         if (!layerSchema) return;
 
-        setCurrentSchema(submenu.item.layer, layerSchema);
+        setCurrentSchema(layerName, layerSchema);
         console.log("layerSchema:::",layerSchema)
-        await updateSchema(submenu.item.layer);
-    }, [layerSchema, submenu.item.layer, updateSchema]);
+        await updateSchema(layerName);
+    }, [layerSchema, layerName, updateSchema]);
 
     const isSidebarVisible =
         !!activeDropdownMenu &&
@@ -117,7 +119,7 @@ const SchemaSetting = ({activeSubmenu, onClose}: Props) => {
                 </div>
             </div>
 
-            {layerSchema.schemata.map((schema) => (
+            {(layerSchema.definition?? []).map((schema) => (
                 <SchemaTable
                     key={schema.id}
                     schema={schema}

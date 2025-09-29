@@ -1,12 +1,9 @@
 package com.iitp.iitp_rest.model.layer;
 
-// Layer.java
 import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
-
-import java.util.List;
 
 @Entity
 @Table(name = "layer")

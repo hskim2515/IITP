@@ -1,6 +1,7 @@
 import BaseLayer from "ol/layer/Base";
 import VectorLayer from "ol/layer/Vector";
 import WebGLVectorLayer from "ol/layer/WebGLVector";
+import { Map as OLMap, MapBrowserEvent } from 'ol';
 
 // 기존 타입 가드들
 export function isVectorLayer(layer: BaseLayer): layer is VectorLayer {
@@ -28,4 +29,8 @@ export function matchesCustomKeyValue<
 ): layer is BaseLayer & Record<K, V> {
     if(layer === null) return false;
     return hasCustomKeys(layer, key) && (layer as BaseLayer & Record<K, V>)[key] === value;
+}
+
+export function findLayerByKeyValue(olMap: OLMap, key: string, value: string | number | boolean | undefined) {
+    return olMap.getAllLayers().find(l => matchesCustomKeyValue(l, key, value))
 }

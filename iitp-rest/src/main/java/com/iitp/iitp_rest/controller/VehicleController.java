@@ -3,7 +3,7 @@ package com.iitp.iitp_rest.controller;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iitp.iitp_rest.model.*;
-import com.iitp.iitp_rest.model.network.RoadResponse;
+import com.iitp.iitp_rest.model.network.road.RoadResponse;
 import com.iitp.iitp_rest.model.geometry.Cartesian3;
 import com.iitp.iitp_rest.model.vehicle.route.VehicleRequest;
 import com.iitp.iitp_rest.model.scenario.Scenario;

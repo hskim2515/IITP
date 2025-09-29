@@ -1,71 +1,96 @@
-import { Viewer, GeoJsonDataSource, Cartesian3, Entity, Color } from "cesium";
-import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
-import { BusStationData, FEATURE_TYPE, TRANSIT_MODE } from "@type/Station";
+import { Color, Entity, GeoJsonDataSource, HeightReference, Viewer } from "cesium";
+import { layerNameToStoreMap } from "@hooks/useLayerInit";
+import { BusPublicStationResponse, BusStationData } from "@type/Station";
+import { diff } from "deep-object-diff";
+import { computePositionAtOffsetCesium } from "@utils/offset";
 
 export default class BusStationDataSourceLayer {
     private readonly LAYER_NAME = "busStation";
     private dataSource: GeoJsonDataSource;
-    private unsubscribe: () => void;
+    private unsubscribe: (() => void) | undefined;
 
     constructor(private viewer: Viewer) {
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
+        this.viewer.dataSources.add(this.dataSource);
 
+        this.load();
         const store = layerNameToStoreMap[this.LAYER_NAME];
-        this.unsubscribe = store.subscribe(
-            (state) => state.currentJsonData,
-            async (currentJsonData) => {
-                if (!currentJsonData?.busStations) return;
-                try {
-                    await this.load(currentJsonData.busStations);
-                } catch (error) {
-                    console.error("[BusStationDataSourceLayer] busStations 로드 실패:", error);
+        if (store) {
+            this.unsubscribe = store.subscribe(
+                (state: {currentJsonData: BusPublicStationResponse}) => state.currentJsonData,
+                () => {
+                    console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
+                    this.load();
+                },
+                {
+                    equalityFn: (a: BusPublicStationResponse, b: BusPublicStationResponse) => diff(a, b) === undefined
                 }
-            },
-            { fireImmediately: true }
-        );
+            );
+        }
     }
 
-    private async load(busStations: Record<string, any>[]): Promise<void> {
-        // 기존 데이터 제거 후 초기화
-        this.viewer.dataSources.remove(this.dataSource, true);
-        this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
-        console.log("busStations:::", busStations)
+    public load(): void {
+        if (!this.dataSource) return;
+        this.dataSource.entities.suspendEvents();
+        try {
+            this.dataSource.entities.removeAll();
 
+            const store = layerNameToStoreMap[this.LAYER_NAME];
+            const busStations: BusStationData[] = store.getState().currentJsonData?.busStations;
+            const networkDataSource = this.viewer.dataSources.getByName("network")[0];
+            if (!networkDataSource) return;
+            if (!busStations) {
+                console.log("[BusStationDataSourceLayer] No bus stations data to load.");
+                return;
+            }
 
-        const store = layerNameToStoreMap[this.LAYER_NAME];
-        console.log("store.getState().currentJsonData:::", store.getState().currentJsonData)
+            busStations.forEach((busStation) => {
+                const props: BusStationData = {
+                    ...busStation
+                };
 
+                const laneEntity = networkDataSource.entities.values.find(
+                    (e) =>
+                        e.properties?.featureType == "lanes" &&
+                        e.properties?.linkRef == busStation.linkRef &&
+                        e.properties?.id == busStation.laneRef
+                );
 
-        busStations.map((data) => {
-            const props: BusStationData = {
-                ...data,
-                transitMode: data.transitMode ?? TRANSIT_MODE.BUS,
-                featureType: data.featureType ?? FEATURE_TYPE.BUS_STATION,
-            };
-            const coord = data.coordinates;
-            const position = Cartesian3.fromDegrees(coord.lng, coord.lat);
+                const laneSource = laneEntity?.properties?.laneSource.getValue()
+                const laneTarget = laneEntity?.properties?.laneTarget.getValue()
 
-            this.dataSource.entities.add(
-                new Entity({
-                    position,
-                    point: {
-                        pixelSize: 6,
-                        color: Color.RED,
-                        outlineWidth: 1,
-                        outlineColor:  Color.TRANSPARENT,
-                    },
-                    properties: props,
-                })
-            );
+                const {offsetPosition} = computePositionAtOffsetCesium(laneSource, laneTarget, busStation.offset)
 
-        })
+                this.dataSource.entities.add(
+                    new Entity({
+                        position: offsetPosition,
+                        point: {
+                            pixelSize: 6,
+                            color: Color.RED,
+                            outlineWidth: 1,
+                            outlineColor: Color.TRANSPARENT,
+                            heightReference: HeightReference.CLAMP_TO_GROUND,
+                        },
+                        properties: props,
+                    })
+                );
+            });
 
-        await this.viewer.dataSources.add(this.dataSource);
-        console.log("[BusStationDataSourceLayer] 로드 완료: ", this.dataSource.entities.values.length);
+            console.log("BusStationDataSourceLayer: 모든 Feature가 추가됨");
+        } catch (error) {
+            console.error("BusStationDataSourceLayer.load() 중 에러 발생:", error);
+        } finally {
+            console.log("this.dataSource.entities:::", this.dataSource.entities)
+            this.dataSource.entities.resumeEvents();
+        }
     }
 
     public destroy(): void {
-        this.unsubscribe?.();
-        this.viewer.dataSources.remove(this.dataSource, true);
+        if (this.unsubscribe) {
+            this.unsubscribe();
+        }
+        if (this.dataSource) {
+            this.viewer.dataSources.remove(this.dataSource, true);
+        }
     }
 }

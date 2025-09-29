@@ -1,10 +1,8 @@
 package com.iitp.iitp_rest.model.network.node;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
-import com.iitp.iitp_rest.model.common.DbMappedEnum;
+import com.iitp.iitp_rest.mapper.DbMappedEnum;
 import lombok.Getter;
-
-import java.util.stream.Stream;
 
 @Getter
 public enum V2x implements DbMappedEnum<String> {
@@ -15,6 +13,7 @@ public enum V2x implements DbMappedEnum<String> {
     V2x(String value) {
         this.value = value;
     }
+
     @Override
     public String getValue() {
         return this.value;
@@ -22,9 +21,6 @@ public enum V2x implements DbMappedEnum<String> {
 
     @JsonCreator
     public static V2x fromValue(String value) {
-        return Stream.of(V2x.values())
-                .filter(type -> type.getValue().equals(value))
-                .findFirst()
-                .orElse(V2x.off);
+        return DbMappedEnum.fromValue(V2x.class, value);
     }
 }

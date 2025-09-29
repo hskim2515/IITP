@@ -1,613 +1,368 @@
-import React, {useCallback, useEffect, useMemo, useRef, useState} from "react";
-import {Checkbox, Select, Table} from "antd";
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState, } from "react";
+import { Table } from "antd";
+import type { ColumnsType } from "antd/es/table";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faChevronDown, faChevronUp } from "@fortawesome/free-solid-svg-icons";
+
 import { useSelectionStore } from "@stores/useSelectionStore";
-import { Input, InputNumber } from "antd/lib";
+import { useMessageStore } from "@stores/useMessageStore";
+import { useSchemaStore } from "@stores/useSchemaStore";
+
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { layerNameToHistoryStoreMap } from "@hooks/useHistoryInit";
-import { useOpenLayersStore } from "@stores/useOpenLayersStore";
-import VectorLayer from "ol/layer/Vector";
-import BaseLayer from "ol/layer/Base";
-import WebGLVectorLayer from "ol/layer/WebGLVector";
-import { generateGUIDWithType } from "@utils/guid";
-import {faChevronDown, faChevronUp} from "@fortawesome/free-solid-svg-icons";
-import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
-import {useSchemaStore} from "@stores/useSchemaStore";
-import debounce from "lodash.debounce";
-import {featureTypeEventHandlers} from "@handler/featureTypeEventHandlers";
-import { matchesCustomKeyValue } from "@utils/olLayer";
-import { useMessageStore } from "@stores/useMessageStore";
-import { Field, Schema } from "@type/Schema";
-import { useShallow } from "zustand/react/shallow";
+
+import { generateGuidWithParentGuid } from "@utils/guid";
 import { generateTemplate } from "@utils/schema";
+import { createEventHandlers } from "@handler/createEventHandlers";
+import { findGuidPath } from "@utils/jsonGrid";
 
+import { LayerSchemaFieldResponse, SchemaColumn, SchemaDefinition, SchemaStructure, } from "@type/openapi.gen";
+import { EditableCell } from "@component/schema/EditableCell";
 
-// 중첩 배열로 생성하지 않을 필드 지정
-const EXCLUDED_NESTED_FIELDS = ["coordinates"];
+const DEFAULT_CELL_WIDTH = 160;
 
-function generateColumnsFromSchema(
-    data: any[],
-    schema: Schema | null,
-) {
-    if(!schema) return [];
-    return schema.fields
-        .filter(field => field.status === 'ACTIVE')
-        .map(field => {
-            // 데이터에서 해당 필드의 고유값 추출 (필터용)
-            const uniqueValues = data.length > 0
-                ? [...new Set(data.map(item => item[field.name]))]
-                    .filter(v => v !== undefined && v !== null)
-                : [];
+/** 현재 레벨의 structure 찾기 */
+function getStructureByFeatureType(
+    structures: SchemaStructure[] | null,
+    targetName?: string
+): SchemaStructure | null {
+    if (!structures || !targetName) return null;
+
+    const findStructure = (structures: SchemaStructure[]): SchemaStructure | null => {
+        for (const structure of structures) {
+            if (structure.name === targetName) return structure;
+            const children = structure.children;
+            if (children && children.length > 0) {
+                const found = findStructure(children);
+                if (found) return found;
+            }
+        }
+        return null;
+    };
+
+    return findStructure(structures);
+}
+
+/** structure 기반 하위 필드 목록 추출 */
+function getChildrenStructure(structure: SchemaStructure | null): string[] {
+    if (!structure) return [];
+    const children = structure.children
+    return (children ?? [])
+        .map((child) => child.name ?? "")
+        .filter((name) => name.length > 0);
+}
+
+/** definition 기반 컬럼 생성 */
+function buildColumnsFromDefinition(
+    definition: SchemaDefinition | null,
+    columnSpecList: SchemaColumn[] | null,
+    onCellUpdate: (record: any, updates: Partial<Record<string, any>>) => void
+): ColumnsType<any> {
+    if (!definition?.fields) return [];
+    const cols: ColumnsType<any> = definition.fields
+        .filter((f: LayerSchemaFieldResponse) => f?.status === "ACTIVE")
+        .map((field: LayerSchemaFieldResponse) => {
+            const colSpec: any =
+                (columnSpecList ?? []).find((c) => c.configKey === field.name);
 
             return {
-                title: field.name.charAt(0).toUpperCase() + field.name.slice(1),
+                title: field.name,
                 dataIndex: field.name,
                 key: field.name,
-                filters: getFilters(field, uniqueValues), // 필드 타입에 따른 필터
-                onFilter: (value, record) => record[field.name] === value,
-                fieldSchema: field,
+                width: DEFAULT_CELL_WIDTH,
+                render: (_: any, record: any) => {
+                    // EditableCell에 전달할 column 최소 사양을 안전하게 구성
+                    const columnForCell: SchemaColumn = {
+                        ...(colSpec ?? ({} as SchemaColumn)),
+                        // EditableCell이 dataKey로 사용할 키(= 레코드의 속성명)
+                        configKey: field.name as any,
+                        // 컬럼 사양이 inputType/옵션을 오버라이드하면 따르고, 없으면 스키마 그대로
+                        inputType: (colSpec?.inputType ?? (field as any).inputType) as any,
+                        options: (colSpec?.options ?? (field as any).options) as any,
+                    };
+
+                    return (
+                        <EditableCell
+                            field={field}
+                            column={columnForCell}
+                            value={record[field.name]}
+                            onUpdate={(partial) => {
+                                const entries = Object.entries(partial ?? {});
+                                if (entries.length !== 1) return;
+
+                                const [k, v] = entries[0];
+
+                                if (k === "options") return;
+
+                                if (k === field.name) {
+                                    onCellUpdate(record, { [k]: v } as Partial<Record<string, any>>);
+                                    return;
+                                }
+
+                                if (Object.prototype.hasOwnProperty.call(record, k)) {
+                                    onCellUpdate(record, { [k]: v } as Partial<Record<string, any>>);
+                                }
+                            }}
+                        />
+                    );
+                },
+                ...colSpec,
             };
         });
+
+    return cols;
 }
 
-// 필드 타입에 따른 필터 생성
-function getFilters(field: Field, uniqueValues: any[]) {
-    if (field.inputType === 'checkbox') {
-        return [
-            { text: 'True', value: true },
-            { text: 'False', value: false }
-        ];
-    }
+type JsonGridProps = {
+    layerName: string;
+    layerGroupName: string;
+    rowData?: any[] | undefined;
+    levelName?: string;
+    parentGuid?: string | React.Key;
+    depth?: number;
+};
 
-    if (field.inputType === 'select' && field.options) {
-        return field.options.map(option => ({
-            text: option.value,
-            value: option.value
-        }));
-    }
-
-    // 기본적으로 데이터의 고유값을 필터로 사용
-    return uniqueValues.slice(0, 10).map(val => ({ // 최대 10개로 제한
-        text: String(val),
-        value: val
-    }));
-}
-
-// 중첩 배열 필드 감지
-function getNestedArrayField(row: any): any[] | null {
-    if (!row) return null;
-
-    let nestedFieldList = []
-
-    for (const key in row) {
-        const value = row[key];
-        if (
-            Array.isArray(value) &&
-            value.length > 0 &&
-            typeof value[0] === "object" &&
-            !EXCLUDED_NESTED_FIELDS.includes(key)
-        ) {
-            nestedFieldList.push(key)
-        }
-    }
-
-    return nestedFieldList;
-}
-
-
-// JsonGrid 컴포넌트 with 들여쓰기 depth
 const JsonGrid = ({
+                      layerName,
+                      layerGroupName,
                       rowData,
                       levelName,
                       parentGuid,
                       depth = 0,
-                      layerName,
-                      layerGroupName,
-                  }: {
-    rowData: any[];
-    levelName?: string;
-    parentGuid?: string;
-    depth?: number;
-    layerName: string;
-    layerGroupName: string;
-}) => {
-
-    const setSelectedGuid = useSelectionStore((state) => state.setSelectedGuid);
-    const selectedGuid = useSelectionStore((state) => state.selectedGuid);
-    const clearSelected = useSelectionStore((state) => state.clearSelected);
-    const [expandedRowKeys, setExpandedRowKeys] = useState<string[]>([]);
-    const [rowEditValues, setRowEditValues] = useState<Record<string, any>>({});
-    const [expandedKey, setExpandedKey] = useState<string | null>(null);
-
+                  }: JsonGridProps) => {
     const setMessage = useMessageStore.getState().setMessage;
-    const store = layerNameToStoreMap[layerName]
+
+    // 도메인별 공통 스토어 매핑
+    const dataStore = layerNameToStoreMap[layerName];
     const historyStore = layerNameToHistoryStoreMap[layerName];
 
-    const {
-        currentSchema,
-        isLoading,
-        fetchSchema,
-        getSchemaByNames,
-    } = useSchemaStore(useShallow((s) => ({
-        currentSchema: s.currentSchema,
-        isLoading: s.isLoading,
-        fetchSchema: s.fetchSchema,
-        getSchemaByNames: s.getSchemaByNames,
-        getLayerSchemaByLayerName: s.getLayerSchemaByLayerName,
-    })));
+    // select 스토어
+    const selectedGuid = useSelectionStore((s) => s.selectedGuid);
+    const setSelectedGuid = useSelectionStore((s) => s.setSelectedGuid);
+    const clearSelected = useSelectionStore((s) => s.clearSelected);
+
+    const [expandedRowKeys, setExpandedRowKeys] = useState<React.Key[]>([]);
+    const lastScrollGuidRef = useRef<string | React.Key | undefined>(undefined);
+    const [topToggled, setTopToggled] = useState<boolean>(false);
 
     useEffect(() => {
-        if (!currentSchema && !isLoading) {
-            void fetchSchema();
+        if (depth === 0) {
+            clearSelected();
+            setExpandedRowKeys([])
         }
-    }, [currentSchema, isLoading, fetchSchema]);
-
-    const olMap = useOpenLayersStore.state.map()
-
-    const layer = useMemo(() => {
-        return olMap?.getLayers().getArray()
-            .find((layer: VectorLayer | BaseLayer | WebGLVectorLayer) => matchesCustomKeyValue(layer, 'layer', layerName));
-    }, [olMap, layerName]);
-
-    const handleSelect = (selectedRowKeys: React.Key[], selectedRows: any[]) => {
-        if (selectedRows.length > 0) {
-            if (selectedRowKeys) {
-                setSelectedGuid(selectedRowKeys);
-            }
-        } else {
-            setSelectedGuid([]); // 선택 해제 시 초기화
-        }
-    };
-
-
-    useEffect(() => {
-        setRowEditValues({}); // 외부 currentJsonData 변경 시 내부 수정 상태 초기화
-    }, [rowData]);
-
-    useEffect(() => {
-        scrollToGuid(selectedGuid[0])
-    }, [selectedGuid]);
-
-    function scrollToGuid(targetGuid: string) {
-
-        const path = findGuidPath(rowData, targetGuid);
-        if (!path) return;
-
-        setExpandedRowKeys(path.slice(0, -1)); // 부모들을 펼침
-
-        const rowElement = document.querySelector(`tr[data-row-key="${targetGuid}"]`);
-        if (rowElement) {
-            rowElement.scrollIntoView({behavior: "smooth", block: "center"});
-        }
-
-    }
-
-    function findGuidPath(data: any[], targetGuid: string, path: string[] = []): string[] | null {
-        for (const row of data) {
-            if (row.__guid === targetGuid) return [...path, row.__guid];
-
-            const nestedFields = getNestedArrayField(row);
-            for (const field of nestedFields) {
-                const children = row[field];
-                if (Array.isArray(children)) {
-                    const result = findGuidPath(children, targetGuid, [...path, row.__guid]);
-                    if (result) return result;
-                }
-            }
-        }
-        return null;
-    }
-
-    const debouncedSetRowEditValues = useRef(
-        debounce((key: string, field: string, value: any) => {
-            setRowEditValues(prev => ({
-                ...prev,
-                [key]: {
-                    ...(prev[key] || {}),
-                    [field]: value,
-                },
-            }));
-        }, 300) // 300ms 지연
-    ).current;
-
-    const handleInputChange = useCallback((key: string, field: string, value: any) => {
-        debouncedSetRowEditValues(key, field, value);
     }, []);
 
-    React.useEffect(() => {
-        return () => debouncedSetRowEditValues.cancel();
-    }, [debouncedSetRowEditValues]);
+    // 스키마 스토어
+    const {
+        getSchemaDefinitionByNames,
+        getSchemaColumnSpecByLayerName,
+        getStructureByLayerName,
+    } = useSchemaStore();
 
+    // 현재 레벨의 schema/structure 조회
+    const definition = useMemo<SchemaDefinition | null>(() => {
+        if (!levelName) return null;
+        return getSchemaDefinitionByNames(layerName, levelName);
+    }, [layerName, levelName]);
 
-    /** const columns = generateColumnsFromData(rowData);
-     const enhancedColumns = columns.map((col) => ({
-     ...col,
-     render: (value, record) => {
+    const columnSpec = useMemo<SchemaColumn[] | null>(() => {
+        if (!levelName) return null;
+        return getSchemaColumnSpecByLayerName(layerName);
+    }, [layerName]);
 
-     const guid = record.__guid;
-     const currentValue = rowEditValues[guid]?.[col.dataIndex] ?? value;
+    const layerStructure = useMemo<SchemaStructure[] | null>(() => {
+        return getStructureByLayerName(layerName);
+    }, [layerName]);
 
-     const field = useSchemaStore.getState().getFieldByNames(layerName ,levelName, col.key);
-     // const field = ''
+    const currentStructure = useMemo<SchemaStructure | null>(() => {
+        return getStructureByFeatureType(layerStructure, levelName);
+    }, [layerStructure, levelName]);
 
-     const handleCommit = (e) => {
+    const childrenStructure = useMemo<string[]>(() => {
+        return getChildrenStructure(currentStructure);
+    }, [currentStructure]);
 
-     debouncedSetRowEditValues.flush();
+    // 셀 업데이트 → 스토어 반영(편집용)
+    const handleCellUpdate = useCallback(
+        (record: any, partial: Partial<Record<string, any>>) => {
+            const merged = {...record, ...partial};
+            dataStore.getState().updateCurrentJsonData(merged, historyStore);
+        },
+        [layerName]
+    );
 
-     if(rowEditValues[guid]){
-     const merged = {
-     ...record,
-     ...rowEditValues[guid],
-     };
+    // 컬럼 생성 (structure → definition 기반)
+    const columns = useMemo<ColumnsType>(() => {
+        return buildColumnsFromDefinition(definition, columnSpec, handleCellUpdate);
+    }, [definition, columnSpec, handleCellUpdate]);
 
-     const store = layerNameToStoreMap[layerName]
-     const historyStore = layerNameToHistoryStoreMap[layerName];
-     store.getState().updateCurrentJsonData(merged, historyStore);
-
-     setRowEditValues({})
-     }
-     };
-
-     if(!field){
-     const numericFieldSet = new Set(['offset', 'linkRef', 'accessTime']);
-
-     const inputType = numericFieldSet.has(col.dataIndex) ? 'number' : 'text';
-
-     return inputType === 'number' ? (
-     <InputNumber
-     value={currentValue}
-     onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
-     onBlur={handleCommit}
-     onPressEnter={handleCommit}
-     size="small"
-     />
-     ) : (
-     <Input
-     value={currentValue}
-     onChange={(e) => {
-     const raw = e.target.value;
-     const val = inputType === 'number' ? Number(raw) : raw;
-     handleInputChange(guid, col.dataIndex, val);
-     }}
-     onBlur={handleCommit}
-     onPressEnter={handleCommit}
-     size="small"
-     />
-     );
-     }
-
-     if (field?.readOnly) {
-     return <span>{String(value)}</span>;
-     }
-
-     if(field.inputType === 'select') {
-     console.log("field:::", field)
-     }
-
-
-     return field?.inputType === 'number' ? (
-     <InputNumber
-     value={currentValue}
-     onChange={(val) =>handleInputChange(guid, col.dataIndex, val)}
-     onBlur={handleCommit}
-     onPressEnter={handleCommit}
-     size="small"
-     />
-     ) : field?.inputType === 'select' ? (
-     <Select
-     value={currentValue}
-     onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
-     onBlur={handleCommit}
-     size="small"
-     style={{ width: '100%' }}
-     options={field.options}
-     >
-     </Select>
-     ) : field?.inputType === 'checkbox' ? (
-     <Checkbox
-     checked={Boolean(currentValue)}
-     value={currentValue}
-     onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
-     />
-     ) : (
-     <Input
-     value={currentValue}
-     onChange={(e) => {
-     const raw = e.target.value;
-     const val = field?.inputType === 'number' ? Number(raw) : raw;
-     handleInputChange(guid, col.dataIndex, val);
-     }}
-     onBlur={handleCommit}
-     onPressEnter={handleCommit}
-     size="small"
-     />
-     );
-
-     },
-     }));
-     **/
-        // 스키마에서 필드 정보 가져오기
-    const schema = getSchemaByNames(layerName, levelName);
-
-    const columns = generateColumnsFromSchema(rowData, schema);
-
-    const enhancedColumns = columns.map((col) => ({
-        ...col,
-        render: (value, record) => {
-            const guid = record.__guid;
-            const currentValue = rowEditValues[guid]?.[col.dataIndex] ?? value;
-            const field = col.fieldSchema; // 스키마에서 가져온 필드 정보 사용
-            const handleCommit = (e) => {
-                debouncedSetRowEditValues.flush();
-
-                if(rowEditValues[guid]){
-                    const merged = {
-                        ...record,
-                        ...rowEditValues[guid],
-                    };
-
-                    const store = layerNameToStoreMap[layerName]
-                    const historyStore = layerNameToHistoryStoreMap[layerName];
-                    store.getState().updateCurrentJsonData(merged, historyStore);
-
-                    setRowEditValues({})
-                }
-            };
-
-            // 스키마가 없는 경우 기존 로직 유지
-            if (!field) {
-                const numericFieldSet = new Set(['offset', 'linkRef', 'accessTime']);
-                const inputType = numericFieldSet.has(col.dataIndex) ? 'number' : 'text';
-
-                return inputType === 'number' ? (
-                    <InputNumber
-                        value={currentValue}
-                        onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
-                        onBlur={handleCommit}
-                        onPressEnter={handleCommit}
-                        size="small"
-                    />
-                ) : (
-                    <Input
-                        value={currentValue}
-                        onChange={(e) => {
-                            const raw = e.target.value;
-                            const val = inputType === 'number' ? Number(raw) : raw;
-                            handleInputChange(guid, col.dataIndex, val);
-                        }}
-                        onBlur={handleCommit}
-                        onPressEnter={handleCommit}
-                        size="small"
-                    />
-                );
-            }
-
-            // readonly 처리
-            if (field.readOnly) {
-                return <span style={{ opacity: 0.6 }}>{String(value)}</span>;
-            }
-
-            // nullable 체크 및 렌더링
-            const isNullable = field.nullable;
-            const displayValue = (!isNullable && (currentValue === null || currentValue === undefined))
-                ? field.defaultValue
-                : currentValue;
-
-            // 입력 타입에 따른 렌더링
-            switch (field.inputType) {
-                case 'number':
-                    return (
-                        <InputNumber
-                            value={displayValue}
-                            onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
-                            onBlur={handleCommit}
-                            onPressEnter={handleCommit}
-                            size="small"
-                            placeholder={!isNullable ? "Required" : ""}
-                        />
-                    );
-
-                case 'select':
-                    return (
-                        <Select
-                            value={displayValue}
-                            onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
-                            onBlur={handleCommit}
-                            size="small"
-                            style={{ width: '100%' }}
-                            placeholder={!isNullable ? "Required" : "Select..."}
-                            allowClear={isNullable}
-                            options={field.options?.map(opt => ({
-                                label: opt.value,
-                                value: opt.value
-                            }))}
-                        />
-                    );
-
-                case 'checkbox':
-                    return (
-                        <Checkbox
-                            checked={Boolean(displayValue)}
-                            onChange={(e) => handleInputChange(guid, col.dataIndex, e.target.checked)}
-                        />
-                    );
-
-                case 'textarea':
-                    return (
-                        <Input.TextArea
-                            value={displayValue}
-                            onChange={(e) => handleInputChange(guid, col.dataIndex, e.target.value)}
-                            onBlur={handleCommit}
-                            size="small"
-                            autoSize={{ minRows: 1, maxRows: 3 }}
-                            placeholder={!isNullable ? "Required" : ""}
-                        />
-                    );
-
-                case 'tags':
-                    return (
-                        <Select
-                            mode="tags"
-                            value={Array.isArray(displayValue) ? displayValue : []}
-                            onChange={(val) => handleInputChange(guid, col.dataIndex, val)}
-                            onBlur={handleCommit}
-                            size="small"
-                            style={{ width: '100%' }}
-                            placeholder={!isNullable ? "Required" : "Add tags..."}
-                            allowClear={isNullable}
-                        />
-                    );
-
-                case 'text':
-                default:
-                    return (
-                        <Input
-                            value={displayValue}
-                            onChange={(e) => handleInputChange(guid, col.dataIndex, e.target.value)}
-                            onBlur={handleCommit}
-                            onPressEnter={handleCommit}
-                            size="small"
-                            placeholder={!isNullable ? "Required" : ""}
-                        />
-                    );
+    // 행 선택
+    const handleSelect = useCallback(
+        (selectedRowKeys: React.Key[], selectedRows: any[]) => {
+            if (selectedRows.length > 0) {
+                setSelectedGuid(selectedRowKeys);
+            } else {
+                setSelectedGuid([]);
             }
         },
-    }));
-    const nestedFields = getNestedArrayField(rowData?.[0]);
+        [setSelectedGuid]
+    );
+
     const handleAddBtn = () => {
-        console.log(parentGuid)
-        let newRecord;
-        let targetFeatureType = levelName;
+        const targetFeatureType = levelName;
         if (!targetFeatureType) {
-            if (rowData.length > 0 && rowData[0].featureType) {
-                targetFeatureType = rowData[0].featureType;
-            } else {
-                console.error("새 레코드를 추가할 FeatureType을 알 수 없습니다.");
-                setMessage({
-                    type: 'error',
-                    text: '새 레코드를 추가할 FeatureType을 알 수 없습니다.',
-                });
-                return;
-            }
+            setMessage({type: "error", text: "새 레코드를 추가할 FeatureType을 알 수 없습니다."});
+            return;
         }
-        const schema = useSchemaStore.getState().getSchemaByNames(layerName ,levelName);
 
-        const template = generateTemplate(schema)
+        const targetSchema = useSchemaStore
+            .getState()
+            .getSchemaDefinitionByNames(layerName, targetFeatureType);
+        const template = generateTemplate(targetSchema);
 
-        if (typeof layer?.createDto === "function" || template) {
-            console.log(template)
-
-            if (template) {
-                newRecord = {
-                    ...template,
-                    featureType: targetFeatureType,
-                    id : Date.now(),
-                    __guid: generateGUIDWithType(targetFeatureType), // __guid 생성
-                    parentGuid : parentGuid
-                };
-            }else{
-                newRecord = layer.createDto(targetFeatureType);
-                newRecord.id = Date.now(); // 임시 ID
-                newRecord.featureType = targetFeatureType;
-                newRecord.__guid = generateGUIDWithType(targetFeatureType); // __guid 생성
-                newRecord.parentGuid = parentGuid; // __guid 생성
-            }
-            store.getState().updateCurrentJsonData(newRecord, historyStore);
-            setSelectedGuid([newRecord.__guid]);
-            featureTypeEventHandlers(newRecord)
-        } else {
-            console.error("레이어에 'createDto' 메서드가 정의되어 있지 않습니다.");
-            setMessage({
-                type: 'error',
-                text: '레이어에 createDto 메서드가 정의되어 있지 않습니다.',
-            });
+        if (!template) {
+            setMessage({type: "error", text: "레이어에 스키마가 정의되어 있지 않습니다."});
+            return;
         }
-    }
-    const handleDeleteBtn = () => {
-        store.getState().removeRecordsByGuid(selectedGuid, historyStore)
-    }
 
-    const toggleGrid = (key: string | undefined) => {
-        if (!key) return;
-        setExpandedKey((prevKey) => (prevKey === key ? null : key)); // 같은 key면 닫기
+        const tempRecord: Record<string, any> = {
+            ...template,
+            featureType: targetFeatureType,
+            id: Date.now(),
+            __guid: undefined,
+            parentGuid: parentGuid || null,
+        };
+        generateGuidWithParentGuid(parentGuid, tempRecord, rowData)
+
+        const cleanup = createEventHandlers(tempRecord);
+        return () => {
+            if (cleanup) cleanup()
+        }
     };
+
+    const handleDeleteBtn = useCallback(() => {
+        if (!selectedGuid || selectedGuid.length === 0) {
+            setMessage({type: "warn", text: "삭제할 항목을 선택해주세요."});
+            return;
+        }
+        dataStore.getState().removeRecordsByGuid(selectedGuid, historyStore);
+        setMessage({type: "info", text: `${selectedGuid.length}개 항목이 삭제되었습니다.`});
+        clearSelected();
+    }, [selectedGuid, dataStore, historyStore, clearSelected, setMessage]);
+
+    const scrollToGuid = useCallback(
+        (targetGuid: string | React.Key | undefined) => {
+            if (!targetGuid) return;
+
+            // 동일 GUID 중복 스크롤 방지
+            if (lastScrollGuidRef.current === targetGuid) return;
+            lastScrollGuidRef.current = targetGuid;
+
+            // 현재 그리드 rowData에서 경로 찾기
+            if(!rowData) return;
+            const path = findGuidPath(rowData, targetGuid);
+            if (!path) return;
+
+            // 부모들을 펼침
+            setExpandedRowKeys(path.slice(0, -1));
+
+            // 스크롤
+            requestAnimationFrame(() => {
+                const rowElement = document.querySelector(
+                    `tr[data-row-key="${String(targetGuid)}"]`
+                );
+                if (rowElement) {
+                    rowElement.scrollIntoView({behavior: "smooth", block: "center"});
+                }
+            });
+        },
+        [rowData]
+    );
+
+    // 선택 변경 시 자동 스크롤
+    useEffect(() => {
+        if (selectedGuid && selectedGuid.length > 0) {
+            scrollToGuid(selectedGuid[0]);
+        }
+    }, [selectedGuid, scrollToGuid]);
 
     return (
         <div style={{paddingLeft: depth * 24}}>
-            <div style={{ display: "flex", alignItems: "center" }}>
-                <h4>{levelName}</h4>
+            <div style={{display: "flex", alignItems: "center"}}>
+                <h4 style={{margin: 0}}>{levelName}</h4>
                 <button className="grid-btn add-btn" onClick={() => handleAddBtn()}>+</button>
                 <button className="grid-btn delete-btn" onClick={() => handleDeleteBtn()}>-</button>
-                <h3 style={{ display: depth === 0 ? "block" : "none" }}>
+
+                {/* 상단 토글 (루트에서만) */}
+                <h3 style={{display: depth === 0 ? "block" : "none"}}>
                     <div className="grid-header">
-                        <FontAwesomeIcon onClick={() => toggleGrid(levelName)}
-                                         icon={expandedKey === levelName ? faChevronDown : faChevronUp}/>
+                        <FontAwesomeIcon
+                            onClick={() => setTopToggled((v) => !v)}
+                            icon={topToggled ? faChevronUp : faChevronDown}
+                        />
                     </div>
                 </h3>
             </div>
 
-            {((expandedKey === levelName) || depth > 0) && (<Table
-                className="transparent-table"
-                dataSource={rowData}
-                columns={enhancedColumns}
-                rowKey={(record) => {
-                    if (!record.__guid) {
-                        console.warn("🚨 누락된 __guid!", record);
-                    }
-                    return record.__guid;
-                }}
-                size="small"
-                pagination={false}
-                scroll={{y: 600}}
-                rowSelection={{
-                    type: "checkbox",
-                    onChange: handleSelect,
-                    selectedRowKeys: selectedGuid,
-                }}
-                expandable={
-                    nestedFields && nestedFields.length > 0
-                        ? {
-                            expandedRowRender: (record) => (
-                                <>
-                                    {nestedFields.map((field) => {
-                                        return (
-                                            Array.isArray(record[field]) && record[field].length > 0 ? (
-                                                <div key={field}>
-                                                    <JsonGrid
-                                                        rowData={record[field]}
-                                                        levelName={field}
-                                                        parentGuid={record['__guid']}
-                                                        depth={depth + 1}
-                                                        layerName={layerName}
-                                                        layerGroupName={layerGroupName}
-                                                    />
-                                                </div>
-                                            ) : null
-                                        )
-                                    })}
-                                </>
-                            ),
-                            rowExpandable: (record) =>
-                                nestedFields.some(
-                                    (field) =>
-                                        Array.isArray(record[field]) &&
-                                        record[field].length > 0
-                                ),
-                            expandedRowKeys: expandedRowKeys,  // 👈 추가
-                            onExpand: (expanded, record) => {
-                                const key = record.__guid;
-                                setExpandedRowKeys(prev =>
-                                    expanded
-                                        ? Array.from(new Set([...prev, key]))
-                                        : prev.filter(k => k !== key)
-                                );
-                            },
+            {(depth > 0 || topToggled) && (
+                <Table
+                    className="transparent-table"
+                    dataSource={rowData ?? []}
+                    columns={columns}
+                    rowKey={(record) => {
+                        if (!record.__guid) {
+                            console.warn("🚨 누락된 __guid!", record);
                         }
-                        : undefined
-                }
-            />)}
-
+                        return record.__guid;
+                    }}
+                    size="small"
+                    pagination={false}
+                    scroll={{y: 600}}
+                    locale={{
+                        emptyText: "데이터가 없습니다. [+] 버튼으로 새 항목 추가를 시작하세요.",
+                    }}
+                    rowSelection={{
+                        type: "checkbox",
+                        onChange: (keys, rows) => handleSelect(keys, rows),
+                        selectedRowKeys: selectedGuid ?? [],
+                    }}
+                    expandable={
+                        // 자식 구조가 정의되어 있으면, 데이터 유무와 무관하게 확장 허용
+                        (childrenStructure.length > 0)
+                            ? {
+                                expandedRowRender: (record) => (
+                                    <>
+                                        {childrenStructure.map((field) => (
+                                            <div key={`${record.__guid}-${field}`}>
+                                                <JsonGrid
+                                                    rowData={Array.isArray(record[field]) ? record[field] : []}
+                                                    levelName={field}
+                                                    parentGuid={record["__guid"]}
+                                                    depth={depth + 1}
+                                                    layerName={layerName}
+                                                    layerGroupName={layerGroupName}
+                                                />
+                                            </div>
+                                        ))}
+                                    </>
+                                ),
+                                rowExpandable: () => true,
+                                expandedRowKeys: expandedRowKeys,
+                                onExpand: (expanded, record) => {
+                                    const key = record.__guid;
+                                    setExpandedRowKeys((prev) =>
+                                        expanded
+                                            ? Array.from(new Set([...prev, key]))
+                                            : prev.filter((k) => k !== key)
+                                    );
+                                },
+                            }
+                            : undefined
+                    }
+                />
+            )}
         </div>
     );
 };
 
-export default JsonGrid;
+export default memo(JsonGrid);

@@ -33,7 +33,7 @@ public class WebConfig {
                 registry.addMapping("/menu/**")
                         .allowedOrigins("*")
                         .allowedMethods("GET", "POST", "PUT", "DELETE");
-                registry.addMapping("/layers/**")
+                registry.addMapping("/layer/**")
                         .allowedOrigins("*")
                         .allowedMethods("GET", "POST", "PUT", "DELETE");
                 registry.addMapping("/scenario/**")

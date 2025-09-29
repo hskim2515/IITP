@@ -1,135 +1,155 @@
 import { EventAdapter } from '@adaptor/EventAdapter';
-import { Feature, Map as OLMap, MapBrowserEvent } from 'ol';
-import VectorSource from 'ol/source/Vector';
-import VectorLayer from 'ol/layer/Vector';
-import { Draw, Modify, Select, Snap } from 'ol/interaction';
+import { EventOptions } from '@type/EventOptions';
+import { Map as OLMap } from 'ol';
+import Interaction from 'ol/interaction/Interaction';
+import Draw from 'ol/interaction/Draw';
+import Modify from 'ol/interaction/Modify';
+import Select from 'ol/interaction/Select';
+import Translate from 'ol/interaction/Translate';
+import Snap from 'ol/interaction/Snap';
 import { unByKey } from 'ol/Observable';
-import { EventOptions } from "@type/EventOptions";
-import GeometryType from "@type/FeatureOptions";
-import { Circle as CircleStyle, Fill, Stroke, Style } from "ol/style";
-import Collection from "ol/Collection";
+import { EventsKey } from 'ol/events';
 
-type InteractionType = 'draw' | 'modify' | 'select' | 'snap';
-type OLInteraction = Draw | Modify | Select | Snap;
+type InteractionType = 'draw' | 'modify' | 'select' | 'translate' | 'snap';
 
 export class OLEventAdapter implements EventAdapter {
-    private map: OLMap;
-    private mapHandlers: Map<string, (e: MapBrowserEvent<any>) => void> = new Map();
-    private interactionMap: Map<InteractionType, OLInteraction> = new Map();
-    private interactionHandlers: Map<string, any> = new Map();
-    private interactionLayerMap: Map<InteractionType, VectorLayer> = new Map();
+    private olMap: OLMap;
+    private registered: Map<string, () => void> = new Map();
+    private interactions: Map<string, Interaction> = new Map();
 
-    constructor(map: OLMap) {
-        this.map = map;
+    constructor(olMap: OLMap) {
+        this.olMap = olMap;
     }
 
-    register(eventType: string, callback: (event: any) => void, options?: EventOptions): void {
-        const interactionType = this.getInteractionType(eventType);
+    register(eventKey: string, callback: (event: any) => void, options?: EventOptions): void {
+        const { interactionType, context, phase } = this.parseEventKey(eventKey);
 
         if (!interactionType) {
-            // 기본 Map 이벤트
-            const handler = (e: MapBrowserEvent<any>) => callback(e);
-            this.map.on(eventType, handler);
-            this.mapHandlers.set(eventType, handler);
+            const translated = this.translateMapEvent(eventKey);
+            const key: EventsKey = this.olMap.on(translated, callback);
+            this.registered.set(eventKey, () => unByKey(key));
             return;
         }
 
-        // Interaction 이벤트
-        if(!options) return;
-        const interaction = this.getOrCreateInteraction(interactionType, options);
+        const interactionKey = this.getInteractionKey(interactionType, context);
+        let interaction = this.interactions.get(interactionKey);
 
-        this.map.addInteraction(interaction);
-        this.interactionMap.set(interactionType, interaction);
-        const key = interaction.on(eventType, (e) => callback(e));
-        this.interactionHandlers.set(eventType, key);
-    }
-
-    unregister(eventType: string): void {
-        const interactionType = this.getInteractionType(eventType);
-
-        if (!interactionType) {
-            // Map 이벤트
-            const handler = this.mapHandlers.get(eventType);
-            if (handler) {
-                this.map.un(eventType, handler);
-                this.mapHandlers.delete(eventType);
-            }
-            return;
+        if (!interaction) {
+            interaction = this.createInteraction(interactionType, options);
+            if (!interaction) return;
+            this.olMap.addInteraction(interaction);
+            this.interactions.set(interactionKey, interaction);
         }
 
-        // Interaction 이벤트
-        const key = this.interactionHandlers.get(eventType);
-        const olInteraction = this.interactionMap.get(interactionType)
-        if (key && olInteraction) {
-            unByKey(key);
-            this.interactionHandlers.delete(eventType);
-            // this.mapHandlers.delete(eventType)
-            this.interactionMap.delete(interactionType)
-            this.map.removeInteraction(olInteraction)
-        }
-
-
-    }
-
-    private getInteractionType(eventType: string): InteractionType | null {
-        if (eventType.startsWith('draw')) return 'draw';
-        if (eventType.startsWith('modify')) return 'modify';
-        if (eventType === 'select') return 'select';
-        if (eventType === 'snap') return 'snap';
-        return null;
-    }
-
-    private getOrCreateInteraction(type: InteractionType, options: EventOptions): OLInteraction {
-        if (this.interactionMap.has(type)) return this.interactionMap.get(type)!;
-        let interaction: OLInteraction;
-        switch (type) {
-            case 'draw': {
-                const geometryType = options.drawGeometryType || GeometryType.POINT
-                // this.attachLayer(type, source)
-                interaction = new Draw({
-                    type: geometryType,
-                });
-                break;
-            }
-            case 'modify': {
-                const rawFeatures = options.features;
-
-                // Feature[]를 Collection으로 감싸기
-                const featuresCollection = Array.isArray(rawFeatures)
-                    ? new Collection<Feature>(rawFeatures)
-                    : rawFeatures;
-
-                interaction = new Modify({
-                    features: featuresCollection,
-                    wrapX: false,
-                    style: options.style ?? undefined
-                });
-                break;
-            }
-            case 'select': {
-                interaction = new Select({
-                    layers: options.olLayers,
-                    style: options.style ?? undefined
-                });
-                break;
-            }
-            case 'snap': {
-                const features = options.features
-                interaction = new Snap({
-                    features
-                });
-                break;
-            }
-        }
-        return interaction;
-    }
-    // 추후 redo&undo 에 활용
-    private attachLayer(type: InteractionType, source: VectorSource) {
-        const layer = new VectorLayer({
-            source,
-            zIndex: 1200
+        const translatedEvents = this.translateInteraction(interactionType, phase);
+        translatedEvents.forEach(ev => {
+            const key: EventsKey = interaction!.on(ev, callback);
+            this.registered.set(`${eventKey}:${ev}`, () => unByKey(key));
         });
-        this.map.addLayer(layer);
-        this.interactionLayerMap.set(type, layer);
+    }
+
+    unregister(eventKey: string): void {
+        [...this.registered.keys()]
+            .filter(k => k.startsWith(eventKey))
+            .forEach(k => {
+                this.registered.get(k)?.();
+                this.registered.delete(k);
+            });
+        const { interactionType, context } = this.parseEventKey(eventKey);
+        if (interactionType) {
+            const interactionKey = this.getInteractionKey(interactionType, context);
+            const interaction = this.interactions.get(interactionKey);
+            if (interaction) {
+                this.olMap.removeInteraction(interaction);
+                this.interactions.delete(interactionKey);
+            }
+        }
+    }
+
+    clearInteractions(): void {
+        this.interactions.forEach(interaction => {
+            this.olMap.removeInteraction(interaction);
+        });
+        this.interactions.clear();
+        this.registered.clear();
+    }
+
+    getInteraction<T extends Interaction>(interactionType: string, context = 'default'): T | null {
+        const key = this.getInteractionKey(interactionType, context);
+        return (this.interactions.get(key) as T) || null;
+    }
+
+    private parseEventKey(eventKey: string): { interactionType: InteractionType | null; context: string; phase?: string } {
+        const parts = eventKey.split(':');
+        if (parts.length < 2) return { interactionType: null, context: 'default' };
+        const [interactionType, context, phase] = parts;
+        return { interactionType: interactionType as InteractionType, context, phase };
+    }
+
+    private getInteractionKey(interactionType: string, context: string): string {
+        return `${interactionType}:${context}`; // phase 제외
+    }
+
+    private translateMapEvent(eventKey: string): string {
+        switch (eventKey) {
+            case 'click':
+                return 'click';
+            case 'singleclick':
+                return 'singleclick';
+            case 'move':
+                return 'moveend';
+            default:
+                return eventKey;
+        }
+    }
+
+    private translateInteraction(interactionType: string, phase?: string): string[] {
+        switch (interactionType) {
+            case 'draw':
+                if (phase === 'start') return ['drawstart'];
+                if (phase === 'end') return ['drawend'];
+                return ['drawstart', 'drawend'];
+            case 'modify':
+                if (phase === 'start') return ['modifystart'];
+                if (phase === 'end') return ['modifyend'];
+                return ['modifystart', 'modifyend'];
+            case 'select':
+                return ['select'];
+            case 'translate':
+                if (phase === 'start') return ['translatestart'];
+                if (phase === 'end') return ['translateend'];
+                return ['translatestart', 'translateend'];
+            case 'snap':
+                return [];
+            default:
+                return [];
+        }
+    }
+
+    private createInteraction(interactionType: string, options?: EventOptions): Interaction | undefined {
+        switch (interactionType) {
+            case 'draw':
+                return new Draw({
+                    type: options?.drawGeometryType
+                });
+            case 'modify':
+                return new Modify({
+                    features: options?.features
+                });
+            case 'select':
+                return new Select({
+                    layers: options?.olLayers
+                });
+            case 'translate':
+                return new Translate({
+                    features: options?.features
+                });
+            case 'snap':
+                return new Snap({
+                    features: options?.features
+                });
+            default:
+                return;
+        }
     }
 }

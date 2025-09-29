@@ -1,16 +1,17 @@
 import { Cartesian3 } from "cesium";
 
 export const FEATURE_TYPE = {
-    NODE: 'node',
-    PORT: 'port',
-    CONNECTION: 'connection',
-    LINK: 'link',
-    LANE: 'lane',
-    CELL: 'cell',
-    SEGMENT: 'segment',
+    NODE: 'nodes',
+    PORT: 'ports',
+    CONNECTION: 'connections',
+    LINK: 'links',
+    LANE: 'lanes',
+    CELL: 'cells',
+    SEGMENT: 'segments',
 } as const;
 
 export interface Network {
+    id: number
     name: string | null
     links: Link[]
     nodes: Node[]
@@ -77,6 +78,7 @@ export interface Link {
 }
 
 export interface Lane {
+    linkRef: number;
     __guid? : string
     id: number | string
     leftLaneId: number | string

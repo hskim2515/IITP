@@ -1,7 +1,7 @@
 package com.iitp.iitp_rest.service.network;
 
 import com.iitp.iitp_rest.handler.XmlValidationEventHandler;
-import com.iitp.iitp_rest.model.network.NetworkXmlResponse;
+import com.iitp.iitp_rest.model.network.NetworkXml;
 import com.iitp.iitp_rest.service.xml.XmlParser;
 import com.iitp.iitp_rest.service.xml.LocationTrackingXmlStreamReader;
 import jakarta.xml.bind.JAXBContext;
@@ -14,14 +14,14 @@ import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
 
 @Component("networkJaxbParser")
-public class NetworkJaxbParser implements XmlParser<NetworkXmlResponse> {
+public class NetworkJaxbParser implements XmlParser<NetworkXml> {
 
     private final JAXBContext jaxbContext;
     private final XMLInputFactory xmlInputFactory;
 
     public NetworkJaxbParser() {
         try {
-            this.jaxbContext = JAXBContext.newInstance(NetworkXmlResponse.class);
+            this.jaxbContext = JAXBContext.newInstance(NetworkXml.class);
             this.xmlInputFactory = XMLInputFactory.newInstance();
         } catch (JAXBException e) {
             throw new IllegalStateException("JAXBContext 초기화 실패", e);
@@ -29,7 +29,7 @@ public class NetworkJaxbParser implements XmlParser<NetworkXmlResponse> {
     }
 
     @Override
-    public NetworkXmlResponse parse(InputStream inputStream) {
+    public NetworkXml parse(InputStream inputStream) {
         LocationTrackingXmlStreamReader locationTracker = null;
         try {
             XMLStreamReader reader = xmlInputFactory.createXMLStreamReader(inputStream);
@@ -39,7 +39,7 @@ public class NetworkJaxbParser implements XmlParser<NetworkXmlResponse> {
             Unmarshaller unmarshaller = jaxbContext.createUnmarshaller();
             unmarshaller.setEventHandler(new XmlValidationEventHandler());
 
-            return (NetworkXmlResponse) unmarshaller.unmarshal(locationTracker);
+            return (NetworkXml) unmarshaller.unmarshal(locationTracker);
         } catch (Exception e) {
             String errorLocation = "알 수 없는 위치";
             if (locationTracker != null) {
