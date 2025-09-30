@@ -38,7 +38,7 @@ export default class PavementMarkingDataSourceLayer {
 
         const features = pavementMarkings
             .map((data) => this.createFeature(data))
-            .filter((f): f is Feature<Point> => !!f);
+            //.filter((f): f is Feature<Point> => !!f);
         const mergedFeatures = interpolateByOffset(features);
 
         const flatRows = mergedFeatures
@@ -92,24 +92,13 @@ export default class PavementMarkingDataSourceLayer {
             ...data,
             featureType: data.featureType ?? FEATURE_TYPE.PAVEMENT_MARKING,
         };
-        const coord = Array.isArray(data.coordinates) ? data.coordinates[0] : undefined;
-        const hasValidCoordinate =
-            coord &&
-            typeof coord.lng === 'number' &&
-            typeof coord.lat === 'number';
-
-        if (!hasValidCoordinate) {
-            console.warn("Invalid or missing coordinates, skipping feature:", data);
-            return undefined;
-        }
-
-        const geom = new Point(fromLonLat([coord.lng!, coord.lat!]));
+        const geom = new Point([0, 0]); // 임시
         const feature = new Feature<Point>(geom);
+
         feature.setProperties(props);
 
         return feature;
     }
-
     public computeRectangleAround(lng: number, lat: number, angleRad: number, widthMeters: number, lengthMeters: number): [number, number, number, number, number, number, number, number] {
         const center = Cesium.Cartesian3.fromDegrees(lng, lat);
         const enuTransform = Cesium.Transforms.eastNorthUpToFixedFrame(center);

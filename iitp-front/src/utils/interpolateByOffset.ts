@@ -76,7 +76,6 @@ export function interpolateAndConvertToRecords(dataList: any[]): any[] {
     const features = dataList
         .map(data => createFeature(data))
         .filter((f): f is Feature => f !== undefined);
-
     const interpolated = interpolateByOffset(features);
     return interpolated.map(convertFeatureToRecord);
 }
