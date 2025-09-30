@@ -1,68 +1,52 @@
-import React, { useEffect, useState } from 'react';
-import { useOpenLayersStore } from '@stores/useOpenLayersStore';
-import { useCesiumStore }      from '@stores/useCesiumStore';
-import { useMapStore }         from '@stores/useMapStore';
+import React, { useEffect } from 'react';
+import { BaseMapType, useMapStore } from '@stores/useMapStore';
 import { LayerField } from "@stores/useLayerSchemaStore";
 import { useLayerStore } from "@stores/useLayerStore";
+import styles from "@css/BaseMap.module.css"
 
-export interface BaseMapProps {
+export interface Props {
     fields: LayerField[];
 }
 
-const BaseMap: React.FC<BaseMapProps> = ({ fields }) => {
-    const olMap = useOpenLayersStore.state.map();
-    const viewer = useCesiumStore.state.viewer();
+const BaseMap = ({fields}: Props) => {
+
     const currentBaseMap = useMapStore.state.currentBaseMap();
     const setCurrentBaseMap = useMapStore.actions.setCurrentBaseMap();
 
     const layerManager = useLayerStore.state.layerManager()
 
-    const defaultSelected = fields.find(field => field.basic)?.key || null;
-    const [selected, setSelected] = useState<string | null>(currentBaseMap);
-
-
     useEffect(() => {
-        if(!layerManager) return;
-    }, [layerManager]);
+        if (currentBaseMap) return;
+        const initialBaseMap = fields.find(field => field.basic)?.key || undefined;
+        if (initialBaseMap) setCurrentBaseMap(initialBaseMap);
+    }, [setCurrentBaseMap]);
 
-    useEffect(() => {
-        if (defaultSelected) {
-            setCurrentBaseMap(defaultSelected);
-        }
-    }, [defaultSelected, setCurrentBaseMap]);
-
-    useEffect(() => {
-        if (currentBaseMap) setSelected(currentBaseMap);
-    }, [currentBaseMap]);
-
-    useEffect(() => {
-        console.log("fields:::", fields)
-    }, [fields]);
-
-    const handleSelect = (value: string) => {
-        const layerName = value
-        if(viewer && layerManager) {
-            layerManager.showLayer("baseMap",layerName) // base, osm, hybrid
+    const handleSelect = (layerName: BaseMapType) => {
+        if (layerManager && layerName) {
+            layerManager.showLayer("baseMap", layerName)
         }
 
-        setCurrentBaseMap(value);
-        setSelected(value);
+        setCurrentBaseMap(layerName);
     };
 
     return (
         <div>
-            {fields.map(field => (
-                <label key={field.key} style={{ color: 'white', display: 'block', margin: '4px 0' }}>
-                    <input
-                        type={field.formType}
-                        name="baseMap"
-                        value={field.key}
-                        checked={selected === field.key}
-                        onChange={() => handleSelect(field.key)}
-                    />
-                    {field.label}
-                </label>
-            ))}
+            {fields.map(field => {
+                    const value = field.key;
+                    return (
+                        <label key={field.key} className={styles['item']}>
+                            <input
+                                type={field.formType}
+                                name="baseMap"
+                                value={value}
+                                checked={currentBaseMap === value}
+                                onChange={() => handleSelect(value)}
+                            />
+                            {field.label}
+                        </label>
+                    )
+                }
+            )}
         </div>
     );
 };

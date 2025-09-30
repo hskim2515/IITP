@@ -1,31 +1,18 @@
 import { create } from "zustand";
 import { combine } from "zustand/middleware";
 import { createSelectors } from "@stores/createSelectors";
-
-// 트리 구조 데이터를 표현하는 인터페이스
-export interface MenuTree {
-    menuId: number;
-    menuCode: string; // 호출 편의를 위해 layer 이름으로 사용 중
-    language: string;
-    nameKor: string;
-    nameEn: string;
-    depth: number;
-    sortOrder: number; // 메뉴 배치 순서를 위한 변수
-    available: string; // 필요에 따라 "Y" | "N" 등으로 변경 가능
-    children?: MenuTree[];
-    rootId: number; // 최상단 메뉴의 ID, 메뉴 위치 변경 고려
-}
+import { MenuTreeResponse } from "@type/openapi.gen";
 
 interface State {
-    menu: MenuTree[] | null;
-    activeDropdownMenu: MenuTree | null;
-    activeSubmenu: MenuTree | null;
+    menu: MenuTreeResponse[] | null;
+    activeDropdownMenu: MenuTreeResponse | null;
+    activeSubmenu: MenuTreeResponse | null;
 }
 
 interface Actions {
-    setMenu: (menu: MenuTree[]) => void;
-    setActiveDropdownMenu: (menu: MenuTree | null) => void;
-    setActiveSubmenu: (menu: MenuTree | null) => void;
+    setMenu: (menu: MenuTreeResponse[]) => void;
+    setActiveDropdownMenu: (menu: MenuTreeResponse | null) => void;
+    setActiveSubmenu: (menu: MenuTreeResponse | null) => void;
 }
 const initialState: State = {
     menu: null,
@@ -42,7 +29,7 @@ export const useMenuStore = createSelectors(create<State & Actions>(
     ))
 ));
 
-export function findMenuByCode(menuList: MenuTree[], code: string): MenuTree | null {
+export function findMenuByCode(menuList: MenuTreeResponse[], code: string): MenuTreeResponse | null {
     for (const menu of menuList) {
         if (menu.menuCode === code) {
             return menu;
@@ -55,3 +42,26 @@ export function findMenuByCode(menuList: MenuTree[], code: string): MenuTree | n
     return null;
 }
 
+// target이 root에 포함되어 있는 메뉴인지 확인
+export function isIncludesMenuCode(root: MenuTreeResponse, targetCode: string | undefined | null): boolean {
+    if(!targetCode) return false;
+    if(root.menuCode === targetCode) return true;
+    if(root.children && root.children.length > 0) {
+        for (const child of root.children) {
+            if (isIncludesMenuCode(child, targetCode)) return true;
+        }
+    }
+    return false;
+}
+
+// 메뉴List에서 parent를 찾고, target이 속해있는지 확인
+export function isDescendantOf(
+    menuList: MenuTreeResponse[] | null,
+    parentCode: string,
+    targetCode: string | undefined | null
+): boolean {
+    if (!menuList || !parentCode || !targetCode) return false;
+    const parent = findMenuByCode(menuList, parentCode);
+    if (!parent) return false;
+    return isIncludesMenuCode(parent, targetCode);
+}

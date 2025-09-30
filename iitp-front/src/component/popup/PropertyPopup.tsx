@@ -5,7 +5,7 @@ import FormPopup from "./FormPopup";
 import {apiConfig, ApiMenuKey} from "@config/apiConfig";
 import axiosInstance from "../../api/axiosInstance";
 import {PropertyFormSchemaProps} from "@schema/propertyFormSchema";
-import {MenuTree} from "@stores/useMenuStore";
+import { MenuTreeResponse } from "@type/openapi.gen";
 
 export interface fieldType {
     [key: string]: string;
@@ -15,7 +15,7 @@ export interface PropertyFormProps {
     open: boolean;
     config: PropertyFormSchemaProps;
     onClose: () => void;
-    activePopupMenu: MenuTree;
+    activePopupMenu: MenuTreeResponse;
 }
 
 const tabComponent: Record<string, React.FC<PropertyFormProps>> = {
@@ -124,7 +124,7 @@ export default PropertyForm;
 
 export interface PropertyPopupProps {
     open: boolean;
-    activePopupMenu:MenuTree;
+    activePopupMenu:MenuTreeResponse;
     config: PropertyFormSchemaProps;
     children: React.ReactNode;
     onClose: () => void;

@@ -1,16 +1,18 @@
 import { create } from "zustand";
 import { createSelectors } from "@stores/createSelectors";
 
+export type BaseMapType = 'osm' | 'satellite' | 'hybrid' | 'base' | 'midnight' | string | undefined;
+
 interface State {
     isCesiumSyncingState: boolean;
     isOLSyncingState: boolean;
-    currentBaseMap: 'osm' | 'satellite' | 'hybrid' | 'base' | 'midnight';
+    currentBaseMap: BaseMapType;
 }
 
 interface Actions {
     setCesiumSyncing: (syncing: boolean) => void;
     setOLSyncing: (syncing: boolean) => void;
-    setCurrentBaseMap: (baseMap: 'osm' | 'satellite' | 'hybrid' | 'base' | 'midnight' | undefined) => void;
+    setCurrentBaseMap: (baseMap: BaseMapType) => void;
 }
 
 const initialState: State = {
@@ -28,7 +30,7 @@ export const useMapStore = createSelectors(
                 isOLSyncingState: !syncing
             }),
             setOLSyncing: (syncing: boolean) => set({isCesiumSyncingState: !syncing, isOLSyncingState: syncing}),
-            setCurrentBaseMap: (baseMap: 'osm' | 'satellite' | 'hybrid' | 'base' | 'midnight' | undefined) => set({currentBaseMap: baseMap}),
+            setCurrentBaseMap: (baseMap: BaseMapType) => set({currentBaseMap: baseMap}),
         })
     )
 );

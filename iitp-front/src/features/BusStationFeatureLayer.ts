@@ -17,11 +17,7 @@ import { findFeatureByProperties } from "@utils/feature";
 export default class BusStationFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "busStation";
-
-    private readonly defaultStyle: Style;
-    private readonly selectStyle: Style;
-    private readonly modifyStyle: Style;
-
+    // private readonly LOTS_SIZE = 15;
     private unsubscribe: (() => void) | undefined;
 
     constructor() {
@@ -48,38 +44,6 @@ export default class BusStationFeatureLayer extends VectorLayer {
             );
         }
 
-
-        this.defaultStyle = new Style({
-            image: new CircleStyle({
-                radius: 6,
-                fill: new Fill({color: "rgba(255, 0, 0, 1)"}), // 빨간색
-                stroke: new Stroke({color: "rgba(0,0,0,0)", width: 1}),
-            }),
-        });
-
-        this.selectStyle = new Style({
-            image: new CircleStyle({
-                radius: 8,
-                fill: new Fill({color: "rgba(0, 255, 0, 1)"}), // 초록색
-                stroke: new Stroke({color: "rgba(255, 0, 0, 1)", width: 2}),
-            }),
-        });
-
-        this.modifyStyle = new Style({
-            image: new CircleStyle({
-                radius: 8,
-                fill: new Fill({color: "rgba(255, 255, 0, 1)"}), // 노란색
-                stroke: new Stroke({color: "rgba(0, 0, 0, 1)", width: 2}),
-            }),
-        });
-    }
-
-    public getSelectStyle() {
-        return this.selectStyle;
-    }
-
-    public getDefaultStyle() {
-        return this.defaultStyle;
     }
 
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
@@ -104,7 +68,6 @@ export default class BusStationFeatureLayer extends VectorLayer {
      */
     public async load(): Promise<void> {
         const store = layerNameToStoreMap[this.LAYER_NAME];
-        console.log("current?:::", store.getState().currentJsonData)
         const networkStore = layerNameToStoreMap["network"];
         const generateTemplateWithLayerNameAndFeatureType = useSchemaStore.getState().generateTemplateWithLayerNameAndFeatureType
         const template = generateTemplateWithLayerNameAndFeatureType('busStation', 'busStations')

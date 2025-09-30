@@ -63,8 +63,12 @@ export const apiConfig:ApiConfig = {
         create:  { url: '/signal', method: 'POST', useFormData: false },
         historyList: { url: '/signal/histories', method: 'GET', useFormData: false },
         origin: {url: '/signal/origin', method: 'GET', useFormData: false},
-    }
+    },
+    MENU: {
+        tree: {url: '/menu/tree', method: 'GET', useFormData: false},
+    },
 
 } as const;
 
-export type ApiMenuKey = keyof typeof apiConfig;
+export type ApiMap = typeof apiConfig;
+export type ApiMenuKey = keyof ApiMap;

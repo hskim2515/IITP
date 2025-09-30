@@ -1,14 +1,14 @@
-import {MutableRefObject, useEffect, useRef, useState } from 'react';
+import { MutableRefObject, useEffect, useState } from 'react';
 import { useCesiumStore } from "@stores/useCesiumStore";
 import * as Cesium from "cesium";
-import { Cartesian3, Cartographic, HeightReference, Viewer } from "cesium";
+import { Cartesian3, Viewer } from "cesium";
 import { useLayerStore } from "@stores/useLayerStore";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
 import { Map as OLMap, View } from "ol";
 import * as olProj from "ol/proj";
 
-const useMapInit = (openlayersMapRef: MutableRefObject<HTMLElement | null>, cesiumMapRef: MutableRefObject<Element | null>) => {
+const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, cesiumMapRef: MutableRefObject<Element | null>) => {
 
     const setMap = useOpenLayersStore.actions.setMap();
     const setView = useOpenLayersStore.actions.setView();
@@ -27,7 +27,7 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLElement | null>, cesi
     //const lodWorker = new Worker(new URL('/src/workers/lodWorker.ts', import.meta.url), { type: 'module' });
 
     useEffect(() => {
-        if(!cesiumMapRef.current) return;
+        if (!cesiumMapRef.current) return;
         if (layerGroups.length === 0) return;
         initializeMaps().then(() => console.log("initializeMaps"));
     }, [layerGroups, cesiumMapRef.current]);
@@ -43,10 +43,10 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLElement | null>, cesi
     }, [setActiveLayerGroupName, setActiveLayerName])
 
     const openLayersMapInit = () => {
-        if(!openlayersMapRef.current) return;
+        if (!openlayersMapRef.current) return;
         // 1) Map & View 초기화
         const view = new View({
-            center: olProj.fromLonLat([ 126.77496, 37.49720 ]),
+            center: olProj.fromLonLat([126.77496, 37.49720]),
             zoom: 16,
         });
         const olMap = new OLMap({
@@ -57,11 +57,11 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLElement | null>, cesi
         setMap(olMap);
         setView(view);
 
-        return { olMap }
+        return {olMap}
     }
 
     const cesiumMapInit = async () => {
-        if(!cesiumMapRef.current) return;
+        if (!cesiumMapRef.current) return;
         Cesium.Ion.defaultAccessToken = '';  // Set your Cesium Ion access token here
         const cesiumViewer = new Viewer(cesiumMapRef.current, {
             //terrain: new Cesium.Terrain(Cesium.CesiumTerrainProvider.fromUrl('http://175.197.92.213:10201/terrain-tile/dem05_ellipsoid')),
@@ -133,7 +133,7 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLElement | null>, cesi
             // cesiumViewer.scene.primitives.add(tileSet2)
             // cesiumViewer.scene.primitives.add(tileSet3)
         } catch (error) {
-            console.log(`Error loading tileset: ${ error }`);
+            console.log(`Error loading tileset: ${error}`);
         }
 
         return {

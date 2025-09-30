@@ -1,0 +1,72 @@
+.header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 98%;
+    height: 50px;
+    background-color: #333;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    z-index: 999;
+}
+
+.nav {
+    display: flex;
+    gap: 20px
+}
+
+.container {
+    position: relative;
+    cursor: pointer;
+}
+
+.title {
+    display: inline-block;
+    padding: 10px;
+    font-size: 16px;
+    color: #fff;
+}
+
+.dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background-color: #444;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+    min-width: 150px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+}
+
+.item {
+    padding: 10px;
+    cursor: pointer;
+    color: #fff;
+    font-size: 14px;
+    background-color: #444;
+    border: none;
+    border-bottom: 1px solid #555;
+    text-align: left;
+
+    transition: background 0.2s ease;
+}
+
+.item:last-child {
+    border-bottom: none;
+}
+
+.item:hover {
+    background-color: #505050;
+}
+
+/* 키보드 포커스 가시화 */
+.item:focus-visible {
+    outline: 2px solid #7aa2ff;
+    outline-offset: 2px;
+}

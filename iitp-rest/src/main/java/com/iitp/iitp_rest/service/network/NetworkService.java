@@ -21,11 +21,11 @@ public class NetworkService {
     private final NetworkJaxbParser networkJaxbParser;
     private final ScenarioRepository scenarioRepository;
 
-    public NetworkXml getNetworkXmlByScenarioKey(String scenarioKey) {
-        String path = scenarioKey + "/network.xml";
+    public NetworkXml getNetworkXmlByVersionId(String versionId) {
+        String path = versionId + "/network.xml";
         InputStream is = XmlUtils.loadXmlAsStream(path);
         NetworkXml dto = streamToDto(is);
-        return transformNetworkCoordinates(scenarioKey, dto);
+        return transformNetworkCoordinates(versionId, dto);
     }
 
     public NetworkXml streamToDto(InputStream is) {

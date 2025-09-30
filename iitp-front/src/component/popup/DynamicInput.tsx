@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import ColorInput from "../util/ColorInput";
-import { apiConfig, ApiMenuKey } from "../../config/apiConfig";
-import axiosInstance from "../../api/axiosInstance";
-import FileInput from "../util/FileInput";
-import {MenuTree} from "@stores/useMenuStore";
+import ColorInput from "@component/util/ColorInput";
+import { apiConfig, ApiMenuKey } from "@config/apiConfig";
+import axiosInstance from "@api/axiosInstance";
+import FileInput from "@component/util/FileInput";
+import { MenuTreeResponse } from "@type/openapi.gen";
 
 interface SelectOption {
     value: string;
@@ -11,7 +11,7 @@ interface SelectOption {
 }
 
 interface DynamicInputProps {
-    activePopupMenu: MenuTree;
+    activePopupMenu: MenuTreeResponse;
     propsOptions?: (string | { value: string; label: string })[];
     type: 'text' | 'number' | 'float' | 'select' | 'file' | 'color';
     value: string | File | null;

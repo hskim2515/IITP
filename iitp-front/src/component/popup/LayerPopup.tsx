@@ -1,4 +1,3 @@
-// components/LayerPopup.tsx
 import React, { useEffect, useState } from 'react';
 import '/static/css/styles.css';
 
@@ -29,7 +28,7 @@ const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
     const { groups, fetchLayerSchema, loading } = useLayerSchemaStore();
 
     useEffect(() => {
-        if (isOpen) fetchLayerSchema();
+        if (isOpen && !loading) fetchLayerSchema();
     }, [isOpen]);
 
     const handleTabClick = (idx: number) => {

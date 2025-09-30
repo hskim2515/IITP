@@ -4,7 +4,9 @@ import com.iitp.iitp_rest.model.BaseVersion;
 import com.iitp.iitp_rest.model.signal.*;
 import com.iitp.iitp_rest.repository.SignalLogsRepository;
 import com.iitp.iitp_rest.repository.SignalVersionsRepository;
+import com.iitp.iitp_rest.util.XmlUtils;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.w3c.dom.Document;
@@ -17,11 +19,13 @@ import java.io.InputStream;
 import java.util.*;
 
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SignalService {
     private final SignalLogsRepository signalLogsRepository;
     private final SignalVersionsRepository signalVersionsRepository;
+    private final SignalJaxbParser signalJaxbParser;
 
     public List<SignalLogs> getLogsByVersion(String id) {
         return signalLogsRepository.findByVersionId(id);
@@ -62,6 +66,21 @@ public class SignalService {
                 .build();
 
         signalLogsRepository.save(newLog);
+    }
+
+    public SignalXml getSignalXmlByScenarioKey(String scenarioKey) {
+        String path = scenarioKey + "/signal.xml";
+        InputStream is = XmlUtils.loadXmlAsStream(path);
+        SignalXml dto = streamToDto(is);
+        return dto;
+    }
+
+    public SignalXml streamToDto(InputStream is) {
+        final long totalStart = System.nanoTime();
+        SignalXml signalXmlDto = signalJaxbParser.parse(is);
+        final long totalEnd = System.nanoTime();
+        log.info("SignalXml streamToDto total:{}", totalEnd - totalStart);
+        return signalXmlDto;
     }
 
     @Transactional

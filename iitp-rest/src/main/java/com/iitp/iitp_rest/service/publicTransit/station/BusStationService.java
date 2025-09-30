@@ -59,8 +59,8 @@ public class BusStationService {
         busStationLogsRepository.save(entityLog);
     }
 
-    public PublicTransitXml getBusStationXmlByScenarioKey(String scenarioKey) {
-        String path = scenarioKey + "/publicTransit.xml";
+    public PublicTransitXml getBusStationXmlByVersionId(String versionId) {
+        String path = versionId + "/publicTransit.xml";
         InputStream is = XmlUtils.loadXmlAsStream(path);
         return streamToDto(is);
     }

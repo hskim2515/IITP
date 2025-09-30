@@ -196,6 +196,38 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/public-transit/station/rail/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getRailStationsByVersionId"];
+        put?: never;
+        post: operations["saveBusStations"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/station/bus/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getBusStationsByVersionId"];
+        put?: never;
+        post: operations["saveBusStations_1"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pavement-marking/{versionId}": {
         parameters: {
             query?: never;
@@ -203,7 +235,7 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
-        get: operations["getPavementMarkingByVersion"];
+        get: operations["getPavementMarking"];
         put?: never;
         post: operations["savePavementMarking"];
         delete?: never;
@@ -222,6 +254,22 @@ export type paths = {
         get?: never;
         put?: never;
         post: operations["createMenu"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/signal/origin/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOriginSignal"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -308,38 +356,6 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/public-transit/station/rail/{scenarioKey}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getRailStationsByScenarioKey"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/public-transit/station/bus/{scenarioKey}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["getBusStationsByScenarioKey"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/pavement-marking/histories/{versionId}": {
         parameters: {
             query?: never;
@@ -356,7 +372,7 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/network/{scenarioKey}": {
+    "/network/{versionId}": {
         parameters: {
             query?: never;
             header?: never;
@@ -571,7 +587,6 @@ export type components = {
             turning?: string;
             type?: string;
             connectionId?: string;
-            get__guid?: string;
         };
         SignalSaveRequest: {
             data?: components["schemas"]["SignalResponse"][];
@@ -621,6 +636,57 @@ export type components = {
             lat?: number;
             /** Format: double */
             lng?: number;
+        };
+        ExitData: {
+            id?: string;
+            /** Format: int32 */
+            linkRef?: number;
+            /** Format: double */
+            offset?: number;
+            /** Format: double */
+            accessTime?: number;
+            coord?: string;
+        };
+        RailStationData: {
+            id?: string;
+            transitMode?: string;
+            address?: string;
+            center?: string;
+            exits?: components["schemas"]["ExitData"][];
+            timetables?: components["schemas"]["TimetableData"][];
+            lineList?: string[];
+            coordinates?: components["schemas"]["Coordinates"];
+        };
+        RailStationSaveRequest: {
+            /** Format: date-time */
+            timestamp?: string;
+            data?: components["schemas"]["RailStationData"][];
+            logs?: components["schemas"]["LogsData"];
+        };
+        TimetableData: {
+            dayOfWeek?: string;
+            lineId?: string;
+            times?: string[];
+        };
+        BusStationData: {
+            id?: string;
+            transitMode?: string;
+            /** Format: int32 */
+            linkRef?: number;
+            /** Format: int32 */
+            laneRef?: number;
+            /** Format: double */
+            pos?: number;
+            type?: string;
+            /** Format: int32 */
+            parkingLots?: number;
+            address?: string;
+            center?: string;
+            lines?: string[];
+        };
+        BusStationSaveRequest: {
+            data?: components["schemas"]["BusStationData"][];
+            logs?: components["schemas"]["LogsData"];
         };
         PavementMarkingData: {
             id?: string;
@@ -928,6 +994,7 @@ export type components = {
             available?: string;
             /** @enum {string} */
             accessRole?: "ROLE_ADMIN" | "ROLE_USER";
+            children?: components["schemas"]["MenuTreeResponse"][];
             /** Format: int64 */
             rootId?: number;
         };
@@ -975,6 +1042,12 @@ export type SchemaFieldsRequest = components['schemas']['SchemaFieldsRequest'];
 export type UpdateFieldOption = components['schemas']['UpdateFieldOption'];
 export type UpdateFieldRequest = components['schemas']['UpdateFieldRequest'];
 export type Coordinates = components['schemas']['Coordinates'];
+export type ExitData = components['schemas']['ExitData'];
+export type RailStationData = components['schemas']['RailStationData'];
+export type RailStationSaveRequest = components['schemas']['RailStationSaveRequest'];
+export type TimetableData = components['schemas']['TimetableData'];
+export type BusStationData = components['schemas']['BusStationData'];
+export type BusStationSaveRequest = components['schemas']['BusStationSaveRequest'];
 export type PavementMarkingData = components['schemas']['PavementMarkingData'];
 export type PavementMarkingSaveRequest = components['schemas']['PavementMarkingSaveRequest'];
 export type VehicleType = components['schemas']['VehicleType'];
@@ -1541,7 +1614,99 @@ export interface operations {
             };
         };
     };
-    getPavementMarkingByVersion: {
+    getRailStationsByVersionId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RailPublicTransitResponse"];
+                };
+            };
+        };
+    };
+    saveBusStations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RailStationSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getBusStationsByVersionId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PublicTransitResponse"];
+                };
+            };
+        };
+    };
+    saveBusStations_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BusStationSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getPavementMarking: {
         parameters: {
             query?: never;
             header?: never;
@@ -1607,6 +1772,28 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["MenuResponse"];
+                };
+            };
+        };
+    };
+    getOriginSignal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SignalNodeResponseData"];
                 };
             };
         };
@@ -1717,50 +1904,6 @@ export interface operations {
             };
         };
     };
-    getRailStationsByScenarioKey: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scenarioKey: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["RailPublicTransitResponse"];
-                };
-            };
-        };
-    };
-    getBusStationsByScenarioKey: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scenarioKey: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "*/*": components["schemas"]["PublicTransitResponse"];
-                };
-            };
-        };
-    };
     getLogsByVersion_1: {
         parameters: {
             query?: never;
@@ -1788,7 +1931,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                scenarioKey: string;
+                versionId: string;
             };
             cookie?: never;
         };

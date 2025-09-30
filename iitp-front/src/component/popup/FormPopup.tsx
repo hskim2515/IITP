@@ -2,12 +2,12 @@ import React, { FC, useEffect, useState } from 'react';
 import { SimpleForm } from './SimpleForm';
 import { TableForm } from './TableForm';
 import {apiConfig, ApiMenuKey} from "@config/apiConfig";
-import axiosInstance from "../../api/axiosInstance";
+import axiosInstance from "@api/axiosInstance";
 import {PropertyFormSchemaProps} from "@schema/propertyFormSchema";
-import {MenuTree} from "@stores/useMenuStore";
+import { MenuTreeResponse } from "@type/openapi.gen";
 
 interface InsertPopupProps {
-    activePopupMenu: MenuTree;
+    activePopupMenu: MenuTreeResponse;
     mode: 'create' | 'edit' | 'view';
     open: boolean;
     config: PropertyFormSchemaProps

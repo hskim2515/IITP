@@ -40,7 +40,7 @@ public class RailStationService {
     }
 
     @Transactional
-    public void saveRailStation(RailStationSaveRequest request, String versionId) {
+    public void saveRailStationByVersionId(RailStationSaveRequest request, String versionId) {
         RailStationVersion entity = railStationVersionsRepository.findByVersionId(versionId)
                 .orElse(new RailStationVersion());
         entity.setVersionId(versionId);
@@ -63,11 +63,11 @@ public class RailStationService {
         railStationLogsRepository.save(entityLog);
     }
 
-    public RailPublicTransitXml getRailStationXmlByScenarioKey(String scenarioKey) {
-        String path = scenarioKey + "/railPublicTransit.xml";
+    public RailPublicTransitXml getRailStationXmlByVersionId(String versionId) {
+        String path = versionId + "/railPublicTransit.xml";
         InputStream is = XmlUtils.loadXmlAsStream(path);
         RailPublicTransitXml railPublicTransitDto = streamToDto(is);
-        return transformRailPublicTransitCoordinates(scenarioKey, railPublicTransitDto);
+        return transformRailPublicTransitCoordinates(versionId, railPublicTransitDto);
     }
 
     public RailPublicTransitXml streamToDto(InputStream is) {

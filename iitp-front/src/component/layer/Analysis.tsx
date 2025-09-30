@@ -1,22 +1,23 @@
-import React, {useEffect, useState} from 'react';
+import React, { useEffect, useState } from 'react';
 import { useLayerStore } from '@stores/useLayerStore';
 import { faCog } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import LayerSettingPopup from "../popup/LayerSettingPopup";
-import {LayerField} from "@stores/useLayerSchemaStore";
+import { LayerField } from "@stores/useLayerSchemaStore";
+import styles from "@css/Analysis.module.css"
 
-export interface AnalysisProps {
+export interface Props {
     fields: LayerField[];
 }
 
-const Analysis: React.FC<AnalysisProps> = ({ fields }) => {
-    const [selectedLayerType, setSelectedLayerType] = useState(null); // <-- 추가
+const Analysis = ({fields}: Props) => {
+    const [selectedLayerType, setSelectedLayerType] = useState<string | undefined>(undefined);
     const {
         activeLayerName,
         addActiveLayerName,
         removeActiveLayerName,
     } = useLayerStore();
-    const handleSettingClick = (type) => {
+    const handleSettingClick = (type: string) => {
         setSelectedLayerType(type);
     };
 
@@ -34,32 +35,29 @@ const Analysis: React.FC<AnalysisProps> = ({ fields }) => {
 
     return (
         <div>
-            <LayerSettingPopup layerType={selectedLayerType}></LayerSettingPopup>
-            {fields.map(field => (
-                <label key={ field.key } style={ { color: 'white', display: 'block', margin: '4px 0' } }>
+            {activeLayerName && fields.map(field => (
+                <label key={field.key} className={styles['field']}>
                     <input
-                        type={ field.formType }
-                        value={ field.key }
-                        checked={ activeLayerName.includes(field.key) }
-                        onChange={ e => handleToggle(field.key, e.target.checked) }
+                        type={field.formType}
+                        value={field.key}
+                        checked={activeLayerName.includes(field.key)}
+                        onChange={e => handleToggle(field.key, e.target.checked)}
                     />
-                    { field.label }
+                    {field.label}
                     <button
-                        onClick={ () => handleSettingClick(field.key) }
-                        style={ {
-                            background: "none",
-                            border: "none",
-                            cursor: "pointer",
-                            padding: 0,
-                            alignItems: "center",
-                            paddingLeft: "10px"
-                        } }
+                        onClick={() => handleSettingClick(field.key)}
+                        className={styles['button-setting']}
                         title="설정"
                     >
-                        <FontAwesomeIcon icon={ faCog } size="lg"/>
+                        <FontAwesomeIcon icon={faCog} size="lg"/>
                     </button>
                 </label>
-            )) }
+            ))}
+                <div style={{position: 'relative'}}>
+            <LayerSettingPopup
+                layerType={selectedLayerType}
+            />
+                </div>
         </div>
     );
 };
