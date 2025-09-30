@@ -1,20 +1,18 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect } from 'react';
 import './App.css'
-import Maps from "./component/map/Maps";
 import Header from "./component/header/Header";
 import LeftPanel from "./component/panel/LeftPanel";
-import Tools from "./component/tool/Tools";
-import ToolsPanel from "./component/tool/ToolsPanel";
 import { useScenarioStore } from "@stores/useScenarioStore";
-import PropertyModal from "./component/modal/PropertyModal";
-import PropertyPanel from "./component/panel/PropertyPanel";
-import { useMenuStore } from "@stores/useMenuStore";
+import PropertyModal from "@component/modal/PropertyModal";
+import PropertyPanel from "@component/panel/PropertyPanel";
+import { isDescendantOf, useMenuStore } from "@stores/useMenuStore";
 import { MessagePopup } from "@component/message/MessagePopup";
 import { useSchemaStore } from "@stores/useSchemaStore";
 import SchemaSetting from "@component/schema/SchemaSetting";
 import ScenarioSelector from "@component/scenario/ScenarioSelector";
-import PropertyForm, {PropertyPopup} from "@component/popup/PropertyPopup";
-import {propertyFormSchema} from "@schema/propertyFormSchema";
+import PropertyForm from "@component/popup/PropertyPopup";
+import { propertyFormSchema } from "@schema/propertyFormSchema";
+import Maps from "@component/map/Maps";
 
 function App() {
 
@@ -25,23 +23,22 @@ function App() {
 
     const fetchSchema = useSchemaStore((state) => state.fetchSchema)
 
-    const activeSubmenu = useMenuStore((state) => state.activeSubmenu)
-    const activeDropdownMenu = useMenuStore((state) => state.activeDropdownMenu)
-    const setActiveSubmenu = useMenuStore((state) => state.setActiveSubmenu)
+    const {
+        menu,
+        activeSubmenu,
+        activeDropdownMenu,
+        setActiveSubmenu,
+    } = useMenuStore();
 
     useEffect(() => {
         fetchSchema()
     }, [fetchSchema]);
 
-    // 시나리오 선택 화면
-    if (!selectedScenario) {
-        return <ScenarioSelector/>
-    }
-
     return (
-        <>
+        !selectedScenario ? (
+            <ScenarioSelector/>
+        ) : (
             <div>
-                {/* 버전 선택 팝업 (version이 없을 때만 보여줌) */}
                 {!version && (
                     <div className="version-popup">
                         <div className="version-popup-content">
@@ -64,41 +61,58 @@ function App() {
                 )}
                 <Header/>
                 <MessagePopup/>
-                <LeftPanel/>
-                <Maps/>
-                <Tools/>
-                <ToolsPanel/>
                 <PropertyModal/>
-                {activeDropdownMenu && activeSubmenu && (
-                    activeDropdownMenu.menuCode === 'SCHEMA_SETTING' ? (
-                        <SchemaSetting
-                            activeSubmenu={activeSubmenu}
-                            onClose={() => setActiveSubmenu(null)}
-                        />
-                    ) : activeSubmenu.menuCode === 'VEHICLE_TYPE' ? (
-                        <PropertyForm
-                            activePopupMenu={activeSubmenu}
-                            open={true}
-                            config={propertyFormSchema['VEHICLE_TYPE']}
-                            onClose={() => setActiveSubmenu(null)}
-                        />
-                    ) : activeSubmenu.menuCode === 'VEHICLE_MODEL' ? (
-                        <PropertyForm
-                            activePopupMenu={activeSubmenu}
-                            open={true}
-                            config={propertyFormSchema['VEHICLE_MODEL']}
-                            onClose={() => setActiveSubmenu(null)}
-                        />
-                    ) : (
-                        <PropertyPanel
-                            activeSubmenu={activeSubmenu}
-                            onClose={() => setActiveSubmenu(null)}
-                        />
-                    )
-                )}
-
+                <main
+                    style={{
+                        position: "fixed",
+                        top: "50px",
+                        left: "0",
+                        right: "0",
+                        bottom: "0",
+                        display: "flex",
+                        width: "100vw",
+                        overflow: "hidden",
+                        height: "calc(100vh - 50px)"
+                    }}
+                >
+                    {activeDropdownMenu && <LeftPanel/>}
+                    <div
+                        style={{
+                            flex: "1 1 auto",
+                            minWidth: "0",
+                            overflow: "hidden",
+                            position: "relative",
+                        }}
+                    >
+                        <Maps/>
+                        {activeSubmenu && (
+                            isDescendantOf(menu, 'SCHEMA_SETTING', activeSubmenu.menuCode) ? (
+                                <SchemaSetting/>
+                            ) : activeSubmenu.menuCode === 'VEHICLE_TYPE' ? (
+                                <PropertyForm
+                                    activePopupMenu={activeSubmenu}
+                                    open={true}
+                                    config={propertyFormSchema['VEHICLE_TYPE']}
+                                    onClose={() => setActiveSubmenu(null)}
+                                />
+                            ) : activeSubmenu.menuCode === 'VEHICLE_MODEL' ? (
+                                <PropertyForm
+                                    activePopupMenu={activeSubmenu}
+                                    open={true}
+                                    config={propertyFormSchema['VEHICLE_MODEL']}
+                                    onClose={() => setActiveSubmenu(null)}
+                                />
+                            ) : (
+                                <PropertyPanel
+                                    activeSubmenu={activeSubmenu}
+                                    onClose={() => setActiveSubmenu(null)}
+                                />
+                            )
+                        )}
+                    </div>
+                </main>
             </div>
-        </>
+        )
     )
 }
 

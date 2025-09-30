@@ -1,10 +1,10 @@
 import React from 'react';
 import {PropertyFormSchemaProps} from "@schema/propertyFormSchema";
 import DynamicInput from "./DynamicInput";
-import {MenuTree} from "@stores/useMenuStore";
+import { MenuTreeResponse } from "@type/openapi.gen";
 
 interface Props {
-    activePopupMenu:MenuTree;
+    activePopupMenu:MenuTreeResponse;
     config: PropertyFormSchemaProps
     metaData: Record<string, string>;
     formData: string[][];
@@ -64,7 +64,7 @@ const renderActionButton = (
 };
 
 const renderMetaInputs = (
-    activePopupMenu: MenuTree,
+    activePopupMenu: MenuTreeResponse,
     config: PropertyFormSchemaProps,
     metaData: Record<string, string>,
     isReadOnly: boolean,
@@ -88,7 +88,7 @@ const renderMetaInputs = (
 );
 
 const renderInputTable = (
-    activePopupMenu: MenuTree,
+    activePopupMenu: MenuTreeResponse,
     config: PropertyFormSchemaProps,
     formData: string[][],
     handleChange: (row: number, col: number, value: string) => void,

@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 
-interface LayerSettingPopupProps {
-    layerType: string;
+import { useHeatmapSettingStore } from '@stores/useHeatmapSettingStore';
+import ColorBar from "@component/util/ColorBar";
+
+interface Props {
+    layerType: string | undefined;
 }
 
-import { useHeatmapSettingStore } from '@stores/useHeatmapSettingStore';
-import ColorBar from "../util/ColorBar";
-
-const LayerSettingPopup: React.FC<LayerSettingPopupProps> = ({ layerType }) => {
+const LayerSettingPopup = ({layerType}: Props) => {
 
     const {
         colors,
@@ -29,14 +29,14 @@ const LayerSettingPopup: React.FC<LayerSettingPopupProps> = ({ layerType }) => {
     };
 
     const colorMaps = {
-        'default' : ["#0000FF", "#00FF00", "#FFFF00", "#FF0000"],
-        'viridis' : ["#440154", "#3B528B", "#21908C", "#5DC863"],
-        'inferno' : ["#000004", "#420A68", "#932667", "#FDE725"],
-        'hot' : ["#000000", "#FF0000", "#FFFF00", "#FFFFFF"],
-        'autumn' : ["#FF0000", "#FF8000", "#FFFF00", "#FFFFFF"],
-        'coolToWarm' : ["#3B4CC0", "#6699FF", "#FFCC33", "#B40426"],
-        'rainbow' : ["#9400D3", "#0000FF", "#00FF00", "#FFFF00"],
-        'grayscale' : ["#000000", "#555555", "#AAAAAA", "#FFFFFF"],
+        'default': ["#0000FF", "#00FF00", "#FFFF00", "#FF0000"],
+        'viridis': ["#440154", "#3B528B", "#21908C", "#5DC863"],
+        'inferno': ["#000004", "#420A68", "#932667", "#FDE725"],
+        'hot': ["#000000", "#FF0000", "#FFFF00", "#FFFFFF"],
+        'autumn': ["#FF0000", "#FF8000", "#FFFF00", "#FFFFFF"],
+        'coolToWarm': ["#3B4CC0", "#6699FF", "#FFCC33", "#B40426"],
+        'rainbow': ["#9400D3", "#0000FF", "#00FF00", "#FFFF00"],
+        'grayscale': ["#000000", "#555555", "#AAAAAA", "#FFFFFF"],
 
     }
 
@@ -45,8 +45,9 @@ const LayerSettingPopup: React.FC<LayerSettingPopupProps> = ({ layerType }) => {
             <style>
                 {`
                 .layer-setting-popup {
+                    margin-top: 8px
                     position : absolute;
-                    top: 130px;
+                    top: 100%;
                     right: 0px;
                     background: linear-gradient(45deg, black, transparent);
                     padding: 10px;
@@ -81,27 +82,14 @@ const LayerSettingPopup: React.FC<LayerSettingPopupProps> = ({ layerType }) => {
                         <label>
                             Color
                         </label>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
 
                             {Object.entries(colorMaps).map(([name, colors]) => (
-                                <div key={name}  onClick={() => setColors(colors)} style={{ width: "25px"}}>
-                                    <ColorBar colormap={colors} />
+                                <div key={name} onClick={() => setColors(colors)} style={{width: "25px"}}>
+                                    <ColorBar colormap={colors}/>
                                 </div>
 
                             ))}
-                            {/*<input*/}
-                            {/*    type="color"*/}
-                            {/*    value={minColor}*/}
-                            {/*    onChange={(e) => setMinColor(e.target.value)}*/}
-                            {/*    title="Min Color"*/}
-                            {/*/>*/}
-                            {/*<span>→</span>*/}
-                            {/*<input*/}
-                            {/*    type="color"*/}
-                            {/*    value={maxColor}*/}
-                            {/*    onChange={(e) => setMaxColor(e.target.value)}*/}
-                            {/*    title="Max Color"*/}
-                            {/*/>*/}
                         </div>
                         <br/>
                         <label>
@@ -117,25 +105,13 @@ const LayerSettingPopup: React.FC<LayerSettingPopupProps> = ({ layerType }) => {
                             onMouseUp={handleExaggerationCommit}
                             onTouchEnd={handleExaggerationCommit}
                         />
-                        <span style={{ marginLeft: '10px' }}>{tempExaggeration.toFixed(1)}</span>
+                        <span style={{marginLeft: '10px'}}>{tempExaggeration.toFixed(1)}</span>
 
                     </div>
-                ) }
+                )}
 
-                { layerType === 'trip' && (
+                {layerType === 'trip' && (
                     <div>
-                        {/*<label>*/}
-                        {/*    <input type="radio" name="facilityLayer" value="facility1" />*/}
-                        {/*    시설물 1*/}
-                        {/*</label>*/}
-                        {/*<label>*/}
-                        {/*    <input type="radio" name="facilityLayer" value="facility2" />*/}
-                        {/*    시설물 2*/}
-                        {/*</label>*/}
-                        {/*<label>*/}
-                        {/*    <input type="radio" name="facilityLayer" value="facility3" />*/}
-                        {/*    시설물 3*/}
-                        {/*</label>*/}
                     </div>
                 )}
             </div>

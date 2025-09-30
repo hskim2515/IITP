@@ -1,8 +1,7 @@
-import React, {Suspense, useEffect, useRef, useState} from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import 'ol/ol.css';
-import MapCesium from "./MapCesium";
-import MapOL from "./MapOL";
-import { useMenuStore } from "@stores/useMenuStore";
+import MapCesium from "@component/map/MapCesium";
+import MapOL from "@component/map/MapOL";
 import useMapInit from "@hooks/useMapInit";
 import useSimulation from "@hooks/useSimulation";
 import useMapSync from "@hooks/sync/useMapSync";
@@ -12,34 +11,24 @@ import useLayerInit from "@hooks/useLayerInit";
 import useDefaultSelect from "@hooks/sync/select/useDefaultSelect";
 import '../../App.css'
 import useDefaultMoveMouse from "@hooks/sync/move/useDefaultMoveMouse";
+import styles from "@css/Maps.module.css"
+import Divider from "@component/map/Divider";
+import Tools from "@component/tool/Tools";
+import ToolsPanel from "@component/tool/ToolsPanel";
 
 const Maps = () => {
 
-    const openlayersMapRef = useRef<HTMLElement|null>(null);
+    const containerRef = useRef<HTMLDivElement | null>(null);
+    const openlayersMapRef = useRef<HTMLDivElement | undefined>(undefined);
     const cesiumMapRef = useRef<Element | null>(null);
-    const containerRef = useRef(null);
-
-    const activeSubmenu = useMenuStore.state.activeSubmenu()
-    const activeDropdownMenu = useMenuStore.state.activeDropdownMenu()
-
-
-
-    // left panel 과 동일한 조건 적용
-    const isSidebarVisible =
-        !!activeDropdownMenu &&
-        !(activeDropdownMenu.menuCode === "FACILITY" && !!activeSubmenu);
-
-    const panelWidth = isSidebarVisible ? 250 : 0;
-    const mapWidth = `calc((100vw - ${ panelWidth }px) / 2)`; // 패널이 열리면 남은 공간을 2등분
-
     const isResizing = useRef(false);
 
-    const [dividerPosition, setDividerPosition] = useState(window.innerWidth / 2);
+    const [dividerX, setDividerX] = useState<number | null>(null);
 
-    const fetchLayerSchema = useLayerSchemaStore.actions.fetchLayerSchema()
+    const {fetchLayerSchema, loading} = useLayerSchemaStore();
 
     useEffect(() => {
-        fetchLayerSchema()
+        if (!loading) fetchLayerSchema()
     }, [fetchLayerSchema]);
 
     useLayerInit();
@@ -50,12 +39,33 @@ const Maps = () => {
     useDefaultSelect();
     useDefaultMoveMouse();
 
-    // Mouse event handlers
+    const getContainerWidth = useCallback(() => {
+        return containerRef.current?.clientWidth ?? 0;
+    }, []);
+
+    useEffect(() => {
+        const width = getContainerWidth();
+        if (width > 0) setDividerX((prev) => prev == null ? Math.round(width / 2) : prev)
+    }, []);
+
+    useEffect(() => {
+        const onResize = () => {
+            const width = getContainerWidth();
+            if (width === 0) return;
+            setDividerX((prev) => {
+                if (prev == null) return Math.round(width / 2);
+                return Math.min(Math.max(prev, 120), width - 120)
+            })
+        };
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+    }, [getContainerWidth])
+
     useEffect(() => {
         const handleMouseMove = (e: MouseEvent) => {
-            if (!isResizing.current) return;
+            if (!isResizing.current || !containerRef.current) return;
             const containerLeft = containerRef.current?.getBoundingClientRect().left || 0;
-            setDividerPosition(e.clientX - containerLeft);
+            setDividerX(e.clientX - containerLeft);
         };
 
         const handleMouseUp = () => {
@@ -75,43 +85,37 @@ const Maps = () => {
         isResizing.current = true;
     };
 
-    const containerWidth = window.innerWidth - panelWidth;
-    const leftWidth = `${dividerPosition}px`;
-    const rightWidth = `${containerWidth - dividerPosition}px`;
+    const containerWidth = getContainerWidth();
+    const leftWidth = `${dividerX}px`;
+    const rightWidth = `${Math.max(containerWidth - (dividerX ?? 0), 0)}px`;
 
     return (
         <div
             ref={containerRef}
-            style={{
-                position: "fixed",
-                top: "50px",
-                left: `${panelWidth}px`,
-                width: `calc(100vw - ${panelWidth}px)`,
-                height: "90vh",
-                display: "flex",
-                overflow: "hidden",
-                userSelect: isResizing.current ? "none" : "auto"
-            }}
+            className={styles['container']}
         >
+            <Tools/>
+            <ToolsPanel/>
             <MapOL
                 ref={openlayersMapRef}
-                style={{ width: leftWidth, transition: isResizing.current ? "none" : "width 0.3s ease" }}
+                style={{
+                    width: leftWidth,
+                    transition: isResizing.current ? "none" : "width 0.3s ease"
+                }}
+                className={styles['map']}
             />
 
-            {/* Divider / Slider */}
-            <div
+            <Divider
                 onMouseDown={handleMouseDown}
-                style={{
-                    width: "6px",
-                    cursor: "col-resize",
-                    backgroundColor: "#ccc",
-                    zIndex: 10
-                }}
             />
 
             <MapCesium
                 ref={cesiumMapRef}
-                style={{ width: rightWidth, transition: isResizing.current ? "none" : "width 0.3s ease" }}
+                style={{
+                    width: rightWidth,
+                    transition: isResizing.current ? "none" : "width 0.3s ease"
+                }}
+                className={styles['map']}
             />
         </div>
     );

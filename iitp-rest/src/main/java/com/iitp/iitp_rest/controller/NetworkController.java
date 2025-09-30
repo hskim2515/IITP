@@ -19,9 +19,9 @@ public class NetworkController {
     private final NetworkService networkService;
     private final NetworkMapper networkMapper;
 
-    @GetMapping("/{scenarioKey}")
-    public ResponseEntity<NetworkResponse> getNetworkByScenarioKey(@PathVariable String scenarioKey) {
-        NetworkXml xml = networkService.getNetworkXmlByScenarioKey(scenarioKey);
+    @GetMapping("/{versionId}")
+    public ResponseEntity<NetworkResponse> getNetworkByScenarioKey(@PathVariable String versionId) {
+        NetworkXml xml = networkService.getNetworkXmlByVersionId(versionId);
         NetworkResponse body = networkMapper.toResponse(xml);
         return ResponseEntity.ok(body);
     }

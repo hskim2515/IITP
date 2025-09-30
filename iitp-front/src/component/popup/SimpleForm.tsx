@@ -1,10 +1,10 @@
 import React from 'react';
 import DynamicInput from "./DynamicInput";
 import {PropertyFormSchemaProps} from "@schema/propertyFormSchema";
-import {MenuTree} from "@stores/useMenuStore";
+import { MenuTreeResponse } from "@type/openapi.gen";
 
 interface Props {
-    activePopupMenu:MenuTree;
+    activePopupMenu:MenuTreeResponse;
     config: PropertyFormSchemaProps;
     formData: string[];
     handleSimpleChange: (idx: number, value: string | File | null) => void;

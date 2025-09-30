@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.model.menu;
 
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import com.iitp.iitp_rest.model.role.Role;
 import lombok.Data;
 import java.util.ArrayList;
@@ -16,7 +17,7 @@ public class MenuTreeResponse {
     private Integer sortOrder;
     private Character available;
     private Role accessRole;
-    // 자식 노드를 담는 리스트 (초기에는 빈 리스트)
+    @JsonManagedReference // code gen 재귀 구조 탐지용
     private List<MenuTreeResponse> children = new ArrayList<>();
     private Long rootId;
 }

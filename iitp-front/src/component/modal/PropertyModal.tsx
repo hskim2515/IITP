@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { usePropertyStore } from "@stores/usePropertyStore";
-import { findMenuByCode, MenuTree, useMenuStore } from "@stores/useMenuStore";
+import { findMenuByCode, useMenuStore } from "@stores/useMenuStore";
 import { faClose } from "@fortawesome/free-solid-svg-icons/faClose";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEdit } from "@fortawesome/free-solid-svg-icons";
+import { MenuTreeResponse } from "@type/openapi.gen";
 
 function truncate(value: string, maxLength: number = 50): string {
     if (value.length <= maxLength) return value;
@@ -13,13 +14,15 @@ function truncate(value: string, maxLength: number = 50): string {
 const PropertyModal = () => {
     const selectedProps = usePropertyStore((state) => state.selectedProps);
     const [showViewer, setShowViewer] = useState<boolean | null>(false);
-    const [subMenu, setSubMenu] = useState<MenuTree | null>(null);
-    const [dropdownMenu, setDropdownMenu] = useState<MenuTree | null>(null);
+    const [subMenu, setSubMenu] = useState<MenuTreeResponse | null>(null);
+
+    // subMenu 가 null 이 아닐 때만 보이게.
+    // 가시화를 조정하는 것이 나을지, 아니면 컴포넌트를 제거하는 것이 나을지,
 
     const {
         activeSubmenu,
         menu,
-        setActiveDropdownMenu,
+
         setActiveSubmenu,
     } = useMenuStore();
 
@@ -35,12 +38,19 @@ const PropertyModal = () => {
     useEffect(() => {
         if(menu) {
             setSubMenu(findMenuByCode(menu, 'NETWORK'))
-            setDropdownMenu(findMenuByCode(menu, 'FACILITY'))
         }
     }, [menu]);
 
     if (!selectedProps || Object.keys(selectedProps).length === 0) return null;
     if (!showViewer || activeSubmenu) return null;
+
+    const onClickClose = () => {
+
+    }
+
+    const conClickEdit = () => {
+
+    }
 
     return (
         <div style={styles.container}>
@@ -53,7 +63,6 @@ const PropertyModal = () => {
                         <FontAwesomeIcon className="edit-btn" icon={faEdit} onClick={() => {
                             if (selectedProps?.menuCode) {
                                 setActiveSubmenu(subMenu);
-                                setActiveDropdownMenu(dropdownMenu);
                             }
                         }}/>
                     </th>
