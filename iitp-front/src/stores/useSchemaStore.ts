@@ -26,6 +26,7 @@ interface SchemaActions {
 
     getLayerSchemaByLayerName: (layerName: string) => LayerSchemaResponse | null
     getSchemaDefinitionByNames: (layerName: string, schemaName: string) => SchemaDefinition | null;
+    getSchemaDefinitionBySchemaDefinitionName: (schemaName: string | unknown) => SchemaDefinition | null;
     getFieldByNames: (layerName: string, schemaName: string, fieldName: string) => LayerSchemaFieldResponse | null;
     getSchemaColumnSpecByLayerName: (layerName: string) => SchemaColumn[] | null;
 
@@ -119,6 +120,13 @@ export const useSchemaStore = create<SchemaState & SchemaActions>()(
                     if (!schemaName) return null;
                     const layerSchema = get().getLayerSchemaByLayerName(layerName);
                     return layerSchema?.definition?.find((schema: SchemaDefinition) => schema.name === schemaName) || null
+                },
+                getSchemaDefinitionBySchemaDefinitionName: (definitionName) => {
+                    if (!definitionName) return null;
+                    const schemata = get().currentSchema;
+                    if (!schemata) return null;
+                    const flatDefinition =  schemata.flatMap(schema => schema.definition ?? []);
+                    return flatDefinition.find(definition => definition.name === definitionName) ?? null;
                 },
                 getFieldByNames: (layerName, schemaName, fieldName) => {
                     if (!fieldName) return null;
