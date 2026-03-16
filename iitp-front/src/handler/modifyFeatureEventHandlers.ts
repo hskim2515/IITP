@@ -125,6 +125,7 @@ const modifyFeatureHandlersInternal = {
             olModifyend(e);
         }
         const cleanup = () => {
+            clearModifyingFeature();
             try {
                 olEventManager?.unbind(`modify:${featureType}:end`, olModifyHandler);
             } catch (error) {
@@ -234,6 +235,7 @@ const modifyFeatureHandlersInternal = {
 
         }
         const cleanup = () => {
+            clearModifyingFeature();
             try {
                 olEventManager?.unbind(`modify:${featureType}:end`, olModifyHandler);
             } catch (error) {
@@ -355,6 +357,7 @@ const modifyFeatureHandlersInternal = {
 
         }
         const cleanup = () => {
+            clearModifyingFeature();
             try {
                 olEventManager?.unbind(`modify:${featureType}:end`, olModifyHandler);
             } catch (error) {

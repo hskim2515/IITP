@@ -11,7 +11,6 @@ import {isFeature} from "@utils/feature";
 import {StyleFunction} from "ol/style/Style";
 import { Icon, RegularShape, Style } from "ol/style";
 import CircleStyle from "ol/style/Circle";
-import {useEventStore} from "@stores/useEventStore";
 import {propertyFormSchema} from "@schema/propertyFormSchema";
 import {useMenuStore} from "@stores/useMenuStore";
 
@@ -156,8 +155,6 @@ export const defaultEventHandlers ={
 
         if (!olMap) return;
 
-        const currentSelectedGuid = useSelectionStore.getState().selectedGuid;
-
         const featureInfo = olMap.forEachFeatureAtPixel(
             e.pixel,
             (feature: FeatureLike, layer: Layer) => {
@@ -169,7 +166,8 @@ export const defaultEventHandlers ={
                     && feature.get("__guid")
                 ) {
                     const guid = feature.get("__guid");
-                    if (currentSelectedGuid.includes(guid)) {
+                    // 현재 선택(하이라이트)된 피처 자체는 hover 제외
+                    if (selectedFeature === feature) {
                         return undefined;
                     }
                     // 수정 중인 피처는 hover 제외
@@ -383,9 +381,7 @@ export const reapplySelectionHighlight = (guid: string, layer: any): Feature | u
 };
 
 const highlightFeature = (feature: FeatureLike | Feature, styleFunction: StyleFunction) => {
-    const olManager = useEventStore.getState().olEventManager;
-
-    if (!isFeature(feature) || !olManager) return;
+    if (!isFeature(feature)) return;
     const currentStyle = feature.getStyle();
     originalFeatureStyles.set(feature, currentStyle);
 
