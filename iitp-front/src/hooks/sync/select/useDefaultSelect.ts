@@ -149,6 +149,8 @@ const useDefaultSelect = () => {
         })
     }
 
+    const SELECTION_COLOR = 'rgb(31,255,0)';
+
     function highlightOlStyleByGuid(olMap: OLMap, layerName: string, guid: string) {
         const olLayer = olMap.getLayers().getArray().find((layer) => {
             return matchesCustomKeyValue(layer, 'layer', layerName)
@@ -156,24 +158,42 @@ const useDefaultSelect = () => {
         const features = getFeaturesByGuidPrefix(olLayer, guid);
 
         if (!features) return;
+
+        const styleFn = (olLayer as VectorLayer<VectorSource>)?.getStyleFunction?.();
+
         features.getArray().forEach((feature) => {
-            feature.setStyle(
-                new Style({
-                    stroke: new Stroke({
-                        color: 'rgb(31,255,0)',
+            if (styleFn) {
+                // 레이어 스타일 함수 기반으로 형광 초록 적용 (geometry override 포함)
+                feature.setStyle((f, resolution) => {
+                    const base = styleFn(f, resolution);
+                    if (!base) return undefined;
+                    const arr = Array.isArray(base) ? base : [base];
+                    arr.forEach(s => {
+                        const image = s.getImage();
+                        if (image instanceof CircleStyle) {
+                            image.getFill()?.setColor(SELECTION_COLOR);
+                            image.getStroke()?.setColor('white');
+                        }
+                        s.getStroke()?.setColor(SELECTION_COLOR);
+                        s.getFill()?.setColor(SELECTION_COLOR);
+                    });
+                    return arr;
+                });
+            } else {
+                feature.setStyle(
+                    new Style({
+                        stroke: new Stroke({color: SELECTION_COLOR}),
+                        zIndex: 200,
+                        fill: new Fill({color: SELECTION_COLOR}),
+                        image: new CircleStyle({
+                            radius: 7,
+                            fill: new Fill({color: SELECTION_COLOR}),
+                            stroke: new Stroke({color: 'white', width: 3}),
+                        }),
                     }),
-                    zIndex: 200,
-                    fill: new Fill({
-                        color: 'rgb(31,255,0)',
-                    }),
-                    image: new CircleStyle({
-                        radius: 7,
-                        fill: new Fill({color: 'rgb(31,255,0)'}),
-                        stroke: new Stroke({color: 'white', width: 3}),
-                    }),
-                }),
-            )
-        })
+                );
+            }
+        });
     }
 
     function clearOlStyleByGuid(olMap: OLMap, layerName: string, guid: string) {
