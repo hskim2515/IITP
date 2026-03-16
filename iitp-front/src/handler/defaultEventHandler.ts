@@ -24,7 +24,12 @@ const setSelectedGuid = useSelectionStore.getState().setSelectedGuid;
 let highlightedEntity: Cesium.Entity | null = null;
 const originalSizeCesiumMap = new WeakMap();
 let highlightedFeature: FeatureLike | undefined = undefined;
-const originalFeatureStyles =new WeakMap()
+const originalFeatureStyles = new WeakMap();
+
+// 선택(클릭/수정) 하이라이트 상태
+let selectedFeature: Feature | undefined = undefined;
+const originalSelectedStyles = new WeakMap<Feature, ReturnType<Feature['getStyle']>>();
+let modifyingGuid: string | null = null;
 
 const HIGHLIGHT_SCALE = 3;
 
@@ -77,19 +82,43 @@ export const defaultEventHandlers ={
             setSelectedGuid([]);
             return;
         }
-        let isFeatureExist = false
-        olMap.forEachFeatureAtPixel(e.pixel, function (feature) {
+
+        // hover 하이라이트 먼저 제거
+        if (highlightedFeature) {
+            clearOlHighlight(highlightedFeature);
+            highlightedFeature = undefined;
+        }
+
+        let isFeatureExist = false;
+        olMap.forEachFeatureAtPixel(e.pixel, function (feature, layer) {
             const guid = feature.get("__guid");
             if (guid) {
                 isFeatureExist = true;
-                setSelectedProps(feature.getProperties())
-                setSelectedGuid([feature.get("__guid")])
-                return true
+                setSelectedProps(feature.getProperties());
+                setSelectedGuid([guid]);
+
+                if (isFeature(feature)) {
+                    // 이전 선택 하이라이트 제거
+                    if (selectedFeature && selectedFeature !== feature) {
+                        clearSelectionHighlight(selectedFeature);
+                    }
+                    // 새 선택 하이라이트 적용
+                    if (selectedFeature !== feature && isVectorLayer(layer)) {
+                        const styleFn = layer.getStyleFunction();
+                        if (styleFn) {
+                            applySelectionHighlight(feature, styleFn);
+                        }
+                    }
+                }
+                return true;
             }
         });
         if (!isFeatureExist) {
-            setSelectedProps(null)
-            setSelectedGuid([])
+            setSelectedProps(null);
+            setSelectedGuid([]);
+            if (selectedFeature) {
+                clearSelectionHighlight(selectedFeature);
+            }
         }
     },
 
@@ -127,6 +156,8 @@ export const defaultEventHandlers ={
 
         if (!olMap) return;
 
+        const currentSelectedGuid = useSelectionStore.getState().selectedGuid;
+
         const featureInfo = olMap.forEachFeatureAtPixel(
             e.pixel,
             (feature: FeatureLike, layer: Layer) => {
@@ -137,7 +168,12 @@ export const defaultEventHandlers ={
                     && isFeature(feature)
                     && feature.get("__guid")
                 ) {
-                    if (selectedGuid.includes(feature.get("__guid"))) {
+                    const guid = feature.get("__guid");
+                    if (currentSelectedGuid.includes(guid)) {
+                        return undefined;
+                    }
+                    // 수정 중인 피처는 hover 제외
+                    if (modifyingGuid && guid === modifyingGuid) {
                         return undefined;
                     }
                     return {feature, layer};
@@ -273,6 +309,78 @@ const clearOlHighlight = (feature: FeatureLike | Feature | undefined) => {
     originalFeatureStyles.delete(feature)
     highlightedFeature = undefined;
 }
+
+const applySelectionHighlight = (feature: Feature, styleFunction: StyleFunction) => {
+    if (originalSelectedStyles.has(feature)) return; // 이미 선택 하이라이트 적용됨
+    const currentStyle = feature.getStyle();
+    originalSelectedStyles.set(feature, currentStyle);
+    feature.setStyle((f, resolution) => {
+        const baseStyle = styleFunction(f, resolution) ?? undefined;
+        return getHighlightedOlStyle(baseStyle, HIGHLIGHT_SCALE);
+    });
+    selectedFeature = feature;
+};
+
+const clearSelectionHighlight = (feature: Feature) => {
+    if (!isFeature(feature)) return;
+    const originalStyle = originalSelectedStyles.get(feature);
+    feature.setStyle(originalStyle ?? undefined);
+    originalSelectedStyles.delete(feature);
+    if (selectedFeature === feature) {
+        selectedFeature = undefined;
+    }
+};
+
+/**
+ * 수정 시작 시 호출: modifyingGuid 설정 + 해당 피처 선택 하이라이트
+ */
+export const setModifyingFeature = (guid: string, feature: Feature, styleFunction?: StyleFunction) => {
+    modifyingGuid = guid;
+    if (selectedFeature && selectedFeature !== feature) {
+        clearSelectionHighlight(selectedFeature);
+    }
+    if (selectedFeature !== feature && styleFunction) {
+        applySelectionHighlight(feature, styleFunction);
+    }
+};
+
+/**
+ * 수정 종료 시 호출: modifyingGuid 해제 (선택 하이라이트는 유지)
+ */
+export const clearModifyingFeature = () => {
+    modifyingGuid = null;
+};
+
+/**
+ * load() 로 source가 재구성된 후, 새 Feature 객체에 선택 하이라이트를 재적용
+ * modifyend 이후 processAndStoreStation → load() 완료 후 호출
+ */
+/**
+ * load() 로 source가 재구성된 후, 새 Feature 객체에 선택 하이라이트를 재적용.
+ * 새 Feature 객체를 반환하므로 호출부에서 modifyFeatures 컬렉션 갱신에 활용 가능.
+ */
+export const reapplySelectionHighlight = (guid: string, layer: any): Feature | undefined => {
+    const source = (layer as any)?.getSource?.();
+    const features = source?.getFeatures?.() as Feature[] | undefined;
+    const newFeature = features?.find((f: Feature) => f.get('__guid') === guid);
+    if (!newFeature) return undefined;
+
+    // 이전 참조 정리 (detached Feature이므로 스타일 복원 불필요)
+    if (selectedFeature) {
+        originalSelectedStyles.delete(selectedFeature);
+        selectedFeature = undefined;
+    }
+
+    const styleFn = (layer as any)?.getStyleFunction?.() as StyleFunction | undefined;
+    if (styleFn) {
+        applySelectionHighlight(newFeature, styleFn);
+    }
+    // selectedGuid 등록 → handleOlHover가 이 피처를 hover 대상에서 제외
+    setSelectedProps(newFeature.getProperties());
+    setSelectedGuid([guid]);
+
+    return newFeature;
+};
 
 const highlightFeature = (feature: FeatureLike | Feature, styleFunction: StyleFunction) => {
     const olManager = useEventStore.getState().olEventManager;
