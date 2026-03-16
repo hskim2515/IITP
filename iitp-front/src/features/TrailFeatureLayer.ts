@@ -1,16 +1,20 @@
 import WebGLVectorLayer from "ol/layer/WebGLVector";
 import VectorSource from "ol/source/Vector";
 import { Feature } from "ol";
-import { Point } from "ol/geom";
+import { LineString } from "ol/geom";
 import { fromLonLat } from "ol/proj";
 import { Cartographic, Ellipsoid, Math as CesiumMath } from "cesium";
 import { useLayerStore } from "@stores/useLayerStore";
 
+const MAX_TRAIL_LENGTH = 80;
+
 export default class TrailFeatureLayer extends WebGLVectorLayer {
     private source: VectorSource;
     private running: boolean;
-    private animationId: number | null = null;
     private speed: number;
+    // 차량별 [x, y] 좌표 이력 (M 값 재계산을 위해 별도 관리)
+    private trailCoords: Map<number, [number, number][]> = new Map();
+    private trailFeatures: Map<number, Feature<LineString>> = new Map();
 
     constructor(
         vehicleRoute: number[][][],
@@ -19,17 +23,18 @@ export default class TrailFeatureLayer extends WebGLVectorLayer {
     ) {
         const source = new VectorSource();
 
+        // line-metric = M 컴포넌트 (0.0: 꼬리/투명 → 1.0: 머리/불투명)
         const style = {
-            "circle-radius": [
-                "interpolate", ["linear"], ["get", "life"],
-                0.0, 0.0,
-                1.0, 2.0
+            "stroke-width": [
+                "interpolate", ["linear"], ["line-metric"],
+                0.0, 1.0,
+                1.0, 4.0
             ],
-            "circle-fill-color": [
-                "interpolate", ["linear"], ["get", "life"],
-                0.0, 'rgb(149,122,112, 0.0)',
-                0.5, 'rgb(214,90,42, 0.5)',
-                1.0, 'rgb(255,149,108)'
+            "stroke-color": [
+                "interpolate", ["linear"], ["line-metric"],
+                0.0, ["color", 149, 122, 112, 0.0],
+                0.4, ["color", 214, 90, 42, 0.5],
+                1.0, ["color", 255, 149, 108, 1.0]
             ]
         };
 
@@ -53,13 +58,17 @@ export default class TrailFeatureLayer extends WebGLVectorLayer {
         }
     }
 
-    private convertToEPSG3857(position: number[]): number[] | null {
+    private convertToEPSG3857(position: number[]): [number, number] | null {
         if (!position || position.length !== 3) return null;
         try {
-            const carto = Cartographic.fromCartesian({ x: position[0], y: position[1], z: position[2] }, Ellipsoid.WGS84);
+            const carto = Cartographic.fromCartesian(
+                { x: position[0], y: position[1], z: position[2] },
+                Ellipsoid.WGS84
+            );
             const lon = CesiumMath.toDegrees(carto.longitude);
             const lat = CesiumMath.toDegrees(carto.latitude);
-            return fromLonLat([lon, lat]);
+            const xy = fromLonLat([lon, lat]);
+            return [xy[0], xy[1]];
         } catch (err) {
             console.warn("[TrailFeatureLayer] Conversion failed", err);
             return null;
@@ -67,37 +76,46 @@ export default class TrailFeatureLayer extends WebGLVectorLayer {
     }
 
     public setLatestPositions(latestPositions: Array<number[] | undefined>) {
-        latestPositions.forEach((pos) => {
-            if (!pos || pos.length < 3) return;
-            const coord = this.convertToEPSG3857(pos);
-            if (!coord) return;
-
-            const pointFeature = new Feature({ geometry: new Point(coord) });
-            pointFeature.set("life", 1.0);
-            this.source.addFeature(pointFeature);
-        });
-    }
-
-    private updateAnimation = () => {
         if (!this.running) return;
 
-        const decayRate = 0.01; // 1초당 0.01씩 감소
-        const toRemove: Feature[] = [];
+        latestPositions.forEach((pos, index) => {
+            if (!pos || pos.length < 3) return;
+            const xy = this.convertToEPSG3857(pos);
+            if (!xy) return;
 
-        this.source.getFeatures().forEach((f) => {
-            let life = f.get("life") ?? 1.0;
-            life -= decayRate;
-            if (life <= 0) {
-                toRemove.push(f);
+            // 좌표 이력 관리
+            let coords = this.trailCoords.get(index);
+            if (!coords) {
+                coords = [];
+                this.trailCoords.set(index, coords);
+            }
+            coords.push(xy);
+            if (coords.length > MAX_TRAIL_LENGTH) {
+                coords.splice(0, coords.length - MAX_TRAIL_LENGTH);
+            }
+
+            // M 값 정규화: index 0(꼬리) = 0.0, 마지막(머리) = 1.0
+            const n = coords.length;
+            const xymCoords: [number, number, number][] = coords.map(
+                (c, i) => [c[0], c[1], n > 1 ? i / (n - 1) : 1.0]
+            );
+
+            // LineString은 최소 2점 필요
+            if (xymCoords.length < 2) {
+                xymCoords.push([...xymCoords[0]]);
+            }
+
+            let feature = this.trailFeatures.get(index);
+            if (!feature) {
+                const geometry = new LineString(xymCoords, "XYM");
+                feature = new Feature<LineString>({ geometry });
+                this.trailFeatures.set(index, feature);
+                this.source.addFeature(feature);
             } else {
-                f.set("life", life);
+                feature.getGeometry()!.setCoordinates(xymCoords, "XYM");
             }
         });
-
-        toRemove.forEach((f) => this.source.removeFeature(f));
-
-        this.animationId = requestAnimationFrame(this.updateAnimation);
-    };
+    }
 
     public setSpeed(speed: number) {
         this.speed = speed;
@@ -105,12 +123,6 @@ export default class TrailFeatureLayer extends WebGLVectorLayer {
 
     public setStatus(isRunning: boolean) {
         this.running = isRunning;
-        if (isRunning && this.animationId === null) {
-            this.animationId = requestAnimationFrame(this.updateAnimation);
-        } else if (!isRunning && this.animationId !== null) {
-            cancelAnimationFrame(this.animationId);
-            this.animationId = null;
-        }
     }
 
     public start() {
@@ -121,8 +133,14 @@ export default class TrailFeatureLayer extends WebGLVectorLayer {
         this.setStatus(false);
     }
 
+    public reset() {
+        this.trailCoords.clear();
+        this.trailFeatures.clear();
+        this.source.clear();
+    }
+
     public destroy() {
         this.stop();
-        this.source.clear();
+        this.reset();
     }
 }

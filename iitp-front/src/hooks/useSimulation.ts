@@ -101,23 +101,27 @@ const useSimulation = () => {
         isRunningRef.current = isRunning;
     }, [ isRunning ]);
 
-    // Cesium 시뮬레이션 업데이트 (재생/일시정지/초기화 적용)
+    // Cesium 시뮬레이션 상태 업데이트 (재생/일시정지/정지)
     useEffect(() => {
-        if (viewer) {
-            layerManager.getLayerGroup("analyze").forEach((layer) => {
-                layer.setSpeed(speed * speedFactor);
-                layer.setStatus(isRunning);
-            });
-
-            viewerClockMultiplier.current = speed;
-
-            viewer.clock.shouldAnimate = isRunning;
-            viewer.clock.multiplier = viewerClockMultiplier.current;
-
-            if (isStop) {
-                viewer.clock.currentTime = viewer.clock.startTime;
-            }
+        if (!viewer) return;
+        viewerClockMultiplier.current = speed;
+        viewer.clock.shouldAnimate = isRunning;
+        viewer.clock.multiplier = viewerClockMultiplier.current;
+        if (isStop) {
+            viewer.clock.currentTime = viewer.clock.startTime;
         }
+    }, [ isRunning, isStop, speed ]);
+
+    // OL 레이어 시뮬레이션 상태 업데이트 (재생/일시정지/정지)
+    useEffect(() => {
+        if (!layerManager) return;
+        layerManager.getLayerGroup("analyze").forEach((layer) => {
+            layer.setSpeed(speed * speedFactor);
+            layer.setStatus(isRunning);
+            if (isStop && typeof layer.reset === "function") {
+                layer.reset();
+            }
+        });
     }, [ isRunning, isStop, speed, speedFactor ]);
 
     // cesium heatmap
