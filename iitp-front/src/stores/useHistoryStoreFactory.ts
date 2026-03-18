@@ -32,6 +32,9 @@ export interface Actions {
     setUpdateLogs: (updateJson: UpdateLogEntry) => void;
     setSnapshotUpdateLogs: (updateJson: UpdateLogEntry) => void;
     resetUpdateLogs: () => void;
+    resetUndoStack: () => void;
+    resetRedoStack: () => void;
+    resetAllHistoryStack: () => void;
     resetSnapshotUpdateLogs: () => void;
     setCurrentIndex: (index:number) => void;
     setCurrentSnapshotIndex: (index:number) => void;
@@ -110,8 +113,23 @@ const createHistoryStore = () =>
                         return last.json;
                     },
 
-                    setUpdateLogs: (updateJson) => {
-                        const newLog: UpdateLogItem = { timestamp: new Date().toISOString(), json: updateJson };
+                    // setUpdateLogs: (updateJson) => {
+                    //     const newLog: UpdateLogItem = { timestamp: new Date().toISOString(), json: updateJson };
+                    //     set({
+                    //         updateLogs: [...get().updateLogs, newLog],
+                    //         undoStack: [...get().undoStack, newLog],
+                    //         redoStack: [],
+                    //     });
+                    // },
+
+                    setUpdateLogs: (updateJsonOrArray) => {
+                        const timestamp = new Date().toISOString();
+
+                        const newLog: UpdateLogItem = {
+                            timestamp,
+                            json: updateJsonOrArray
+                        };
+
                         set({
                             updateLogs: [...get().updateLogs, newLog],
                             undoStack: [...get().undoStack, newLog],
@@ -127,6 +145,9 @@ const createHistoryStore = () =>
                     },
 
                     resetUpdateLogs: () => set({ updateLogs: [] }),
+                    resetUndoStack: () => set({ undoStack: [] }),
+                    resetRedoStack: () => set({ redoStack: [] }),
+                    resetAllHistoryStack: () => set({updateLogs: [], undoStack: [], redoStack: []}),
                     resetSnapshotUpdateLogs: () => set({ snapshotUpdateLogs: [] }),
                     setCurrentIndex: (index:number) => set({ currentIndex: index}),
                     setCurrentSnapshotIndex: (index:number) => set({ currentSnapshotIndex: index})

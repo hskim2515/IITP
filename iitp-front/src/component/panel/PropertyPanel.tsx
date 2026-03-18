@@ -163,7 +163,8 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     }
 
     const handleInitBtn = () => {
-        store.getState().initCurrentData()
+        store.getState().initCurrentData();
+        historyStore.getState().resetAllHistoryStack();
         historyStore.getState().setCurrentSnapshotIndex(null);
     }
 
