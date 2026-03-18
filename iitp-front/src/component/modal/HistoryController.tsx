@@ -15,8 +15,8 @@ const HistoryController: React.FC<Props> = ({
 
     return (
         <>
-            <button onClick={()=>onHistoryAply(true)} disabled={disabledUndo}>←</button>
-            <button onClick={()=>onHistoryAply(false)} disabled={disabledRedo}>→</button>
+            <button onClick={()=>onHistoryAply(true)} disabled={disabledUndo}>⟲</button>
+            <button onClick={()=>onHistoryAply(false)} disabled={disabledRedo}>⟳</button>
         </>
 
     );
