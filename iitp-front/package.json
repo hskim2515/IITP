@@ -12,7 +12,7 @@
     "gen:types:local": "node scripts/gen-types.cjs local",
     "gen:types:develop": "node scripts/gen-types.cjs develop"
   },
-    "dependencies": {
+  "dependencies": {
     "@deck.gl/aggregation-layers": "^9.1.8",
     "@deck.gl/core": "^9.1.8",
     "@fortawesome/fontawesome-svg-core": "^6.7.2",
@@ -62,6 +62,7 @@
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.1",
     "@types/rollup": "^0.51.4",
+    "@types/three": "^0.181.0",
     "@typescript-eslint/eslint-plugin": "8.18.0",
     "@typescript-eslint/parser": "8.18.0",
     "@vitejs/plugin-react": "^4.3.4",

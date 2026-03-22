@@ -17,6 +17,7 @@ import {getFeaturesByProperties} from "@utils/feature";
 import {Fill, Stroke, Style} from "ol/style";
 import {Feature} from "ol";
 import {applyCesiumSignalStyle, applyOlSignalStyle, updateSignalStyles} from "@utils/signal";
+import { useVehicleModelStore, resolveGlbUrl, resolveModelByVehicleType } from "@stores/useVehicleModelStore";
 
 const useSimulation = () => {
     const { isRunning, isStop, speed } = useSimulationStore();
@@ -25,6 +26,7 @@ const useSimulation = () => {
 
     const numVehicle = useVehicleStore((state) => state.numVehicle);
     const speedFactor = useVehicleStore((state) => state.speedFactor);
+    const selectedVehicleModel = useVehicleModelStore((s) => s.selectedModel);
 
     const heatmapSetting = {
         exaggeration: useHeatmapSettingStore.state.exaggeration(),
@@ -33,24 +35,18 @@ const useSimulation = () => {
     };
 
     const setCzml = useVehicleStore((state) => state.setCzml);
-    const setVehicleData = useVehicleStore((state) => state.setVehicleData);
     const setVehicleRoute = useVehicleStore((state) => state.setVehicleRoute);
 
     const setFeatures = useVehicleStore((state) => state.setFeatures);
-    const features = useVehicleStore((state) => state.features);
     const vehicleRoute = useVehicleStore((state) => state.vehicleRoute);
     //신호
     const setSignalTimeline = useSignalTimelineStore((state) => state.setSignalTimeline);
-    const signalTimeline = useSignalTimelineStore((state) => state.signalTimeline);
-    const connectionFeatureMapRef = useRef<Map<string, Feature>>(new Map());
 
-    // Ref 선언 (OpenLayers, Cesium, 애니메이션)
     const viewerClockMultiplier = useRef(null);
 
     const viewer = useCesiumStore((state) => state.viewer);
     const layerManager: LayerManager = useLayerStore((state) => state.layerManager);
     const czml = useVehicleStore((state) => state.czml);
-    const vehicleData = useVehicleStore((state) => state.vehicleData);
     const czmlDataSourceRef = useRef(null);
     const vehicleDataRef = useRef(null);
     const vehicleRouteStartEndRef = useRef(null);
@@ -61,17 +57,15 @@ const useSimulation = () => {
     const isRunningRef = useRef(isRunning);
 
     const lastUpdateTime = useRef(0);
+    const lastOdUpdateTime = useRef(0);
     const entityMapRef = useRef<Map<string, Cesium.Entity>>(new Map());
     const lastPositionsRef = useRef([])
 
-    const changeModelWorkerRef = useRef<Worker | null>(null);
+    // const changeModelWorkerRef = useRef<Worker | null>(null);
     const czmlPositionWorkerRef = useRef<Worker | null>(null);
     const makeOdDataWorkerRef = useRef<Worker | null>(null);
 
     useEffect(() => {
-        if (!changeModelWorkerRef.current) {
-            changeModelWorkerRef.current = new Worker(new URL('/src/workers/changeModelWorker.ts', import.meta.url), { type: 'module' });
-        }
         if (!czmlPositionWorkerRef.current) {
             czmlPositionWorkerRef.current = new Worker(new URL('/src/workers/czmlPositionWorker.ts', import.meta.url), { type: 'module' });
         }
@@ -80,10 +74,8 @@ const useSimulation = () => {
         }
 
         return () => {
-            changeModelWorkerRef.current?.terminate();
             czmlPositionWorkerRef.current?.terminate();
             makeOdDataWorkerRef.current?.terminate();
-            changeModelWorkerRef.current = null;
             czmlPositionWorkerRef.current = null;
             makeOdDataWorkerRef.current = null;
         };
@@ -116,6 +108,8 @@ const useSimulation = () => {
 
             if (isStop) {
                 viewer.clock.currentTime = viewer.clock.startTime;
+                useSimulationStore.getState().setCurrentTime(JulianDate.clone(viewer.clock.startTime));
+                useVehicleStore.getState().setActiveVehicleCount(0);
             }
         }
     }, [ isRunning, isStop, speed, speedFactor ]);
@@ -192,124 +186,198 @@ const useSimulation = () => {
         const currentTime = performance.now(); // 고해상도 시간 (ms)
         const simTime = Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime()
 
-        if (currentTime - lastUpdateTime.current >= 1000) { // 1초(1000ms)마다 실행
-            lastUpdateTime.current = currentTime;
+        if (currentTime - lastOdUpdateTime.current >= 1000) { // 1초(1000ms)마다 실행
+            lastOdUpdateTime.current = currentTime;
 
-            const cameraPositionWC = Cesium.Cartesian3.clone(viewer.camera.positionWC);
-            const cameraDirectionWC = Cesium.Cartesian3.clone(viewer.camera.directionWC);
-            if (vehicleDataRef.current) {
-                const newVehicleData = vehicleDataRef.current;
-                const type = 'tick';
-                changeModelWorkerRef.current.postMessage({ type, newVehicleData, cameraPositionWC, cameraDirectionWC });
-                //updateSignalStyles(layerManager, viewer, connectionFeatureMapRef.current, signalTimeline, simTime); //신호 커넥션 스타일 변경
-            }
             const newVehicleRoute = vehicleRouteStartEndRef.current;
-            const lastPositions = lastPositionsRef.current;
+            const lastPositions = lastPositionsRef.current.positions;
             makeOdDataWorkerRef.current?.postMessage({ lastPositions, newVehicleRoute })
 
         }
-
-        if(isRunningRef.current){
+        if(currentTime - lastUpdateTime.current >= 50 && isRunningRef.current){
+            lastUpdateTime.current = currentTime;
             czmlPositionWorkerRef.current.postMessage({ type: 'tick', currentTime: simTime });
+            useSimulationStore.getState().setCurrentTime(JulianDate.clone(viewer.clock.currentTime));
         }
     };
 
-    const setSimulation = () => {
-        //if (!viewer || !czml || !vehicleData || vehicleRoute.length === 0 || !layerManager) return;
+    const setSimulation = async () => {
         if (!viewer || !czml || vehicleRoute.length === 0 || !layerManager) return;
 
-        const sampleModel = new Cesium.ModelGraphics({
-            uri: "CesiumMilkTruck.glb",
-            scale: 0.8,
-            maximumScale: 0.8,
-            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-        });
-        // CZML
+        // 스토어가 비어있으면 먼저 fetch
+        let { models, vehicleTypes, setModels, setVehicleTypes } = useVehicleModelStore.getState();
+        if (models.length === 0 || vehicleTypes.length === 0) {
+            try {
+                const axiosInstance = (await import('@api/axiosInstance')).default;
+                const [modelsData, typesData] = await Promise.all([
+                    axiosInstance.get('/vehicle-models').then(r => r.data).catch(() => []),
+                    axiosInstance.get('/vehicle-types').then(r => r.data).catch(() => []),
+                ]);
+                models = Array.isArray(modelsData) ? modelsData : [];
+                vehicleTypes = Array.isArray(typesData) ? typesData : [];
+                setModels(models);
+                setVehicleTypes(vehicleTypes);
+            } catch (e) {
+                console.warn('[setSimulation] 모델 데이터 로드 실패:', e);
+            }
+        }
+
         loadCzmlDataSource(czml).then((czmlSource) => {
-            // Clock 설정
             viewer.clock.shouldAnimate = isRunningRef.current;
 
-            // 초기화
+            // 레이어 초기화
             layerManager.removeSimulationLayers();
             const vectorSource = new VectorSource();
-            layerManager.addVehicleLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, czmlSource);
-            layerManager.addHeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, heatmapSetting)
-            layerManager.addODArrows(vehicleRoute, speedFactor, isRunningRef.current)
-            layerManager.addTripLayer(vehicleRoute, speedFactor, isRunningRef.current)
+            const typeGroups = new Map<string, any[]>();
+            vehicleRoute.forEach((entry: any, idx: number) => {
+                const isLegacy = Array.isArray(entry);
+                const path = isLegacy ? entry : entry.path;
+                let vType: string;
+                if (isLegacy) {
+                    // 레거시 배열: 인덱스 기반 타입 배정 (백엔드와 동일한 비율)
+                    const mod = idx % 100;
+                    if (mod < 70)       vType = 'CAR';
+                    else if (mod < 85)  vType = 'TAXI';
+                    else if (mod < 95)  vType = 'BUS';
+                    else if (mod < 99)  vType = 'TRUCK';
+                    else                vType = 'MOTO';
+                } else if (entry.type) {
+                    vType = entry.type;
+                } else {
+                    // type 없는 캐시 데이터 → 백엔드와 동일한 ID 기반 배정
+                    const numId = parseInt(String(entry.id ?? '0').replace(/\D/g, '')) || 0;
+                    const mod = numId % 100;
+                    if (mod < 70)       vType = 'CAR';
+                    else if (mod < 85)  vType = 'TAXI';
+                    else if (mod < 95)  vType = 'BUS';
+                    else if (mod < 99)  vType = 'TRUCK';
+                    else                vType = 'MOTO';
+                }
+                if (!typeGroups.has(vType)) typeGroups.set(vType, []);
+                typeGroups.get(vType)!.push(path);
+            });
+            console.log('[setSimulation] vehicleRoute sample:', vehicleRoute[0], '| typeGroups:', [...typeGroups.entries()].map(([k, v]) => `${k}:${v.length}`));
 
-            const VehicleModelData: { id: any; position: any; visible: boolean; }[] = [];
+            const { correctionByType } = useVehicleModelStore.getState();
 
-            czmlSource.entities.values.forEach(entity => {
-                const times = entity.position?._property._times;
-                const firstTime = times[0];
+            const resolveCorrectionHpr = (vType: string, modelCfg?: string | { heading: number; pitch: number; roll: number }) => {
+                // DB 모델에 correctionHpr이 있으면 최우선 사용 (JSON 문자열일 수 있음)
+                if (modelCfg) {
+                    try {
+                        const parsed = typeof modelCfg === 'string' ? JSON.parse(modelCfg) : modelCfg;
+                        if (parsed && parsed.heading != null) {
+                            console.log(`[resolveCorrectionHpr] type=${vType} from DB:`, parsed);
+                            return new Cesium.HeadingPitchRoll(parsed.heading, parsed.pitch, parsed.roll);
+                        }
+                    } catch (e) {
+                        console.warn('[resolveCorrectionHpr] JSON parse failed:', modelCfg, e);
+                    }
+                }
+                // DB 모델 없으면 store 설정(DEFAULT_CORRECTIONS 포함) 사용
+                const stored = correctionByType[vType];
+                if (stored) {
+                    console.log(`[resolveCorrectionHpr] type=${vType} from DEFAULT:`, stored);
+                    return new Cesium.HeadingPitchRoll(stored.heading, stored.pitch, stored.roll);
+                }
+                return undefined;
+            };
 
-                const firstPosition = entity.position?.getValue(firstTime);
-                VehicleModelData.push({id: entity.id, position: firstPosition, visible:false});
-            })
+            if (typeGroups.size === 0) {
+                // 구버전 fallback
+                const selModel = useVehicleModelStore.getState().selectedModel;
+                const glbUrl = resolveGlbUrl(selModel, 'CAR');
+                const modelCfg = selModel?.correctionHpr;
+                const zOffset = selModel?.zOffset ?? 0;
+                layerManager.addVehicleLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, glbUrl, resolveCorrectionHpr('default', modelCfg), 'default', zOffset);
+            } else {
+                typeGroups.forEach((paths, vType) => {
+                    const typeModel = resolveModelByVehicleType(vType, models, vehicleTypes);
+                    console.log(`[setSimulation] type=${vType} typeModel=`, typeModel);
+                    const glbUrl = resolveGlbUrl(typeModel, vType);
+                    const zOffset = typeModel?.zOffset ?? 0;
+                    layerManager.addVehicleLayer(paths, vectorSource, speedFactor, isRunningRef.current, glbUrl, resolveCorrectionHpr(vType, typeModel?.correctionHpr), vType, zOffset);
+                });
+            }
+            layerManager.addHeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, heatmapSetting);
+            layerManager.addODArrows(vehicleRoute, speedFactor, isRunningRef.current);
+            layerManager.addTripLayer(vehicleRoute, speedFactor, isRunningRef.current);
+            layerManager.addTrafficLayer();
 
-            vehicleDataRef.current = VehicleModelData
+            const VehicleModelData: { id: string; position: Cesium.Cartesian3; visible: boolean; model?: Cesium.Model }[] = [];
 
-            //changeModelWorkerRef.current.postMessage({ type:'init', newVehicleData: VehicleModelData})
+            vehicleDataRef.current = VehicleModelData;
 
+            czmlPositionWorkerRef.current.onmessage = (e) => {
+                const result = e.data;
+                if (result) {
+                    // types 배열이 있으면 vehicleType별로 분류하여 각 VehiclePrimitive에 전달
+                    const hasTypes = Array.isArray(result.types) && result.types.length > 0;
+
+                    if (hasTypes) {
+                        // vehicleType별로 positions/headings 분류 (비활성 null 제외)
+                        // VehiclePrimitive는 null을 처리할 수 없으므로 활성 차량만 전달
+                        const byType = new Map<string, { positions: any[], headings: any[] }>();
+                        result.positions.forEach((pos: any, i: number) => {
+                            if (!pos) return; // 비활성 차량 제외 (인덱스 보존은 비-vehicleType 레이어에서 처리)
+                            const t = result.types[i] ?? 'default';
+                            if (!byType.has(t)) byType.set(t, { positions: [], headings: [] });
+                            byType.get(t)!.positions.push(pos);
+                            byType.get(t)!.headings.push(result.headings[i]);
+                        });
+
+                        layerManager.getLayerGroup("analyze").forEach((layer) => {
+                            if (layer && typeof layer.setLatestPositions === "function") {
+                                const vType = (layer as any).vehicleType;
+                                // vehicleType이 있는 레이어(VehiclePrimitive 계열)만 타입별 분류 데이터를 받고,
+                                // 없는 레이어(HeatmapFeatureLayer, TrailFeatureLayer, HeatBarLayer 등)는 전체 positions를 받음
+                                const dataToSend = vType
+                                    ? (byType.get(vType) ?? { positions: [], headings: [] })
+                                    : result;
+                                try {
+                                    layer.setLatestPositions(dataToSend);
+                                } catch (err) {
+                                    console.warn("[LayerManager] setLatestPositions 실행 오류:", err);
+                                }
+                            }
+                        });
+                        lastPositionsRef.current = result; // OD 워커용으로 항상 전체 positions 유지
+                    } else {
+                        // 구버전: 모든 레이어에 동일한 positions 전달
+                        layerManager.getLayerGroup("analyze").forEach((layer) => {
+                            if (layer && typeof layer.setLatestPositions === "function") {
+                                try {
+                                    layer.setLatestPositions(result);
+                                } catch (err) {
+                                    console.warn("[LayerManager] setLatestPositions 실행 오류:", err);
+                                }
+                            }
+                        });
+                        lastPositionsRef.current = result;
+                    }
+
+                    useVehicleStore.getState().setActiveVehicleCount(result.positions?.filter(Boolean).length ?? 0);
+                }
+            }
+
+            makeOdDataWorkerRef.current.onmessage = (e) => {
+                const { odData } = e.data;
+                if (odData) {
+                    layerManager.getLayer("analyze", "od").forEach((layer)=> {
+                        if (layer && typeof layer.setOdData === "function") {
+                            try {
+                                layer.setOdData(odData);
+                            } catch (err) {
+                                console.warn("[LayerManager] setOdData 실행 오류:", err);
+                            }
+                        }
+                    });
+                }
+            };
+
+            layerManager?.showLayer("analyze", "default");
         });
-
-        // Worker 메시지 처리
-        // changeModelWorkerRef.current.onmessage = (e) => {
-        //     const map = entityMapRef.current;
-        //
-        //     e.data.forEach(data => {
-        //         const vehicleEntity = map.get(data.id);
-        //
-        //         if (data.changed) {
-        //             if (data.display) {
-        //                 vehicleEntity.model = sampleModel;
-        //                 //layerManager?.hideLayer("layer", "default");
-        //             } else {
-        //                 vehicleEntity.model = undefined;
-        //                 layerManager?.showLayer("analyze", "default");
-        //             }
-        //         }
-        //     });
-        //     vehicleDataRef.current = e.data;
-        // };
-
-        czmlPositionWorkerRef.current.onmessage = (e) => {
-            const { positions } = e.data;
-            if (positions) {
-                layerManager.getLayerGroup("analyze").forEach((layer) => {
-                    if (layer && typeof layer.setLatestPositions === "function") {
-                        try {
-                            layer.setLatestPositions(positions)
-                            lastPositionsRef.current = positions
-                        } catch (err) {
-                            console.warn("[LayerManager] setLatestPositions 실행 오류:", err);
-                        }
-                    } else {
-                        console.log("[LayerManager] 해당 layer는 setLatestPositions를 지원하지 않음:", layer);
-                    }
-                });
-            }
-        }
-
-        makeOdDataWorkerRef.current.onmessage = (e) => {
-            const { odData } = e.data;
-            if (odData) {
-                layerManager.getLayer("analyze", "od").forEach((layer)=> {
-                    if (layer && typeof layer.setOdData === "function") {
-                        try {
-                            layer.setOdData(odData)
-                        } catch (err) {
-                            console.warn("[LayerManager] setOdData 실행 오류:", err);
-                        }
-                    } else {
-                        console.log("[LayerManager] 해당 layer는 setOdData 지원하지 않음:", layer);
-
-                    }
-                });
-            }
-        }
-        layerManager?.showLayer("analyze", "default");
     };
+
 
     const loadCzmlDataSource = (czml) => {
         const czmlSource = new Cesium.CzmlDataSource();

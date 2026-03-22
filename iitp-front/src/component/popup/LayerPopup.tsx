@@ -1,13 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import '/static/css/styles.css';
-
 import BaseMap from '../layer/BaseMap';
 import Analysis from '../layer/Analysis';
 import Facility from '../layer/Facility';
-
 import { useLayerStore } from '@stores/useLayerStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useLayerSchemaStore } from '@stores/useLayerSchemaStore';
+import styles from "@css/ToolsPanel.module.css";
 
 interface LayerPopupProps {
     isOpen: boolean;
@@ -33,7 +31,7 @@ const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
 
     const handleTabClick = (idx: number) => {
         setActiveTab(idx);
-        setActiveLayerGroupName(groups[idx].key); // 그룹명 설정
+        setActiveLayerGroupName(groups[idx].key);
     };
 
     if (!isOpen || loading || groups.length === 0) return null;
@@ -42,20 +40,22 @@ const LayerPopup: React.FC<LayerPopupProps> = ({ isOpen }) => {
     const ActiveComponent = tabComponentMap[current.key];
 
     return (
-        <div className="layer-popup">
-            <div className="tabs">
+        <>
+            <div className={styles.panelHeader}>
                 {groups.map((group, idx) => (
                     <button
                         key={group.key}
-                        className={`tab ${activeTab === idx ? 'active' : ''}`}
+                        className={activeTab === idx ? styles.tabActive : styles.tab}
                         onClick={() => handleTabClick(idx)}
                     >
                         {group.label}
                     </button>
                 ))}
             </div>
-            {ActiveComponent && <ActiveComponent fields={current.fields} />}
-        </div>
+            <div className={styles.panelBody}>
+                {ActiveComponent && <ActiveComponent fields={current.fields} />}
+            </div>
+        </>
     );
 };
 

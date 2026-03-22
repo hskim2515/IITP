@@ -1,187 +1,309 @@
 import * as Cesium from "cesium";
-import {Cartesian3} from "cesium";
+import { Cartesian3 } from "cesium";
+import { useNetworkStore } from "@stores/useNetworkStore";
 
+// ──────────────────────────────────────────────
+// 상수
+// ──────────────────────────────────────────────
+const GRID_CELL_SIZE_M      = 100.0;
+const BOX_HEIGHT_MAX        = 300.0;
+const NOISE_DECAY           = 0.95;
+const NOISE_NORMALIZE_SCALE = 10.0;
+const MIN_NOISE_THRESHOLD   = 0.01;   // 이 미만 셀은 DrawCommand push 생략
 
-export default class HeatBarLayer{
-    constructor(viewer, positions, speed, status, colors, exaggeration, gridWidth = 100, gridHeight = 100) {
-        this.viewer = viewer;
-        this.positions = positions;
-        this.startPosition = this.positions[0]
-        this.endPosition = this.positions[1]
-        this.speed = speed;
-        this.gridWidth = gridWidth;
-        this.gridHeight = gridHeight;
-        this.noiseValues = new Float32Array(gridWidth * gridHeight);
-        this.noiseTexture = null;
-        this.vertexArray = null;
-        this.drawCommand = null;
-        this.progress = [];
-        this.status = status;
-        this.previousTime = [] // 마지막 업데이트 시간
-        this.currentIndex = [];
-        this.show = false;
-        this.exaggeration= exaggeration;
-        this.colors = hexToVec3(colors);
-        //this.init();
+// ──────────────────────────────────────────────
+// 내부 타입
+// ──────────────────────────────────────────────
+interface DrawEntry {
+    drawCommand: any;
+    modelMatrix: Cesium.Matrix4;
+    noiseOffset: Cesium.Cartesian2;
+    noiseScale:  Cesium.Cartesian2;
+    gridIdx:     number;             // noiseValues 인덱스 (빈 셀 skip용)
+}
+
+// ──────────────────────────────────────────────
+// ② 네트워크 bbox → 그리드 크기 + 중심 자동 계산
+// ──────────────────────────────────────────────
+function computeGridFromNetwork(): {
+    gridW: number; gridH: number; lon: number; lat: number;
+} | null {
+    const net = (useNetworkStore.getState().currentJsonData
+              ?? useNetworkStore.getState().originData) as any;
+    if (!net?.links?.length) return null;
+    let minLat = Infinity, maxLat = -Infinity;
+    let minLng = Infinity, maxLng = -Infinity;
+    for (const link of net.links) {
+        for (const c of (link.coordinates ?? [])) {
+            if (c.lat < minLat) minLat = c.lat;
+            if (c.lat > maxLat) maxLat = c.lat;
+            if (c.lng < minLng) minLng = c.lng;
+            if (c.lng > maxLng) maxLng = c.lng;
+        }
+    }
+    if (!isFinite(minLat)) return null;
+    const lon    = (minLng + maxLng) / 2;
+    const lat    = (minLat + maxLat) / 2;
+    const cosLat = Math.cos(lat * Math.PI / 180);
+    const eastM  = (maxLng - minLng) * 111320 * cosLat;
+    const northM = (maxLat - minLat) * 111320;
+    const gridW  = Math.min(80, Math.max(20, Math.ceil(eastM  / GRID_CELL_SIZE_M) + 4));
+    const gridH  = Math.min(80, Math.max(20, Math.ceil(northM / GRID_CELL_SIZE_M) + 4));
+    return { gridW, gridH, lon, lat };
+}
+
+function hexToVec3(colors: string[]): Cesium.Cartesian3[] {
+    return colors.map(hex => {
+        hex = hex.replace("#", "");
+        if (hex.length === 3) hex = hex.split("").map(ch => ch + ch).join("");
+        return new Cesium.Cartesian3(
+            parseInt(hex.slice(0, 2), 16) / 255,
+            parseInt(hex.slice(2, 4), 16) / 255,
+            parseInt(hex.slice(4, 6), 16) / 255,
+        );
+    });
+}
+
+// ──────────────────────────────────────────────
+// HeatBarLayer
+//
+// 최적화:
+//  ② 그리드 자동 크기 (네트워크 bbox, 최대 80×80)
+//  ③ 빈 셀 skip (update에서 noise < threshold 셀 push 안 함)
+//  ④ center 고정 (네트워크 bbox 중심, 모델 행렬 1회 계산 후 캐시)
+// ──────────────────────────────────────────────
+export default class HeatBarLayer {
+
+    // ── static scratch ──
+    private static readonly _scratchMv          = new Cesium.Matrix4();
+    private static readonly _scratchMvp         = new Cesium.Matrix4();
+    private static readonly _scratchOffset      = new Cesium.Cartesian3();
+    private static readonly _scratchLocalPos    = new Cesium.Cartesian3();
+    private static readonly _scratchScale       = new Cesium.Cartesian3();
+    private static readonly _scratchScaleMatrix = new Cesium.Matrix4();
+    private static readonly _scratchENU         = new Cesium.Matrix4();
+    private static readonly _scratchRotation    = new Cesium.Matrix3();
+    private static readonly _scratchInvRot      = new Cesium.Matrix3();
+    private static readonly _scratchFlipY       = new Cesium.Matrix3(
+        1,  0,  0,
+        0, -1,  0,
+        0,  0,  1,
+    );
+    private static readonly _scratchAdjRot      = new Cesium.Matrix3();
+    private static readonly _scratchOffsetFC    = new Cesium.Cartesian3();
+    private static readonly _scratchLocalENU    = new Cesium.Cartesian3();
+
+    // ④ 고정 중심 (네트워크 bbox)
+    private readonly _center            = new Cesium.Cartesian3();
+    private readonly _modelMatrixCenter = new Cesium.Matrix4();
+    private _centerValid = false;
+
+    // ④ ENU 역회전 캐시 (중심 고정 → 1회 계산)
+    private readonly _adjRot    = new Cesium.Matrix3();
+    private _adjRotReady = false;
+
+    private viewer:       Cesium.Viewer;
+    private gridWidth:    number;
+    private gridHeight:   number;
+
+    private noiseValues:  Float32Array;
+    private noiseTexture: any = null;
+    private vertexArray:  any = null;
+    private shaderProgram: any = null;
+    private drawCommands: DrawEntry[] = [];
+
+    private speed:        number;
+    private status:       string;
+    private exaggeration: number;
+    private colors:       Cesium.Cartesian3[];
+
+    show = false;
+
+    private _frameCount = 0;
+    private static readonly NOISE_UPDATE_INTERVAL = 3;
+
+    private latestPositions: (number[] | undefined)[] | null = null;
+
+    constructor(
+        viewer:       Cesium.Viewer,
+        _positions:   number[][],          // 하위 호환 유지
+        speed:        number,
+        status:       string,
+        colors:       string[],
+        exaggeration: number,
+        gridWidth  = 100,
+        gridHeight = 100,
+    ) {
+        this.viewer       = viewer;
+        this.speed        = speed;
+        this.status       = status;
+        this.exaggeration = exaggeration;
+        this.colors       = hexToVec3(colors);
+
+        // ② 네트워크 bbox에서 그리드 크기 + 중심 자동 계산
+        const grid = computeGridFromNetwork();
+        if (grid) {
+            this.gridWidth  = grid.gridW;
+            this.gridHeight = grid.gridH;
+            const ecef = Cesium.Cartesian3.fromDegrees(grid.lon, grid.lat, 0);
+            Cesium.Cartesian3.clone(ecef, this._center);
+            Cesium.Transforms.eastNorthUpToFixedFrame(ecef, undefined, this._modelMatrixCenter);
+            this._centerValid = true;
+        } else {
+            this.gridWidth  = gridWidth;
+            this.gridHeight = gridHeight;
+        }
+
+        this.noiseValues = new Float32Array(this.gridWidth * this.gridHeight);
     }
 
-    init() {
-        const context = this.viewer.scene.context;
-        // this.progress = new Array(this.positions[0].length).fill(0);
-        // this.currentIndex = new Array(this.positions[0].length).fill(0);
-        // this.previousTime = new Array(this.positions[0].length).fill(performance.now());
-
+    // ──────────────────────────────────────────
+    // 초기화 (lazy)
+    // ──────────────────────────────────────────
+    init(): void {
+        const context = (this.viewer.scene as any).context;
         this.createNoiseTexture(context);
         this.createGeometry(context);
         this.createDrawCommand(context);
     }
 
-    createNoiseTexture(context) {
+    private createNoiseTexture(context: any): void {
         this.noiseValues = new Float32Array(this.gridWidth * this.gridHeight);
-
         for (let i = 0; i < this.noiseValues.length; i++) {
-            this.noiseValues[i] = Math.random(); // 0 ~ 1 사이의 값
+            this.noiseValues[i] = Math.random() * 0.001; // 거의 0으로 초기화
         }
-
-
-        this.noiseTexture = new Cesium.Texture({
-            context: context,
-            pixelFormat: Cesium.PixelFormat.RED,
+        this.noiseTexture = new (Cesium as any).Texture({
+            context,
+            pixelFormat:   Cesium.PixelFormat.RED,
             pixelDatatype: Cesium.PixelDatatype.FLOAT,
             source: {
-                width: this.gridWidth,
-                height: this.gridHeight,
-                arrayBufferView: this.noiseValues
+                width:           this.gridWidth,
+                height:          this.gridHeight,
+                arrayBufferView: this.noiseValues,
             },
-            sampler: new Cesium.Sampler({
-                wrapS: Cesium.TextureWrap.CLAMP_TO_EDGE,
-                wrapT: Cesium.TextureWrap.CLAMP_TO_EDGE,
-                minificationFilter: Cesium.TextureMinificationFilter.LINEAR,
-                magnificationFilter: Cesium.TextureMagnificationFilter.LINEAR
-            })
+            sampler: new (Cesium as any).Sampler({
+                wrapS:               (Cesium as any).TextureWrap.CLAMP_TO_EDGE,
+                wrapT:               (Cesium as any).TextureWrap.CLAMP_TO_EDGE,
+                minificationFilter:  (Cesium as any).TextureMinificationFilter.LINEAR,
+                magnificationFilter: (Cesium as any).TextureMagnificationFilter.LINEAR,
+            }),
         });
     }
 
-    createGeometry(context) {
+    private createGeometry(context: any): void {
         const geometry = Cesium.BoxGeometry.createGeometry(
             new Cesium.BoxGeometry({
                 vertexFormat: Cesium.VertexFormat.POSITION_ONLY,
                 maximum: new Cesium.Cartesian3(0.5, 0.5, 0.5),
-                minimum: new Cesium.Cartesian3(-0.5, -0.5, 0.0)
+                minimum: new Cesium.Cartesian3(-0.5, -0.5, 0.0),
             })
-        );
+        )!;
 
-        const positionAttribute = geometry.attributes.position;
-        const positions = positionAttribute.values;
-        const indices = geometry.indices;
-
+        const positions   = (geometry.attributes as any).position.values as Float32Array;
+        const indices     = geometry.indices!;
         const vertexCount = positions.length / 3;
 
-        // ✅ st 좌표 계산: BoxGeometry는 정사각형이므로 단순 반복 가능한 패턴 사용
-        const stValues = new Float32Array(vertexCount * 2);
+        const stValues   = new Float32Array(vertexCount * 2);
+        const posZValues = new Float32Array(vertexCount);
         for (let i = 0; i < vertexCount; i++) {
-            const px = positions[i * 3];
-            const py = positions[i * 3 + 1];
-
-            // 정규화된 좌표로 매핑 (-0.5 ~ 0.5 → 0 ~ 1)
-            stValues[i * 2] = px + 0.5;
-            stValues[i * 2 + 1] = py + 0.5;
+            stValues[i * 2]!     = positions[i * 3]!     + 0.5;
+            stValues[i * 2 + 1]! = positions[i * 3 + 1]! + 0.5;
+            posZValues[i]        = positions[i * 3 + 2]!;
         }
 
-        this.vertexArray = Cesium.VertexArray.fromGeometry({
-            context: context,
-            geometry: new Cesium.Geometry({
+        this.vertexArray = (Cesium as any).VertexArray.fromGeometry({
+            context,
+            geometry: new (Cesium as any).Geometry({
                 attributes: {
                     position: new Cesium.GeometryAttribute({
-                        componentDatatype: Cesium.ComponentDatatype.FLOAT,
+                        componentDatatype:     Cesium.ComponentDatatype.FLOAT,
                         componentsPerAttribute: 3,
-                        values: positions
+                        values: positions,
                     }),
                     st: new Cesium.GeometryAttribute({
-                        componentDatatype: Cesium.ComponentDatatype.FLOAT,
+                        componentDatatype:     Cesium.ComponentDatatype.FLOAT,
                         componentsPerAttribute: 2,
-                        values: stValues
-                    })
+                        values: stValues,
+                    }),
+                    posZ: new Cesium.GeometryAttribute({
+                        componentDatatype:     Cesium.ComponentDatatype.FLOAT,
+                        componentsPerAttribute: 1,
+                        values: posZValues,
+                    }),
                 },
-                indices: indices,
-                primitiveType: Cesium.PrimitiveType.TRIANGLES
+                indices,
+                primitiveType: Cesium.PrimitiveType.TRIANGLES,
             }),
-            attributeLocations: {
-                position: 0,
-                st: 1
-            }
+            attributeLocations: { position: 0, st: 1, posZ: 2 },
         });
     }
 
-
-    createDrawCommand(context) {
-
+    private createDrawCommand(context: any): void {
         const vertexShader = `
-            #version 300 es
-            precision highp float;
-        
-            layout(location = 0) in vec3 position;
-            layout(location = 1) in vec2 st;
-        
+            layout(location = 0) in vec3  position;
+            layout(location = 1) in vec2  st;
+            layout(location = 2) in float posZ;
+
             uniform sampler2D noiseTexture;
-            uniform mat4 u_modelViewProjectionMatrix;
-            uniform vec2 u_noiseOffset;
-            uniform vec2 u_noiseScale;
-            
+            uniform mat4  u_modelViewProjectionMatrix;
+            uniform vec2  u_noiseOffset;
+            uniform vec2  u_noiseScale;
             uniform float exaggeration;
-        
+            uniform float u_time;
+
             out float v_height;
             out float v_density;
-            out vec2 v_st;
-        
-            void main() {
-                // texCoord를 사각형 크기 단위로 나눈다.
-                //vec2 texCoord = u_noiseOffset + floor(st * u_noiseScale);  // floor를 이용해 각 사각형에 대해 같은 texCoord를 생성
-                
+            out float v_topFace;
+            out vec2  v_cellUv;
 
+            void main() {
                 vec2 texCoord;
                 if (exaggeration >= 1.0) {
-                    texCoord = u_noiseOffset + floor(st * u_noiseScale); // 박스형
+                    texCoord = u_noiseOffset + floor(st * u_noiseScale);
                 } else {
-                    texCoord = u_noiseOffset + (st * u_noiseScale); // 부드러운 히트맵형
+                    texCoord = u_noiseOffset + (st * u_noiseScale);
                 }
-            
-                // noise 값을 동일하게 반환
+
                 float noise = texture(noiseTexture, texCoord).r;
-                float height = noise * 300.0 * exaggeration;
-            
-                v_height = height;
-                v_density = noise; // 정규화된 밀집도 [0~1]
-                v_st = st;
-            
-                // 위쪽 꼭짓점만 밀어올림
+                float baseH = noise * ${BOX_HEIGHT_MAX.toFixed(1)} * exaggeration;
+
+                // 밀도 높을수록 위상 앞섬 → 고밀도→저밀도 방향으로 흐름
+                float phaseShift = noise * 4.0;
+                float px = u_noiseOffset.x, py = u_noiseOffset.y, t = u_time;
+                float w1 = sin(px * 20.0 + py * 13.0 - t * 2.4 + phaseShift);
+                float w2 = sin(px * 11.0 - py * 17.0 + t * 1.8 + phaseShift * 0.7);
+                float w3 = sin((px + py) * 15.0      - t * 1.6 + phaseShift * 0.5);
+                float wave = (w1 * 0.42 + w2 * 0.34 + w3 * 0.24) * 0.5 + 0.5;
+
+                float height = baseH * (0.50 + wave * 1.00);
+
+                v_height  = height;
+                v_density = noise;
+                v_topFace = posZ;
+                v_cellUv  = u_noiseOffset;
+
                 vec3 pos = position;
                 if (position.z > 0.0) {
-                    pos.z += height; 
+                    pos.z += height;
                 }
-                
                 gl_Position = u_modelViewProjectionMatrix * vec4(pos, 1.0);
             }
-
-`;
+        `;
 
         const fragmentShader = `
-            #version 300 es
-            precision highp float;
-        
             in float v_height;
             in float v_density;
-            in vec2 v_st;
-        
+            in float v_topFace;
+            in vec2  v_cellUv;
+
             uniform float u_time;
-            
-            uniform vec3 grade1Color;
-            uniform vec3 grade2Color;
-            uniform vec3 grade3Color;
-            uniform vec3 grade4Color;
-        
+            uniform vec3  grade1Color;
+            uniform vec3  grade2Color;
+            uniform vec3  grade3Color;
+            uniform vec3  grade4Color;
+
             out vec4 fragColor;
-        
+
             vec3 colormap(float value) {
                 return clamp(
                     value < 0.25 ? grade1Color :
@@ -191,349 +313,234 @@ export default class HeatBarLayer{
                     0.0, 1.0
                 );
             }
-        
+
             void main() {
-            // 카메라 방향에 따른 광원 방향 설정
-            vec3 lightDir = normalize(vec3(0.5, 0.5, 1.0));  // 기본 광원 방향
-        
-            float normalizedHeight = pow(v_height / 300.0, 1.3);
-            vec3 baseColor = colormap(normalizedHeight);
-        
-            // Light simulation
-            float light = clamp(dot(normalize(vec3(0.0, 0.0, 1.0)), lightDir), 0.3, 1.0);
-            
-            // Ambient Light 추가 (주변광)
-            vec3 ambientLight = vec3(0.3, 0.3, 0.3);  // 약간의 배경광을 추가
-            baseColor += ambientLight;
-        
-            // Border effect
-            float edge = smoothstep(0.0, 0.05, v_st.x) *
-                         smoothstep(0.0, 0.05, v_st.y) *
-                         smoothstep(0.0, 0.05, 1.0 - v_st.x) *
-                         smoothstep(0.0, 0.05, 1.0 - v_st.y);
-            float border = 1.0 - edge;
-        
-            // 혼잡 지역 pulse 효과 (밀집도 > 0.8)
-            if (normalizedHeight > 0.8) {
-                float pulse = 0.5 + 0.5 * sin(u_time * 5.0);
-                baseColor = mix(baseColor, grade4Color, pulse);
+                float normalizedHeight = pow(v_height / ${BOX_HEIGHT_MAX.toFixed(1)}, 1.3);
+                vec3 baseColor = colormap(normalizedHeight);
+
+                // 측면 음영
+                float shade = 0.30 + v_topFace * 1.40;
+                baseColor *= shade;
+
+                // 3파 스펙큘러 (꼭대기만)
+                float phaseShift = v_density * 4.0;
+                float px = v_cellUv.x, py = v_cellUv.y, t = u_time;
+                float r1 = sin(px * 20.0 + py * 13.0 - t * 2.4 + phaseShift);
+                float r2 = sin(px * 11.0 - py * 17.0 + t * 1.8 + phaseShift * 0.7);
+                float r3 = sin((px + py) * 15.0      - t * 1.6 + phaseShift * 0.5);
+                float ripple  = (r1 * 0.42 + r2 * 0.34 + r3 * 0.24) * 0.5 + 0.5;
+                float specular = v_topFace > 0.3
+                    ? pow(max(0.0, ripple - 0.55), 2.0) * 2.5
+                    : 0.0;
+                baseColor += vec3(0.80, 0.92, 1.00) * specular * 0.45;
+
+                fragColor = vec4(baseColor, 0.5);
             }
-        
-            //vec3 finalColor = mix(vec3(0.0), baseColor * light, border);
-            vec3 finalColor = mix(vec3(0.0), baseColor * light, 1.0);
-            fragColor = vec4(finalColor, 0.5);
-            }
-        
         `;
 
-
-        try{
-            const shaderProgram = Cesium.ShaderProgram.fromCache({
-                context: context,
-                vertexShaderSource: vertexShader,
+        try {
+            this.shaderProgram = (Cesium as any).ShaderProgram.fromCache({
+                context,
+                vertexShaderSource:   vertexShader,
                 fragmentShaderSource: fragmentShader,
-                attributeLocations: {
-                    position: 0,
-                    st: 1
-                }
+                attributeLocations: { position: 0, st: 1, posZ: 2 },
             });
+        } catch (err) {
+            console.error("[HeatBarLayer] shader error:", err);
+            return;
+        }
 
-            this.drawCommands = [];
+        this.drawCommands = [];
 
-            // 다수의 위치 좌표 평균으로 중심 계산
-            let sum = new Cesium.Cartesian3(0, 0, 0);
-            for (const pos of this.latestPositions) {
-                if(pos)
-                    Cesium.Cartesian3.add(sum, new Cartesian3(pos[0],pos[1],pos[2]), sum);
-            }
-            //console.log(sum)
-            const center = Cesium.Cartesian3.divideByScalar(sum, this.latestPositions.filter(item => item !== undefined).length, new Cesium.Cartesian3());
-            const modelMatrixCenter = Cesium.Transforms.eastNorthUpToFixedFrame(center);
+        for (let y = 0; y < this.gridHeight; y++) {
+            for (let x = 0; x < this.gridWidth; x++) {
+                const tx = x - this.gridWidth  / 2;
+                const ty = y - this.gridHeight / 2;
 
-            for (let y = 0; y < this.gridHeight; y++) {
-                for (let x = 0; x < this.gridWidth; x++) {
-                    const tx = x - this.gridWidth / 2;
-                    const ty = y - this.gridHeight / 2;
+                // ④ 모델 행렬 1회 계산 후 캐시 (center 고정이므로 매 프레임 재계산 불필요)
+                const entryModelMatrix = new Cesium.Matrix4();
+                Cesium.Cartesian3.fromElements(
+                    tx * GRID_CELL_SIZE_M,
+                    ty * GRID_CELL_SIZE_M,
+                    0,
+                    HeatBarLayer._scratchOffset,
+                );
+                Cesium.Matrix4.multiplyByPoint(
+                    this._modelMatrixCenter,
+                    HeatBarLayer._scratchOffset,
+                    HeatBarLayer._scratchLocalPos,
+                );
+                const localMM   = Cesium.Transforms.eastNorthUpToFixedFrame(HeatBarLayer._scratchLocalPos);
+                const xyScale   = GRID_CELL_SIZE_M / Math.max(this.exaggeration, 1.0);
+                const zScale    = this.exaggeration;
+                Cesium.Cartesian3.fromElements(xyScale, xyScale, zScale, HeatBarLayer._scratchScale);
+                Cesium.Matrix4.fromScale(HeatBarLayer._scratchScale, HeatBarLayer._scratchScaleMatrix);
+                Cesium.Matrix4.multiply(localMM, HeatBarLayer._scratchScaleMatrix, entryModelMatrix);
 
-                    const offset = new Cesium.Cartesian3(tx * 500, ty * 500, 0); // ENU 오프셋
-                    const localPosition = Cesium.Matrix4.multiplyByPoint(modelMatrixCenter, offset, new Cesium.Cartesian3());
+                const noiseOffset = new Cesium.Cartesian2(x / this.gridWidth,  y / this.gridHeight);
+                const noiseScale  = new Cesium.Cartesian2(1.0 / this.gridWidth, 1.0 / this.gridHeight);
 
-                    const modelMatrix = Cesium.Transforms.eastNorthUpToFixedFrame(localPosition);
-                    const exaggeration = this.exaggeration; // 예: 0.1 ~ 2.0
-                    const baseScale = 100.0;
+                const entry: DrawEntry = {
+                    drawCommand: null,
+                    modelMatrix: entryModelMatrix,
+                    noiseOffset,
+                    noiseScale,
+                    gridIdx: y * this.gridWidth + x,
+                };
 
-                    // 낮을수록 퍼짐 (최소값 제한)
-                    const xyScale = baseScale / Math.max(1.0, 0.01);
-                    const zScale = 1.0;
-
-                    this.scale = new Cesium.Cartesian3(xyScale, xyScale, zScale);
-                    //this.scale = new Cesium.Cartesian3(100.0, 100.0, 1.0);
-
-                    const scaleMatrix = Cesium.Matrix4.fromScale(this.scale, new Cesium.Matrix4());
-                    const finalModelMatrix = Cesium.Matrix4.multiply(modelMatrix, scaleMatrix, new Cesium.Matrix4());
-
-                    const viewMatrix = this.viewer.scene.context.uniformState.view;
-                    const projectionMatrix = this.viewer.scene.context.uniformState.projection;
-
-                    const mvMatrix = Cesium.Matrix4.multiply(viewMatrix, finalModelMatrix, new Cesium.Matrix4());
-                    const mvpMatrix = Cesium.Matrix4.multiply(projectionMatrix, mvMatrix, new Cesium.Matrix4());
-
-                    const drawCommand = new Cesium.DrawCommand({
-                        vertexArray: this.vertexArray,
-                        shaderProgram: shaderProgram,
-                        uniformMap: {
-                            u_modelViewProjectionMatrix: () => mvpMatrix,
-                            u_time:() => performance.now() / 1000.0,
-
-                            noiseTexture: () => this.noiseTexture,
-                            u_noiseOffset: () => new Cesium.Cartesian2(x / this.gridWidth, y / this.gridHeight),
-                            u_noiseScale: () => new Cesium.Cartesian2(1.0 / this.gridWidth, 1.0 / this.gridHeight),
-                            grade1Color: () => this.colors[0],
-                            grade2Color: () => this.colors[1],
-                            grade3Color: () => this.colors[2],
-                            grade4Color: () => this.colors[3],
-                            exaggeration: () => this.exaggeration,
+                const drawCommand = new (Cesium as any).DrawCommand({
+                    vertexArray:   this.vertexArray,
+                    shaderProgram: this.shaderProgram,
+                    uniformMap: {
+                        u_modelViewProjectionMatrix: () => {
+                            const view = (this.viewer.scene as any).context.uniformState.view;
+                            const proj = (this.viewer.scene as any).context.uniformState.projection;
+                            Cesium.Matrix4.multiply(view, entry.modelMatrix, HeatBarLayer._scratchMv);
+                            Cesium.Matrix4.multiply(proj, HeatBarLayer._scratchMv, HeatBarLayer._scratchMvp);
+                            return HeatBarLayer._scratchMvp;
                         },
-                        renderState: Cesium.RenderState.fromCache({
-                            depthTest: { enabled: true },
-                            blending: Cesium.BlendingState.ALPHA_BLEND
-                        }),
-                        pass: Cesium.Pass.OPAQUE
-                    });
-                    //this.viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(center, 100000.0));
+                        u_time:        () => performance.now() / 1000.0,
+                        noiseTexture:  () => this.noiseTexture,
+                        u_noiseOffset: () => entry.noiseOffset,
+                        u_noiseScale:  () => entry.noiseScale,
+                        grade1Color:   () => this.colors[0],
+                        grade2Color:   () => this.colors[1],
+                        grade3Color:   () => this.colors[2],
+                        grade4Color:   () => this.colors[3],
+                        exaggeration:  () => this.exaggeration,
+                    },
+                    renderState: (Cesium as any).RenderState.fromCache({
+                        depthTest: { enabled: true },
+                        blending:  Cesium.BlendingState.ALPHA_BLEND,
+                    }),
+                    pass: (Cesium as any).Pass.OPAQUE,
+                });
 
-                    //drawCommand.boundingVolume = new Cesium.BoundingSphere(localPosition, 10000.0);
-                    this.drawCommands.push({ drawCommand, x, y });  // x, y를 저장해두기
-                }
+                entry.drawCommand = drawCommand;
+                this.drawCommands.push(entry);
             }
-
-
-        }catch (error){
-            console.error(error);
         }
     }
 
-    updateNoiseValues(targetPositionArr, center) {
-        // 기존 noiseValues 감쇠
+    // ──────────────────────────────────────────
+    // noise 업데이트
+    // ──────────────────────────────────────────
+    private updateNoiseValues(positions: (number[] | undefined)[]): void {
         for (let i = 0; i < this.noiseValues.length; i++) {
-            this.noiseValues[i] *= 0.95;
+            this.noiseValues[i]! *= NOISE_DECAY;
         }
 
-        // 중심점 기준 ENU 회전행렬만 추출 (위치 정보 제외)
-        const enuMatrix = Cesium.Transforms.eastNorthUpToFixedFrame(center);
-        const rotationMatrix = Cesium.Matrix4.getMatrix3(enuMatrix, new Cesium.Matrix3());
+        // ④ 중심 고정 → adjRot 1회만 계산
+        if (!this._adjRotReady) {
+            Cesium.Transforms.eastNorthUpToFixedFrame(this._center, undefined, HeatBarLayer._scratchENU);
+            Cesium.Matrix4.getMatrix3(HeatBarLayer._scratchENU, HeatBarLayer._scratchRotation);
+            Cesium.Matrix3.transpose(HeatBarLayer._scratchRotation, HeatBarLayer._scratchInvRot);
+            Cesium.Matrix3.multiply(HeatBarLayer._scratchFlipY, HeatBarLayer._scratchInvRot, HeatBarLayer._scratchAdjRot);
+            Cesium.Matrix3.clone(HeatBarLayer._scratchAdjRot, this._adjRot);
+            this._adjRotReady = true;
+        }
 
-        // ENU → 월드 좌표로 변환된 위치를 다시 되돌리기 위해 회전 역행렬을 적용 (전치)
-        const inverseRotation = Cesium.Matrix3.transpose(rotationMatrix, new Cesium.Matrix3());
+        for (const position of positions) {
+            if (!position) continue;
+            const worldPos = new Cartesian3(position[0]!, position[1]!, position[2]!);
+            Cesium.Cartesian3.subtract(worldPos, this._center, HeatBarLayer._scratchOffsetFC);
+            Cesium.Matrix3.multiplyByVector(this._adjRot, HeatBarLayer._scratchOffsetFC, HeatBarLayer._scratchLocalENU);
 
-        // 3. Y축 반전 행렬 생성
-        const flipYMatrix = new Cesium.Matrix3(
-            1,  0,  0,
-            0, -1,  0,
-            0,  0,  1
-        );
-
-        // 4. Y축 반전을 적용한 최종 회전 행렬
-        const adjustedRotation = Cesium.Matrix3.multiply(flipYMatrix, inverseRotation, new Cesium.Matrix3());
-
-        const cellSizeX = 100.0;
-        const cellSizeY = 100.0;
-
-        targetPositionArr.forEach(position => {
-            if (!position) return;
-
-            position = new Cartesian3(position[0], position[1], position[2]);
-            // 월드 위치에서 중심점 빼기 (ENU 원점 기준 오프셋)
-            const offsetFromCenter = Cesium.Cartesian3.subtract(position, center, new Cesium.Cartesian3());
-
-            // 회전 역행렬을 곱해서 ENU 기준으로 좌표 변환
-            const localENU = Cesium.Matrix3.multiplyByVector(adjustedRotation, offsetFromCenter, new Cesium.Cartesian3());
-
-            // ENU 평면 좌표계 (x: East, y: North)에 맞춰 인덱스 계산
-            const gridX = Math.floor(localENU.x / cellSizeX + this.gridWidth / 2);
-            const gridY = Math.floor(localENU.y / cellSizeY + this.gridHeight / 2);
-
-            const radius = Math.floor(1.0/this.exaggeration || 0.1); // 퍼질 반경 (exaggeration=1일 땐 자기 셀만)
+            const gridX  = Math.floor(HeatBarLayer._scratchLocalENU.x / GRID_CELL_SIZE_M + this.gridWidth  / 2);
+            const gridY  = Math.floor(HeatBarLayer._scratchLocalENU.y / GRID_CELL_SIZE_M + this.gridHeight / 2);
+            const radius = Math.floor(1.0 / (this.exaggeration || 0.1));
 
             for (let dy = -radius; dy <= radius; dy++) {
                 for (let dx = -radius; dx <= radius; dx++) {
                     const gx = gridX + dx;
                     const gy = gridY + dy;
-                    if (gx >= 0 && gx < this.gridWidth && gy >= 0 && gy < this.gridHeight) {
-                        const distance = Math.sqrt(dx * dx + dy * dy);
-                        const strength = this.exaggeration;
-                        const falloff = Math.pow(Math.max(1.0 - distance / (radius + 0.1), 0.0), strength);
-                        this.noiseValues[gy * this.gridWidth + gx] += falloff;
-                    }
+                    if (gx < 0 || gx >= this.gridWidth || gy < 0 || gy >= this.gridHeight) continue;
+                    const dist    = Math.sqrt(dx * dx + dy * dy);
+                    const falloff = Math.pow(Math.max(1.0 - dist / (radius + 0.1), 0.0), this.exaggeration);
+                    this.noiseValues[gy * this.gridWidth + gx]! += falloff;
                 }
             }
-        });
+        }
 
-        // 정규화
-        const max = Math.max(...this.noiseValues);
+        let max = 0.0;
+        for (let i = 0; i < this.noiseValues.length; i++) {
+            if (this.noiseValues[i]! > max) max = this.noiseValues[i]!;
+        }
         if (max > 0) {
             for (let i = 0; i < this.noiseValues.length; i++) {
-                this.noiseValues[i] = (this.noiseValues[i] / max) * 10.0;
+                this.noiseValues[i] = (this.noiseValues[i]! / max) * NOISE_NORMALIZE_SCALE;
             }
         }
 
-        // 텍스처에 반영
         this.noiseTexture.copyFrom({
             source: {
-                width: this.gridWidth,
-                height: this.gridHeight,
-                arrayBufferView: this.noiseValues
-            }
+                width:           this.gridWidth,
+                height:          this.gridHeight,
+                arrayBufferView: this.noiseValues,
+            },
         });
     }
 
-    update(frameState) {
+    // ──────────────────────────────────────────
+    // 매 프레임 업데이트
+    // ──────────────────────────────────────────
+    update(frameState: any): void {
+        if (!this.show || !this.latestPositions) return;
+        if (this.latestPositions.filter(p => p != null).length === 0) return;
 
-        // const targetPositionArr = []
-        //
-        // for(let i = 0; i < this.startPosition.length; ++i) {
-        //
-        //     let startPosition = this.positions[this.currentIndex[i]];
-        //     let endPosition = this.positions[this.currentIndex[i]+1];
-        //
-        //     if (this.progress[i] >= 1) {
-        //         this.progress[i] = 0;
-        //         this.currentIndex[i] = this.currentIndex[i] + 1;
-        //     } else {
-        //         if(startPosition[i] == null || !endPosition || endPosition[i] == null){
-        //             targetPositionArr.push(null)
-        //             return;
-        //         }else{
-        //             if(!this.status || this.startPosition ==undefined) {
-        //                 const currentTimestamp = performance.now();
-        //                 this.previousTime[i] = currentTimestamp;
-        //             }else{
-        //                 const speedMps = this.speed / 3.6; // km/h -> m/s
-        //
-        //                 // 이동 시간 계산 (속도와 거리로부터 시간 계산)
-        //                 const distance = Cesium.Cartesian3.distance(startPosition[i], endPosition[i]); // m 단위
-        //                 const timeToTravel = distance / speedMps; // 이동 시간 (초 단위)
-        //
-        //                 const currentTimestamp = performance.now();
-        //                 const deltaTime = (currentTimestamp - this.previousTime[i]) / 1000; // 시간 차이 (초 단위)
-        //                 this.previousTime[i] = currentTimestamp;
-        //
-        //
-        //                 this.progress[i] += (deltaTime / timeToTravel); // 시간에 비례하여 progress 증가
-        //
-        //                 if (this.progress[i] > 1) {
-        //                     this.progress[i] = 1; // 최대값 제한
-        //                 }
-        //             }
-        //             let interpolatedPosition = new Cesium.Cartesian3();
-        //             Cesium.Cartesian3.lerp(startPosition[i], endPosition[i], this.progress[i], interpolatedPosition);
-        //             targetPositionArr.push(interpolatedPosition)
-        //         }
-        //     }
-        // }
-
-
-        if (this.show && this.latestPositions && this.latestPositions.filter(item => item !== undefined).length > 0) {
-            if(!this.noiseTexture){
-                this.init()
+        // ④ 네트워크 bbox가 없을 때만 positions로 보정 (1회)
+        if (!this._centerValid) {
+            let sx = 0, sy = 0, sz = 0, cnt = 0;
+            for (const p of this.latestPositions) {
+                if (p) { sx += p[0]!; sy += p[1]!; sz += p[2]!; cnt++; }
             }
+            if (cnt === 0) return;
+            const c = new Cesium.Cartesian3(sx / cnt, sy / cnt, sz / cnt);
+            Cesium.Cartesian3.clone(c, this._center);
+            Cesium.Transforms.eastNorthUpToFixedFrame(c, undefined, this._modelMatrixCenter);
+            this._centerValid = true;
+        }
 
-            let sum = new Cesium.Cartesian3(0, 0, 0);
-            for (const pos of this.latestPositions) {
-                if(pos)
-                    Cesium.Cartesian3.add(sum, new Cartesian3(pos[0],pos[1],pos[2]), sum);
-            }
-            const center = Cesium.Cartesian3.divideByScalar(sum, this.latestPositions.filter(item => item !== undefined).length, new Cesium.Cartesian3());
+        if (!this.noiseTexture) {
+            this.init();
+            if (this.drawCommands.length === 0) return;
+        }
 
-            const modelMatrixCenter = Cesium.Transforms.eastNorthUpToFixedFrame(center);
+        this._frameCount++;
+        if (this._frameCount % HeatBarLayer.NOISE_UPDATE_INTERVAL === 0) {
+            this.updateNoiseValues(this.latestPositions);
+        }
 
-            this.updateNoiseValues(this.latestPositions, center);
-
-            for (let i = 0; i < this.drawCommands.length; i++) {
-                const { drawCommand, x, y } = this.drawCommands[i];
-
-                const tx = x - this.gridWidth / 2;
-                const ty = y - this.gridHeight / 2;
-
-                const offset = new Cesium.Cartesian3(tx * 100, ty * 100, 0); // ENU 오프셋
-
-                const localPosition = Cesium.Matrix4.multiplyByPoint(modelMatrixCenter, offset, new Cesium.Cartesian3());
-
-                const modelMatrix = Cesium.Transforms.eastNorthUpToFixedFrame(localPosition);
-
-                const baseScale = 100.0;
-
-                // 낮을수록 퍼짐 (최소값 제한)
-                const xyScale = baseScale / Math.max(this.exaggeration, 1.0);
-                const zScale = this.exaggeration;
-
-                this.scale = new Cesium.Cartesian3(xyScale, xyScale, zScale);
-
-                const scaleMatrix = Cesium.Matrix4.fromScale(this.scale, new Cesium.Matrix4());
-                const finalModelMatrix = Cesium.Matrix4.multiply(modelMatrix, scaleMatrix, new Cesium.Matrix4());
-
-                const viewMatrix = this.viewer.scene.context.uniformState.view;
-                const projectionMatrix = this.viewer.scene.context.uniformState.projection;
-
-                const mvMatrix = Cesium.Matrix4.multiply(viewMatrix, finalModelMatrix, new Cesium.Matrix4());
-                const mvpMatrix = Cesium.Matrix4.multiply(projectionMatrix, mvMatrix, new Cesium.Matrix4());
-
-                drawCommand.uniformMap.u_modelViewProjectionMatrix = () => mvpMatrix;
-                drawCommand.uniformMap.u_time= () => performance.now() / 1000.0;
-                drawCommand.uniformMap.u_noiseOffset = () => new Cesium.Cartesian2(x / this.gridWidth, y / this.gridHeight);
-            }
-
-            for (const command of this.drawCommands) {
-                frameState.commandList.push(command.drawCommand);
+        // ③ 빈 셀 skip: noise < threshold인 셀은 push 안 함
+        for (const entry of this.drawCommands) {
+            if (this.noiseValues[entry.gridIdx]! >= MIN_NOISE_THRESHOLD) {
+                frameState.commandList.push(entry.drawCommand);
             }
         }
     }
 
-    setSpeed(speed: number) {
-        this.speed = speed;
+    // ──────────────────────────────────────────
+    // setters
+    // ──────────────────────────────────────────
+    setSpeed(speed: number):      void { this.speed        = speed; }
+    setStatus(status: string):    void { this.status       = status; }
+    setColors(colors: string[]):  void { this.colors       = hexToVec3(colors); }
+    setExaggeration(e: number):   void { this.exaggeration = e; }
+
+    setLatestPositions(latestPositions: { positions: (number[] | undefined)[] }): void {
+        this.latestPositions = latestPositions.positions;
     }
 
-    setStatus(status: string) {
-        this.status = status;
-    }
-
-    setColors(colors: string[]) {
-        this.colors = hexToVec3(colors);
-    }
-
-    setExaggeration(exaggeration: number) {
-        this.exaggeration = exaggeration
-    }
-
-    setLatestPositions(latestPositions) {
-        this.latestPositions = latestPositions;
-    }
-
-    destroy() {
+    // ──────────────────────────────────────────
+    // 리소스 해제
+    // ──────────────────────────────────────────
+    destroy(): void {
         this.noiseTexture?.destroy();
+        this.noiseTexture  = null;
         this.vertexArray?.destroy();
-        //this.drawCommand.shaderProgram.destroy();
+        this.vertexArray   = null;
+        this.shaderProgram?.destroy();
+        this.shaderProgram = null;
+        this.drawCommands  = [];
     }
 }
-function hexToVec3(colors: string[]) {
-    let colorArray = []
-    colors.forEach((hex) => {
-        // Remove #
-        hex = hex.replace("#", "");
-
-        // Expand shorthand form (e.g. "f00") to full form (e.g. "ff0000")
-        if (hex.length === 3) {
-            hex = hex.split("").map(ch => ch + ch).join("");
-        }
-
-        const r = parseInt(hex.slice(0, 2), 16) / 255;
-        const g = parseInt(hex.slice(2, 4), 16) / 255;
-        const b = parseInt(hex.slice(4, 6), 16) / 255;
-
-        return colorArray.push(new Cesium.Cartesian3(Number(r.toFixed(3)), Number(g.toFixed(3)), Number(b.toFixed(3))))
-    })
-
-    return colorArray;
-
-}
-

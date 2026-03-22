@@ -14,6 +14,7 @@ public class CoordinateConverter {
     private double roadBaseNorthing;
     private double roadTargetEasting;
     private double roadTargetNorthing;
+    private double halfWidth;
 
     private static final CoordinateTransform wgsToMercator;
     private static final CoordinateTransform mercatorToWgs;
@@ -35,30 +36,33 @@ public class CoordinateConverter {
         this.baseLat = lat;
     }
 
-    public void setRoadPoint(double baseEasting, double baseNorthing, double targetEasting, double targetNorthing) {
+    public void setRoadPoint(double baseEasting, double baseNorthing, double targetEasting, double targetNorthing, double halfWidth) {
         this.roadBaseEasting = baseEasting;
         this.roadBaseNorthing = baseNorthing;
         this.roadTargetEasting = targetEasting;
         this.roadTargetNorthing = targetNorthing;
+        this.halfWidth = halfWidth;
     }
 
-    public ProjCoordinate toAbsolute(double relX, double relY) {
-        // 1. 차선 방향 벡터 구하기
+    public ProjCoordinate toAbsolute(double posX, double posY) {
+        // 1. 링크 방향 단위 벡터
         double dirX = roadTargetEasting - roadBaseEasting;
         double dirY = roadTargetNorthing - roadBaseNorthing;
         double length = Math.sqrt(dirX * dirX + dirY * dirY);
         dirX /= length;
         dirY /= length;
 
-        // 2. 상대좌표 회전 적용
-        double dx = relX * dirX - relY * dirY;
-        double dy = relX * dirY + relY * dirX;
+        // 2. pos_x/pos_y는 링크 기준 좌표계:
+        //    pos_x = 링크 시작점으로부터 진행방향 거리(m)
+        //    pos_y = 링크 왼쪽 엣지로부터 오른쪽 방향 거리(m)
+        //    왼쪽 방향 벡터 = (-dirY, dirX), 오른쪽 방향 벡터 = (dirY, -dirX)
+        double leftEdgeX = roadBaseEasting + halfWidth * (-dirY);
+        double leftEdgeY = roadBaseNorthing + halfWidth * (dirX);
 
-        // 3. 실제 위치 계산 (easting/northing 기반)
-        double absX = roadBaseEasting + dx;
-        double absY = roadBaseNorthing + dy;
+        double absX = leftEdgeX + posX * dirX + posY * dirY;
+        double absY = leftEdgeY + posX * dirY - posY * dirX;
 
-        // 4. 근사 위경도 변환 (정밀 필요시 Proj4J 사용 권장)
+        // 3. 근사 위경도 변환
         double lon = baseLon + absX / 88000.0;
         double lat = baseLat + absY / 111000.0;
 

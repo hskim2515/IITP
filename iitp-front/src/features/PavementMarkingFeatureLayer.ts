@@ -66,6 +66,7 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
             updated: Record<string, Array<Record<string, unknown>>>,
             origin: Record<string, Array<Record<string, unknown>>>
         ) => {
+            if (!updated) return;
             Object.keys(updated).forEach((objectName) => {
                 const updatedList = updated[objectName] ?? [];
                 const originList = origin[objectName] ?? [];
@@ -175,7 +176,9 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
 
     public async load(): Promise<void> {
         const store = layerNameToStoreMap[this.LAYER_NAME];
-        const { pavementMarkings } = store.getState().currentJsonData;
+        const currentJsonData = store.getState().currentJsonData;
+        if (!currentJsonData) return;
+        const { pavementMarkings } = currentJsonData;
 
         const source = this.source;
         source.clear();

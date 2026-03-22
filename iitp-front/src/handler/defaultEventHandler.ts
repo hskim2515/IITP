@@ -6,7 +6,7 @@ import {useCesiumStore} from "@stores/useCesiumStore";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import Feature, {FeatureLike} from "ol/Feature";
 import {Layer} from "ol/layer";
-import {isVectorLayer, matchesCustomKeyValue} from "@utils/olLayer";
+import {isVectorLayer, isWebGLVectorLayer, matchesCustomKeyValue} from "@utils/olLayer";
 import {isFeature} from "@utils/feature";
 import {StyleFunction} from "ol/style/Style";
 import { Icon, RegularShape, Style } from "ol/style";
@@ -86,6 +86,10 @@ export const defaultEventHandlers ={
                 setSelectedGuid([feature.get("__guid")])
                 return true
             }
+        }, {
+            // disableHitDetection: true 인 WebGLVectorLayer(TrailFeatureLayer 등)에서
+            // forEachFeatureAtPixel 호출 시 throw 발생 → 해당 레이어 제외
+            layerFilter: (layer) => !isWebGLVectorLayer(layer),
         });
         if (!isFeatureExist) {
             setSelectedProps(null)
@@ -144,7 +148,10 @@ export const defaultEventHandlers ={
                 }
                 return undefined;
             },
-            {hitTolerance: 10}
+            {
+                hitTolerance: 10,
+                layerFilter: (layer) => !isWebGLVectorLayer(layer),
+            }
         );
 
         if (!featureInfo) {

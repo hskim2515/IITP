@@ -3,12 +3,14 @@ import { devtools } from "zustand/middleware";
 
 interface VehicleState {
     numVehicle: number,
+    activeVehicleCount: number,
     speedFactor: number,
     czml: object,
     vehicleData : object,
     vehicleRoute : object,
     features: object,
     setNumVehicle: (num: number) => void;
+    setActiveVehicleCount: (count: number) => void;
     setSpeedFactor: (speed: number) => void;
     setCzml: (czml: object) => void;
     setVehicleData: (vehicleData: object) => void;
@@ -18,12 +20,14 @@ interface VehicleState {
 
 export const useVehicleStore = create<VehicleState>(((set) => ({
     numVehicle: 10,
+    activeVehicleCount: 0,
     speedFactor: 30,
     czml: '',
     vehicleData : '',
     vehicleRoute : '',
     features : '',
     setNumVehicle: (state : VehicleState) => set({ numVehicle: state }),
+    setActiveVehicleCount: (count: number) => set({ activeVehicleCount: count }),
     setSpeedFactor: (state: VehicleState) => set({ speedFactor: state }),
     setCzml: (state: VehicleState) => set({ czml: state }),
     setVehicleData: (state: VehicleState) => set({ vehicleData: state }),

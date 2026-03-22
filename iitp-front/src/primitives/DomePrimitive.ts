@@ -1,5 +1,4 @@
 import * as Cesium from "cesium";
-import {BufferUsage} from "ol/webgl/Buffer";
 
 export default class DomePrimitive {
     constructor(positions, context, speed, status) {
@@ -19,11 +18,11 @@ export default class DomePrimitive {
 
     createResources(){
         // 초기 위치 설정
-        const positionsArray = new Float32Array(this.positions[0].length * 3);
-        for (let i = 0; i < this.positions[0].length; i++) {
-            positionsArray[i * 3] = this.positions[0][i].x;
-            positionsArray[i * 3 + 1] = this.positions[0][i].y;
-            positionsArray[i * 3 + 2] = this.positions[0][i].z;
+        const positionsArray = new Float32Array(this.positions.length * 3);
+        for (let i = 0; i < this.positions.length; i++) {
+            positionsArray[i * 3]     = this.positions[i][1];
+            positionsArray[i * 3 + 1] = this.positions[i][2];
+            positionsArray[i * 3 + 2] = this.positions[i][3];
         }
 
         this.vertexBuffer = Cesium.Buffer.createVertexBuffer({
@@ -104,7 +103,7 @@ export default class DomePrimitive {
     update(frameState) {
         if (this.destroyed || !this.show) return;
         // 워커에서 받은 위치를 vertexBuffer에 반영
-        const filteredPositions = this.latestPositions?.filter(item => item !== undefined)
+        const filteredPositions = this.latestPositions?.filter(item => item != null)
         if (this.latestPositions && filteredPositions.length > 0) {
 
             this.latestPositions = filteredPositions
@@ -123,7 +122,7 @@ export default class DomePrimitive {
                 this.vertexBuffer = Cesium.Buffer.createVertexBuffer({
                     context: frameState.context,
                     typedArray: flatResult,
-                    usage: BufferUsage.DYNAMIC_DRAW
+                    usage: Cesium.BufferUsage.DYNAMIC_DRAW
                 });
 
                 this.drawCommand.vertexArray = new Cesium.VertexArray({
@@ -147,72 +146,6 @@ export default class DomePrimitive {
         }
     }
 
-    // update(frameState) {
-    //
-    //     if (this.destroyed) return; // 이미 제거된 경우 업데이트하지 않음
-    //
-    //     if(!this.status) {
-    //         this.previousTime = performance.now();
-    //         if(this.show){
-    //             frameState.commandList.push(this.drawCommand);
-    //         }
-    //         return;
-    //     }
-    //
-    //     if (!this.positions || this.positions.length < 2) {
-    //         console.error("🚨 경로 데이터가 부족하거나 초기화되지 않았습니다.");
-    //         return;
-    //     }
-    //
-    //     // speedKmh는 km/h로 주어지며 이를 m/s로 변환
-    //     const speedMps = this.speed / 3.6; // km/h -> m/s
-    //
-    //     // 이동이 끝났으면 currentIndex 증가
-    //     if (this.progress >= 1) {
-    //         this.progress = 0; // 다음 이동을 위해 초기화
-    //         this.currentIndex++; // 다음 위치로 이동
-    //     } else {
-    //         // 현재 위치와 다음 위치 가져오기
-    //         let startPosition = this.positions[this.currentIndex];
-    //         const nextIndex = this.currentIndex + 1;
-    //         let endPosition = this.positions[nextIndex];
-    //
-    //         if (!startPosition || !endPosition) {
-    //             return;
-    //         }
-    //
-    //         // 이동 시간 계산 (속도와 거리로부터 시간 계산)
-    //         const distance = Cesium.Cartesian3.distance(startPosition, endPosition); // m 단위
-    //         const timeToTravel = distance / speedMps; // 이동 시간 (초 단위)
-    //
-    //         const currentTimestamp = performance.now();
-    //         const deltaTime = (currentTimestamp - this.previousTime) / 1000; // 시간 차이 (초 단위)
-    //         this.previousTime = currentTimestamp;
-    //
-    //         this.progress += (deltaTime / timeToTravel); // 시간에 비례하여 progress 증가
-    //
-    //         if (this.progress > 1) {
-    //             this.progress = 1; // 최대값 제한
-    //         }
-    //
-    //
-    //         if(this.show){
-    //             // 두 점 사이 위치 보간 (Lerp)
-    //             let interpolatedPosition = new Cesium.Cartesian3();
-    //             Cesium.Cartesian3.lerp(startPosition, endPosition, this.progress, interpolatedPosition);
-    //
-    //             // 위치 업데이트
-    //             const newPositions = new Float32Array([interpolatedPosition.x, interpolatedPosition.y, interpolatedPosition.z]);
-    //             this.vertexBuffer.copyFromArrayView(newPositions);
-    //         }
-    //
-    //     }
-    //
-    //     if(this.show){
-    //         frameState.commandList.push(this.drawCommand);
-    //     }
-    // }
-
     async adjustPositionsToTerrain(positions: Cesium.Cartographic[]): Promise<Cartesian3[]> {
         const updated = await Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, positions);
         return updated.map(cart => Cesium.Cartesian3.fromRadians(cart.longitude, cart.latitude, cart.height));
@@ -227,11 +160,9 @@ export default class DomePrimitive {
         this.status = status;
     }
 
-    setLatestPositions(latestPositions: Float32Array) {
-        this.latestPositions = latestPositions;
+    setLatestPositions(latestPositions) {
+        this.latestPositions = latestPositions.positions;
     }
-
-
 
     destroy() {
         if (this.vertexBuffer) {
