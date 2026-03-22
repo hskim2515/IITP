@@ -272,3 +272,7 @@ export function generateTemplate(
         ...additionalProps,
     };
 }
+
+export function findMenuCodeBySchemaDefinition(schemaDefinition: SchemaDefinition | null) {
+    return schemaDefinition?.fields?.find(field=> field.name === 'menuCode')?.defaultValue
+}

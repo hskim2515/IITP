@@ -5,6 +5,8 @@ import { faClose } from "@fortawesome/free-solid-svg-icons/faClose";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEdit } from "@fortawesome/free-solid-svg-icons";
 import { MenuTreeResponse } from "@type/openapi.gen";
+import { useSchemaStore } from "@stores/useSchemaStore";
+import { findMenuCodeBySchemaDefinition } from "@utils/schema";
 
 function truncate(value: string, maxLength: number = 50): string {
     if (value.length <= maxLength) return value;
@@ -13,6 +15,7 @@ function truncate(value: string, maxLength: number = 50): string {
 
 const PropertyModal = () => {
     const selectedProps = usePropertyStore((state) => state.selectedProps);
+    const getSchemaDefinitionBySchemaDefinitionName = useSchemaStore.getState().getSchemaDefinitionBySchemaDefinitionName;
     const [showViewer, setShowViewer] = useState<boolean | null>(false);
     const [subMenu, setSubMenu] = useState<MenuTreeResponse | null>(null);
 
@@ -36,20 +39,31 @@ const PropertyModal = () => {
     }, [selectedProps]);
 
     useEffect(() => {
-        if(menu) {
+        if(menu){
             setSubMenu(findMenuByCode(menu, 'NETWORK'))
         }
+        console.log(subMenu)
     }, [menu]);
 
     if (!selectedProps || Object.keys(selectedProps).length === 0) return null;
     if (!showViewer || activeSubmenu) return null;
 
     const onClickClose = () => {
-
+        setShowViewer(false);
     }
 
-    const conClickEdit = () => {
+    const onClickEdit = () => {
+        const featureType = selectedProps.featureType;
 
+        const menuCode = findMenuCodeBySchemaDefinition(getSchemaDefinitionBySchemaDefinitionName(featureType));
+        console.log("menuCode:::", menuCode)
+        if(!menuCode) return;
+        if (menuCode && menu) {
+            const foundMenu = findMenuByCode(menu, menuCode);
+            console.log("menuCode:::found:::",foundMenu)
+            setSubMenu(foundMenu);
+            setActiveSubmenu(foundMenu);
+        }
     }
 
     return (
@@ -59,12 +73,8 @@ const PropertyModal = () => {
                 <tr>
                     <th colSpan={2}>
                         <h2 style={{display: "contents"}}>{selectedProps?.featureType}</h2>
-                        <FontAwesomeIcon className="close-btn" icon={faClose} onClick={() => setShowViewer(false)}/>
-                        <FontAwesomeIcon className="edit-btn" icon={faEdit} onClick={() => {
-                            if (selectedProps?.menuCode) {
-                                setActiveSubmenu(subMenu);
-                            }
-                        }}/>
+                        <FontAwesomeIcon className="close-btn" icon={faClose} onClick={onClickClose}/>
+                        <FontAwesomeIcon className="edit-btn" icon={faEdit} onClick={onClickEdit}/>
                     </th>
                 </tr>
                 <tr>
