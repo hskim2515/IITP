@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import "/static/css/styles.css";
 import { propertyFormSchema } from "@schema/propertyFormSchema";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
@@ -50,6 +50,12 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const selectedScenario = useScenarioStore.getState().selectedScenario;
 
     const olMap = useOpenLayersStore.state.map()
+
+    const heightRef = useRef(400);
+    const [height, setHeight] = useState(400);
+    const rafRef = useRef<number | null>(null);
+    const overlayRef = useRef<HTMLDivElement>(null);
+
     type BodySize = "mini" | "default" | "full";
     const [bodySize, setBodySize] = useState<BodySize>("default");
     const setMessage = useMessageStore.getState().setMessage;
@@ -79,8 +85,6 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
         selectedGuidRef.current = nextGuids;
     }, [selectedGuid]);
 
-    // openlayers와 cesium에서 해당 guid 내의 featureType을 추출
-    // 추출한 featureType을 가진 객체를 찾아 이벤트를 생성한다.
     useEffect(() => {
         if (!submenu.item.layer) return;
 
@@ -109,6 +113,42 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     useEffect(() => {
         clearSelected()
     }, [activeSubmenu]);
+
+
+    const handleMouseMove = useCallback((e: MouseEvent) => {
+        if (rafRef.current !== null) return;
+
+        rafRef.current = requestAnimationFrame(() => {
+            const newHeight = window.innerHeight - e.clientY - 35;
+            if (newHeight > 150 && newHeight < window.innerHeight * 0.9) {
+                heightRef.current = newHeight;
+                if (overlayRef.current) {
+                    overlayRef.current.style.height = `${newHeight}px`;
+                }
+            }
+            rafRef.current = null;
+        });
+    }, []);
+
+    const stopResizing = useCallback(() => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', stopResizing);
+        document.body.style.userSelect = 'auto';
+        setHeight(heightRef.current);
+    }, [handleMouseMove]);
+
+    const startResizing = useCallback((e: React.MouseEvent) => {
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', stopResizing);
+        document.body.style.userSelect = 'none';
+    }, [handleMouseMove, stopResizing]);
+
+    useEffect(() => {
+        return () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', stopResizing);
+        };
+    }, [handleMouseMove, stopResizing]);
 
     const [reloadFlag, setReloadFlag] = useState(false);
 
@@ -212,7 +252,19 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     };
 
     return (
-        <div className={`popup-overlay${submenu?.item?.type ? `-${submenu.item.type}` : ''}`}>
+        <div ref={overlayRef} className={`popup-overlay${submenu?.item?.type ? `-${submenu.item.type}` : ''}`}
+             style={{height: `${height}px`}}>
+            <div className="resize-handle" onMouseDown={startResizing}
+                style={{
+                    width: '100%',
+                    height: '6px',
+                    cursor: 'row-resize',
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    zIndex: 10,
+                }}
+            />
             <div className={`popup-container${submenu?.item?.type ? `-${submenu.item.type}` : ''}`}>
                 <div className="popup-header">
                     <span>{activeSubmenu.nameKor}</span>
@@ -265,6 +317,7 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                                         layerGroupName={"facility"}
                                         rowData={value}
                                         levelName={key}
+                                        containerHeight={height}
                                     />
                                 </div>
                             ))}

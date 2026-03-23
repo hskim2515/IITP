@@ -120,6 +120,7 @@ type JsonGridProps = {
     levelName?: string;
     parentGuid?: string | React.Key;
     depth?: number;
+    containerHeight?: number;
 };
 
 const JsonGrid = ({
@@ -129,6 +130,7 @@ const JsonGrid = ({
                       levelName,
                       parentGuid,
                       depth = 0,
+                      containerHeight = 600,
                   }: JsonGridProps) => {
     const setMessage = useMessageStore.getState().setMessage;
 
@@ -317,7 +319,10 @@ const JsonGrid = ({
                     }}
                     size="small"
                     pagination={false}
-                    scroll={{y: 600}}
+                    scroll={{
+                        y: depth === 0 ? containerHeight - 200 : 300,
+                        x: "max-content"
+                    }}
                     locale={{
                         emptyText: "데이터가 없습니다. [+] 버튼으로 새 항목 추가를 시작하세요.",
                     }}
