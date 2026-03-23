@@ -6,7 +6,9 @@ import { useLayerStore } from "@stores/useLayerStore";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
 import { Map as OLMap, View } from "ol";
+import { defaults as defaultInteractions } from "ol/interaction/defaults";
 import * as olProj from "ol/proj";
+import { SmoothDragPan } from "@interactions/SmoothDragPan";
 
 const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, cesiumMapRef: MutableRefObject<Element | null>) => {
 
@@ -53,6 +55,11 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
             pixelRatio: 1,
             target: openlayersMapRef.current,
             view,
+            // 기본 DragPan 제거 → SmoothDragPan으로 교체
+            // (DragPan은 드래그 중 ViewHint.INTERACTING을 켜서 WebGL 레이어 업데이트를 막음)
+            // 기본 DragPan → SmoothDragPan으로 교체
+            // (DragPan은 드래그 중 ViewHint.INTERACTING를 설정 → WebGL 레이어 업데이트 차단)
+            interactions: defaultInteractions({ dragPan: false }).extend([new SmoothDragPan()]),
         });
         setMap(olMap);
         setView(view);

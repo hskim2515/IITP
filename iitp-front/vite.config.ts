@@ -36,6 +36,7 @@ export default defineConfig(({ mode }) => {
                 '@config': path.resolve(__dirname, 'src/config'),
                 '@datasource': path.resolve(__dirname, 'src/datasource'),
                 '@features': path.resolve(__dirname, 'src/features'),
+                '@interactions': path.resolve(__dirname, 'src/interactions'),
                 '@handler': path.resolve(__dirname, 'src/handler'),
                 '@hooks': path.resolve(__dirname, 'src/hooks'),
                 '@managers': path.resolve(__dirname, 'src/managers'),

@@ -1,6 +1,6 @@
 import WebGLVectorLayer from "ol/layer/WebGLVector";
 import VectorSource from "ol/source/Vector";
-import { Feature } from "ol";
+import { Feature, Map as OLMap } from "ol";
 import { Point } from "ol/geom";
 import { fromLonLat } from "ol/proj";
 import { Cartographic, Ellipsoid } from "cesium";
@@ -15,7 +15,7 @@ const TYPE_COLORS: Record<string, string> = {
     'default': 'rgba(251, 188, 96,  0.92)',
 };
 
-const TYPE_REAL: Record<string, { len: number; wid: number }> = {
+const TYPE_SIZE: Record<string, { len: number; wid: number }> = {
     'CAR':     { len: 4.5, wid: 1.8 },
     'TAXI':    { len: 4.5, wid: 1.8 },
     'BUS':     { len: 12,  wid: 2.5 },
@@ -52,6 +52,7 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private headings: (number | null)[] = [];
     /** 새 위치가 도착했을 때만 true → rAF 프레임 스킵 */
     private dirty: boolean = false;
+    private olMap: OLMap | null = null;
     public readonly vehicleType: string;
 
     constructor(
@@ -61,18 +62,18 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
         running: boolean,
         vehicleType: string = 'default',
     ) {
-        const real  = TYPE_REAL[vehicleType]  ?? TYPE_REAL['default'];
+        const size  = TYPE_SIZE[vehicleType]  ?? TYPE_SIZE['default'];
         const color = TYPE_COLORS[vehicleType] ?? TYPE_COLORS['default'];
 
         // canvas 픽셀 종횡비 = 실세계 종횡비 (기준 길이 32px)
         const BASE_LEN = 32;
-        const canvasWid = Math.round(BASE_LEN * (real.wid / real.len));
+        const canvasWid = Math.round(BASE_LEN * (size.wid / size.len));
         const dataUrl   = createVehicleDataUrl(BASE_LEN, canvasWid, color);
 
         // icon-scale: 실세계 길이(m) / (canvas 픽셀 수 × 해상도(m/px))
         // clamp으로 최소·최대 화면 크기 제한
         const iconScale = ["clamp",
-            ["/", real.len / 2, ["*", BASE_LEN / 2, ["resolution"]]],
+            ["/", size.len / 2, ["*", BASE_LEN / 2, ["resolution"]]],
             0.25, 5.0,
         ] as any;
 
@@ -172,7 +173,12 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
                 feature.set('heading', h, true);
                 changed = true;
             });
-            if (changed) this.source.changed();
+            if (changed) {
+                this.source.changed();
+                // source.changed() 이후 명시적으로 render 요청 —
+                // 드래그 중 OL이 이미 렌더 중이더라도 갱신된 버퍼를 즉시 반영
+                this.olMap?.render();
+            }
         }
 
         if (this.running) {
@@ -181,6 +187,11 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
             this.animationId = null;
         }
     };
+
+    override setMap(map: OLMap | null) {
+        super.setMap(map);
+        this.olMap = map;
+    }
 
     setSpeed(_speed: number) {}
 
@@ -194,8 +205,20 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
         }
     }
 
-    start()   { this.setStatus(true); }
-    stop()    { this.setStatus(false); }
+    start() { this.setStatus(true); }
+
+    stop() {
+        this.setStatus(false);
+        // 정지 시 피처를 화면 밖으로 이동 — 이전 위치가 다음 재생 전까지 남지 않도록
+        this.positions = [];
+        this.headings  = [];
+        this.geometries.forEach(geom => {
+            if (!geom) return;
+            geom.flatCoordinates[0] = 0;
+            geom.flatCoordinates[1] = 0;
+        });
+        this.source.changed();
+    }
     destroy() {
         this.stop();
         this.source.clear();

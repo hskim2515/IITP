@@ -64,6 +64,8 @@ const useSimulation = () => {
     // const changeModelWorkerRef = useRef<Worker | null>(null);
     const czmlPositionWorkerRef = useRef<Worker | null>(null);
     const makeOdDataWorkerRef = useRef<Worker | null>(null);
+    /** 시뮬레이션 자연 종료 감지용 clock.onTick 리스너 참조 */
+    const clockEndListenerRef = useRef<((clock: Cesium.Clock) => void) | null>(null);
 
     useEffect(() => {
         if (!czmlPositionWorkerRef.current) {
@@ -78,6 +80,10 @@ const useSimulation = () => {
             makeOdDataWorkerRef.current?.terminate();
             czmlPositionWorkerRef.current = null;
             makeOdDataWorkerRef.current = null;
+            if (clockEndListenerRef.current && viewer) {
+                viewer.clock.onTick.removeEventListener(clockEndListenerRef.current);
+                clockEndListenerRef.current = null;
+            }
         };
     }, []);
 
@@ -405,6 +411,24 @@ const useSimulation = () => {
                 });
 
                 viewer.scene.preRender.addEventListener(updateFrameFunc);
+
+                // 이전 리스너 제거 후 자연 종료 감지 리스너 등록
+                if (clockEndListenerRef.current) {
+                    viewer.clock.onTick.removeEventListener(clockEndListenerRef.current);
+                }
+                clockEndListenerRef.current = (clock: Cesium.Clock) => {
+                    if (!isRunningRef.current) return;
+                    // shouldAnimate 의존 제거 — clockRange 설정과 무관하게 stopTime 도달로 판단
+                    if (Cesium.JulianDate.compare(clock.currentTime, clock.stopTime) < 0) return;
+                    // 한 번만 실행
+                    viewer.clock.onTick.removeEventListener(clockEndListenerRef.current!);
+                    clockEndListenerRef.current = null;
+                    // 자연 종료: 차량은 마지막 위치 유지, trail 레이어만 순차 제거
+                    layerManager.getLayerGroup("analyze").forEach((layer) => {
+                        if (typeof (layer as any).drain === "function") (layer as any).drain();
+                    });
+                };
+                viewer.clock.onTick.addEventListener(clockEndListenerRef.current);
 
                 return d; // ✅ CzmlDataSource를 반환
             });

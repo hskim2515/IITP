@@ -79,7 +79,25 @@ export default class TrailFeatureLayer extends WebGLVectorLayer {
         if (!positions) return;
 
         positions.forEach((pos, idx) => {
-            if (!pos) return;
+            if (!pos) {
+                // 해당 vehicle이 멈춘 경우: worker tick마다 꼬리 한 점 제거 (자연 drain)
+                const trail = this.trails.get(idx);
+                if (!trail || trail.length === 0) return;
+                trail.shift();
+                if (trail.length >= 2) {
+                    const n = trail.length;
+                    const xymCoords = trail.map((coord, i) => [coord[0]!, coord[1]!, i / (n - 1)]);
+                    this.trailFeatures.get(idx)?.getGeometry()?.setCoordinates(xymCoords, "XYM");
+                } else {
+                    const f = this.trailFeatures.get(idx);
+                    if (f) {
+                        this.source.removeFeature(f);
+                        this.trailFeatures.delete(idx);
+                    }
+                    this.trails.delete(idx);
+                }
+                return;
+            }
 
             const xy = this.toEPSG3857(pos as Cartesian3Like | number[]);
             if (!xy) return;
@@ -123,6 +141,58 @@ export default class TrailFeatureLayer extends WebGLVectorLayer {
         this.trails.clear();
         this.trailFeatures.clear();
         this.source.clear();
+    }
+
+    /**
+     * 자연 종료 시 trail을 시간 순서대로 앞쪽(꼬리)부터 순차 제거.
+     * TailPrimitive의 원형 버퍼 count 감소 방식과 동일한 50ms 간격.
+     */
+    public drain() {
+        this.setStatus(false);
+        const DRAIN_INTERVAL = 50;
+        let last = performance.now();
+
+        const step = () => {
+            const now = performance.now();
+            if (now - last < DRAIN_INTERVAL) {
+                requestAnimationFrame(step);
+                return;
+            }
+            last = now;
+
+            let anyLeft = false;
+            this.trails.forEach((trail, idx) => {
+                if (trail.length === 0) return;
+                trail.shift(); // 가장 오래된 점(꼬리) 제거
+                anyLeft = true;
+
+                if (trail.length >= 2) {
+                    const n = trail.length;
+                    const xymCoords = trail.map((coord, i) =>
+                        [coord[0]!, coord[1]!, i / (n - 1)]
+                    );
+                    this.trailFeatures.get(idx)?.getGeometry()
+                        ?.setCoordinates(xymCoords, 'XYM');
+                } else {
+                    const f = this.trailFeatures.get(idx);
+                    if (f) {
+                        this.source.removeFeature(f);
+                        this.trailFeatures.delete(idx);
+                    }
+                    trail.length = 0;
+                }
+            });
+            this.source.changed();
+
+            if (anyLeft) {
+                requestAnimationFrame(step);
+            } else {
+                this.trails.clear();
+                this.trailFeatures.clear();
+            }
+        };
+
+        requestAnimationFrame(step);
     }
 
     public destroy() {
