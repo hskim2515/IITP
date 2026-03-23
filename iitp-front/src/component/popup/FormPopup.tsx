@@ -1,6 +1,7 @@
 import React, { FC, useEffect, useState } from 'react';
 import { SimpleForm } from './SimpleForm';
 import { TableForm } from './TableForm';
+import VehicleModelForm from './VehicleModelForm';
 import {apiConfig, ApiMenuKey} from "@config/apiConfig";
 import axiosInstance from "@api/axiosInstance";
 import {PropertyFormSchemaProps} from "@schema/propertyFormSchema";
@@ -209,6 +210,20 @@ const FormPopup: FC<InsertPopupProps> = ({
     }, [targetId, mode, activePopupMenu.menuCode, config.inputFields]);
 
     if (!open) return null;
+
+    // VEHICLE_MODEL은 GLB 프리뷰 + 방향 보정이 통합된 전용 폼 사용
+    if (activePopupMenu.menuCode === 'VEHICLE_MODEL') {
+        return (
+            <VehicleModelForm
+                activePopupMenu={activePopupMenu}
+                mode={mode}
+                targetId={targetId}
+                onClose={onClose}
+                onSubmit={onSubmit}
+                onEditMode={onEditMode}
+            />
+        );
+    }
 
     return isTableMode ? (
         <TableForm

@@ -84,52 +84,44 @@ public class GeoJsonUtils {
                 Element linkElement = (Element) linkList.item(i);
                 String linkId = linkElement.getAttribute("id");
 
-                NodeList laneList = linkElement.getElementsByTagName("lane");
+                // pos_x/pos_y는 링크 기준 좌표계 (link-local frame)이므로 link shape 사용
+                String shapeStr = linkElement.getAttribute("shape");
+                double width = 0;
+                try { width = Double.parseDouble(linkElement.getAttribute("width")); } catch (NumberFormatException ignored) {}
+                double halfWidth = width / 2.0;
 
-                for (int j = 0; j < laneList.getLength(); j++) {
-                    Element laneElement = (Element) laneList.item(j);
-                    String laneId = laneElement.getAttribute("id");
+                Double baseEasting = null;
+                Double baseNorthing = null;
+                Double targetEasting = null;
+                Double targetNorthing = null;
+                List<Cartesian3> positions = new ArrayList<>();
 
-                    List<Cartesian3> positions = new ArrayList<>();
-
-                    String shapeStr = laneElement.getAttribute("shape");
-                    Double baseEasting = null;
-                    Double baseNorthing = null;
-
-                    Double targetEasting = null;
-                    Double targetNorthing = null;
-
-                    if (shapeStr != null && !shapeStr.isEmpty()) {
-                        String[] coords = shapeStr.trim().split(" ");
-                        if (coords.length > 0) {
-                            String[] firstCoord = coords[0].split(",");
-                            String[] endCoord = coords[1].split(",");
-                            if (firstCoord.length >= 2) {
-                                baseEasting = Double.parseDouble(firstCoord[0]);
-                                baseNorthing = Double.parseDouble(firstCoord[1]);
-                            }
-                            if(endCoord.length >= 2) {
-                                targetEasting = Double.parseDouble(endCoord[0]);
-                                targetNorthing = Double.parseDouble(endCoord[1]);
-                            }
-
-                            for (String coordPair : coords) {
-                                String[] xy = coordPair.split(",");
-                                if (xy.length >= 2) {
-                                    double x = Double.parseDouble(xy[0]);
-                                    double y = Double.parseDouble(xy[1]);
-                                    positions.add(new Cartesian3(x, y, 0));
-                                }
+                if (shapeStr != null && !shapeStr.isEmpty()) {
+                    String[] coords = shapeStr.trim().split(" ");
+                    if (coords.length >= 2) {
+                        String[] firstCoord = coords[0].split(",");
+                        String[] lastCoord = coords[coords.length - 1].split(",");
+                        if (firstCoord.length >= 2) {
+                            baseEasting = Double.parseDouble(firstCoord[0]);
+                            baseNorthing = Double.parseDouble(firstCoord[1]);
+                        }
+                        if (lastCoord.length >= 2) {
+                            targetEasting = Double.parseDouble(lastCoord[0]);
+                            targetNorthing = Double.parseDouble(lastCoord[1]);
+                        }
+                        for (String coordPair : coords) {
+                            String[] xy = coordPair.split(",");
+                            if (xy.length >= 2) {
+                                positions.add(new Cartesian3(Double.parseDouble(xy[0]), Double.parseDouble(xy[1]), 0));
                             }
                         }
                     }
+                }
 
-
-                    if (!positions.isEmpty()) {
-                        Polyline polyline = new Polyline(positions);
-                        RoadResponse.Road road = new RoadResponse.Road(linkId, laneId, polyline, baseEasting, baseNorthing, targetEasting, targetNorthing);
-                        roads.add(road);
-                    }
+                if (!positions.isEmpty()) {
+                    Polyline polyline = new Polyline(positions);
+                    RoadResponse.Road road = new RoadResponse.Road(linkId, null, polyline, baseEasting, baseNorthing, targetEasting, targetNorthing, halfWidth);
+                    roads.add(road);
                 }
             }
 

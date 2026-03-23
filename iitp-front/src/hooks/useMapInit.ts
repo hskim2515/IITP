@@ -88,6 +88,8 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
             destination: Cartesian3.fromDegrees(126.77496, 37.49720, 10000) // Adjust the height as needed
         });
 
+        cesiumViewer.scene.debugShowFramesPerSecond = true;
+
         cesiumViewer.cesiumWidget.creditDisplay.container.style.display = "none";
 
         cesiumViewer.scene.globe.depthTestAgainstTerrain = true;

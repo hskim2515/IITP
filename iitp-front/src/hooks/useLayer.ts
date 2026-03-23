@@ -33,19 +33,18 @@ const useLayer = () => {
         const added = activeLayerName?.filter(name => !prevLayerNames.includes(name)) || [];
         const removed = prevLayerNames?.filter(name => !activeLayerName?.includes(name)) || [];
 
+        // getLayerByName 은 VectorLayerManager 만 체크하므로,
+        // Cesium-only 레이어(speed 등)를 포함하려면 getManagersByGroupAndLayerName 으로 존재 확인
         removed.forEach(name => {
-            if(layerManager?.getLayerByName(name)){
-                layerManager?.hideLayer(activeLayerGroupName, name);
+            if (layerManager?.getManagersByGroupAndLayerName(activeLayerGroupName, name).length) {
+                layerManager.hideLayer(activeLayerGroupName, name);
             }
-
-
         });
 
         added.forEach(name => {
-            if(layerManager?.getLayerByName(name)){
-                layerManager?.showLayer(activeLayerGroupName, name);
+            if (layerManager?.getManagersByGroupAndLayerName(activeLayerGroupName, name).length) {
+                layerManager.showLayer(activeLayerGroupName, name);
             }
-
         });
 
     }, [activeLayerName, activeLayerGroupName, viewer]);

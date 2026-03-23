@@ -51,17 +51,16 @@ class VectorLayerManager {
     add(layer, groupName: string, layerName: string, basic: boolean) {
         const group = this._getOrCreateGroup(groupName);
 
-        const existingLayer = group.find(layer => matchesCustomKeyValue(layer, 'layer', layerName));
+        // Deduplicate by instance identity only (not by layerName)
+        // This allows multiple layers with the same layerName (e.g., vehicle_CAR, vehicle_TAXI etc.)
+        const existingIndex = group.indexOf(layer);
+        if (existingIndex > -1) group.splice(existingIndex, 1);
+
         const isOnMap = this.olMap.getLayers().getArray().includes(layer);
 
         layer["layerGroup"] = groupName;
         layer["layer"] = layerName;
 
-
-        if (existingLayer) {
-            const index = group.indexOf(existingLayer);
-            if (index > -1) group.splice(index, 1);
-        }
         layer.values_.visible = basic;
 
         group.push(layer);

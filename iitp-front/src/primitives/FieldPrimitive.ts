@@ -1,5 +1,4 @@
 import * as Cesium from "cesium";
-import {BufferUsage} from "ol/webgl/Buffer";
 
 export default class FieldPrimitive {
     constructor(positions, context, speed, status) {
@@ -101,7 +100,9 @@ export default class FieldPrimitive {
 
         // 워커에서 받은 위치를 vertexBuffer에 반영
         if (this.latestPositions) {
-            this.latestPositions = this.latestPositions.filter(item => item !== undefined)
+            this.latestPositions = this.latestPositions.filter(item => item != null);
+
+            if (this.latestPositions.length === 0) return;
 
             const flatResult = new Float32Array(this.latestPositions.length * 3);
             for (let i = 0; i < this.latestPositions.length; i++) {
@@ -116,7 +117,7 @@ export default class FieldPrimitive {
                 this.vertexBuffer = Cesium.Buffer.createVertexBuffer({
                     context: frameState.context,
                     typedArray: flatResult,
-                    usage: BufferUsage.DYNAMIC_DRAW
+                    usage: Cesium.BufferUsage.DYNAMIC_DRAW
                 });
 
                 this.drawCommand.vertexArray = new Cesium.VertexArray({
@@ -131,7 +132,7 @@ export default class FieldPrimitive {
                     ]
                 });
             } else {
-                this.vertexBuffer.copyFromArrayView(flatResult.buffer);
+                this.vertexBuffer.copyFromArrayView(flatResult);
             }
 
             this.drawCommand.vertexCount = this.latestPositions.length;
@@ -209,8 +210,8 @@ export default class FieldPrimitive {
         this.status = status;
     }
 
-    setLatestPositions(latestPositions: Float32Array) {
-        this.latestPositions = latestPositions;
+    setLatestPositions(latestPositions) {
+        this.latestPositions = latestPositions.positions;
     }
 
     destroy() {

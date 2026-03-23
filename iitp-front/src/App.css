@@ -113,7 +113,6 @@ body {
   object-fit: cover;
   z-index: -1;
   pointer-events: none; /* 핵심! 클릭 이벤트 무시 */
-  opacity: 0.6; /* 투명도 조정 */
 }
 
 
@@ -133,13 +132,17 @@ body {
 }
 
 .version-popup-content {
-  background: rgba(27, 29, 42, 0.85);
+  background: rgba(13, 15, 25, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
   color: #ffffff;
-  padding: 2rem 2rem;
+  padding: 2.5rem 2.5rem;
   text-align: center;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
-  max-width: 500px;
-  animation: fadeIn 0.3s ease-out;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+  max-width: 480px;
+  animation: fadeIn 0.25s ease-out;
   font-family: 'Segoe UI', 'Pretendard', sans-serif;
 }
 

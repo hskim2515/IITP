@@ -45,6 +45,9 @@ public class WebConfig {
                 registry.addMapping("/pavement-marking/**")
                         .allowedOrigins("*")
                         .allowedMethods("GET", "POST", "PUT", "DELETE");
+                registry.addMapping("/analytics/**")
+                        .allowedOrigins("*")
+                        .allowedMethods("GET", "POST", "PUT", "DELETE");
             }
         };
     }

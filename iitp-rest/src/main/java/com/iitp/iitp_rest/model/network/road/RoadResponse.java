@@ -29,6 +29,8 @@ public class RoadResponse {
         private Double targetEasting;
         private Double targetNorthing;
 
+        private Double halfWidth;
+
 
     }
 

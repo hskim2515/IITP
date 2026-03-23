@@ -1,12 +1,13 @@
-import React, {useRef, forwardRef, useImperativeHandle} from 'react';
+import React, { useRef, forwardRef, useImperativeHandle } from 'react';
 import { AgGridReact } from 'ag-grid-react';
-import {AllCommunityModule, ColDef, ModuleRegistry} from 'ag-grid-community';
+import { AllCommunityModule, ColDef, ModuleRegistry } from 'ag-grid-community';
 import 'ag-grid-community/styles/ag-grid.css';
 import 'ag-grid-community/styles/ag-theme-alpine.css';
 import ColorCellRenderer from "../util/ColorCellRenderer";
 import FileCellRenderer from "../util/FileCellRenderer";
-import {fieldType} from "./PropertyPopup";
-import {PropertyFormSchemaProps} from "@schema/propertyFormSchema";
+import { fieldType } from "./PropertyPopup";
+import { PropertyFormSchemaProps } from "@schema/propertyFormSchema";
+import './ListTable.css';
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -15,11 +16,12 @@ export interface ListTableRef {
 }
 
 export interface PropertyFormProps {
-    config: PropertyFormSchemaProps
+    config: PropertyFormSchemaProps;
     onClose: () => void;
     data: { [key: string]: any }[];
     onEditMode?: (mode: string, id: string | number) => void;
 }
+
 const buildColumnDefs = (fields: fieldType[]): ColDef[] => [
     {
         headerName: '',
@@ -43,22 +45,18 @@ const buildColumnDefs = (fields: fieldType[]): ColDef[] => [
 
 const getCellRenderer = (type?: string) => {
     switch (type) {
-        case 'color':
-            return ColorCellRenderer;
-        case 'file':
-            return FileCellRenderer;
-        default:
-            return undefined;
+        case 'color': return ColorCellRenderer;
+        case 'file':  return FileCellRenderer;
+        default:      return undefined;
     }
 };
 
 const ListTable = forwardRef<ListTableRef, PropertyFormProps>((props, ref) => {
     const { config, data, onEditMode } = props;
     const gridRef = useRef<AgGridReact>(null);
+
     useImperativeHandle(ref, () => ({
-        getSelectedRows: () => {
-            return gridRef.current?.api?.getSelectedRows?.() || [];
-        }
+        getSelectedRows: () => gridRef.current?.api?.getSelectedRows?.() || []
     }));
 
     const columnDefs = buildColumnDefs(config.fields);
@@ -70,23 +68,21 @@ const ListTable = forwardRef<ListTableRef, PropertyFormProps>((props, ref) => {
     };
 
     return (
-        <div>
-            <div className="ag-theme-alpine" style={{ height: 200, width: '100%' }}>
-                <AgGridReact
-                    theme={"legacy"}
-                    ref={gridRef}
-                    rowData={data}
-                    columnDefs={columnDefs}
-                    rowSelection="multiple"
-                    onRowDoubleClicked={handleRowDoubleClicked}
-                    defaultColDef={{
-                        flex: 1,
-                        resizable: true,
-                        sortable: true,
-                        filter: true,
-                    }}
-                />
-            </div>
+        <div className="ag-theme-alpine ag-dark-custom" style={{ height: 240, width: '100%' }}>
+            <AgGridReact
+                theme="legacy"
+                ref={gridRef}
+                rowData={data}
+                columnDefs={columnDefs}
+                rowSelection="multiple"
+                onRowDoubleClicked={handleRowDoubleClicked}
+                defaultColDef={{
+                    flex: 1,
+                    resizable: true,
+                    sortable: true,
+                    filter: true,
+                }}
+            />
         </div>
     );
 });

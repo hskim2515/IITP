@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import './App.css'
 import Header from "./component/header/Header";
 import LeftPanel from "./component/panel/LeftPanel";
@@ -13,8 +13,12 @@ import ScenarioSelector from "@component/scenario/ScenarioSelector";
 import PropertyForm from "@component/popup/PropertyPopup";
 import { propertyFormSchema } from "@schema/propertyFormSchema";
 import Maps from "@component/map/Maps";
+import Dashboard from "@component/panel/Dashboard";
+import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 
 function App() {
+
+    const [showDashboard, setShowDashboard] = useState(false);
 
     const version = useScenarioStore((state) => state.selectedScenarioVersion);
     const setVersion = useScenarioStore((state) => state.setVersion);
@@ -59,20 +63,20 @@ function App() {
                         </div>
                     </div>
                 )}
-                <Header/>
+                <Header onDashboard={() => setShowDashboard(true)}/>
+                {showDashboard && <Dashboard onClose={() => setShowDashboard(false)}/>}
                 <MessagePopup/>
                 <PropertyModal/>
                 <main
                     style={{
                         position: "fixed",
-                        top: "50px",
+                        top: "44px",
                         left: "0",
                         right: "0",
                         bottom: "0",
                         display: "flex",
-                        width: "100vw",
                         overflow: "hidden",
-                        height: "calc(100vh - 50px)"
+                        height: "calc(100vh - 44px)"
                     }}
                 >
                     {activeDropdownMenu && <LeftPanel/>}
@@ -102,12 +106,12 @@ function App() {
                                     config={propertyFormSchema['VEHICLE_MODEL']}
                                     onClose={() => setActiveSubmenu(null)}
                                 />
-                            ) : (
+                            ) : menuCodeToStoreMap[activeSubmenu.menuCode] ? (
                                 <PropertyPanel
                                     activeSubmenu={activeSubmenu}
                                     onClose={() => setActiveSubmenu(null)}
                                 />
-                            )
+                            ) : null
                         )}
                     </div>
                 </main>

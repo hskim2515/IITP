@@ -1,0 +1,248 @@
+/* ── Bottom Sheet Overlay ─────────────────────────────────────── */
+.overlay {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    animation: fadeUp 0.2s ease;
+    pointer-events: none;
+}
+
+@keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Panel ────────────────────────────────────────────────────── */
+.panel {
+    pointer-events: all;
+    background: rgba(8, 10, 20, 0.96);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    border-left: 1px solid rgba(255, 255, 255, 0.06);
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -8px 36px rgba(0, 0, 0, 0.6), 0 -1px 0 rgba(255,255,255,0.04);
+    display: flex;
+    flex-direction: column;
+}
+
+/* ── Drag Handle ──────────────────────────────────────────────── */
+.handle {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 7px 0 3px;
+    cursor: ns-resize;
+    flex-shrink: 0;
+}
+
+.handleBar {
+    width: 40px;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.14);
+    border-radius: 2px;
+    transition: background 0.15s;
+}
+
+.handle:hover .handleBar {
+    background: rgba(255, 255, 255, 0.28);
+}
+
+/* ── Header ───────────────────────────────────────────────────── */
+.header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    flex-shrink: 0;
+    min-height: 40px;
+}
+
+.titleWrap {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-shrink: 0;
+}
+
+.titleDot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #4169E1;
+    box-shadow: 0 0 7px rgba(65, 105, 225, 0.7);
+    flex-shrink: 0;
+}
+
+.title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #ccc;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+}
+
+/* ── Action Group (save / revert / history) ───────────────────── */
+.actionGroup {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 10px;
+    flex-wrap: nowrap;
+}
+
+.divider {
+    width: 1px;
+    height: 14px;
+    background: rgba(255, 255, 255, 0.1);
+    flex-shrink: 0;
+    margin: 0 3px;
+}
+
+/* ── Controls (size + close) ──────────────────────────────────── */
+.controls {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+/* ── Button Base ──────────────────────────────────────────────── */
+.btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 500;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    white-space: nowrap;
+    height: 24px;
+    padding: 0 9px;
+    border: 1px solid transparent;
+}
+
+.saveBtn {
+    composes: btn;
+    background: rgba(65, 105, 225, 0.2);
+    border-color: rgba(65, 105, 225, 0.42);
+    color: #7aa2ff;
+}
+
+.saveBtn:hover {
+    background: rgba(65, 105, 225, 0.35);
+    border-color: rgba(65, 105, 225, 0.68);
+}
+
+.revertBtn {
+    composes: btn;
+    background: rgba(255, 165, 0, 0.12);
+    border-color: rgba(255, 165, 0, 0.3);
+    color: #fbbf24;
+}
+
+.revertBtn:hover {
+    background: rgba(255, 165, 0, 0.22);
+    border-color: rgba(255, 165, 0, 0.5);
+}
+
+.historyBtn {
+    composes: btn;
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #999;
+}
+
+.historyBtn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ccc;
+}
+
+.debugBtn {
+    composes: btn;
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.07);
+    color: #555;
+    font-size: 10px;
+}
+
+.debugBtn:hover {
+    color: #888;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+/* ── Icon Buttons (size / close) ──────────────────────────────── */
+.iconBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 5px;
+    cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.04);
+    color: #777;
+    font-size: 11px;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.iconBtn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #ccc;
+    border-color: rgba(255, 255, 255, 0.16);
+}
+
+.closeIconBtn {
+    composes: iconBtn;
+}
+
+.closeIconBtn:hover {
+    background: rgba(239, 68, 68, 0.18);
+    border-color: rgba(239, 68, 68, 0.35);
+    color: #fca5a5;
+}
+
+/* ── Body ─────────────────────────────────────────────────────── */
+.body {
+    overflow-y: auto;
+    max-height: 300px;
+    transition: max-height 0.25s ease;
+    width: 100%;
+}
+
+.bodyFull {
+    overflow-y: auto;
+    max-height: 75vh;
+    transition: max-height 0.25s ease;
+    width: 100%;
+}
+
+.bodyMini {
+    overflow-y: hidden;
+    max-height: 0;
+    transition: max-height 0.25s ease;
+    width: 100%;
+}
+
+/* Body scrollbar */
+.body::-webkit-scrollbar,
+.bodyFull::-webkit-scrollbar { width: 4px; }
+.body::-webkit-scrollbar-track,
+.bodyFull::-webkit-scrollbar-track { background: transparent; }
+.body::-webkit-scrollbar-thumb,
+.bodyFull::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+/* ── Grid container inside body ───────────────────────────────── */
+.gridWrap {
+    width: 99%;
+    padding: 6px 10px;
+}
