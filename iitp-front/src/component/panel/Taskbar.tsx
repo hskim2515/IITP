@@ -1,5 +1,6 @@
 import React from 'react';
 import { useWorkflowStore } from "@stores/useWorkflowStore";
+import styles from "@css/Taskbar.module.css";
 
 const Taskbar = () => {
     const { sessions, activeMenuCode, openSession, minimizeSession, closeSession } = useWorkflowStore();
@@ -7,19 +8,22 @@ const Taskbar = () => {
     if (sessions.length === 0) return null;
 
     return (
-        <div className="edit-taskbar">
+        <div className={styles['edit-taskbar']}>
             {sessions.map((session) => (
                 <div
                     key={session.menuCode}
-                    className={`task-chip ${activeMenuCode === session.menuCode ? 'active' : ''}`}
-                    onClick={() => openSession(session)}
+                    className={`${styles['task-chip']} ${activeMenuCode === session.menuCode ? styles.active : ''}`}
+                    onClick={() => openSession(session.menu)}
                 >
-                    <span className="chip-dot"/>
-                    <span className="chip-label">{session.nameKor}</span>
-                    <span className="chip-close" onClick={(e) => {
-                        e.stopPropagation();
-                        closeSession(session.menuCode);
-                    }}>✕</span>
+                    <span className={styles['chip-dot']}/>
+                    <span className={styles['chip-label']}>{session.nameKor}</span>
+                    <span
+                        className={styles['chip-close']}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            closeSession(session.menuCode);
+                        }}
+                    >✕</span>
                 </div>
             ))}
         </div>

@@ -114,7 +114,7 @@ function App() {
                                     config={propertyFormSchema['VEHICLE_MODEL']}
                                     onClose={() => setActiveSubmenu(null)}
                                 />
-                            ) : menuCodeToStoreMap[activeSubmenu.menuCode] ? (
+                            ) : menuCodeToStoreMap[activeSession.menuCode] ? (
                                 <PropertyPanel
                                     activeSubmenu={activeSession.menu}  // ← 바로 사용
                                     onClose={() => minimizeSession(activeSession.menuCode)}
