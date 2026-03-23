@@ -1,12 +1,19 @@
+/* LeftPanel: flex child (지도 이벤트 충돌 방지) */
 .sidebar {
     --sidebar-width: 0;
     flex: 0 0 var(--sidebar-width);
     width: var(--sidebar-width);
     transition: flex-basis 160ms ease, width 160ms ease;
 
-    background-color: rgba(0, 0, 0, 0.75);
+    background-color: rgba(9, 10, 18, 0.90);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border-right: 1px solid rgba(255, 255, 255, 0.07);
+    box-shadow: 4px 0 20px rgba(0, 0, 0, 0.45);
+
     color: #fff;
-    padding: 20px;
+    padding: 10px;
+    box-sizing: border-box;
 
     display: flex;
     flex-direction: column;
@@ -15,11 +22,26 @@
     min-width: 0;
     overflow: hidden;
     z-index: 998;
+    flex-shrink: 0;
 }
 
 .header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.header h3 {
+    font-size: 12px;
+    font-weight: 600;
+    color: #aaa;
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }

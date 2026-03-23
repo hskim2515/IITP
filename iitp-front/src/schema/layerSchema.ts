@@ -14,6 +14,8 @@ export const localLayerSchema: Record<string, LocalLayerFieldSchema> = {
     midnight:   { type: 'radio', url: `http://api.vworld.kr/req/wmts/1.0.0/${API_KEY}/midnight/{z}/{y}/{x}.png` },
     heatmap:    { type: 'checkbox' },
     trip:       { type: 'checkbox' },
+    speed:      { type: 'checkbox' },
+    traffic:    { type: 'checkbox' },
     od:         { type: 'checkbox' },
     facility1:  { type: 'checkbox' },
     facility2:  { type: 'checkbox' },

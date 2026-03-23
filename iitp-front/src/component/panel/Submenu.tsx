@@ -8,6 +8,7 @@ import {useWorkflowStore} from "@stores/useWorkflowStore";
 const Submenu = () => {
   const {
     activeDropdownMenu,
+    activeSubmenu,
     setActiveSubmenu,
   } = useMenuStore();
 
@@ -37,7 +38,7 @@ const Submenu = () => {
             <p
                 key={item.menuId}
                 onClick={() => handleClickSubmenu(item)}
-                className={styles['item']}
+                className={`${styles['item']} ${activeSubmenu?.menuId === item.menuId ? styles['itemActive'] : ''}`}
             >
               {item.nameKor}
             </p>

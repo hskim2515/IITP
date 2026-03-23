@@ -1,0 +1,13 @@
+.field {
+    color: white;
+    display: block;
+    margin: 4px 0;
+}
+
+.button-setting {
+    background: none;
+    border: none;
+    cursor: pointer;
+    align-items: center;
+    padding: 0 0 0 10px;
+}

@@ -6,6 +6,15 @@ import { fromLonLat } from "ol/proj";
 import { Cartographic, Ellipsoid } from "cesium";
 import * as Cesium from "cesium";
 
+const TYPE_COLORS: Record<string, string> = {
+    'CAR':     'rgb(100, 160, 255)',
+    'TAXI':    'rgb(255, 220, 0)',
+    'BUS':     'rgb(255, 90, 90)',
+    'TRUCK':   'rgb(180, 120, 60)',
+    'MOTO':    'rgb(80, 220, 130)',
+    'default': 'rgb(251, 188, 96)',
+};
+
 export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private source: VectorSource;
     private features: Feature<Point>[] = [];
@@ -14,18 +23,22 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private animationId: number | null = null;
     private lastUpdateTime: number = performance.now();
     private positions: number[][] = [];
+    private vehicleType: string;
 
-    constructor(vehicleRoute: any[], vectorSource, speed: number, running: boolean) {
+    constructor(vehicleRoute: any[], vectorSource, speed: number, running: boolean, vehicleType: string = 'default') {
+        const color = TYPE_COLORS[vehicleType] ?? TYPE_COLORS['default'];
+        const radius = (vehicleType === 'BUS' || vehicleType === 'TRUCK') ? 6 : 4;
 
         super({
             source: vectorSource,
             visible: false,
             style: {
-                "circle-radius": 4,
-                "circle-fill-color": "rgb(251,188,96)",
+                "circle-radius": radius,
+                "circle-fill-color": color,
             },
             zIndex: 110,
         });
+        this.vehicleType = vehicleType;
 
         this.source = vectorSource;
         this.speed = speed;
@@ -37,7 +50,7 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
         // 초기 위치 설정
         if (vehicleRoute && vehicleRoute.length > 0) {
             const initialPositions = vehicleRoute.map(route => route[0]); // 각 vehicle의 첫 번째 위치
-            this.setLatestPositions(initialPositions);
+            this.setLatestPositions({positions: initialPositions});
         }
 
         if (running) {
@@ -92,6 +105,7 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
             });
 
             pointFeature.setId(`vehicle${idx}`);
+            pointFeature.set("vehicleType", this.vehicleType);
             pointFeature.set("initialCoordinate", coord);
 
             this.source.addFeature(pointFeature);
@@ -99,7 +113,7 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
         });
     }
 
-    setLatestPositions(latestPositions: number[][]) {
+    setLatestPositions(latestPositions) {
         const handleUndefined = (pos: number[] | undefined, idx: number): number[] | null => {
             if (!pos) {
                 const prevPos = this.positions[idx];
@@ -111,7 +125,7 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
             return pos;
         };
 
-        const converted = latestPositions.map((pos, idx) => {
+        const converted = latestPositions.positions.map((pos, idx) => {
             try {
                 const validPos = handleUndefined(pos, idx);
                 return validPos ? this.convertToEPSG3857(validPos) : null;

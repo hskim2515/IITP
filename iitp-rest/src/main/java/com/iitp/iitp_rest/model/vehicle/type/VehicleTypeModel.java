@@ -21,5 +21,14 @@ public class VehicleTypeModel {
     private String fileName;
     private String filePath;
     private String length;
+
+    @Column(name = "vehicle_type_id")
+    private Long vehicleTypeId;
+
+    @Column(name = "correction_hpr", columnDefinition = "TEXT")
+    private String correctionHpr;
+
+    @Column(name = "z_offset")
+    private Double zOffset;
 }
 

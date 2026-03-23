@@ -159,7 +159,7 @@ export default class ParabolicArrowPrimitive {
         this.show = visible;
     }
 
-    setLatestPositions(latestPositions: any) {
+    setLatestPositions(latestPositions) {
         this.latestPositions = latestPositions;
     }
     setOdData(odData: any) {

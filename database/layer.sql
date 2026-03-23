@@ -39,6 +39,8 @@ INSERT INTO layer (id, group_id, key, label, basic, auth, form_type, url) VALUES
 INSERT INTO layer (id, group_id, key, label, basic, auth) VALUES
                                                               (5, 2, 'heatmap', '히트맵 분석',        false, 0),
                                                               (6, 2, 'trip',    '트립플로우 분석',    false, 0),
+                                                              (23, 2, 'speed',   '속도 히트맵',    false, 0),
+                                                              (24, 2, 'traffic', '교통량 히트맵', false, 0),
                                                               (10, 2, 'od',    'OD 분석',    false, 0),
                                                               (21, 2, 'vehicle',    '차량 분석 결과',    true, 0);
 

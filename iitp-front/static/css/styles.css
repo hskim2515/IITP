@@ -4,53 +4,114 @@ body {
     -moz-user-select: none;
     -ms-user-select: none;
 }
+
+/* ── Dark Form Inputs (DynamicInput global overrides) ─────────── */
+.popup-overlay input,
+.popup-overlay select,
+.popup-overlay textarea {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 5px;
+    color: #eee;
+    font-size: 12px;
+    padding: 5px 10px;
+    outline: none;
+    transition: border-color 0.15s, background 0.15s;
+    height: 30px;
+    box-sizing: border-box;
+    width: 100%;
+}
+
+.popup-overlay input:focus,
+.popup-overlay select:focus {
+    border-color: rgba(65, 105, 225, 0.6);
+    background: rgba(65, 105, 225, 0.06);
+}
+
+.popup-overlay input:read-only,
+.popup-overlay select:disabled {
+    color: #666;
+    cursor: default;
+    opacity: 0.7;
+}
+
+.popup-overlay select option {
+    background: #1a1c2a;
+    color: #eee;
+}
+
+/* formOverlay (SimpleForm/TableForm) 동일 적용 */
+[class*="formOverlay"] input,
+[class*="formOverlay"] select,
+[class*="formOverlay"] textarea,
+[class*="formPanel"] input,
+[class*="formPanel"] select {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 5px;
+    color: #eee;
+    font-size: 12px;
+    padding: 5px 10px;
+    outline: none;
+    transition: border-color 0.15s;
+    height: 30px;
+    box-sizing: border-box;
+    width: 100%;
+}
+
+[class*="formPanel"] input:focus,
+[class*="formPanel"] select:focus {
+    border-color: rgba(65, 105, 225, 0.6);
+    background: rgba(65, 105, 225, 0.06);
+}
+
+[class*="formPanel"] input:read-only,
+[class*="formPanel"] select:disabled {
+    color: #666;
+    opacity: 0.65;
+}
+
+[class*="formPanel"] select option {
+    background: #1a1c2a;
+    color: #eee;
+}
 .popup-overlay {
     display: flex;
     position: fixed;
-    bottom: 0;
+    top: 0;
     left: 0;
     width: 100%;
-    align-items: stretch;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    align-items: center;
     justify-content: center;
     z-index: 998;
-    background-color: transparent;
 }
 
-.popup-overlay-table {
-    position: absolute;
-    bottom: 35px;
-    width: 100%;
-    z-index: 1000;
-}
+/* popup-overlay-table / popup-container-table → PropertyPanel.module.css 로 이전 */
 
 .popup-container {
-    background-color: rgba(0, 0, 0, 0.75);
-    border-radius: 8px;
+    background-color: rgba(9, 10, 18, 0.92);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 10px;
     padding: 16px;
-    width: 100%;        /* 80% → 100% */
-    box-shadow: 0px 2px 10px rgba(0, 0, 0, 0.3);
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    box-sizing: border-box;
-}
-
-.popup-container-table {
-    background-color: rgba(0, 0, 0, 0.75);
-    border-radius: 8px;
-    padding: 16px;
-    width: 100%;
-    height: 100%;
-    box-shadow: 0px 2px 10px rgba(0, 0, 0, 0.3);
+    width: 80%;
+    max-width: 500px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
 }
 
 .popup-header {
     display: flex;
     align-items: center;
-    padding: 8px 16px;
-    color: #fff;
-    font-size: 18px;
-    font-weight: bold;
+    padding: 6px 10px;
+    color: #eee;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    margin-bottom: 8px;
 }
 
 /* 제목 텍스트 */
@@ -65,14 +126,22 @@ body {
 }
 
 .close-btn {
-    /*margin-left: auto;*/
-    float: right;
-    background: transparent;
-    border: none;
-    font-size: 20px;
-    color: #fff;
+    margin-left: auto;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    font-size: 16px;
+    color: #888;
     cursor: pointer;
-    padding: 4px 8px;
+    padding: 3px 8px;
+    transition: background 0.15s, color 0.15s;
+    line-height: 1;
+}
+
+.close-btn:hover {
+    background: rgba(239, 68, 68, 0.15);
+    border-color: rgba(239, 68, 68, 0.3);
+    color: #fff;
 }
 
 .expand-btn {
@@ -84,20 +153,6 @@ body {
     color: #fff;
     cursor: pointer;
     padding: 4px 8px;
-}
-
-.resize-handle {
-    transition: background-color 0.2s;
-}
-
-.resize-handle:hover {
-    background-color: rgba(0, 122, 255, 0.6); /* 드래그 가능 구역 표시 */
-}
-
-/* 기존 popup-overlay의 height: auto나 고정 px가 있다면 제거하거나 state가 우선되게 합니다 */
-.popup-overlay-table {
-    /* 기존 스타일 유지하되 height는 인라인 스타일이 덮어씀 */
-    min-height: 150px;
 }
 
 .collapse-btn {
@@ -139,57 +194,50 @@ body {
     align-items: center;
 }
 .popup-header-actions {
-    margin-left: 30px;
+    margin-left: 16px;
+    display: flex;
+    gap: 5px;
 }
 
 /* 액션 버튼 공통 스타일 */
 .popup-header-actions button {
-    margin-left: 5px;
-    padding: 6px 12px;
-    border: none;
-    border-radius: 4px;
+    padding: 4px 10px;
+    border: 1px solid transparent;
+    border-radius: 5px;
     cursor: pointer;
-    font-size: 14px;
-    background-color: #4CAF50;
+    font-size: 12px;
+    font-weight: 500;
     color: white;
+    transition: opacity 0.15s;
 }
 
 .popup-header-actions button:hover {
-    background-color: #45a049;
+    opacity: 0.85;
 }
 
 .popup-header-actions .edit-btn {
-    background-color: #007bff;
-}
-
-.popup-header-actions .edit-btn:hover {
-    background-color: #0056b3;
+    background-color: rgba(0, 123, 255, 0.75);
+    border-color: rgba(0, 123, 255, 0.4);
 }
 
 .popup-header-actions .add-btn {
-    background-color: #28a745;
-}
-
-.popup-header-actions .add-btn:hover {
-    background-color: #218838;
+    background-color: rgba(40, 167, 69, 0.75);
+    border-color: rgba(40, 167, 69, 0.4);
 }
 
 .popup-header-actions .delete-btn {
-    background-color: #dc3545;
-}
-
-.popup-header-actions .delete-btn:hover {
-    background-color: #c82333;
+    background-color: rgba(220, 53, 69, 0.75);
+    border-color: rgba(220, 53, 69, 0.4);
 }
 .popup-actions button:hover {
     background-color: #666;
 }
 
 .popup-body {
+    /*margin-bottom: 10px;*/
+    max-height: 300px;
     overflow-y: auto;
     width: 100%;
-    flex: 1;
-    min-height: 0;
 }
 
 .popup-body-full {
@@ -203,6 +251,11 @@ body {
     /*margin-bottom: 10px;*/
     max-height: 0;
     overflow-y: auto;
+    width: 100%;
+}
+
+.popup-extra {
+    padding: 0 8px 8px;
     width: 100%;
 }
 
@@ -482,9 +535,7 @@ body {
     cursor: pointer;
 }
 
-.close-btn:hover {
-    color: #fff;
-}
+/* close-btn:hover is defined above */
 
 .input-table {
     width: 100%;
@@ -669,75 +720,3 @@ body {
     background-color: rgba(255, 255, 255, 0.2) !important; /* 👈 배경 흰색 + 투명도 0.3 */
 }
 
-/* Taskbar.css */
-.edit-taskbar {
-    position: fixed;
-    bottom: 0px;
-    left: 0;
-    width: 100%;
-    height: 45px;
-    background: rgba(20, 20, 20, 0.95);
-    display: flex;
-    align-items: center;
-    padding: 0 15px;
-    gap: 10px;
-    z-index: 1100;
-    border-top: 1px solid #444;
-    box-shadow: 0 -2px 10px rgba(0,0,0,0.3);
-}
-.task-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 4px 10px 4px 12px;
-    border-radius: 6px;
-    border: 0.5px solid rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.04);
-    color: rgba(255, 255, 255, 0.45);
-    font-size: 12px;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s, color 0.15s;
-    white-space: nowrap;
-}
-
-.task-chip:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.2);
-    color: rgba(255, 255, 255, 0.75);
-}
-
-.task-chip.active {
-    background: rgba(0, 122, 255, 0.18);
-    border-color: rgba(0, 122, 255, 0.5);
-    color: #60aaff;
-}
-
-.chip-dot {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.25);
-    flex-shrink: 0;
-    transition: background 0.15s;
-}
-
-.task-chip.active .chip-dot {
-    background: #60aaff;
-}
-
-.chip-close {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 14px;
-    height: 14px;
-    border-radius: 3px;
-    opacity: 0.5;
-    font-size: 10px;
-    transition: opacity 0.15s, background 0.15s;
-}
-
-.chip-close:hover {
-    opacity: 1;
-    background: rgba(255, 255, 255, 0.1);
-}

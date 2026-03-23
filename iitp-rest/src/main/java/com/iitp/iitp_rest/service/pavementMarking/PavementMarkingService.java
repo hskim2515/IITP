@@ -79,6 +79,9 @@ public class PavementMarkingService {
         List<PavementMarkingData> markingResponses = new ArrayList<>();
 
         try (InputStream is = getClass().getClassLoader().getResourceAsStream(versionId + "/pavementMarking.xml")) {
+            if (is == null) {
+                return markingResponses;
+            }
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document doc = builder.parse(is);

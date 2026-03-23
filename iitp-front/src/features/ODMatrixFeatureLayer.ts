@@ -72,7 +72,7 @@ export default class ODMatrixFeatureLayer extends WebGLVectorLayer {
 
         return [leftFrom, leftTo, rightTo, rightFrom, leftFrom];
     }
-    public setLatestPositions(latestPositions: Array<number[] | undefined>) {
+    public setLatestPositions(latestPositions) {
 
     }
     private createResources() {

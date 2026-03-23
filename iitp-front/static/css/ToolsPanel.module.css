@@ -1,0 +1,305 @@
+/* ── Right Toolbar ────────────────────────────────────────────── */
+.toolbar {
+    position: fixed;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 999;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: 6px 4px;
+    background: rgba(8, 10, 20, 0.92);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-right: none;
+    border-radius: 10px 0 0 10px;
+    box-shadow: -4px 0 20px rgba(0, 0, 0, 0.45);
+}
+
+.toolBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 7px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #666;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    padding: 0;
+    flex-shrink: 0;
+}
+
+.toolBtn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #bbb;
+}
+
+.toolBtnActive {
+    composes: toolBtn;
+    background: rgba(65, 105, 225, 0.2);
+    border-color: rgba(65, 105, 225, 0.4);
+    color: #7aa2ff;
+}
+
+.toolDivider {
+    width: 20px;
+    height: 1px;
+    background: rgba(255, 255, 255, 0.08);
+    margin: 2px 0;
+}
+
+/* ── Popup Panel ──────────────────────────────────────────────── */
+.panel {
+    position: fixed;
+    right: 44px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 260px;
+    max-height: calc(100vh - 100px);
+    z-index: 998;
+    background: rgba(8, 10, 20, 0.95);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    border-radius: 10px;
+    box-shadow: -6px 0 28px rgba(0, 0, 0, 0.55);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: slideIn 0.18s ease;
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateY(-50%) translateX(10px); }
+    to   { opacity: 1; transform: translateY(-50%) translateX(0); }
+}
+
+/* ── Panel Header / Tabs ──────────────────────────────────────── */
+.panelHeader {
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    flex-shrink: 0;
+    gap: 2px;
+    min-height: 38px;
+}
+
+.tab {
+    padding: 8px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    color: #666;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+    margin-bottom: -1px;
+}
+
+.tab:hover {
+    color: #aaa;
+}
+
+.tabActive {
+    composes: tab;
+    color: #7aa2ff;
+    border-bottom-color: #7aa2ff;
+}
+
+/* ── Panel Body ───────────────────────────────────────────────── */
+.panelBody {
+    padding: 12px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.panelBody::-webkit-scrollbar { width: 3px; }
+.panelBody::-webkit-scrollbar-track { background: transparent; }
+.panelBody::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+
+/* ── Layer Items (BaseMap radio) ──────────────────────────────── */
+.layerItem {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.12s;
+    font-size: 12px;
+    color: #aaa;
+    margin-bottom: 2px;
+}
+
+.layerItem:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: #ddd;
+}
+
+.layerItem input[type="radio"],
+.layerItem input[type="checkbox"] {
+    accent-color: #7aa2ff;
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+/* ── Facility Section ─────────────────────────────────────────── */
+.sectionLabel {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #7aa2ff;
+    letter-spacing: 0.3px;
+    cursor: pointer;
+    border-radius: 5px;
+    transition: background 0.12s;
+    user-select: none;
+}
+
+.sectionLabel:hover {
+    background: rgba(122, 162, 255, 0.06);
+}
+
+.sectionToggle {
+    font-size: 9px;
+    color: #555;
+}
+
+.childItem {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px 5px 24px;
+    border-radius: 5px;
+    font-size: 11px;
+    color: #888;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    margin-bottom: 1px;
+}
+
+.childItem:hover {
+    background: rgba(255, 255, 255, 0.04);
+    color: #bbb;
+}
+
+.childItem input[type="checkbox"] {
+    accent-color: #7aa2ff;
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+/* ── Measure Buttons ──────────────────────────────────────────── */
+.measureBtn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 12px;
+    border-radius: 7px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    background: rgba(255, 255, 255, 0.03);
+    color: #aaa;
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    margin-bottom: 6px;
+    text-align: left;
+}
+
+.measureBtn:hover {
+    background: rgba(255, 255, 255, 0.07);
+    color: #ddd;
+}
+
+.measureBtnActive {
+    composes: measureBtn;
+    background: rgba(65, 105, 225, 0.18);
+    border-color: rgba(65, 105, 225, 0.4);
+    color: #7aa2ff;
+}
+
+.measureIcon {
+    font-size: 13px;
+    flex-shrink: 0;
+}
+
+/* ── Setting Items ────────────────────────────────────────────── */
+.settingRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    gap: 10px;
+}
+
+.settingRow:last-child {
+    border-bottom: none;
+}
+
+.settingLabel {
+    font-size: 11px;
+    color: #888;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.settingValue {
+    font-size: 11px;
+    color: #ccc;
+    font-variant-numeric: tabular-nums;
+}
+
+.settingRange {
+    flex: 1;
+    accent-color: #7aa2ff;
+    height: 3px;
+    cursor: pointer;
+}
+
+/* ── Section Divider ──────────────────────────────────────────── */
+.sectionDivider {
+    height: 1px;
+    background: rgba(255, 255, 255, 0.06);
+    margin: 8px 0;
+}
+
+/* ── Color Bar Row ────────────────────────────────────────────── */
+.colorBarRow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 0;
+}
+
+.colorBarItem {
+    width: 22px;
+    cursor: pointer;
+    border-radius: 3px;
+    overflow: hidden;
+    border: 1px solid transparent;
+    transition: border-color 0.15s, transform 0.15s;
+}
+
+.colorBarItem:hover {
+    border-color: rgba(122, 162, 255, 0.5);
+    transform: scale(1.1);
+}

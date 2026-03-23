@@ -1,8 +1,11 @@
 import HeatBarLayer from "@primitives/HeatBarLayer";
 import ParabolicArrowPrimitive from "@primitives/ParabolicArrowPrimitive";
-import FieldPrimitive from "@primitives/FieldPrimitive";
 import TailPrimitive from "@primitives/TailPrimitive";
-import DomePrimitive from "@primitives/DomePrimitive";
+import VehiclePrimitive from "@primitives/VehiclePrimitive";
+import PointSpritePrimitive from "@primitives/PointSpritePrimitive";
+import SpeedHeatmapLayer from "@primitives/SpeedHeatmapLayer";
+import TrafficHeatmapCesiumLayer from "@primitives/TrafficHeatmapCesiumLayer";
+import SpeedHeatmapOlLayer from "@features/SpeedHeatmapOlLayer";
 import PrimitiveLayerManager from "./PrimitiveLayerManager";
 import BaseMapLayerManager from "./BaseMapLayerManager";
 import * as Cesium from "cesium";
@@ -14,8 +17,10 @@ import BaseLayer from "ol/layer/Base";
 import ODMatrixFeatureLayer from "@features/ODMatrixFeatureLayer";
 import VehicleFeatureLayer from "@features/VehicleFeatureLayer";
 import TrailFeatureLayer from "@features/TrailFeatureLayer";
+import TrafficHeatmapFeatureLayer from "@features/TrafficHeatmapFeatureLayer";
 import DataSourceLayerManager from "@managers/DataSourceLayerManager";
 import VehicleDataSourceLayer from "../datasource/VehicleDataSourceLayer";
+import VectorSource from "ol/source/Vector";
 
 type LayerItem = {
     id: number;
@@ -149,60 +154,105 @@ export class LayerManager {
         const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
         if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
 
-        this.primitiveLayerManager.add(new FieldPrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning), groupName, "trip");
-        const primitiveCollections = this.primitiveLayerManager.add(new TailPrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning), groupName, "trip");
+        // FieldPrimitive(노란 점) → PointSpritePrimitive(통합, 용량 기반 재할당)
+        this.primitiveLayerManager.add(
+            new PointSpritePrimitive(this.cesiumViewer.scene.context, { color: [1.0, 1.0, 0.0], alpha: 0.7, pointSize: 9 }),
+            groupName, "trip"
+        );
+        this.primitiveLayerManager.add(new TailPrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning), groupName, "trip");
+        // 속도 히트맵 레이어: Cesium 3D
+        const primitiveCollections = this.primitiveLayerManager.add(new SpeedHeatmapLayer(this.cesiumViewer), groupName, "speed");
         const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
         if (!managedCollection.includes(primitiveCollections)) {
             managedCollection.push(primitiveCollections);
         }
-
-        // vehicleRoute.forEach(position => {
-        //     const flatArray = position.flatMap(({ x, y, z }) => [x, y, z]);
-        //     const coords = Cesium.Cartesian3.fromDegreesArrayHeights(flatArray);
-        //     this.primitiveLayerManager.add(new FieldPrimitive(coords, this.viewer.scene.context, speedFactor, isRunning), "layer", "trip");
-        //     this.primitiveLayerManager.add(new TailPrimitive(coords, this.viewer.scene.context, speedFactor, isRunning), "layer", "trip");
-        //     const group = this.primitiveLayerManager.add(new DomePrimitive(coords, this.viewer.scene.context, speedFactor, isRunning), "layer", "default");
-        //     this.layerGroups.set("layer", group);
-        // });
 
         const tripLayer = new TrailFeatureLayer(vehicleRoute, speedFactor, isRunning)
         const layers = this.vectorLayerManager.add(tripLayer, groupName, "trip", false);
-
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
-
         layers.forEach((layer: BaseLayer) => {
-            if (!vectorLayers.includes(layer)) {
-                vectorLayers.push(layer);
-            }
-        })
+            if (!vectorLayers.includes(layer)) vectorLayers.push(layer);
+        });
 
+        // 속도 히트맵 OL 2D (ImageLayer → any 캐스트)
+        const speedOlLayer = new SpeedHeatmapOlLayer();
+        const speedOlLayers = this.vectorLayerManager.add(speedOlLayer as any, groupName, "speed", false);
+        speedOlLayers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) vectorLayers.push(layer);
+        });
     }
 
     removeTripLayer(): void {
-        this._removeLayers("analyze", "trip", "default"); // trip + default
+        this._removeLayers("analyze", "trip", "speed", "traffic", "default"); // trip + speed + traffic + default
     }
 
-    addVehicleLayer(vehicleRoute, vectorSource, speedFactor, isRunning, czmlSource) {
+    addTrafficLayer() {
+        const groupName = "analyze";
+        const layerName = "traffic";
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        // OL 2D
+        const trafficOl = new TrafficHeatmapFeatureLayer();
+        const olLayers  = this.vectorLayerManager.add(trafficOl, groupName, layerName, false);
+        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+        olLayers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) vectorLayers.push(layer);
+        });
+
+        // Cesium 3D (viewer 전달 → WallGeometry 빌드에 scene 필요)
+        const trafficCesium = new TrafficHeatmapCesiumLayer(this.cesiumViewer);
+        this.primitiveLayerManager.add(trafficCesium, groupName, layerName, false);
+    }
+
+    addVehicleLayer(
+        vehicleRoute,
+        vectorSource,
+        speedFactor,
+        isRunning,
+        glbUrl: string = 'public/model_12.glb',
+        correctionHpr?: Cesium.HeadingPitchRoll,
+        vehicleType: string = 'default',
+        zOffset: number = 0
+    ) {
         const groupName = "analyze"
         const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
 
-        if (czmlSource) {
-            const vehicleDataSourceLayer = new VehicleDataSourceLayer(this.cesiumViewer, czmlSource);
-            const dataSourceCollection = this.dataSourceLayerManager.add(vehicleDataSourceLayer, groupName, "vehicle", true);
-            const managedCollection = (layerGroup["dataSourceLayerManager"] ||= []);
-            if (!managedCollection.includes(dataSourceCollection)) {
-                managedCollection.push(dataSourceCollection);
-            }
-        }
-
-        const primitiveCollections = this.primitiveLayerManager.add(new DomePrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning), groupName, "vehicle", true)
+        const VEHICLE_TYPE_COLORS: Record<string, [number, number, number]> = {
+            'CAR':   [0.39, 0.63, 1.0],
+            'TAXI':  [1.0,  0.86, 0.0],
+            'BUS':   [1.0,  0.35, 0.35],
+            'TRUCK': [0.71, 0.47, 0.24],
+            'MOTO':  [0.31, 0.86, 0.51],
+        };
+        // 타입별 목표 차량 크기(m): GLB 모델이 이 크기로 자동 스케일됨
+        const VEHICLE_TARGET_SIZE: Record<string, number> = {
+            'CAR':   4,
+            'TAXI':  4,
+            'BUS':   10,
+            'TRUCK': 8,
+            'MOTO':  2,
+        };
+        const targetSizeM = VEHICLE_TARGET_SIZE[vehicleType] ?? 4;
+        const primitive = new VehiclePrimitive(vehicleRoute, this.cesiumViewer, glbUrl, speedFactor, isRunning, correctionHpr, targetSizeM, zOffset);
+        primitive.baseColor = VEHICLE_TYPE_COLORS[vehicleType] ?? [1, 1, 1];
+        (primitive as any).vehicleType = vehicleType;
+        this.primitiveLayerManager.add(primitive, groupName, "vehicle", true);
+        // DomePrimitive(주황 점) → PointSpritePrimitive(통합, 용량 기반 재할당)
+        // const primitiveCollections = this.primitiveLayerManager.add(
+        //     new PointSpritePrimitive(this.cesiumViewer.scene.context, { color: [1.0, 0.5, 0.0], alpha: 0.5, pointSize: 10, zOffset: 5 }),
+        //     groupName, "vehicle", true
+        // )
         const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
-        if (!managedCollection.includes(primitiveCollections)) {
-            managedCollection.push(primitiveCollections);
-        }
+        // if (!managedCollection.includes(primitiveCollections)) {
+        //     managedCollection.push(primitiveCollections);
+        // }
 
         if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
-        const vehicleLayer = new VehicleFeatureLayer(vehicleRoute, vectorSource, speedFactor, isRunning);
+        // Each vehicle type gets its own VectorSource to prevent color/position conflicts
+        const vehicleVectorSource = new VectorSource();
+        const vehicleLayer = new VehicleFeatureLayer(vehicleRoute, vehicleVectorSource, speedFactor, isRunning, vehicleType);
+        console.log(`[LayerManager] addVehicleLayer type=${vehicleType} color=${vehicleLayer.getStyle?.()}`);
         const layers = this.vectorLayerManager.add(vehicleLayer, groupName, "vehicle", true);
 
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
@@ -217,6 +267,15 @@ export class LayerManager {
 
     removeVehicleLayer(): void {
         this._removeLayers("analyze", "vehicle");
+    }
+
+    /** 실행 중인 VehiclePrimitive의 방향 보정값을 즉시 갱신합니다. */
+    updateVehicleCorrection(vehicleType: string, hpr: Cesium.HeadingPitchRoll): void {
+        this.primitiveLayerManager.getAllByGroup("analyze").forEach((p: any) => {
+            if (p.vehicleType === vehicleType && typeof p.setCorrectionHpr === "function") {
+                p.setCorrectionHpr(hpr);
+            }
+        });
     }
 
     addBaseMapLayer(schema: any[]) {
