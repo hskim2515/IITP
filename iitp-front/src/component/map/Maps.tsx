@@ -14,6 +14,7 @@ import useDefaultMoveMouse from "@hooks/sync/move/useDefaultMoveMouse";
 import styles from "@css/Maps.module.css"
 import Divider from "@component/map/Divider";
 import ToolsPanel from "@component/tool/ToolsPanel";
+import { useNetworkDraw } from "@hooks/useNetworkDraw";
 
 const Maps = () => {
 
@@ -37,6 +38,7 @@ const Maps = () => {
     useLayer();
     useDefaultSelect();
     useDefaultMoveMouse();
+    useNetworkDraw();
 
     const getContainerWidth = useCallback(() => {
         return containerRef.current?.clientWidth ?? 0;

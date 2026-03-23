@@ -1,15 +1,19 @@
 import React, { useState } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faRuler, faLayerGroup, faCog } from '@fortawesome/free-solid-svg-icons';
+import { faRuler, faLayerGroup, faCog, faRoad, faFileArrowDown } from '@fortawesome/free-solid-svg-icons';
 import LayerPopup from "../popup/LayerPopup";
 import MeasurePopup from "../popup/MeasurePopup";
 import SettingPopup from "../popup/SettingPopup";
+import NetworkDrawPanel from "./NetworkDrawPanel";
+import DataIOPanel from "./DataIOPanel";
 import styles from "@css/ToolsPanel.module.css";
 
 const tools = [
-    { icon: faLayerGroup, label: '레이어', popup: <LayerPopup isOpen={true} /> },
-    { icon: faRuler,      label: '측정',   popup: <MeasurePopup isOpen={true} /> },
-    { icon: faCog,        label: '설정',   popup: <SettingPopup isOpen={true} /> },
+    { icon: faLayerGroup,    label: '레이어',     popup: <LayerPopup isOpen={true} /> },
+    { icon: faRuler,         label: '측정',       popup: <MeasurePopup isOpen={true} /> },
+    { icon: faRoad,          label: '도로 그리기', popup: <NetworkDrawPanel /> },
+    { icon: faFileArrowDown, label: '데이터 입출력', popup: <DataIOPanel /> },
+    { icon: faCog,           label: '설정',       popup: <SettingPopup isOpen={true} /> },
 ];
 
 const ToolsPanel = () => {
