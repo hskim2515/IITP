@@ -29,7 +29,7 @@ export const useWorkflowStore = create((set, get) => ({
                     menuCode: menu.menuCode,
                     nameKor: menu.nameKor,
                     isMinimized: false,
-                    menu: menu,  // ← 추가
+                    menu: menu,
                 }]
             });
         }

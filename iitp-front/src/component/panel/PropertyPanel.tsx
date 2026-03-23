@@ -7,7 +7,7 @@ import VectorLayer from "ol/layer/Vector";
 import { apiConfig, ApiMenuKey } from "@config/apiConfig";
 import axiosInstance from "@api/axiosInstance";
 import JsonGrid from "@component/util/JsonGrid";
-import { faChevronDown, faChevronUp, } from "@fortawesome/free-solid-svg-icons";
+import {faChevronDown, faChevronUp, faMinus,} from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import useHistoryInit, { menuCodeToHistoryStoreMap } from "@hooks/useHistoryInit";
 import { mergeJsonWithLogRecursive, mergeUpdateLogs } from "@utils/history";
@@ -25,6 +25,7 @@ import { useEventStore } from "@stores/useEventStore";
 import { modifyFeatureEventHandlers } from "@handler/modifyFeatureEventHandlers";
 import { extractFeatureTypeFromGuid } from "@utils/guid";
 import { MenuTreeResponse } from "@type/openapi.gen";
+import {useWorkflowStore} from "@stores/useWorkflowStore";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTreeResponse
@@ -55,6 +56,8 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
     const [height, setHeight] = useState(400);
     const rafRef = useRef<number | null>(null);
     const overlayRef = useRef<HTMLDivElement>(null);
+
+    const { minimizeSession, closeSession } = useWorkflowStore();
 
     type BodySize = "mini" | "default" | "full";
     const [bodySize, setBodySize] = useState<BodySize>("default");
@@ -276,22 +279,38 @@ const PropertyPanel = ({activeSubmenu, onClose}: PropertyPanelProps) => {
                         <button className="save-btn" onClick={() => handleSaveBtn()}>저장</button>
                     </div>
 
-                    <div>
+                    {/*<div>*/}
 
-                        <FontAwesomeIcon className="close-btn" icon={faClose} onClick={onClose}/>
-                        {(bodySize !== "full") && (<FontAwesomeIcon
-                            className="expand-btn"
-                            icon={faChevronUp} // ⬆️ 확대 아이콘
-                            onClick={increaseSize}
-                            title="확장"
-                        />)}
-                        {(bodySize !== "mini") && (<FontAwesomeIcon
-                            className="collapse-btn"
-                            icon={faChevronDown} // ⬇️ 축소 아이콘
-                            onClick={decreaseSize}
-                            title="축소"
-                        />)}
+                    {/*    <FontAwesomeIcon className="close-btn" icon={faClose} onClick={onClose}/>*/}
+                    {/*    {(bodySize !== "full") && (<FontAwesomeIcon*/}
+                    {/*        className="expand-btn"*/}
+                    {/*        icon={faChevronUp} // ⬆️ 확대 아이콘*/}
+                    {/*        onClick={increaseSize}*/}
+                    {/*        title="확장"*/}
+                    {/*    />)}*/}
+                    {/*    {(bodySize !== "mini") && (<FontAwesomeIcon*/}
+                    {/*        className="collapse-btn"*/}
+                    {/*        icon={faChevronDown} // ⬇️ 축소 아이콘*/}
+                    {/*        onClick={decreaseSize}*/}
+                    {/*        title="축소"*/}
+                    {/*    />)}*/}
 
+                    {/*</div>*/}
+
+                    <div className="popup-header-actions">
+                        <FontAwesomeIcon
+                            className="minimize-btn"
+                            icon={faMinus}
+                            onClick={() => minimizeSession(activeSubmenu.menuCode)}
+                            title="최소화"
+                        />
+
+                        <FontAwesomeIcon
+                            className="close-btn"
+                            icon={faClose}
+                            onClick={() => closeSession(activeSubmenu.menuCode)}
+                            title="닫기"
+                        />
                     </div>
 
                 </div>
