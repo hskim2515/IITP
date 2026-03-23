@@ -356,6 +356,22 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/pavement-marking/origin/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOriginPavementMarking"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pavement-marking/histories/{versionId}": {
         parameters: {
             query?: never;
@@ -484,6 +500,22 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/analytics/link-stats/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getLinkStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 };
 export type webhooks = Record<string, never>;
 export type components = {
@@ -496,6 +528,11 @@ export type components = {
             fileName?: string;
             filePath?: string;
             length?: string;
+            /** Format: int64 */
+            vehicleTypeId?: number;
+            correctionHpr?: string;
+            /** Format: double */
+            zoffset?: number;
         };
         MenuRequest: {
             /** Format: int64 */
@@ -558,6 +595,8 @@ export type components = {
             targetEasting?: number;
             /** Format: double */
             targetNorthing?: number;
+            /** Format: double */
+            halfWidth?: number;
         };
         RoadResponse: {
             roads?: components["schemas"]["Road"][];
@@ -1017,6 +1056,28 @@ export type components = {
             label?: string;
             layers?: components["schemas"]["LayerResponse"][];
         };
+        LinkStatsResponse: {
+            /** Format: int32 */
+            interval?: number;
+            overallTimeSeries?: components["schemas"]["TimeSlotStats"][];
+            topLinks?: components["schemas"]["LinkSummary"][];
+        };
+        LinkSummary: {
+            linkId?: string;
+            /** Format: int32 */
+            totalVolume?: number;
+            /** Format: double */
+            avgSpeed?: number;
+            timeSeries?: components["schemas"]["TimeSlotStats"][];
+        };
+        TimeSlotStats: {
+            /** Format: int32 */
+            time?: number;
+            /** Format: int32 */
+            volume?: number;
+            /** Format: double */
+            avgSpeed?: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -1082,6 +1143,9 @@ export type SegmentResponse = components['schemas']['SegmentResponse'];
 export type MenuTreeResponse = components['schemas']['MenuTreeResponse'];
 export type LayerResponse = components['schemas']['LayerResponse'];
 export type LayerGroupResponse = components['schemas']['LayerGroupResponse'];
+export type LinkStatsResponse = components['schemas']['LinkStatsResponse'];
+export type LinkSummary = components['schemas']['LinkSummary'];
+export type TimeSlotStats = components['schemas']['TimeSlotStats'];
 export type $defs = Record<string, never>;
 export interface operations {
     getVehicleTypeFlat: {
@@ -1158,10 +1222,13 @@ export interface operations {
     };
     updateVehicleTypeModel: {
         parameters: {
-            query: {
-                name: string;
-                color: string;
-                length: string;
+            query?: {
+                name?: string;
+                vehicleTypeId?: number;
+                color?: string;
+                length?: string;
+                correctionHpr?: string;
+                zOffset?: number;
             };
             header?: never;
             path: {
@@ -1469,10 +1536,13 @@ export interface operations {
     };
     createVehicleModel: {
         parameters: {
-            query: {
-                name: string;
-                color: string;
-                length: string;
+            query?: {
+                name?: string;
+                vehicleTypeId?: number;
+                color?: string;
+                length?: string;
+                correctionHpr?: string;
+                zOffset?: number;
             };
             header?: never;
             path?: never;
@@ -1904,6 +1974,28 @@ export interface operations {
             };
         };
     };
+    getOriginPavementMarking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RoadAssetData"];
+                };
+            };
+        };
+    };
     getLogsByVersion_1: {
         parameters: {
             query?: never;
@@ -2070,6 +2162,31 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["LayerGroupResponse"];
+                };
+            };
+        };
+    };
+    getLinkStats: {
+        parameters: {
+            query?: {
+                interval?: number;
+                topN?: number;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LinkStatsResponse"];
                 };
             };
         };
