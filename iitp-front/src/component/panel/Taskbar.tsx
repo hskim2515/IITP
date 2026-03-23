@@ -14,8 +14,9 @@ const Taskbar = () => {
                     className={`task-chip ${activeMenuCode === session.menuCode ? 'active' : ''}`}
                     onClick={() => openSession(session)}
                 >
+                    <span className="chip-dot"/>
                     <span className="chip-label">{session.nameKor}</span>
-                    <span onClick={(e) => {
+                    <span className="chip-close" onClick={(e) => {
                         e.stopPropagation();
                         closeSession(session.menuCode);
                     }}>✕</span>
