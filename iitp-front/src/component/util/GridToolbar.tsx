@@ -1,6 +1,7 @@
 import React, { useMemo } from "react";
 import { useCanGoBack, useCurrentFrame, useNavigationStore } from "@stores/useNavigationStore";
 import style from "@css/GridToolbar.module.css";
+import {useSelectionStore} from "@stores/useSelectionStore";
 
 type GridToolbarProps = {
     onAdd: () => void;
@@ -23,12 +24,13 @@ export const GridToolbar = ({
     const goTo = useNavigationStore((s) => s.goTo);
     const canGoBack = useCanGoBack();
     const rowCount = frame.rows.length;
+    const clearSelected = useSelectionStore((s) => s.clearSelected); // ← 추가
 
     return (
         <div className={style.toolbar}>
             <div className={style.navSection}>
                 {canGoBack && (
-                    <button className={style.back} onClick={pop}>← 뒤로</button>
+                    <button className={style.back} onClick={() => {clearSelected();pop();}}>← 뒤로</button>
                 )}
 
                 <ol className={style.list}>
@@ -53,9 +55,9 @@ export const GridToolbar = ({
                                                 ))}
                                             </div>
                                         ) : (
-                                            <span className={`${style.crumb} ${style.crumbActive}`}>
-                                                {(isRoot ? activeRootKey : f.breadLabel)?.toUpperCase()}
-                                            </span>
+                                            <button onClick={() => {clearSelected();goTo(index);}}>
+                                                {f.breadLabel.toUpperCase()}
+                                            </button>
                                         )}
                                         <span className={style.rowCount}>{rowCount}개</span>
                                     </div>

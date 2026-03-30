@@ -147,11 +147,15 @@ const DrilldownGrid = ({
                 onSave={handleSave}
                 rootKeys={rootKeys}
                 activeRootKey={activeRootKey ?? ""}
-                onRootChange={setActiveRootKey}
+                onRootChange={(key) => {
+                    clearSelected();
+                    setActiveRootKey(key);
+                }}
             />
 
             <div className={style.tableWrap}>
                 <GridTable
+                    key={`${frame.levelName}-${frame.parentGuid || 'root'}`}
                     layerName={layerName}
                     layerGroupName={layerGroupName}
                     frame={frame}
