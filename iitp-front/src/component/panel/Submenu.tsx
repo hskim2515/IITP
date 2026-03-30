@@ -3,6 +3,7 @@ import { useMenuStore } from "@stores/useMenuStore";
 import { MenuTreeResponse } from "@type/openapi.gen";
 import { propertyFormSchema } from "@schema/propertyFormSchema";
 import styles from "@css/Submenu.module.css"
+import {useWorkflowStore} from "@stores/useWorkflowStore";
 
 const Submenu = () => {
   const {
@@ -10,6 +11,8 @@ const Submenu = () => {
     activeSubmenu,
     setActiveSubmenu,
   } = useMenuStore();
+
+  const { openSession } = useWorkflowStore();
 
   useEffect(() => {
     if(!activeDropdownMenu) return
@@ -23,6 +26,7 @@ const Submenu = () => {
     if(!item.menuCode) return
     if (propertyFormSchema[item.menuCode]) {
       setActiveSubmenu(item);
+      openSession(item);
     } else {
       setActiveSubmenu(null);
     }

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import { propertyFormSchema } from "@schema/propertyFormSchema";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
@@ -6,7 +6,7 @@ import VectorLayer from "ol/layer/Vector";
 import { apiConfig, ApiMenuKey } from "@config/apiConfig";
 import axiosInstance from "@api/axiosInstance";
 import JsonGrid from "@component/util/JsonGrid";
-import { faChevronDown, faChevronUp } from "@fortawesome/free-solid-svg-icons";
+import {faChevronDown, faChevronUp, faMinus} from "@fortawesome/free-solid-svg-icons";
 import { faClose } from "@fortawesome/free-solid-svg-icons/faClose";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import useHistoryInit, { menuCodeToHistoryStoreMap } from "@hooks/useHistoryInit";
@@ -25,6 +25,8 @@ import { modifyFeatureEventHandlers } from "@handler/modifyFeatureEventHandlers"
 import { extractFeatureTypeFromGuid } from "@utils/guid";
 import { MenuTreeResponse } from "@type/openapi.gen";
 import styles from "@css/PropertyPanel.module.css";
+import {useWorkflowStore} from "@stores/useWorkflowStore";
+import DrilldownGrid from "@component/util/DrilldownGrid";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTreeResponse
@@ -43,10 +45,15 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     const historyStore = menuCodeToHistoryStoreMap[activeSubmenu.menuCode];
 
     const currentJsonData = store(useShallow((state: { currentJsonData: unknown }) => state.currentJsonData));
-
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const selectedScenario = useScenarioStore.getState().selectedScenario;
     const olMap = useOpenLayersStore.state.map();
+
+    const heightRef = useRef(400);
+    const [height, setHeight] = useState(400);
+    const rafRef = useRef<number | null>(null);
+    const overlayRef = useRef<HTMLDivElement>(null);
+    const { minimizeSession, closeSession } = useWorkflowStore();
 
     type BodySize = "mini" | "default" | "full";
     const [bodySize, setBodySize] = useState<BodySize>("default");
@@ -87,6 +94,41 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     }, [selectedGuid, submenu.item.layer]);
 
     useEffect(() => { clearSelected(); }, [activeSubmenu]);
+
+    const handleMouseMove = useCallback((e: MouseEvent) => {
+        if (rafRef.current !== null) return;
+
+        rafRef.current = requestAnimationFrame(() => {
+            const newHeight = window.innerHeight - e.clientY - 35;
+            if (newHeight > 150 && newHeight < window.innerHeight * 0.9) {
+                heightRef.current = newHeight;
+                if (overlayRef.current) {
+                    overlayRef.current.style.height = `${newHeight}px`;
+                }
+            }
+            rafRef.current = null;
+        });
+    }, []);
+
+    const stopResizing = useCallback(() => {
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', stopResizing);
+        document.body.style.userSelect = 'auto';
+        setHeight(heightRef.current);
+    }, [handleMouseMove]);
+
+    const startResizing = useCallback((e: React.MouseEvent) => {
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', stopResizing);
+        document.body.style.userSelect = 'none';
+    }, [handleMouseMove, stopResizing]);
+
+    useEffect(() => {
+        return () => {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', stopResizing);
+        };
+    }, [handleMouseMove, stopResizing]);
 
     const [reloadFlag, setReloadFlag] = useState(false);
     useHistoryInit(reloadFlag);
@@ -136,21 +178,24 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
 
     const bodyClass =
         bodySize === "full" ? styles.bodyFull
-        : bodySize === "mini" ? styles.bodyMini
-        : styles.body;
+            : bodySize === "mini" ? styles.bodyMini
+                : styles.body;
 
     return (
-        <div className={styles.overlay}>
+        <div ref={overlayRef} className={styles.overlay} style={{ height: `${height}px` }}>
             <div className={styles.panel}>
-                {/* Drag handle */}
-                <div className={styles.handle}>
-                    <div className={styles.handleBar} />
+                {/* Resize handle */}
+                <div
+                    className={styles.handle}
+                    onMouseDown={startResizing}
+                >
+                    <div className={styles.handleBar}/>
                 </div>
 
                 {/* Header */}
                 <div className={styles.header}>
                     <div className={styles.titleWrap}>
-                        <div className={styles.titleDot} />
+                        <div className={styles.titleDot}/>
                         <span className={styles.title}>{activeSubmenu.nameKor}</span>
                     </div>
 
@@ -158,29 +203,33 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                         <button className={styles.revertBtn} onClick={handleInitBtn} title="초기 데이터로 되돌리기">
                             되돌리기
                         </button>
-                        <HistoryController onHistoryAply={handleHistoryApply} />
+                        <HistoryController onHistoryAply={handleHistoryApply}/>
                         <button className={styles.historyBtn} onClick={() => setIsHistoryOpen(true)}>
                             변경 이력
                         </button>
-                        <div className={styles.divider} />
+                        <div className={styles.divider}/>
                         <button className={styles.saveBtn} onClick={handleSaveBtn}>
                             저장
                         </button>
                     </div>
 
                     <div className={styles.controls}>
-                        {bodySize !== "full" && (
-                            <button className={styles.iconBtn} onClick={() => setBodySize(prev => prev === "mini" ? "default" : "full")} title="확장">
-                                <FontAwesomeIcon icon={faChevronUp} />
-                            </button>
-                        )}
-                        {bodySize !== "mini" && (
-                            <button className={styles.iconBtn} onClick={() => setBodySize(prev => prev === "full" ? "default" : "mini")} title="축소">
-                                <FontAwesomeIcon icon={faChevronDown} />
-                            </button>
-                        )}
-                        <button className={styles.closeIconBtn} onClick={onClose} title="닫기">
-                            <FontAwesomeIcon icon={faClose} />
+                        {/*{bodySize !== "full" && (*/}
+                        {/*    <button className={styles.iconBtn} onClick={() => setBodySize(prev => prev === "mini" ? "default" : "full")} title="확장">*/}
+                        {/*        <FontAwesomeIcon icon={faChevronUp} />*/}
+                        {/*    </button>*/}
+                        {/*)}*/}
+                        {/*{bodySize !== "mini" && (*/}
+                        {/*    <button className={styles.iconBtn} onClick={() => setBodySize(prev => prev === "full" ? "default" : "mini")} title="축소">*/}
+                        {/*        <FontAwesomeIcon icon={faChevronDown} />*/}
+                        {/*    </button>*/}
+                        {/*)}*/}
+                        <button>
+                            <FontAwesomeIcon className={styles.closeIconBtn} icon={faMinus} onClick={() => minimizeSession(activeSubmenu.menuCode)} title="최소화"/>
+                        </button>
+
+                        <button className={styles.closeIconBtn} onClick={() => closeSession(activeSubmenu.menuCode)} title="닫기">
+                            <FontAwesomeIcon icon={faClose}/>
                         </button>
                     </div>
                 </div>
@@ -195,17 +244,26 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                         />
                     )}
                     {submenu.item?.layer && (
+                        // <div className={styles.gridWrap}>
+                        //     {Object.entries(currentJsonData ?? []).map(([key, value]) => (
+                        //         <div key={key} className="grid-container">
+                        //             {/*<JsonGrid*/}
+                        //             {/*    layerName={submenu.item.layer}*/}
+                        //             {/*    layerGroupName={"facility"}*/}
+                        //             {/*    rowData={value}*/}
+                        //             {/*    levelName={key}*/}
+                        //             {/*    containerHeight={height}*/}
+                        //             {/*/>*/}
+                        //         </div>
+                        //     ))}
+                        // </div>
                         <div className={styles.gridWrap}>
-                            {Object.entries(currentJsonData ?? []).map(([key, value]) => (
-                                <div key={key} className="grid-container">
-                                    <JsonGrid
-                                        layerName={submenu.item.layer}
-                                        layerGroupName={"facility"}
-                                        rowData={value}
-                                        levelName={key}
-                                    />
-                                </div>
-                            ))}
+                            <DrilldownGrid
+                                layerName={submenu.item.layer}
+                                layerGroupName={"facility"}
+                                currentJsonData={currentJsonData}
+                                containerHeight={height}
+                            />
                         </div>
                     )}
                 </div>

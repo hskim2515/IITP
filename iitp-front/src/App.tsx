@@ -13,6 +13,8 @@ import ScenarioSelector from "@component/scenario/ScenarioSelector";
 import PropertyForm from "@component/popup/PropertyPopup";
 import { propertyFormSchema } from "@schema/propertyFormSchema";
 import Maps from "@component/map/Maps";
+import {useWorkflowStore} from "@stores/useWorkflowStore";
+import Taskbar from "@component/panel/Taskbar";
 import Dashboard from "@component/panel/Dashboard";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 
@@ -27,12 +29,16 @@ function App() {
 
     const fetchSchema = useSchemaStore((state) => state.fetchSchema)
 
+    const { sessions, activeMenuCode, minimizeSession } = useWorkflowStore();
+
     const {
         menu,
         activeSubmenu,
         activeDropdownMenu,
         setActiveSubmenu,
     } = useMenuStore();
+
+    const activeSession = sessions.find(s => s.menuCode === activeMenuCode && !s.isMinimized);
 
     useEffect(() => {
         fetchSchema()
@@ -89,30 +95,33 @@ function App() {
                         }}
                     >
                         <Maps/>
-                        {activeSubmenu && (
-                            isDescendantOf(menu, 'SCHEMA_SETTING', activeSubmenu.menuCode) ? (
+                        <Taskbar/>
+
+                        {activeSession && (
+                            isDescendantOf(menu, 'SCHEMA_SETTING', activeSession.menuCode) ? (
                                 <SchemaSetting/>
-                            ) : activeSubmenu.menuCode === 'VEHICLE_TYPE' ? (
+                            ) : activeSession.menuCode === 'VEHICLE_TYPE' ? (
                                 <PropertyForm
-                                    activePopupMenu={activeSubmenu}
+                                    activePopupMenu={activeSession.menu}
                                     open={true}
                                     config={propertyFormSchema['VEHICLE_TYPE']}
                                     onClose={() => setActiveSubmenu(null)}
                                 />
-                            ) : activeSubmenu.menuCode === 'VEHICLE_MODEL' ? (
+                            ) : activeSession.menuCode === 'VEHICLE_MODEL' ? (
                                 <PropertyForm
-                                    activePopupMenu={activeSubmenu}
+                                    activePopupMenu={activeSession.menu}
                                     open={true}
                                     config={propertyFormSchema['VEHICLE_MODEL']}
                                     onClose={() => setActiveSubmenu(null)}
                                 />
-                            ) : menuCodeToStoreMap[activeSubmenu.menuCode] ? (
+                            ) : menuCodeToStoreMap[activeSession.menuCode] ? (
                                 <PropertyPanel
-                                    activeSubmenu={activeSubmenu}
-                                    onClose={() => setActiveSubmenu(null)}
+                                    activeSubmenu={activeSession.menu}  // ← 바로 사용
+                                    onClose={() => minimizeSession(activeSession.menuCode)}
                                 />
                             ) : null
                         )}
+
                     </div>
                 </main>
             </div>
