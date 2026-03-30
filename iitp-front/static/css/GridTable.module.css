@@ -1,0 +1,30 @@
+.drillColumnCell {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    flex-wrap: nowrap;
+}
+
+.drillHint {
+    cursor: pointer;
+    font-size: 11px;
+    color: #1890ff;
+    background: rgba(24, 144, 255, 0.1);
+    padding: 2px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.drillHint:hover {
+    background: rgba(24, 144, 255, 0.2);
+    text-decoration: underline;
+}
+
+:global(.ant-table-body)::-webkit-scrollbar {
+    height: 8px;
+}
+
+:global(.ant-table-body)::-webkit-scrollbar-thumb {
+    background: #444;
+    border-radius: 4px;
+}

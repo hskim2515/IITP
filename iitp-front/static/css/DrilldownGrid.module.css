@@ -1,0 +1,45 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    width: 100%;
+    min-width: 0; /* 이 줄이 없으면 테이블이 압축됩니다 */
+}
+
+.rootTabHeader {
+    display: flex;
+    gap: 4px;
+    padding: 8px 12px 0 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tab {
+    padding: 6px 16px;
+    font-size: 12px;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.4);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    border-radius: 4px 4px 0 0;
+    transition: all 0.2s;
+}
+
+.tab:hover {
+    color: rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.activeTab {
+    composes: tab;
+    color: rgba(100, 180, 255, 1);
+    background: rgba(100, 180, 255, 0.1);
+    border-bottom: 2px solid rgba(100, 180, 255, 1);
+}
+
+.tableWrap {
+    flex: 1;
+    width: 100%;
+    min-width: 0; /* 이 줄도 필수입니다 */
+    overflow: hidden;
+}

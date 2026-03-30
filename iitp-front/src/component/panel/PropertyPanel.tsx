@@ -26,6 +26,7 @@ import { extractFeatureTypeFromGuid } from "@utils/guid";
 import { MenuTreeResponse } from "@type/openapi.gen";
 import styles from "@css/PropertyPanel.module.css";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
+import DrilldownGrid from "@component/util/DrilldownGrid";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTreeResponse
@@ -44,7 +45,6 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     const historyStore = menuCodeToHistoryStoreMap[activeSubmenu.menuCode];
 
     const currentJsonData = store(useShallow((state: { currentJsonData: unknown }) => state.currentJsonData));
-
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const selectedScenario = useScenarioStore.getState().selectedScenario;
     const olMap = useOpenLayersStore.state.map();
@@ -225,12 +225,10 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                         {/*    </button>*/}
                         {/*)}*/}
                         <button>
-                            <FontAwesomeIcon className={styles.closeIconBtn} icon={faMinus}
-                                             onClick={() => minimizeSession(activeSubmenu.menuCode)} title="최소화"/>
+                            <FontAwesomeIcon className={styles.closeIconBtn} icon={faMinus} onClick={() => minimizeSession(activeSubmenu.menuCode)} title="최소화"/>
                         </button>
 
-                        <button className={styles.closeIconBtn} onClick={() => closeSession(activeSubmenu.menuCode)}
-                                title="닫기">
+                        <button className={styles.closeIconBtn} onClick={() => closeSession(activeSubmenu.menuCode)} title="닫기">
                             <FontAwesomeIcon icon={faClose}/>
                         </button>
                     </div>
@@ -246,18 +244,26 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                         />
                     )}
                     {submenu.item?.layer && (
+                        // <div className={styles.gridWrap}>
+                        //     {Object.entries(currentJsonData ?? []).map(([key, value]) => (
+                        //         <div key={key} className="grid-container">
+                        //             {/*<JsonGrid*/}
+                        //             {/*    layerName={submenu.item.layer}*/}
+                        //             {/*    layerGroupName={"facility"}*/}
+                        //             {/*    rowData={value}*/}
+                        //             {/*    levelName={key}*/}
+                        //             {/*    containerHeight={height}*/}
+                        //             {/*/>*/}
+                        //         </div>
+                        //     ))}
+                        // </div>
                         <div className={styles.gridWrap}>
-                            {Object.entries(currentJsonData ?? []).map(([key, value]) => (
-                                <div key={key} className="grid-container">
-                                    <JsonGrid
-                                        layerName={submenu.item.layer}
-                                        layerGroupName={"facility"}
-                                        rowData={value}
-                                        levelName={key}
-                                        containerHeight={height}
-                                    />
-                                </div>
-                            ))}
+                            <DrilldownGrid
+                                layerName={submenu.item.layer}
+                                layerGroupName={"facility"}
+                                currentJsonData={currentJsonData}
+                                containerHeight={height}
+                            />
                         </div>
                     )}
                 </div>

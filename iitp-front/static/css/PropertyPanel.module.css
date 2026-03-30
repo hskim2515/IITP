@@ -246,6 +246,7 @@
 
 /* ── Grid container inside body ───────────────────────────────── */
 .gridWrap {
+    height: 90%;
     width: 99%;
     padding: 6px 10px;
 }

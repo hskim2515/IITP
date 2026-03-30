@@ -22,7 +22,7 @@ import { EditableCell } from "@component/schema/EditableCell";
 const DEFAULT_CELL_WIDTH = 160;
 
 /** 현재 레벨의 structure 찾기 */
-function getStructureByFeatureType(
+export function getStructureByFeatureType(
     structures: SchemaStructure[] | null,
     targetName?: string
 ): SchemaStructure | null {
@@ -44,7 +44,7 @@ function getStructureByFeatureType(
 }
 
 /** structure 기반 하위 필드 목록 추출 */
-function getChildrenStructure(structure: SchemaStructure | null): string[] {
+export function getChildrenStructure(structure: SchemaStructure | null): string[] {
     if (!structure) return [];
     const children = structure.children
     return (children ?? [])
@@ -53,7 +53,7 @@ function getChildrenStructure(structure: SchemaStructure | null): string[] {
 }
 
 /** definition 기반 컬럼 생성 */
-function buildColumnsFromDefinition(
+export function buildColumnsFromDefinition(
     definition: SchemaDefinition | null,
     columnSpecList: SchemaColumn[] | null,
     onCellUpdate: (record: any, updates: Partial<Record<string, any>>) => void
@@ -113,7 +113,7 @@ function buildColumnsFromDefinition(
     return cols;
 }
 
-type JsonGridProps = {
+export type JsonGridProps = {
     layerName: string;
     layerGroupName: string;
     rowData?: any[] | undefined;
