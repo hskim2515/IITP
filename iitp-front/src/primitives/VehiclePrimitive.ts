@@ -32,6 +32,7 @@ export default class VehiclePrimitive {
 
     latestPositions?: number[][];   // [x, y, z] ECEF
     latestHeadings?:  number[];     // ENU 기준 north=0, 시계방향
+    private _stopped = false;
 
     baseColor:   [number, number, number] = [1, 1, 1];
     vehicleType  = 'default';
@@ -427,8 +428,22 @@ export default class VehiclePrimitive {
 
     // ─── 외부 인터페이스 ──────────────────────────────────────────────────
     setLatestPositions(data: { positions: number[][]; headings: number[] }) {
+        if (this._stopped) return;
         this.latestPositions = data.positions;
         this.latestHeadings  = data.headings;
+    }
+
+    start(): void { this._stopped = false; }
+
+    stop(): void {
+        this._stopped = true;
+        this.latestPositions = undefined;
+        this.latestHeadings  = undefined;
+    }
+
+    /** 자연 종료 시 호출 — 마지막 위치 유지 없이 즉시 초기화 */
+    drain(): void {
+        this.stop();
     }
 
     setSpeed(speed: number)   { this.speed  = speed;  }

@@ -8,6 +8,33 @@ import { useLayerStore } from "@stores/useLayerStore";
 
 const MAX_TRAIL_LENGTH = 80;
 
+/** VehicleFeatureLayer 의 TYPE_COLORS 와 동일한 값 유지 */
+const TYPE_COLORS: Record<string, [number, number, number, number]> = {
+    'CAR':     [100, 160, 255, 0.92],
+    'TAXI':    [255, 220,   0, 0.92],
+    'BUS':     [255,  90,  90, 0.92],
+    'TRUCK':   [180, 120,  60, 0.92],
+    'MOTO':    [ 80, 220, 130, 0.92],
+    'default': [251, 188,  96, 0.92],
+};
+
+function buildTrailStyle(vehicleType: string) {
+    const [r, g, b, a] = TYPE_COLORS[vehicleType] ?? TYPE_COLORS['default'];
+    return {
+        "stroke-color": [
+            "interpolate", ["linear"], ["line-metric"],
+            0.0, [r, g, b, 0],
+            0.5, [r, g, b, +(a * 0.5).toFixed(2)],
+            1.0, [r, g, b, a],
+        ],
+        "stroke-width": [
+            "interpolate", ["linear"], ["line-metric"],
+            0.0, 0,
+            1.0, 3,
+        ],
+    };
+}
+
 type Cartesian3Like = { x: number; y: number; z: number };
 type PositionData =
     | { positions: Array<Cartesian3Like | null> }
@@ -17,28 +44,20 @@ export default class TrailFeatureLayer extends WebGLVectorLayer {
     private source: VectorSource;
     private running: boolean;
     private speed: number;
+    public readonly vehicleType: string;
+    /** sparse positions 배열(원본 인덱스 보존)이 필요함을 dispatch 측에 알림 */
+    public readonly sparsePositions = true;
 
     /** vehicle index → accumulated EPSG:3857 [x, y] coords (sliding window) */
     private trails = new Map<number, number[][]>();
     /** vehicle index → OL Feature */
     private trailFeatures = new Map<number, Feature<LineString>>();
+    /** 진행 중인 drain rAF ID — start() 시 취소용 */
+    private drainRafId: number | null = null;
 
-    constructor(vehicleRoute: number[][][], speed: number, running: boolean) {
+    constructor(vehicleRoute: number[][][], speed: number, running: boolean, vehicleType = 'default') {
         const source = new VectorSource();
-
-        const style = {
-            "stroke-color": [
-                "interpolate", ["linear"], ["line-metric"],
-                0.0, [149, 122, 112, 0],
-                0.5, [214, 90, 42, 0.5],
-                1.0, [255, 149, 108, 1],
-            ],
-            "stroke-width": [
-                "interpolate", ["linear"], ["line-metric"],
-                0.0, 0,
-                1.0, 3,
-            ],
-        };
+        const style  = buildTrailStyle(vehicleType);
 
         const isVisible = useLayerStore.getState().activeLayerName?.includes("trip") ?? false;
 
@@ -53,6 +72,7 @@ export default class TrailFeatureLayer extends WebGLVectorLayer {
         this.source = source;
         this.running = running;
         this.speed = speed;
+        this.vehicleType = vehicleType;
 
         if (running) this.start();
     }
@@ -133,11 +153,24 @@ export default class TrailFeatureLayer extends WebGLVectorLayer {
     }
 
     public start() {
+        // 진행 중인 drain 애니메이션 취소 — drain과 새 위치 데이터 충돌 방지
+        if (this.drainRafId !== null) {
+            cancelAnimationFrame(this.drainRafId);
+            this.drainRafId = null;
+        }
+        // 이전 trail 데이터 완전 초기화 — 종료 위치에서 새 시작 위치로의 점프 방지
+        this.trails.clear();
+        this.trailFeatures.clear();
+        this.source.clear();
         this.setStatus(true);
     }
 
     public stop() {
         this.setStatus(false);
+        if (this.drainRafId !== null) {
+            cancelAnimationFrame(this.drainRafId);
+            this.drainRafId = null;
+        }
         this.trails.clear();
         this.trailFeatures.clear();
         this.source.clear();
@@ -153,9 +186,12 @@ export default class TrailFeatureLayer extends WebGLVectorLayer {
         let last = performance.now();
 
         const step = () => {
+            // start()가 호출되어 drainRafId가 null이 됐으면 즉시 중단
+            if (this.drainRafId === null) return;
+
             const now = performance.now();
             if (now - last < DRAIN_INTERVAL) {
-                requestAnimationFrame(step);
+                this.drainRafId = requestAnimationFrame(step);
                 return;
             }
             last = now;
@@ -185,14 +221,15 @@ export default class TrailFeatureLayer extends WebGLVectorLayer {
             this.source.changed();
 
             if (anyLeft) {
-                requestAnimationFrame(step);
+                this.drainRafId = requestAnimationFrame(step);
             } else {
+                this.drainRafId = null;
                 this.trails.clear();
                 this.trailFeatures.clear();
             }
         };
 
-        requestAnimationFrame(step);
+        this.drainRafId = requestAnimationFrame(step);
     }
 
     public destroy() {

@@ -149,7 +149,7 @@ export class LayerManager {
         this._removeLayers("analyze", "od");
     }
 
-    addTripLayer(vehicleRoute: any[], speedFactor: number, isRunning: boolean) {
+    addTripLayer(vehicleRoute: any[], speedFactor: number, isRunning: boolean, typeGroups?: Map<string, any[]>, vehicleTypeArray?: string[]) {
         const groupName = "analyze"
         const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
         if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
@@ -159,7 +159,7 @@ export class LayerManager {
             new PointSpritePrimitive(this.cesiumViewer.scene.context, { color: [1.0, 1.0, 0.0], alpha: 0.7, pointSize: 9 }),
             groupName, "trip"
         );
-        this.primitiveLayerManager.add(new TailPrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning), groupName, "trip");
+        this.primitiveLayerManager.add(new TailPrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning, vehicleTypeArray ?? []), groupName, "trip");
         // 속도 히트맵 레이어: Cesium 3D
         const primitiveCollections = this.primitiveLayerManager.add(new SpeedHeatmapLayer(this.cesiumViewer), groupName, "speed");
         const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
@@ -167,11 +167,15 @@ export class LayerManager {
             managedCollection.push(primitiveCollections);
         }
 
-        const tripLayer = new TrailFeatureLayer(vehicleRoute, speedFactor, isRunning)
-        const layers = this.vectorLayerManager.add(tripLayer, groupName, "trip", false);
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
-        layers.forEach((layer: BaseLayer) => {
-            if (!vectorLayers.includes(layer)) vectorLayers.push(layer);
+        // 차종별 TrailFeatureLayer 생성 — typeGroups 없으면 단일 default 레이어
+        const types = typeGroups && typeGroups.size > 0 ? [...typeGroups.keys()] : ['default'];
+        types.forEach((vType) => {
+            const tripLayer = new TrailFeatureLayer(vehicleRoute, speedFactor, isRunning, vType);
+            const layers = this.vectorLayerManager.add(tripLayer, groupName, "trip", false);
+            layers.forEach((layer: BaseLayer) => {
+                if (!vectorLayers.includes(layer)) vectorLayers.push(layer);
+            });
         });
 
         // 속도 히트맵 OL 2D (ImageLayer → any 캐스트)

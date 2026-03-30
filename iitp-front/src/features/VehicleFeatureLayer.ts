@@ -89,7 +89,7 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
             style: {
                 "icon-src":              dataUrl,
                 "icon-rotation":         ["get", "heading"] as any,
-                "icon-rotate-with-view": false,
+                "icon-rotate-with-view": true,
                 "icon-anchor":           [0.5, 0.5],
                 "icon-anchor-x-units":   "fraction",
                 "icon-anchor-y-units":   "fraction",
@@ -219,6 +219,12 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
         });
         this.source.changed();
     }
+
+    /** 자연 종료 시 호출 — 위치 초기화는 stop()과 동일 */
+    drain() {
+        this.stop();
+    }
+
     destroy() {
         this.stop();
         this.source.clear();

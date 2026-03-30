@@ -36,6 +36,7 @@ export default class PointSpritePrimitive {
     private _capacity = 0;
 
     private latestPositions: (number[] | null)[] | null = null;
+    private _stopped = false;
 
     private readonly color:     [number, number, number];
     private readonly alpha:     number;
@@ -86,8 +87,13 @@ export default class PointSpritePrimitive {
     // setters
     // ──────────────────────────────────────────
     setLatestPositions(data: { positions: (number[] | null)[] }): void {
+        if (this._stopped) return;
         this.latestPositions = data.positions;
     }
+
+    start(): void { this._stopped = false; }
+    stop(): void  { this._stopped = true; this.latestPositions = null; }
+    drain(): void { this._stopped = true; this.latestPositions = null; }
 
     setSpeed(_speed: number): void   {}
     setStatus(_status: string): void {}

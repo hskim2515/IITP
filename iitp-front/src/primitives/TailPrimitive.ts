@@ -37,6 +37,18 @@ interface TrailResources {
 }
 
 // ──────────────────────────────────────────────
+// 차종별 색상 (VehicleFeatureLayer / TrailFeatureLayer 와 동일한 값 유지)
+// ──────────────────────────────────────────────
+const TYPE_COLORS: Record<string, [number, number, number, number]> = {
+    'CAR':     [100, 160, 255, 0.92],
+    'TAXI':    [255, 220,   0, 0.92],
+    'BUS':     [255,  90,  90, 0.92],
+    'TRUCK':   [180, 120,  60, 0.92],
+    'MOTO':    [ 80, 220, 130, 0.92],
+    'default': [251, 188,  96, 0.92],
+};
+
+// ──────────────────────────────────────────────
 // TailPrimitive
 // ──────────────────────────────────────────────
 export default class TailPrimitive {
@@ -55,12 +67,14 @@ export default class TailPrimitive {
     private MAX_TRAIL_LENGTH: number;
     private trails: TrailResources[];
     private latestPositions: (number[] | undefined)[] | null;
+    private _stopped: boolean;
 
     constructor(
-        positions: number[][],
-        context:   any,
-        speed:     number,
-        status:    string
+        positions:    number[][],
+        context:      any,
+        speed:        number,
+        status:       string,
+        vehicleTypes: string[] = []
     ) {
         this.positions    = positions;
         this.speed        = speed;
@@ -73,16 +87,24 @@ export default class TailPrimitive {
         this.status       = status;
         this.show         = false;
         this.latestPositions = null;
+        this._stopped = false;
 
         this.MAX_TRAIL_LENGTH = 50;
         this.trails = [];
 
-        this.positions.forEach((position) => {
-            this.trails.push(
-                this.createTrailResources(
-                    new Cartesian3(position[1]!, position[2]!, position[3]!)
-                )
+        this.positions.forEach((position, i) => {
+            const resources = this.createTrailResources(
+                new Cartesian3(position[1]!, position[2]!, position[3]!)
             );
+            // 차종별 색상을 drawCommand.uniformMap에 주입 (0-255 → 0-1 정규화)
+            const vType = vehicleTypes[i] ?? 'default';
+            const [r, g, b, a] = TYPE_COLORS[vType] ?? TYPE_COLORS['default']!;
+            const color = new Cesium.Cartesian4(r / 255, g / 255, b / 255, a);
+            resources.drawCommand.uniformMap = {
+                ...resources.drawCommand.uniformMap,
+                u_color: () => color,
+            };
+            this.trails.push(resources);
         });
     }
 
@@ -201,18 +223,12 @@ export default class TailPrimitive {
                 #version 300 es
                 precision highp float;
 
-                uniform float u_time;
+                uniform vec4 u_color;
                 in float v_fade;
                 out vec4 fragColor;
 
                 void main() {
-                    float r = abs(sin(u_time * 2.0)) * 2.0;
-                    float g = abs(sin(u_time * 3.0 + 2.0)) * 2.0;
-                    float b = abs(sin(u_time * 4.0 + 4.0)) * 2.0;
-                    vec3 neonColor = vec3(r, g, b);
-
-                    fragColor = vec4(1.0 * v_fade, 0.5 * v_fade, 0.0, v_fade);
-                    //fragColor = vec4(neonColor, v_fade);
+                    fragColor = vec4(u_color.rgb * v_fade, u_color.a * v_fade);
                 }
             `,
             attributeLocations: {
@@ -229,11 +245,12 @@ export default class TailPrimitive {
             uniformMap: {
                 u_modelViewProjectionMatrix: () =>
                     this.context.uniformState.modelViewProjection,
-                u_time: () => performance.now() / 1000.0,
                 u_viewportSize: () => new Cesium.Cartesian2(
                     this.context.drawingBufferWidth,
                     this.context.drawingBufferHeight
                 ),
+                // u_color는 constructor에서 trail별로 덮어씀
+                u_color: () => new Cesium.Cartesian4(0.98, 0.74, 0.38, 0.92),
             },
             primitiveType: Cesium.PrimitiveType.TRIANGLE_STRIP,
             renderState: (Cesium as any).RenderState.fromCache({
@@ -263,8 +280,7 @@ export default class TailPrimitive {
     // 매 프레임 업데이트
     // ──────────────────────────────────────────
     update(frameState: any): void {
-        // destroyed / show 체크를 한 번만 수행 (중복 체크 제거)
-        if (this.destroyed || !this.show || !this.latestPositions) return;
+        if (this.destroyed || !this.show || !this.latestPositions || this._stopped) return;
 
         this.trails.forEach((trail, index) => {
             if (this.latestPositions![index]) {
@@ -337,7 +353,33 @@ export default class TailPrimitive {
     setStatus(status: string): void { this.status = status; }
 
     setLatestPositions(latestPositions: { positions: (number[] | undefined)[] }): void {
+        if (this._stopped) return;
         this.latestPositions = latestPositions.positions;
+    }
+
+    start(): void {
+        this._stopped = false;
+        // 재생 시작 시 circular buffer 초기화 — 이전 trail 데이터가 새 시작점에 연결되지 않도록
+        this._resetBuffers();
+    }
+
+    stop(): void {
+        this._stopped = true;
+        this.latestPositions = null;
+        this._resetBuffers();
+    }
+
+    drain(): void {
+        this._stopped = true;
+        this.latestPositions = null;
+        this._resetBuffers();
+    }
+
+    private _resetBuffers(): void {
+        for (const trail of this.trails) {
+            trail.buffer.head  = 0;
+            trail.buffer.count = 0;
+        }
     }
 
     // ──────────────────────────────────────────
