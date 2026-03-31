@@ -127,20 +127,6 @@ const DrilldownGrid = ({
 
     return (
         <div className={style.container}>
-            {/*{stack.length === 1 && rootKeys.length > 1 && (*/}
-            {/*    <div className={style.rootTabHeader}>*/}
-            {/*        {rootKeys.map((key) => (*/}
-            {/*            <button*/}
-            {/*                key={key}*/}
-            {/*                className={activeRootKey === key ? style.activeTab : style.tab}*/}
-            {/*                onClick={() => setActiveRootKey(key)}*/}
-            {/*            >*/}
-            {/*                {key.toUpperCase()} ({currentJsonData?.[key]?.length ?? 0})*/}
-            {/*            </button>*/}
-            {/*        ))}*/}
-            {/*    </div>*/}
-            {/*)}*/}
-
             <GridToolbar
                 onAdd={handleAdd}
                 onDelete={handleDelete}
