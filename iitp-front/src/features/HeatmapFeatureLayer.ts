@@ -42,7 +42,7 @@ export default class HeatmapFeatureLayer extends Heatmap {
         }
     }
 
-    public setLatestPositions(latestPositions: Array<number[] | undefined>) {
+    public setLatestPositions(latestPositions) {
 
     }
 

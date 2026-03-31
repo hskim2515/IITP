@@ -59,8 +59,9 @@ public class VehicleController {
 
         List<RoadResponse.Road> roadEntities = GeoJsonUtils.parseXmlToRoads(is);
 
+        // pos_x/pos_y가 링크 기준 좌표계이므로 linkId로만 키잉
         Map<String, RoadResponse.Road> roadMap = roadEntities.stream().collect(Collectors.toMap(
-                road -> road.getLinkId() + "|" + road.getLaneId(),
+                RoadResponse.Road::getLinkId,
                 Function.identity(),
                 (r1, r2) -> r1
         ));
@@ -70,7 +71,7 @@ public class VehicleController {
         roadMap.forEach((key, road) -> {
             CoordinateConverter converter = new CoordinateConverter();
             converter.setBasePoint(scenario.getLongitude(), scenario.getLatitude());
-            converter.setRoadPoint(road.getBaseEasting(), road.getBaseNorthing(), road.getTargetEasting(), road.getTargetNorthing());
+            converter.setRoadPoint(road.getBaseEasting(), road.getBaseNorthing(), road.getTargetEasting(), road.getTargetNorthing(), road.getHalfWidth());
             converterCache.put(key, converter);
         });
 
@@ -79,7 +80,7 @@ public class VehicleController {
 
         List<Map<String, Object>> czml = Collections.synchronizedList(new ArrayList<>());
         List<Map<String, Object>> featureList = Collections.synchronizedList(new ArrayList<>());
-        List<List<Double>> vehiclePathList = Collections.synchronizedList(new ArrayList<>());
+        List<Map<String, Object>> vehiclePathList = Collections.synchronizedList(new ArrayList<>());
 
         Instant startTime = Instant.now();
 
@@ -114,7 +115,7 @@ public class VehicleController {
             List<Cartesian3> path2d = new ArrayList<>();
 
             for (VehicleEvent vehicle : vehicles) {
-                String key = vehicle.getLinkId() + "|" + vehicle.getLaneId();
+                String key = vehicle.getLinkId();
                 RoadResponse.Road baseRoad = roadMap.get(key);
                 if (baseRoad == null) continue;
 
@@ -225,7 +226,12 @@ public class VehicleController {
 
             czml.add(czmlPacket);
             featureList.add(feature);
-            vehiclePathList.add(cartesianArray);
+
+            Map<String, Object> vehicleEntry = new HashMap<>();
+            vehicleEntry.put("id", vehicleId);
+            vehicleEntry.put("type", resolveVehicleType(vehicleId, vehicles.get(0).getType()));
+            vehicleEntry.put("path", cartesianArray);
+            vehiclePathList.add(vehicleEntry);
         });
 
         Instant globalStart = earliestStartRef.get();
@@ -280,6 +286,29 @@ public class VehicleController {
         } catch (JsonProcessingException e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Failed to parse JSON"));
+        }
+    }
+
+    /**
+     * vehicle ID 또는 DB의 type 값을 기반으로 차량 유형을 결정합니다.
+     * DB에 type 컬럼이 없거나 null인 경우 vehicle ID 숫자로 분포 배정합니다.
+     * 배정 비율: CAR 70%, TAXI 15%, BUS 10%, TRUCK 4%, MOTO 1%
+     */
+    private String resolveVehicleType(String vehicleId, String dbType) {
+        if (dbType != null && !dbType.isBlank()) {
+            return dbType.toUpperCase();
+        }
+        // DB에 type 없을 때 vehicle ID 기반으로 배정
+        try {
+            int id = Integer.parseInt(vehicleId.replaceAll("[^0-9]", ""));
+            int mod = id % 100;
+            if (mod < 70)  return "CAR";
+            if (mod < 85)  return "TAXI";
+            if (mod < 95)  return "BUS";
+            if (mod < 99)  return "TRUCK";
+            return "MOTO";
+        } catch (NumberFormatException e) {
+            return "CAR";
         }
     }
 

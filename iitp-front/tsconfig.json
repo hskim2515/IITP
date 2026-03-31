@@ -21,6 +21,7 @@
       "@config/*": ["src/config/*"],
       "@datasource/*": ["src/datasource/*"],
       "@features/*": ["src/features/*"],
+      "@interactions/*": ["src/interactions/*"],
       "@handler/*": ["src/handler/*"],
       "@hooks/*": ["src/hooks/*"],
       "@managers/*": ["src/managers/*"],

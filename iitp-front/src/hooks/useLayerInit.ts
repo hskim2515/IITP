@@ -65,6 +65,7 @@ const useLayerInit = (): void => {
 
         if(!olMap || !cesiumViewer) return;
 
+        // 1단계: 모든 데이터를 fetch하여 originData 세팅만 (initCurrentData는 아직 호출 안 함)
         for (const menuCode of menuCodes) {
             const store = menuCodeToStoreMap[menuCode];
             if (!store) continue;
@@ -77,18 +78,14 @@ const useLayerInit = (): void => {
                 });
 
                 store.getState().setOriginData(response.data);
-                assignPropertyToResponseData(response.data)
-                store.getState().initCurrentData();
-
-                console.log(`${menuCode} :::`,store.getState().originData)
-                console.log(`${menuCode} 데이터 초기화 완료`);
+                assignPropertyToResponseData(response.data);
+                console.log(`${menuCode} 데이터 fetch 완료`);
             } catch (err) {
                 console.error(`[${menuCode}] 데이터 불러오기 실패`, err);
-            } finally {
-                console.log(`[${menuCode}] originData:::`, store.getState().originData);
             }
         }
 
+        // 2단계: 레이어 생성 (network OL 레이어가 먼저 map에 추가됨)
         const vectorLayerManager = new VectorLayerManager(olMap, useLayerStore);
         const tileLayerManager = new TileLayerManager(olMap);
         const primitiveLayerManager = new PrimitiveLayerManager(cesiumViewer, useLayerStore);
@@ -108,7 +105,20 @@ const useLayerInit = (): void => {
 
         setLayerManager(layerManager);
         layerManager.addBaseMapLayer(layerGroups);
-        await layerManager.addFacilityLayers(layerGroups)
+        await layerManager.addFacilityLayers(layerGroups);
+
+        // 3단계: 레이어가 모두 준비된 후 initCurrentData 호출
+        // → PavementMarking 등 network 레이어에 의존하는 레이어가 안전하게 interpolate 가능
+        for (const menuCode of menuCodes) {
+            const store = menuCodeToStoreMap[menuCode];
+            if (!store) continue;
+            try {
+                store.getState().initCurrentData();
+                console.log(`${menuCode} 데이터 초기화 완료`);
+            } catch (err) {
+                console.error(`[${menuCode}] initCurrentData 실패`, err);
+            }
+        }
     };
 };
 

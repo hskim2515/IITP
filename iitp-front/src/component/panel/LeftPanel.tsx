@@ -10,7 +10,7 @@ const LeftPanel = () => {
         setActiveDropdownMenu,
     } = useMenuStore();
 
-    const sidebarWidth = activeDropdownMenu ? 'clamp(220px, 16vw, 340px)' : '0px';
+    const sidebarWidth = activeDropdownMenu ? 'clamp(180px, 13vw, 230px)' : '0px';
 
     return (
         <aside className={styles['sidebar']} style={{ ["--sidebar-width" as any]: sidebarWidth }}>

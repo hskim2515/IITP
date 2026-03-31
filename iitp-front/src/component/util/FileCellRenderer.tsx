@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
+import { buildFileUrl } from "@utils/fileUrl";
 
 interface Props {
     value: string;
@@ -8,10 +9,9 @@ interface Props {
 
 const FileCellRenderer: React.FC<Props> = ({ value }) => {
     const [imageUrl, setImageUrl] = useState<string | null>(null);
-    const baseUrl = process.env.REACT_APP_FILE_BASE_URL || '';
 
     useEffect(() => {
-        const filePath = baseUrl + value;
+        const filePath = buildFileUrl(value);
         if (!filePath.endsWith(".glb")) return;
 
         const loader = new GLTFLoader();

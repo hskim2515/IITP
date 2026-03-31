@@ -42,16 +42,22 @@ public class VehicleTypeModelController {
 
     @PostMapping
     public ResponseEntity<?> createVehicleModel(
-            @RequestParam("name") String name,
-            @RequestParam("color") String color,
-            @RequestParam("length") String length,
+            @RequestParam(value = "name", required = false) String name,
+            @RequestParam(value = "vehicleTypeId", required = false) Long vehicleTypeId,
+            @RequestParam(value = "color", required = false) String color,
+            @RequestParam(value = "length", required = false) String length,
+            @RequestParam(value = "correctionHpr", required = false) String correctionHpr,
+            @RequestParam(value = "zOffset", required = false) Double zOffset,
             @RequestPart(value = "file", required = false) MultipartFile file
     ) {
         try {
             VehicleTypeModel model = new VehicleTypeModel();
             model.setName(name);
+            model.setVehicleTypeId(vehicleTypeId);
             model.setColor(color);
             model.setLength(length);
+            model.setCorrectionHpr(correctionHpr);
+            model.setZOffset(zOffset);
 
             String filePath = "/models/";
 
@@ -75,9 +81,12 @@ public class VehicleTypeModelController {
     @PutMapping("/{id}")
     public ResponseEntity<VehicleTypeModel> updateVehicleTypeModel(
             @PathVariable Long id,
-            @RequestParam("name") String name,
-            @RequestParam("color") String color,
-            @RequestParam("length") String length,
+            @RequestParam(value = "name", required = false) String name,
+            @RequestParam(value = "vehicleTypeId", required = false) Long vehicleTypeId,
+            @RequestParam(value = "color", required = false) String color,
+            @RequestParam(value = "length", required = false) String length,
+            @RequestParam(value = "correctionHpr", required = false) String correctionHpr,
+            @RequestParam(value = "zOffset", required = false) Double zOffset,
             @RequestPart(value = "file", required = false) MultipartFile file) throws IOException, JSchException {
 
         try {
@@ -89,19 +98,21 @@ public class VehicleTypeModelController {
             VehicleTypeModel existing = existingOpt.get();
 
             existing.setName(name);
+            existing.setVehicleTypeId(vehicleTypeId);
             existing.setColor(color);
             existing.setLength(length);
-
-            String oldPath = existingOpt.get().getFilePath();
-            if (oldPath != null && !oldPath.isEmpty()) {
-                try {
-                    sftpFileManager.deleteFile(oldPath);
-                } catch (IOException | JSchException e) {
-                    System.err.println("파일 삭제 실패: " + oldPath);
-                }
-            }
+            existing.setCorrectionHpr(correctionHpr);
+            existing.setZOffset(zOffset);
 
             if (file != null && !file.isEmpty()) {
+                String oldPath = existing.getFilePath();
+                if (oldPath != null && !oldPath.isEmpty()) {
+                    try {
+                        sftpFileManager.deleteFile(oldPath);
+                    } catch (IOException | JSchException e) {
+                        System.err.println("파일 삭제 실패: " + oldPath);
+                    }
+                }
                 String filePath = "/models/";
                 String fileName = file.getOriginalFilename();
                 sftpFileManager.uploadFile(file.getInputStream(), fileName);

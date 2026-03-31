@@ -6,12 +6,21 @@ import path from 'path'
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, process.cwd(), '');
 
+    const fileOrigin = env.REACT_APP_FILE_ORIGIN ?? '';
+
     return {
         server: {
             hmr: true,
             watch: {
                 usePolling: true,
             },
+            proxy: fileOrigin ? {
+                '/file-proxy': {
+                    target: fileOrigin,
+                    changeOrigin: true,
+                    rewrite: (path) => path.replace(/^\/file-proxy/, ''),
+                },
+            } : {},
         },
         define: {
             global: 'globalThis',
@@ -27,6 +36,7 @@ export default defineConfig(({ mode }) => {
                 '@config': path.resolve(__dirname, 'src/config'),
                 '@datasource': path.resolve(__dirname, 'src/datasource'),
                 '@features': path.resolve(__dirname, 'src/features'),
+                '@interactions': path.resolve(__dirname, 'src/interactions'),
                 '@handler': path.resolve(__dirname, 'src/handler'),
                 '@hooks': path.resolve(__dirname, 'src/hooks'),
                 '@managers': path.resolve(__dirname, 'src/managers'),

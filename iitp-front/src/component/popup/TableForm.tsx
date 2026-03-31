@@ -1,11 +1,12 @@
 import React from 'react';
-import {PropertyFormSchemaProps} from "@schema/propertyFormSchema";
+import { PropertyFormSchemaProps } from "@schema/propertyFormSchema";
 import DynamicInput from "./DynamicInput";
 import { MenuTreeResponse } from "@type/openapi.gen";
+import styles from "@css/PropertyPopup.module.css";
 
 interface Props {
-    activePopupMenu:MenuTreeResponse;
-    config: PropertyFormSchemaProps
+    activePopupMenu: MenuTreeResponse;
+    config: PropertyFormSchemaProps;
     metaData: Record<string, string>;
     formData: string[][];
     handleChange: (row: number, col: number, value: string) => void;
@@ -18,139 +19,117 @@ interface Props {
     targetId: number;
 }
 
-const getTitleByMode = (mode: string) => ({
-    create: '새 데이터 추가',
-    edit: '데이터 편집',
-    view: '상세 데이터 조회'
-}[mode] ?? '');
-
-const renderActionButton = (
-    mode: string,
-    targetId: number,
-    onEditMode: (mode: string, targetId: number) => void
-) => {
-    const createButton = (
-        label: string,
-        onClick?: (e: React.MouseEvent<HTMLButtonElement>) => void,
-        type: "submit" | "button" = "submit"
-    ) => (
-        <button type={type} className="submit-btn" onClick={onClick}>
-            {label}
-        </button>
-    );
-
-    if (mode === 'view') {
-        return createButton('편집', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onEditMode('edit', targetId);
-        }, 'button');
-    }
-
-    if (mode === 'edit') {
-        return (
-            <>
-                {createButton('저장')}
-                {createButton('취소', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onEditMode('view', targetId);
-                }, 'button')}
-            </>
-        );
-    }
-
-    return createButton('등록');
+const MODE_LABELS: Record<string, string> = {
+    create: '새 항목 추가',
+    edit: '항목 편집',
+    view: '상세 정보',
 };
 
-const renderMetaInputs = (
-    activePopupMenu: MenuTreeResponse,
-    config: PropertyFormSchemaProps,
-    metaData: Record<string, string>,
-    isReadOnly: boolean,
-    handleChangeMeta: (key: string, value: string) => void
-) => (
-    <div className="meta-inputs">
-        {config.fields.map(({ name, label },idx) => (
-            <label key={name}>
-                {label}:
-                <DynamicInput
-                    activePopupMenu={activePopupMenu}
-                    type={config.fields[idx].type}
-                    propsOptions={config.fields[idx].options}
-                    value={metaData[name] ?? ''}
-                    onChange={(val) => {handleChangeMeta(name, val);}}
-                    readOnly={isReadOnly}
-                />
-            </label>
-        ))}
-    </div>
-);
-
-const renderInputTable = (
-    activePopupMenu: MenuTreeResponse,
-    config: PropertyFormSchemaProps,
-    formData: string[][],
-    handleChange: (row: number, col: number, value: string) => void,
-    isReadOnly: boolean
-) => (
-    <table className="input-table">
-        <thead>
-        <tr>
-            <th></th>
-            {config.inputFields.map(({ label }) => (
-                <th key={label}>{label}</th>
-            ))}
-        </tr>
-        </thead>
-        <tbody>
-        {config.rowFields.map(({ label }, rowIdx) => (
-            <tr key={label}>
-                <th>{label}</th>
-                {config.inputFields.map((_, colIdx) => (
-                    <td key={colIdx}>
-                        <DynamicInput
-                            activePopupMenu={activePopupMenu}
-                            type={config.inputFields[colIdx].type}
-                            propsOptions={config.inputFields[colIdx].options}
-                            value={formData[rowIdx]?.[colIdx] ?? ''}
-                            onChange={(val) => handleChange(rowIdx, colIdx, val)}
-                            readOnly={isReadOnly}
-                        />
-                    </td>
-                ))}
-            </tr>
-        ))}
-        </tbody>
-    </table>
-);
-
+const MODE_BADGE: Record<string, string> = {
+    create: styles.modeBadgeCreate,
+    edit:   styles.modeBadgeEdit,
+    view:   styles.modeBadgeView,
+};
 
 export const TableForm: React.FC<Props> = ({
-                                               activePopupMenu,
-                                               config,
-                                               formData,
-                                               metaData,
-                                               handleChange,
-                                               handleChangeMeta,
-                                               handleSubmitTable,
-                                               isReadOnly,
-                                               mode,
-                                               onClose,
-                                               onEditMode,
-                                               targetId
-                                           }) => (
-    <div className="popup-overlay-input-table">
-        <div className="popup-container-input-table" onClick={(e) => e.stopPropagation()}>
-            <div className="popup-header">
-                <span>{getTitleByMode(mode)}</span>
-                <button className="close-btn" onClick={onClose}>×</button>
+    activePopupMenu, config, formData, metaData,
+    handleChange, handleChangeMeta, handleSubmitTable,
+    isReadOnly, mode, onClose, onEditMode, targetId
+}) => (
+    <div className={styles.formOverlay}>
+        <div
+            className={`${styles.formPanel} ${styles.formPanelWide}`}
+            onClick={e => e.stopPropagation()}
+        >
+            {/* Header */}
+            <div className={styles.formHeader}>
+                <span className={styles.formTitle}>{MODE_LABELS[mode] ?? mode}</span>
+                <span className={`${styles.modeBadge} ${MODE_BADGE[mode] ?? ''}`}>
+                    {mode}
+                </span>
+                <button className={styles.formCloseBtn} onClick={onClose}>×</button>
             </div>
-            <div className="popup-body">
+
+            {/* Body */}
+            <div className={styles.formBody}>
                 <form onSubmit={handleSubmitTable}>
-                    {renderMetaInputs(activePopupMenu, config, metaData, isReadOnly, handleChangeMeta)}
-                    {renderInputTable(activePopupMenu, config, formData, handleChange, isReadOnly)}
-                    {renderActionButton(mode, targetId, onEditMode)}
+                    {/* Meta fields */}
+                    {config.fields.length > 0 && (
+                        <div className={styles.metaRow}>
+                            {config.fields.map(({ name, label }, idx) => (
+                                <div key={name} className={styles.metaField}>
+                                    <span className={styles.metaLabel}>{label}</span>
+                                    <DynamicInput
+                                        activePopupMenu={activePopupMenu}
+                                        type={config.fields[idx].type}
+                                        propsOptions={config.fields[idx].options}
+                                        value={metaData[name] ?? ''}
+                                        onChange={val => handleChangeMeta(name, val)}
+                                        readOnly={isReadOnly}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Input table */}
+                    <table className={styles.inputTable}>
+                        <thead>
+                            <tr>
+                                <th></th>
+                                {config.inputFields.map(({ label }) => (
+                                    <th key={label}>{label}</th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {config.rowFields.map(({ label }, rowIdx) => (
+                                <tr key={label}>
+                                    <th>{label}</th>
+                                    {config.inputFields.map((_, colIdx) => (
+                                        <td key={colIdx}>
+                                            <DynamicInput
+                                                activePopupMenu={activePopupMenu}
+                                                type={config.inputFields[colIdx].type}
+                                                propsOptions={config.inputFields[colIdx].options}
+                                                value={formData[rowIdx]?.[colIdx] ?? ''}
+                                                onChange={val => handleChange(rowIdx, colIdx, val)}
+                                                readOnly={isReadOnly}
+                                            />
+                                        </td>
+                                    ))}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+
+                    {/* Footer actions */}
+                    <div className={styles.formFooter} style={{ padding: '14px 0 0' }}>
+                        {mode === 'view' && (
+                            <button
+                                type="button"
+                                className={styles.editBtn}
+                                onClick={e => { e.preventDefault(); onEditMode('edit', targetId); }}
+                            >
+                                편집
+                            </button>
+                        )}
+                        {mode === 'edit' && (
+                            <>
+                                <button type="submit" className={styles.submitBtn}>저장</button>
+                                <button
+                                    type="button"
+                                    className={styles.cancelBtn}
+                                    onClick={e => { e.preventDefault(); onEditMode('view', targetId); }}
+                                >
+                                    취소
+                                </button>
+                            </>
+                        )}
+                        {mode === 'create' && (
+                            <button type="submit" className={styles.submitBtn}>등록</button>
+                        )}
+                    </div>
                 </form>
             </div>
         </div>

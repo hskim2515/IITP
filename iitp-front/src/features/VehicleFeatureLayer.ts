@@ -1,181 +1,232 @@
 import WebGLVectorLayer from "ol/layer/WebGLVector";
 import VectorSource from "ol/source/Vector";
-import { Feature } from "ol";
+import { Feature, Map as OLMap } from "ol";
 import { Point } from "ol/geom";
 import { fromLonLat } from "ol/proj";
 import { Cartographic, Ellipsoid } from "cesium";
 import * as Cesium from "cesium";
 
+const TYPE_COLORS: Record<string, string> = {
+    'CAR':     'rgba(100, 160, 255, 0.92)',
+    'TAXI':    'rgba(255, 220, 0,   0.92)',
+    'BUS':     'rgba(255, 90,  90,  0.92)',
+    'TRUCK':   'rgba(180, 120, 60,  0.92)',
+    'MOTO':    'rgba(80,  220, 130, 0.92)',
+    'default': 'rgba(251, 188, 96,  0.92)',
+};
+
+const TYPE_SIZE: Record<string, { len: number; wid: number }> = {
+    'CAR':     { len: 4.5, wid: 1.8 },
+    'TAXI':    { len: 4.5, wid: 1.8 },
+    'BUS':     { len: 12,  wid: 2.5 },
+    'TRUCK':   { len: 8,   wid: 2.5 },
+    'MOTO':    { len: 2.2, wid: 0.8 },
+    'default': { len: 4.5, wid: 1.8 },
+};
+
+/**
+ * canvas로 둥근 직사각형 data URL 생성 (생성자에서 차종당 1회만 호출).
+ * height = len (길이 방향 = OL 아이콘 기본 방향 위쪽), width = wid.
+ */
+function createVehicleDataUrl(lenPx: number, widPx: number, color: string): string {
+    const canvas = document.createElement('canvas');
+    canvas.width  = widPx;
+    canvas.height = lenPx;
+    const ctx = canvas.getContext('2d')!;
+    const r = Math.min(widPx, lenPx) * 0.28;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.roundRect(0, 0, widPx, lenPx, r);
+    ctx.fill();
+    return canvas.toDataURL();
+}
+
 export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private source: VectorSource;
     private features: Feature<Point>[] = [];
-    private speed: number;
+    /** feature geometry 캐시 — getGeometry() 반복 호출 방지 */
+    private geometries: Point[] = [];
     private running: boolean;
     private animationId: number | null = null;
-    private lastUpdateTime: number = performance.now();
     private positions: number[][] = [];
+    private headings: (number | null)[] = [];
+    /** 새 위치가 도착했을 때만 true → rAF 프레임 스킵 */
+    private dirty: boolean = false;
+    private olMap: OLMap | null = null;
+    public readonly vehicleType: string;
 
-    constructor(vehicleRoute: any[], vectorSource, speed: number, running: boolean) {
+    constructor(
+        vehicleRoute: any[],
+        vectorSource: VectorSource,
+        _speed: number,
+        running: boolean,
+        vehicleType: string = 'default',
+    ) {
+        const size  = TYPE_SIZE[vehicleType]  ?? TYPE_SIZE['default'];
+        const color = TYPE_COLORS[vehicleType] ?? TYPE_COLORS['default'];
+
+        // canvas 픽셀 종횡비 = 실세계 종횡비 (기준 길이 32px)
+        const BASE_LEN = 32;
+        const canvasWid = Math.round(BASE_LEN * (size.wid / size.len));
+        const dataUrl   = createVehicleDataUrl(BASE_LEN, canvasWid, color);
+
+        // icon-scale: 실세계 길이(m) / (canvas 픽셀 수 × 해상도(m/px))
+        // clamp으로 최소·최대 화면 크기 제한
+        const iconScale = ["clamp",
+            ["/", size.len / 2, ["*", BASE_LEN / 2, ["resolution"]]],
+            0.25, 5.0,
+        ] as any;
+
+        // resolution > 4 m/px(≈zoom 15 이하)에서 페이드아웃 → 완전 투명
+        const iconOpacity = ["interpolate", ["linear"], ["resolution"],
+            3, 1,
+            5, 0,
+        ] as any;
 
         super({
             source: vectorSource,
             visible: false,
             style: {
-                "circle-radius": 4,
-                "circle-fill-color": "rgb(251,188,96)",
+                "icon-src":              dataUrl,
+                "icon-rotation":         ["get", "heading"] as any,
+                "icon-rotate-with-view": true,
+                "icon-anchor":           [0.5, 0.5],
+                "icon-anchor-x-units":   "fraction",
+                "icon-anchor-y-units":   "fraction",
+                "icon-scale":            iconScale,
+                "icon-opacity":          iconOpacity,
             },
             zIndex: 110,
+            disableHitDetection: true,
         });
 
-        this.source = vectorSource;
-        this.speed = speed;
-        this.running = running;
-        this.lastUpdateTime = performance.now();
+        this.vehicleType = vehicleType;
+        this.source   = vectorSource;
+        this.running  = running;
 
-        this.createResources(vehicleRoute);
+        this.createFeatures(vehicleRoute);
 
-        // 초기 위치 설정
-        if (vehicleRoute && vehicleRoute.length > 0) {
-            const initialPositions = vehicleRoute.map(route => route[0]); // 각 vehicle의 첫 번째 위치
-            this.setLatestPositions(initialPositions);
+        if (vehicleRoute.length > 0) {
+            const initPos = vehicleRoute.map(route => route[0]);
+            this.setLatestPositions({ positions: initPos, headings: [] });
         }
 
-        if (running) {
-        this.start();
-        }
+        if (running) this.start();
     }
 
-    private convertToEPSG3857(position: number[]): number[] {
-        if (!position || position.length !== 3) {
-            // 기본값으로 0,0,0 사용
-            position = [0, 0, 0];
-        }
-
-        // 유효한 Cartesian3 좌표인지 확인
-        try {
-            const carto = Cartographic.fromCartesian({ x: position[0], y: position[1], z: position[2] }, Ellipsoid.WGS84);
-            if (!carto) {
-                // 유효하지 않은 좌표인 경우 기본값으로 처리
-                return fromLonLat([0, 0]);
-            }
-            const lon = Cesium.Math.toDegrees(carto.longitude);
-            const lat = Cesium.Math.toDegrees(carto.latitude);
-            return fromLonLat([lon, lat]);
-        } catch (error) {
-            console.warn("[VehicleFeatureLayer] Failed to convert position:", error);
-            // 에러 발생 시 기본값으로 처리
-            return fromLonLat([0, 0]);
-        }
-    }
-
-    private createResources(vehicleRoute: any[]) {
-
+    private createFeatures(vehicleRoute: any[]) {
         this.features = vehicleRoute.map((route, idx) => {
-            // 🟡 t === 0인 좌표만 찾기
-            let initialPosition: number[] = [0, 0, 0];
+            let initPos: number[] = [0, 0, 0];
             for (let i = 0; i < route.length; i += 4) {
-                const t = route[i];
-                const x = route[i + 1];
-                const y = route[i + 2];
-                const z = route[i + 3];
-
-                if (t === 0) {
-                    initialPosition = [x, y, z];
-                    break;
-                }
+                if (route[i] === 0) { initPos = [route[i + 1], route[i + 2], route[i + 3]]; break; }
             }
-
-            const coord = this.convertToEPSG3857(initialPosition);
-
-            const pointFeature = new Feature<Point>({
-                geometry: new Point(coord),
-            });
-
-            pointFeature.setId(`vehicle${idx}`);
-            pointFeature.set("initialCoordinate", coord);
-
-            this.source.addFeature(pointFeature);
-            return pointFeature;
+            const coord = this.toEPSG3857(initPos);
+            const geom = new Point(coord);
+            const f = new Feature<Point>({ geometry: geom });
+            f.setId(`vehicle-${this.vehicleType}-${idx}`);
+            f.set('heading', 0);
+            this.geometries[idx] = geom;
+            this.source.addFeature(f);
+            return f;
         });
     }
 
-    setLatestPositions(latestPositions: number[][]) {
-        const handleUndefined = (pos: number[] | undefined, idx: number): number[] | null => {
-            if (!pos) {
-                const prevPos = this.positions[idx];
-                if (prevPos) {
-                    return prevPos;
-                }
-                return fromLonLat([0, 0]);
-            }
-            return pos;
-        };
+    private toEPSG3857(pos: number[]): number[] {
+        if (!pos || pos.length < 3) return fromLonLat([0, 0]);
+        try {
+            const c = Cartographic.fromCartesian(
+                { x: pos[0], y: pos[1], z: pos[2] } as any,
+                Ellipsoid.WGS84,
+            );
+            if (!c) return fromLonLat([0, 0]);
+            return fromLonLat([Cesium.Math.toDegrees(c.longitude), Cesium.Math.toDegrees(c.latitude)]);
+        } catch { return fromLonLat([0, 0]); }
+    }
 
-        const converted = latestPositions.map((pos, idx) => {
-            try {
-                const validPos = handleUndefined(pos, idx);
-                return validPos ? this.convertToEPSG3857(validPos) : null;
-            } catch (err) {
-                // 에러 발생 시 이전 위치 유지
-                return this.positions[idx] || fromLonLat([0, 0]);
-            }
-        }).filter(p => p !== null) as number[][];
+    setLatestPositions(data: { positions: any[]; headings?: any[] }) {
+        if (!this.running) return;
 
-        this.positions = converted;
+        const inHeadings = data.headings ?? [];
+
+        data.positions.forEach((pos, idx) => {
+            if (!pos) return;
+            const xy = this.toEPSG3857(pos);
+            const h  = (inHeadings[idx] != null ? inHeadings[idx] : this.headings[idx]) ?? 0;
+            this.positions[idx] = xy;
+            this.headings[idx]  = h as number;
+        });
+
+        this.dirty = true;
     }
 
     private updateAnimation = () => {
-        // 위치 업데이트는 항상 수행하고, 애니메이션은 running 상태에 따라 결정
-        const features = this.source.getFeatures();
+        if (this.dirty) {
+            this.dirty = false;
+            let changed = false;
+            this.features.forEach((feature, i) => {
+                const geom = this.geometries[i];
+                const xy   = this.positions[i];
+                const h    = this.headings[i] ?? 0;
+                if (!geom || !xy) return;
+                geom.flatCoordinates[0] = xy[0];
+                geom.flatCoordinates[1] = xy[1];
+                feature.set('heading', h, true);
+                changed = true;
+            });
+            if (changed) {
+                this.source.changed();
+                // source.changed() 이후 명시적으로 render 요청 —
+                // 드래그 중 OL이 이미 렌더 중이더라도 갱신된 버퍼를 즉시 반영
+                this.olMap?.render();
+            }
+        }
 
-        features.forEach((feature, index) => {
-            const geom = feature.getGeometry() as Point;
-            const target = this.positions[index];
-            if (!geom || !target) return;
-            geom.setCoordinates(target);
-            feature.changed();
-        });
-
-        // 애니메이션이 필요한 경우에만 다음 프레임을 요청
-        if (this.running && this.positions.length > 0) {
+        if (this.running) {
             this.animationId = requestAnimationFrame(this.updateAnimation);
         } else {
             this.animationId = null;
         }
     };
 
-    public setSpeed(speed: number) {
-        this.speed = speed;
+    override setMap(map: OLMap | null) {
+        super.setMap(map);
+        this.olMap = map;
     }
 
-    public setStatus(isRunning: boolean) {
+    setSpeed(_speed: number) {}
+
+    setStatus(isRunning: boolean) {
         this.running = isRunning;
         if (isRunning && this.animationId === null) {
-            this.lastUpdateTime = performance.now();
             this.animationId = requestAnimationFrame(this.updateAnimation);
         } else if (!isRunning && this.animationId !== null) {
             cancelAnimationFrame(this.animationId);
             this.animationId = null;
         }
     }
-    public start() {
-        console.log("[VehicleFeatureLayer] start() called");
-        this.setStatus(true);
-    }
 
-    public stop() {
-        console.log("[VehicleFeatureLayer] stop() called");
+    start() { this.setStatus(true); }
+
+    stop() {
         this.setStatus(false);
+        // 정지 시 피처를 화면 밖으로 이동 — 이전 위치가 다음 재생 전까지 남지 않도록
+        this.positions = [];
+        this.headings  = [];
+        this.geometries.forEach(geom => {
+            if (!geom) return;
+            geom.flatCoordinates[0] = 0;
+            geom.flatCoordinates[1] = 0;
+        });
+        this.source.changed();
     }
 
-    public destroy() {
-        console.log("[VehicleFeatureLayer] Destroying layer");
-        if (this.animationId !== null) {
-            cancelAnimationFrame(this.animationId);
-            this.animationId = null;
-        }
+    /** 자연 종료 시 호출 — 위치 초기화는 stop()과 동일 */
+    drain() {
+        this.stop();
+    }
+
+    destroy() {
+        this.stop();
         this.source.clear();
-        this.source.refresh();
-        this.running = false;
     }
 }

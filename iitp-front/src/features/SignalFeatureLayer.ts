@@ -42,6 +42,7 @@ export class SignalFeatureLayer extends VectorLayer {
             updated: Record<string, Array<Record<string, unknown>>>,
             origin: Record<string, Array<Record<string, unknown>>>
         ) => {
+            if (!updated) return;
             Object.keys(updated).forEach((objectName) => {
                 const updatedList = updated[objectName] ?? [];
                 const originList = origin[objectName] ?? [];
@@ -131,7 +132,9 @@ export class SignalFeatureLayer extends VectorLayer {
 
     public async load(): Promise<void> {
         const store = layerNameToStoreMap[this.LAYER_NAME];
-        const { signals } = store.getState().currentJsonData;
+        const currentJsonData = store.getState().currentJsonData;
+        if (!currentJsonData) return;
+        const { signals } = currentJsonData;
 
         const source = this.source;
         source.clear();

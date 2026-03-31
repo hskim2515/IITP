@@ -50,12 +50,9 @@ export function mergeJsonWithLogRecursive(
     updateLog: UpdateLogEntry,
     isUndo: boolean
 ): any {
-    // 깊은 복사본 생성
     const clonedData = structuredClone(currentJsonData);
-
     const { added, modified, deleted } = updateLog;
 
-    // guid 또는 id로 객체 찾기 (중첩 객체 탐색)
     function findByGuid(obj: any, guid: string): any | null {
         if (Array.isArray(obj)) {
             for (const item of obj) {
@@ -63,7 +60,7 @@ export function mergeJsonWithLogRecursive(
                 if (found) return found;
             }
         } else if (obj && typeof obj === "object") {
-            if (obj.__guid === guid || obj.id === guid) return obj;
+            if (obj.__guid === guid) return obj;
             for (const val of Object.values(obj)) {
                 const found = findByGuid(val, guid);
                 if (found) return found;
@@ -72,100 +69,98 @@ export function mergeJsonWithLogRecursive(
         return null;
     }
 
-    // 같은 guid + timestamp 기준으로 묶기
-    function groupByGuidAndTimestamp(changes: any[]): any[][] {
+    function groupByGuid(changes: any[]): any[][] {
         const map = new Map<string, any[]>();
         changes.forEach(change => {
-            const key = `${change.guid}|${change.timestamp}`;
-            if (!map.has(key)) map.set(key, []);
-            map.get(key)!.push(change);
+            if (!map.has(change.guid)) map.set(change.guid, []);
+            map.get(change.guid)!.push(change);
         });
         return Array.from(map.values());
     }
 
-    if (isUndo) {
-        // Undo: 삭제 → 다시 추가
-        groupByGuidAndTimestamp(deleted || []).forEach(group => {
-            const change = group[0];
-            const parts = change.guid.split(".");
+    function resolveParentAndIndex(guid: string): {
+        parentObj: any;
+        childKey: string;
+        index: number;
+    } | null {
+        const parts = guid.split(".");
+
+        if (parts.length === 1) {
+            const lastDashIdx = guid.lastIndexOf("-");
+            const childKey = guid.substring(0, lastDashIdx);
+            const index = parseInt(guid.substring(lastDashIdx + 1), 10);
+            return { parentObj: clonedData, childKey, index };
+        } else {
             const parentGuid = parts.slice(0, -1).join(".");
-            const childKeyWithIndex = parts[parts.length - 1];
-            const [childKey, indexStr] = childKeyWithIndex.split("-");
-            const index = parseInt(indexStr, 10);
+            const lastPart = parts[parts.length - 1];
+            const lastDashIdx = lastPart.lastIndexOf("-");
+            const childKey = lastPart.substring(0, lastDashIdx);
+            const index = parseInt(lastPart.substring(lastDashIdx + 1), 10);
 
-            const parentObj = parentGuid ? findByGuid(clonedData, parentGuid) : clonedData;
-            if (!parentObj) return;
-            if (!Array.isArray(parentObj[childKey])) parentObj[childKey] = [];
+            const parentObj = findByGuid(clonedData, parentGuid);
+            if (!parentObj) return null;
 
-            const restoredObj: any = {};
-            group.forEach(f => {
-                restoredObj[f.field!] = f.oldValue;
+            return { parentObj, childKey, index };
+        }
+    }
+
+    function removeItem(guid: string) {
+        const resolved = resolveParentAndIndex(guid);
+        if (!resolved) return;
+        const { parentObj, childKey } = resolved;
+        if (!Array.isArray(parentObj[childKey])) return;
+
+        const idx = parentObj[childKey].findIndex((item: any) => item.__guid === guid);
+        if (idx !== -1) parentObj[childKey].splice(idx, 1);
+    }
+
+    function addItem(guid: string, obj: any) {
+        const resolved = resolveParentAndIndex(guid);
+        if (!resolved) return;
+        const { parentObj, childKey, index } = resolved;
+        if (!Array.isArray(parentObj[childKey])) parentObj[childKey] = [];
+
+        const exists = parentObj[childKey].some((item: any) => item.__guid === guid);
+        if (!exists) parentObj[childKey].splice(index, 0, obj);
+    }
+
+    if (isUndo) {
+        const deletedGroups = groupByGuid(deleted || []);
+        deletedGroups
+            .sort((a, b) => {
+                const aResolved = resolveParentAndIndex(a[0].guid);
+                const bResolved = resolveParentAndIndex(b[0].guid);
+                return (aResolved?.index ?? 0) - (bResolved?.index ?? 0);
+            })
+            .forEach(group => {
+                const restoredObj: any = {};
+                group.forEach(f => { restoredObj[f.field!] = f.oldValue; });
+                addItem(group[0].guid, restoredObj);
             });
-            parentObj[childKey].splice(index, 0, restoredObj);
-        });
 
-        // Undo: 수정 → 원래 값으로 복원
         modified?.forEach(change => {
             const target = findByGuid(clonedData, change.guid);
             if (target) target[change.field!] = change.oldValue;
         });
 
-        // Undo: 추가 → 배열에서 제거
-        groupByGuidAndTimestamp(added || []).forEach(group => {
-            const change = group[0];
-            const parts = change.guid.split(".");
-            const parentGuid = parts.slice(0, -1).join(".");
-            const childKeyWithIndex = parts[parts.length - 1];
-            const [childKey, indexStr] = childKeyWithIndex.split("-");
-            const index = parseInt(indexStr, 10);
-
-            const parentObj = parentGuid ? findByGuid(clonedData, parentGuid) : clonedData;
-            if (!parentObj || !Array.isArray(parentObj[childKey])) return;
-
-            parentObj[childKey].splice(index, 1);
+        groupByGuid(added || []).forEach(group => {
+            removeItem(group[0].guid);
         });
 
     } else {
-        // Redo: 삭제 → 배열에서 제거
-        groupByGuidAndTimestamp(deleted || []).forEach(group => {
-            const change = group[0];
-            const parts = change.guid.split(".");
-            const parentGuid = parts.slice(0, -1).join(".");
-            const childKeyWithIndex = parts[parts.length - 1];
-            const [childKey, indexStr] = childKeyWithIndex.split("-");
-            const index = parseInt(indexStr, 10);
-
-            const parentObj = parentGuid ? findByGuid(clonedData, parentGuid) : clonedData;
-            if (!parentObj || !Array.isArray(parentObj[childKey])) return;
-
-            parentObj[childKey].splice(index, 1);
+        groupByGuid(deleted || []).forEach(group => {
+            removeItem(group[0].guid);
         });
 
-        // Redo: 수정 → 새로운 값 반영
         modified?.forEach(change => {
             const target = findByGuid(clonedData, change.guid);
             if (target) target[change.field!] = change.newValue;
         });
 
-        // Redo: 추가 → 다시 생성
-        groupByGuidAndTimestamp(added || []).forEach(group => {
-            const change = group[0];
-            const parts = change.guid.split(".");
-            const parentGuid = parts.slice(0, -1).join(".");
-            const childKeyWithIndex = parts[parts.length - 1];
-            const [childKey, indexStr] = childKeyWithIndex.split("-");
-            const index = parseInt(indexStr, 10);
-
-            const parentObj = parentGuid ? findByGuid(clonedData, parentGuid) : clonedData;
-            if (!parentObj) return;
-            if (!Array.isArray(parentObj[childKey])) parentObj[childKey] = [];
-
+        groupByGuid(added || []).forEach(group => {
             const newObj: any = {};
-            group.forEach(f => {
-                newObj[f.field!] = f.newValue;
-            });
-
-            parentObj[childKey].splice(index, 0, newObj);
+            group.forEach(f => { newObj[f.field!] = f.newValue; });
+            addItem(group[0].guid, newObj);
         });
     }
 

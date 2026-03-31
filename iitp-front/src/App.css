@@ -113,7 +113,6 @@ body {
   object-fit: cover;
   z-index: -1;
   pointer-events: none; /* 핵심! 클릭 이벤트 무시 */
-  opacity: 0.6; /* 투명도 조정 */
 }
 
 
@@ -133,13 +132,17 @@ body {
 }
 
 .version-popup-content {
-  background: rgba(27, 29, 42, 0.85);
+  background: rgba(13, 15, 25, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
   color: #ffffff;
-  padding: 2rem 2rem;
+  padding: 2.5rem 2.5rem;
   text-align: center;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6);
-  max-width: 500px;
-  animation: fadeIn 0.3s ease-out;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+  max-width: 480px;
+  animation: fadeIn 0.25s ease-out;
   font-family: 'Segoe UI', 'Pretendard', sans-serif;
 }
 
@@ -210,118 +213,130 @@ body {
   position: absolute;
   top: 5px;
   right: 600px;
-  /*background-color: #222;*/
-  color: white;
-  font-family: sans-serif;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  color: #ccc;
+  font-family: 'Segoe UI', sans-serif;
 }
 
 .ruler {
   display: flex;
   position: relative;
-  height: 15px;
-  border-bottom: 1px solid #555;
+  height: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .tick {
   width: 100px;
   text-align: center;
-  font-size: 10px;
-  color: #aaa;
-  border-left: 1px solid #555;
+  font-size: 9px;
+  color: #555;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  line-height: 12px;
 }
 
 .track {
   position: relative;
-  height: 25px;
-  /*background-color: #333;*/
-  /*margin-top: 5px;*/
+  height: 16px;
+  background-color: rgba(255, 255, 255, 0.04);
+  border-radius: 3px;
 }
 
 .block {
   position: absolute;
-  top: 5px;
-  height: 30px;
-  line-height: 30px;
-  border: 1px solid white;
-  padding: 0 8px;
-  font-size: 12px;
+  top: 2px;
+  height: 12px;
+  line-height: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 0 4px;
+  font-size: 9px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-radius: 4px;
+  border-radius: 3px;
+  box-sizing: border-box;
 }
 
 .block.jump {
   position: absolute;
-  height: 15px;
-  background-color: rgba(255, 165, 0, 0.6);
-  border: 1px solid orange;
+  height: 12px;
+  background-color: rgba(255, 165, 0, 0.18);
+  border: 1px solid rgba(255, 165, 0, 0.45);
   display: flex;
   align-items: center;
-  padding: 0 4px;
+  padding: 0 3px;
   box-sizing: border-box;
   z-index: 2;
 }
 
 .close-button {
   margin-left: auto;
-  margin-right: 4px;
-  color: red;
+  color: rgba(255, 100, 100, 0.8);
   font-weight: bold;
   cursor: pointer;
   user-select: none;
+  font-size: 10px;
+  line-height: 1;
 }
 
 .block.active {
-  background-color: rgba(0, 255, 0, 0.5);
+  background-color: rgba(65, 105, 225, 0.18);
+  border: 1px solid rgba(65, 105, 225, 0.45);
   z-index: 2;
   display: flex;
   align-items: center;
   position: absolute;
-  height: 15px;
+  height: 12px;
+  box-sizing: border-box;
 }
 
 .resize-handle {
-  width: 8px;
+  width: 6px;
   cursor: ew-resize;
   height: 100%;
-  background-color: rgba(255, 255, 255, 0.3);
+  background-color: transparent;
+  flex-shrink: 0;
 }
 
 .resize-handle.left {
-  border-left: 2px solid white;
+  border-left: 2px solid rgba(255, 255, 255, 0.25);
 }
 
 .resize-handle.right {
-  border-right: 2px solid white;
+  border-right: 2px solid rgba(255, 255, 255, 0.25);
 }
 
 .label {
   flex: 1;
   text-align: center;
-  color: white;
+  color: #888;
+  font-size: 9px;
   pointer-events: none;
+  letter-spacing: 0.2px;
 }
 
 .add-button {
   margin-left: auto;
-  margin-right: 4px;
-  color: green;
+  color: #7aa2ff;
   font-weight: bold;
   cursor: pointer;
   user-select: none;
-  font-size: 15px;
+  font-size: 12px;
+  line-height: 1;
 }
 
 .slider-icon {
   position: absolute;
-  top: 5px;
-  font-size: 16px;
-  color: rgba(255, 0, 0, 0.8);
+  top: 2px;
+  font-size: 10px;
+  color: #7aa2ff;
   cursor: pointer;
   user-select: none;
   transform: translateX(-50%);
   z-index: 3;
+  line-height: 1;
 }
 
 

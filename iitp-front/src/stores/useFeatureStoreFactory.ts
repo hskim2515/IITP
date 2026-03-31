@@ -6,6 +6,7 @@ import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
 import { featureUpdateLogs } from "@utils/history";
 import {findParentRecordByFeatureType, findParentRecordByGuid} from "@utils/json";
 import { diff, applyChange } from 'deep-diff';
+import {UpdateLogEntry} from "@type/HistoryTypes";
 
 export type FeatureStoreFactoryType<T> = UseBoundStore<StoreApi<State<T>&Actions<T>>>
 
@@ -171,68 +172,66 @@ const createFeatureStore = <T>() => {
                             }
                         },
 
-                        removeRecordsByGuid: (guids: (string | number)[], historyStore) => {
-                            const current = get().currentJsonData as Record<string, any>;
-                            if (!current) return;
+                    removeRecordsByGuid: (guids: (string | number)[], historyStore) => {
+                        const current = get().currentJsonData as Record<string, any>;
+                        if (!current) return;
 
-                            let hasChanges = false;
+                        let hasChanges = false;
+                        const deletedItems: any[] = [];
 
-                            function deepRemove(obj: any): any {
-                                if (Array.isArray(obj)) {
-                                    const result = [];
-                                    for (const item of obj) {
-                                        if (typeof item === "object" && item !== null && "__guid" in item) {
-                                            if (guids.includes(item.__guid)) {
-                                                hasChanges = true;
+                        function deepRemove(obj: any): any {
+                            if (Array.isArray(obj)) {
+                                const toBeDeleted = obj.filter(
+                                    item => typeof item === "object" && item !== null && guids.includes(item.__guid)
+                                );
+                                const filtered = obj.filter(
+                                    item => !(typeof item === "object" && item !== null && guids.includes(item.__guid))
+                                );
 
-                                                const toBeDeleted = obj.filter(item => guids.includes(item.__guid));
-                                                const filtered = obj.filter(item => !guids.includes(item.__guid));
-
-                                                if (filtered.length !== obj.length) {
-                                                    hasChanges = true;
-
-                                                    // 삭제 이력 기록
-                                                    if (historyStore) {
-                                                        toBeDeleted.forEach(item => {
-                                                            const guid = item.__guid;
-                                                            const properties = item;
-
-                                                            if (guid && properties) {
-                                                                featureUpdateLogs(historyStore, {
-                                                                    guid,
-                                                                    updateType: "deleted",
-                                                                    properties,
-                                                                });
-                                                            }
-                                                        });
-                                                    }
-                                                }
-                                                continue; // 삭제
-                                            }
-                                        }
-                                        result.push(deepRemove(item));
-                                    }
-                                    return result;
-                                } else if (typeof obj === "object" && obj !== null) {
-                                    const newObj: Record<string, any> = {};
-                                    for (const [key, value] of Object.entries(obj)) {
-                                        newObj[key] = deepRemove(value);
-                                    }
-                                    return newObj;
-                                } else {
-                                    return obj; // primitive
+                                if (toBeDeleted.length > 0) {
+                                    hasChanges = true;
+                                    deletedItems.push(...toBeDeleted);
                                 }
-                            }
 
-                            const updated = deepRemove(current);
-
-                            if (hasChanges) {
-                                set({
-                                    currentJsonData: updated,
-                                    isChanged: true,
-                                });
+                                return filtered.map(item => deepRemove(item));
+                            } else if (typeof obj === "object" && obj !== null) {
+                                const newObj: Record<string, any> = {};
+                                for (const [key, value] of Object.entries(obj)) {
+                                    newObj[key] = deepRemove(value);
+                                }
+                                return newObj;
+                            } else {
+                                return obj;
                             }
-                        },
+                        }
+
+                        const updated = deepRemove(current);
+
+                        if (hasChanges) {
+                            set({
+                                currentJsonData: updated,
+                                isChanged: true,
+                            });
+
+                            if (historyStore && deletedItems.length > 0) {
+                                const timestamp = new Date().toISOString();
+
+                                const batchUpdates: UpdateLogEntry = {
+                                    deleted: deletedItems.flatMap(item =>
+                                        Object.entries(item).map(([key, value]) => ({
+                                            guid: item.__guid,
+                                            field: key,
+                                            oldValue: value,
+                                            newValue: null,
+                                            timestamp,
+                                        }))
+                                    )
+                                };
+
+                                historyStore.getState().setUpdateLogs(batchUpdates);
+                            }
+                        }
+                    },
                         setChange: (changed: boolean) => set({isChanged: changed}),
                         initCurrentData: () => {
                             if (origin) set({

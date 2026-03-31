@@ -18,6 +18,7 @@ import { projectPointOntoSegmentOl } from "@utils/offset";
 import { createCoordinatesFromOl } from "@utils/coordinates";
 import Geometry from "ol/geom/Geometry";
 import { useRailStationHistoryStore, useRailStationStore } from "@stores/useRailStationStore";
+import { setModifyingFeature, clearModifyingFeature, reapplySelectionHighlight } from "@handler/defaultEventHandler";
 
 const setMessage = useMessageStore.getState().setMessage;
 
@@ -101,10 +102,17 @@ const modifyFeatureHandlersInternal = {
                 return;
             }
 
-            const {offset, offsetPosition} = projectPointOntoSegmentOl(laneStart, laneEnd, coord);
+            const {offset} = projectPointOntoSegmentOl(laneStart, laneEnd, coord);
 
-            geom.setCoordinates(offsetPosition)
+            // store 갱신 → load() 가 단일 경로로 source를 재구성 (하향식)
+            clearModifyingFeature();
             processAndStoreStation(<BusStationData>record, parentLink.id, laneData.id, offset);
+            // load() 로 새 Feature 객체 생성 후 하이라이트 재적용, Modify가 새 객체를 추적하도록 컬렉션 갱신
+            const newFeature = reapplySelectionHighlight(<string>record.__guid, layer);
+            if (newFeature) {
+                modifyFeatures.clear();
+                modifyFeatures.push(newFeature);
+            }
         }
 
         const {olEventManager, cesiumEventManager} = useEventStore.getState();
@@ -117,6 +125,7 @@ const modifyFeatureHandlersInternal = {
             olModifyend(e);
         }
         const cleanup = () => {
+            clearModifyingFeature();
             try {
                 olEventManager?.unbind(`modify:${featureType}:end`, olModifyHandler);
             } catch (error) {
@@ -139,6 +148,14 @@ const modifyFeatureHandlersInternal = {
         }
         modifyFeatures.clear()
         selected.forEach(f => modifyFeatures.push(f))
+
+        // 수정 시작: modifyingGuid 설정 + 선택 하이라이트
+        const firstFeature = modifyFeatures.item(0);
+        if (firstFeature) {
+            const guid = firstFeature.get('__guid') as string | undefined;
+            const styleFn = (layer as any).getStyleFunction?.();
+            if (guid) setModifyingFeature(guid, firstFeature, styleFn);
+        }
 
         olEventManager?.bind(`modify:${featureType}:end`, olModifyHandler, {features: modifyFeatures});
         const snapLayer = useLayerStore.getState().layerManager?.getLayerByName(snapLayerName);
@@ -197,7 +214,14 @@ const modifyFeatureHandlersInternal = {
             const coordinates = createCoordinatesFromOl(coord)
             if (!coordinates) return;
 
+            clearModifyingFeature();
             processAndStoreStation(<RailStationData>record, coordinates);
+            // load() 로 새 Feature 객체 생성 후 하이라이트 재적용, Modify가 새 객체를 추적하도록 컬렉션 갱신
+            const newFeature = reapplySelectionHighlight(<string>record.__guid, layer);
+            if (newFeature) {
+                modifyFeatures.clear();
+                modifyFeatures.push(newFeature);
+            }
         }
 
         const {olEventManager, cesiumEventManager} = useEventStore.getState();
@@ -211,6 +235,7 @@ const modifyFeatureHandlersInternal = {
 
         }
         const cleanup = () => {
+            clearModifyingFeature();
             try {
                 olEventManager?.unbind(`modify:${featureType}:end`, olModifyHandler);
             } catch (error) {
@@ -233,6 +258,14 @@ const modifyFeatureHandlersInternal = {
         }
         modifyFeatures.clear()
         selected.forEach(f => modifyFeatures.push(f))
+
+        // 수정 시작: modifyingGuid 설정 + 선택 하이라이트
+        const firstFeature = modifyFeatures.item(0);
+        if (firstFeature) {
+            const guid = firstFeature.get('__guid') as string | undefined;
+            const styleFn = (layer as any).getStyleFunction?.();
+            if (guid) setModifyingFeature(guid, firstFeature, styleFn);
+        }
 
         olEventManager?.bind(`modify:${featureType}:end`, olModifyHandler, {features: modifyFeatures});
         return cleanup;
@@ -300,10 +333,17 @@ const modifyFeatureHandlersInternal = {
             const linkStart = fromLonLat([linkData.coordinates[0].lng, linkData.coordinates[0].lat]);
             const linkEnd = fromLonLat([linkData.coordinates[1].lng, linkData.coordinates[1].lat]);
 
-            const {offset, offsetPosition} = projectPointOntoSegmentOl(linkStart, linkEnd, coord);
+            const {offset} = projectPointOntoSegmentOl(linkStart, linkEnd, coord);
 
-            geom.setCoordinates(offsetPosition)
+            // store 갱신 → load() 가 단일 경로로 source를 재구성 (하향식)
+            clearModifyingFeature();
             processAndStoreStation(<RailStationExitData>record, linkData.id, offset);
+            // load() 로 새 Feature 객체 생성 후 하이라이트 재적용, Modify가 새 객체를 추적하도록 컬렉션 갱신
+            const newFeature = reapplySelectionHighlight(<string>record.__guid, layer);
+            if (newFeature) {
+                modifyFeatures.clear();
+                modifyFeatures.push(newFeature);
+            }
         }
 
         const {olEventManager, cesiumEventManager} = useEventStore.getState();
@@ -317,6 +357,7 @@ const modifyFeatureHandlersInternal = {
 
         }
         const cleanup = () => {
+            clearModifyingFeature();
             try {
                 olEventManager?.unbind(`modify:${featureType}:end`, olModifyHandler);
             } catch (error) {
@@ -339,6 +380,14 @@ const modifyFeatureHandlersInternal = {
         }
         modifyFeatures.clear()
         selected.forEach(f => modifyFeatures.push(f))
+
+        // 수정 시작: modifyingGuid 설정 + 선택 하이라이트
+        const firstFeature = modifyFeatures.item(0);
+        if (firstFeature) {
+            const guid = firstFeature.get('__guid') as string | undefined;
+            const styleFn = (layer as any).getStyleFunction?.();
+            if (guid) setModifyingFeature(guid, firstFeature, styleFn);
+        }
 
         olEventManager?.bind(`modify:${featureType}:end`, olModifyHandler, {features: modifyFeatures});
         const snapLayer = useLayerStore.getState().layerManager?.getLayerByName(snapLayerName);

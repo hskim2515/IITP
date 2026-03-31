@@ -5,10 +5,19 @@ import {Feature} from "ol";
 
 export function interpolateByOffset(features: any[]): any[] {
     const olMap = useOpenLayersStore.getState().map;
+    if (!olMap) {
+        console.warn('[interpolateByOffset] OL map not ready, skipping interpolation');
+        return features;
+    }
     const layers = olMap.getLayers().getArray();
-    const networkLayer = layers.find(layer => layer.LAYER_NAME === "network");
+    const networkLayer = layers.find((layer: any) => layer.LAYER_NAME === "network");
 
-    const networkFeatures = networkLayer.getSource().getFeatures();
+    if (!networkLayer) {
+        console.warn('[interpolateByOffset] network layer not found, skipping interpolation');
+        return features;
+    }
+
+    const networkFeatures = (networkLayer as any).getSource().getFeatures();
     const laneMap = new Map<string, any>();
     networkFeatures.forEach(f => {
         const props = f.getProperties();
