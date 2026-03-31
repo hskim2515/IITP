@@ -278,7 +278,7 @@ const Dashboard: React.FC<Props> = ({ onClose }) => {
                             {selectedScenario?.label ?? '-'}
                         </span>
                         {selectedScenarioVersion && (
-                            <span className={styles.versionTag}>{selectedScenarioVersion}</span>
+                            <span className={styles.versionTag}>{selectedScenarioVersion.label}</span>
                         )}
                     </div>
                     <div className={styles.headerRight}>

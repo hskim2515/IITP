@@ -47,6 +47,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     const currentJsonData = store(useShallow((state: { currentJsonData: unknown }) => state.currentJsonData));
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const selectedScenario = useScenarioStore.getState().selectedScenario;
+    const selectedScenarioVersion = useScenarioStore.getState().selectedScenarioVersion;
     const olMap = useOpenLayersStore.state.map();
 
     const heightRef = useRef(400);
@@ -148,7 +149,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         const payload = { data: extractedArray, logs: mergedLog };
         try {
             if (!selectedScenario) return;
-            await axiosInstance({ method: api.method, url: api.url + '/' + selectedScenario.key, data: payload });
+            await axiosInstance({ method: api.method, url: api.url + '/' + (selectedScenarioVersion?.key ?? selectedScenario.key), data: payload });
             historyStore.getState().resetUpdateLogs();
             setReloadFlag(prev => !prev);
             setMessage({ type: 'info', text: '저장 완료' });

@@ -2,6 +2,7 @@ package com.iitp.iitp_rest.service.signal;
 
 import com.iitp.iitp_rest.model.signal.SignalTimelineResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -10,6 +11,7 @@ import org.w3c.dom.NodeList;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.InputStream;
+import java.net.URL;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -22,11 +24,15 @@ public class SignalTimelineServiceImpl implements SignalTimelineService {
 
     private static final DateTimeFormatter formatter = DateTimeFormatter.ISO_INSTANT;
 
+    @Value("${database.vehicle_sim.remoteUrl}")
+    private String remoteUrl;
+
     @Override
-    public List<SignalTimelineResponse> generateSignalTimeline(long simulationStartTime, String targetPlanId) {
+    public List<SignalTimelineResponse> generateSignalTimeline(long simulationStartTime, String targetPlanId, String dataPath, int simulationDurationSeconds) {
         List<SignalTimelineResponse> timelines = new ArrayList<>();
 
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream("scenario1/signal.xml")) {
+        String xmlUrl = remoteUrl + dataPath + "/signal.xml";
+        try (InputStream is = new URL(xmlUrl).openStream()) {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document doc = builder.parse(is);
@@ -34,8 +40,7 @@ public class SignalTimelineServiceImpl implements SignalTimelineService {
             Element signalElement = doc.getDocumentElement();
             NodeList nodeList = signalElement.getElementsByTagName("node");
 
-            // 시뮬레이션 전체 시간 (초), 필요에 따라 조절하세요
-            int simulationDurationSeconds = 600; // 10분
+            // 시뮬레이션 전체 시간: 파라미터로 전달받음
 
             for (int i = 0; i < nodeList.getLength(); i++) {
                 Element nodeElement = (Element) nodeList.item(i);

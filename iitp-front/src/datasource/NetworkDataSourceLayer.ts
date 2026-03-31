@@ -3,7 +3,6 @@ import * as Cesium from "cesium";
 import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
 import {useScenarioStore} from "@stores/useScenarioStore";
 import { Network } from "@type/Network";
-import { diff } from "deep-object-diff";
 
 export default class NetworkDataSourceLayer {
     private readonly LAYER_NAME = "network";
@@ -11,6 +10,7 @@ export default class NetworkDataSourceLayer {
     private unsubscribe: (() => void) | undefined;
     private static readonly EPSILON = 1e-9;
     private selectedScenario = useScenarioStore.getState().selectedScenario
+    private selectedScenarioVersion = useScenarioStore.getState().selectedScenarioVersion
 
     constructor(private viewer: Viewer) {
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
@@ -25,7 +25,7 @@ export default class NetworkDataSourceLayer {
                     console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
                     this.load();
                 },
-                {equalityFn: (a: Network, b: Network) => diff(a, b) === undefined}
+                {equalityFn: (a: Network, b: Network) => a === b}
             );
         }
     }
@@ -334,6 +334,7 @@ export default class NetworkDataSourceLayer {
                 headers: { "Content-Type": "application/json" },
             })
                 .then((response) => {
+                    if (!response.ok) return null;
                     return response.json();
                 })
                 .then(({nodes : signalNodes}) => {
@@ -349,9 +350,6 @@ export default class NetworkDataSourceLayer {
                     });
 
                 })
-
-            this.viewer.dataSources.add(this.dataSource);
-            return this.dataSource;
 
             console.log("NetworkDataSourceLayer: 모든 Feature가 추가됨");
         } catch (error) {

@@ -22,7 +22,7 @@ public class RailStationController {
     private final RailStationMapper railStationMapper;
 
     @GetMapping("/{versionId}")
-    public ResponseEntity<RailPublicTransitResponse> getRailStationsByVersionId(@PathVariable String versionId) {
+    public ResponseEntity<RailPublicTransitResponse> getRailStationsByVersionId(@PathVariable String versionId) throws java.io.IOException {
         log.info("[getRailStationsByVersionId] scenarioKey: {}", versionId);
 
         RailPublicTransitXml xml = railStationService.getRailStationXmlByVersionId(versionId);

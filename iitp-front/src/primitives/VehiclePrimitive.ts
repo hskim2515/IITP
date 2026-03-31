@@ -49,6 +49,7 @@ export default class VehiclePrimitive {
     private modelNormalBuffer: any = null;
     private modelIndexBuffer:  any = null;
     private orientationBuffer: any = null;
+    private scaleBuffer:       any = null;   // per-instance scale (instance)
 
     // ─── RTC 기준점 (ECEF) ────────────────────────────────────────────────
     private referenceCenter = new Cesium.Cartesian3();
@@ -68,6 +69,9 @@ export default class VehiclePrimitive {
     private correctionQ = new Cesium.Quaternion();
 
     // ─── 생성자 ───────────────────────────────────────────────────────────
+    /** per-instance scale (targetSizeM 기준 상대값). 없으면 모두 1.0 */
+    private instanceScales: Float32Array;
+
     constructor(
         paths: number[][],
         viewer: any,
@@ -76,7 +80,8 @@ export default class VehiclePrimitive {
         status: string,
         correctionHpr?: Cesium.HeadingPitchRoll,
         targetSizeM = 5.0,
-        zOffset = 0.0
+        zOffset = 0.0,
+        scales?: number[]
     ) {
         this.viewer        = viewer;
         this.context       = viewer.scene.context;
@@ -88,6 +93,13 @@ export default class VehiclePrimitive {
         this.correctionHpr = correctionHpr ?? new Cesium.HeadingPitchRoll(0, 0, Math.PI);
         this.targetSizeM   = targetSizeM;
         this.zOffset       = zOffset;
+
+        // per-instance scale: 제공된 length / targetSizeM, 0이거나 없으면 1.0
+        this.instanceScales = new Float32Array(paths.length);
+        for (let i = 0; i < paths.length; i++) {
+            const len = scales?.[i];
+            this.instanceScales[i] = (len && len > 0) ? len / targetSizeM : 1.0;
+        }
 
         console.log(`[VehiclePrimitive] correctionHpr H=${this.correctionHpr.heading.toFixed(3)} P=${this.correctionHpr.pitch.toFixed(3)} R=${this.correctionHpr.roll.toFixed(3)}`);
 
@@ -246,8 +258,9 @@ export default class VehiclePrimitive {
                 : Cesium.IndexDatatype.UNSIGNED_SHORT,
             usage: BU.STATIC_DRAW,
         });
-        this.offsetBuffer      = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: offsetInit, usage: BU.DYNAMIC_DRAW });
-        this.orientationBuffer = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: orientInit, usage: BU.DYNAMIC_DRAW });
+        this.offsetBuffer      = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: offsetInit,        usage: BU.DYNAMIC_DRAW });
+        this.orientationBuffer = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: orientInit,        usage: BU.DYNAMIC_DRAW });
+        this.scaleBuffer       = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: this.instanceScales, usage: BU.STATIC_DRAW });
 
         // CPU 재사용 배열
         this._offsetArr = new Float32Array(this.instanceCount * 3);
@@ -263,6 +276,7 @@ export default class VehiclePrimitive {
                 // 인스턴스 데이터 (per-instance, instanceDivisor=1)
                 { index: 2, vertexBuffer: this.offsetBuffer,      componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
                 { index: 3, vertexBuffer: this.orientationBuffer, componentsPerAttribute: 4, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
+                { index: 4, vertexBuffer: this.scaleBuffer,       componentsPerAttribute: 1, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
             ],
             indexBuffer: this.modelIndexBuffer,
         });
@@ -285,6 +299,7 @@ export default class VehiclePrimitive {
                 layout(location=1) in vec3 a_modelNormal;
                 layout(location=2) in vec3 a_instanceOffset;       // position - referenceCenter
                 layout(location=3) in vec4 a_instanceOrientation;  // WXYZ quaternion
+                layout(location=4) in float a_instanceScale;       // per-vehicle scale
 
                 uniform mat4 u_view;
                 uniform mat4 u_projection;
@@ -296,8 +311,8 @@ export default class VehiclePrimitive {
                 }
 
                 void main() {
-                    // 모델 정점 회전
-                    vec3 rotated = quatRotate(a_modelPosition, a_instanceOrientation);
+                    // per-instance scale 적용 후 회전
+                    vec3 rotated = quatRotate(a_modelPosition * a_instanceScale, a_instanceOrientation);
 
                     // camera-relative 위치 (RTC: 정밀도 보존)
                     vec3 posRel = u_rtcCenter + a_instanceOffset + rotated;
@@ -318,10 +333,11 @@ export default class VehiclePrimitive {
                 }
             `,
             attributeLocations: {
-                a_modelPosition:    0,
-                a_modelNormal:      1,
-                a_instanceOffset:   2,
+                a_modelPosition:       0,
+                a_modelNormal:         1,
+                a_instanceOffset:      2,
                 a_instanceOrientation: 3,
+                a_instanceScale:       4,
             },
         });
 
@@ -453,6 +469,7 @@ export default class VehiclePrimitive {
         this.modelIndexBuffer?.destroy();
         this.offsetBuffer?.destroy();
         this.orientationBuffer?.destroy();
+        this.scaleBuffer?.destroy();
         this.shaderProgram?.destroy();
 
         this._offsetArr = null;

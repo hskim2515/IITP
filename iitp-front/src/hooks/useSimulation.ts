@@ -22,7 +22,8 @@ import { useVehicleModelStore, resolveGlbUrl, resolveModelByVehicleType } from "
 const useSimulation = () => {
     const { isRunning, isStop, speed } = useSimulationStore();
 
-    const selectedScenario = useScenarioStore.getState().selectedScenario;
+    const selectedScenario = useScenarioStore((state) => state.selectedScenario);
+    const selectedScenarioVersion = useScenarioStore((state) => state.selectedScenarioVersion);
 
     const numVehicle = useVehicleStore((state) => state.numVehicle);
     const speedFactor = useVehicleStore((state) => state.speedFactor);
@@ -58,8 +59,10 @@ const useSimulation = () => {
 
     const lastUpdateTime = useRef(0);
     const lastOdUpdateTime = useRef(0);
+    const lastSignalUpdateTime = useRef(0);
     const entityMapRef = useRef<Map<string, Cesium.Entity>>(new Map());
     const lastPositionsRef = useRef([])
+    const connectionFeatureMapRef = useRef<Map<string, Feature>>(new Map());
 
     // const changeModelWorkerRef = useRef<Worker | null>(null);
     const czmlPositionWorkerRef = useRef<Worker | null>(null);
@@ -140,27 +143,41 @@ const useSimulation = () => {
     }, [ heatmapSetting.colors, heatmapSetting.blur, heatmapSetting.exaggeration ]);
 
     useEffect(() => {
-        fetch(process.env.VITE_API_URL + "/vehicle/vehicle-route/" + selectedScenario.key, { // generate-czml
+        if (!selectedScenario) return;
+
+        const scenarioKey = selectedScenario.key;
+        const baseUrl = process.env.VITE_API_URL;
+        const requestBody = JSON.stringify({ numVehicle, speedFactor, czml });
+
+        const applyRouteData = (data: any) => {
+            if (!data || !data.czml) return;
+            const { czml: czmlData, positions, features, signalTimeline } = data;
+            setVehicleRoute(positions);
+            setCzml(czmlData);
+            setFeatures(features);
+            setSignalTimeline(signalTimeline);
+            const clock = czmlData[0].clock;
+            const [startTime, endTime] = czmlData[0].clock.interval.split('/');
+            const start = JulianDate.fromIso8601(startTime);
+            const end = JulianDate.fromIso8601(endTime);
+            const current = JulianDate.fromIso8601(clock.currentTime);
+            useSimulationStore.getState().setClock(start, end, current);
+        };
+
+        fetch(`${baseUrl}/vehicle/vehicle-route/${scenarioKey}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ numVehicle, speedFactor, czml }),
+            body: requestBody,
         })
-            .then((response) => response.json())
-            .then(({ czml, positions, features, signalTimeline }) => {
-                setVehicleRoute(positions);
-                setCzml(czml);
-                setFeatures(features);
-                setSignalTimeline(signalTimeline);
-                const clock = czml[0].clock;
-                const [startTime, endTime] = czml[0].clock.interval.split('/');
-                const start = JulianDate.fromIso8601(startTime);
-                const end = JulianDate.fromIso8601(endTime);
-                const current = JulianDate.fromIso8601(clock.currentTime);
-
-                useSimulationStore.getState().setClock(start, end, current);
-
-            });
-    }, [ numVehicle, speedFactor ]);
+            .then((r) => {
+                if (!r.ok) {
+                    console.warn(`[useSimulation] 차량 경로 로드 실패 (${r.status}):`, scenarioKey);
+                    return null;
+                }
+                return r.json();
+            })
+            .then(applyRouteData);
+    }, [ numVehicle, speedFactor, selectedScenario?.key ]);
 
     // Cesium과 OpenLayers 시뮬레이션 통합: 후처리 및 Cesium 관련 설정
     useEffect(() => {
@@ -198,6 +215,15 @@ const useSimulation = () => {
             lastUpdateTime.current = currentTime;
             czmlPositionWorkerRef.current.postMessage({ type: 'tick', currentTime: simTime });
             useSimulationStore.getState().setCurrentTime(JulianDate.clone(viewer.clock.currentTime));
+
+            const signalInterval = Math.max(200, 1000 / (speedRef.current || 1));
+            if (currentTime - lastSignalUpdateTime.current >= signalInterval) {
+                lastSignalUpdateTime.current = currentTime;
+                const signalTimeline = useSignalTimelineStore.getState().signalTimeline;
+                if (signalTimeline?.length) {
+                    updateSignalStyles(layerManager as any, viewer, connectionFeatureMapRef.current, signalTimeline, simTime);
+                }
+            }
         }
     };
 
@@ -222,13 +248,16 @@ const useSimulation = () => {
             }
         }
 
+        connectionFeatureMapRef.current.clear();
+
         loadCzmlDataSource(czml).then((czmlSource) => {
             viewer.clock.shouldAnimate = isRunningRef.current;
 
             // 레이어 초기화
             layerManager.removeSimulationLayers();
             const vectorSource = new VectorSource();
-            const typeGroups = new Map<string, any[]>();
+            const typeGroups  = new Map<string, any[]>();
+            const scaleGroups = new Map<string, number[]>();  // per-vehicle length (m)
             vehicleRoute.forEach((entry: any, idx: number) => {
                 const isLegacy = Array.isArray(entry);
                 const path = isLegacy ? entry : entry.path;
@@ -253,8 +282,10 @@ const useSimulation = () => {
                     else if (mod < 99)  vType = 'TRUCK';
                     else                vType = 'MOTO';
                 }
-                if (!typeGroups.has(vType)) typeGroups.set(vType, []);
+                if (!typeGroups.has(vType))  typeGroups.set(vType, []);
+                if (!scaleGroups.has(vType)) scaleGroups.set(vType, []);
                 typeGroups.get(vType)!.push(path);
+                scaleGroups.get(vType)!.push(isLegacy ? 0 : (entry.length ?? 0) as number);
             });
             console.log('[setSimulation] vehicleRoute sample:', vehicleRoute[0], '| typeGroups:', [...typeGroups.entries()].map(([k, v]) => `${k}:${v.length}`));
 
@@ -295,7 +326,8 @@ const useSimulation = () => {
                     console.log(`[setSimulation] type=${vType} typeModel=`, typeModel);
                     const glbUrl = resolveGlbUrl(typeModel, vType);
                     const zOffset = typeModel?.zOffset ?? 0;
-                    layerManager.addVehicleLayer(paths, vectorSource, speedFactor, isRunningRef.current, glbUrl, resolveCorrectionHpr(vType, typeModel?.correctionHpr), vType, zOffset);
+                    const scales = scaleGroups.get(vType);
+                    layerManager.addVehicleLayer(paths, vectorSource, speedFactor, isRunningRef.current, glbUrl, resolveCorrectionHpr(vType, typeModel?.correctionHpr), vType, zOffset, scales);
                 });
             }
             layerManager.addHeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, heatmapSetting);

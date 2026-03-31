@@ -35,6 +35,7 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
     const featureStore = menuCodeToStoreMap[menuCode];
 
     const selectedScenario = useScenarioStore.getState().selectedScenario;
+    const selectedScenarioVersion = useScenarioStore.getState().selectedScenarioVersion;
     const originData = featureStore.getState().originData;
     const firstKey = Object.keys(originData)[0] as keyof typeof originData;
     const originHistoryLogData = historyStore.getState().originHistoryData;
@@ -70,7 +71,7 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
             const api = apiConfig[menuCode as ApiMenuKey].origin;
             const response = await axiosInstance({
                 method: api.method,
-                url: api.url + '/' + selectedScenario.key,
+                url: api.url + '/' + (selectedScenarioVersion?.key ?? selectedScenario.key),
             });
 
             store.getState().setOriginHistoryData(response.data);

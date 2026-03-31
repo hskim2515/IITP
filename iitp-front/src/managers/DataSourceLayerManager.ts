@@ -88,13 +88,24 @@ class DataSourceLayerManager {
         const ds = this.get(groupName, layerName);
         if (!ds) return;
 
+        // 부모 DataSource가 숨겨진 상태면 entity 토글이 무의미함
+        // visible=true일 때 부모도 함께 show
+        if (visible && !ds.show) {
+            ds.show = true;
+        }
+
         ds.entities.values.forEach(entity => {
             const entityFeatureType = entity?.properties?.featureType?.getValue?.();
-
             if (entityFeatureType === featureType) {
                 entity.show = visible;
             }
         });
+
+        // 모든 entity가 숨겨진 경우 부모 DataSource도 hide
+        if (!visible) {
+            const anyVisible = ds.entities.values.some(e => e.show);
+            if (!anyVisible) ds.show = false;
+        }
     }
 
 

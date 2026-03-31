@@ -7,13 +7,15 @@ import com.iitp.iitp_rest.model.publicTransit.bus.PublicTransitXml;
 import com.iitp.iitp_rest.repository.BusStationLogsRepository;
 import com.iitp.iitp_rest.repository.BusStationVersionsRepository;
 import com.iitp.iitp_rest.repository.ScenarioRepository;
-import com.iitp.iitp_rest.util.XmlUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
 import java.util.List;
 
 @Service
@@ -26,6 +28,9 @@ public class BusStationService {
     private final BusStationJaxbParser busStationJaxbParser;
 
     private final ScenarioRepository scenarioRepository;
+
+    @Value("${database.vehicle_sim.remoteUrl}")
+    private String remoteUrl;
 
     public BusStationVersion getByVersionId(String versionId) {
         return busStationVersionsRepository.findByVersionId(versionId).orElse(new BusStationVersion());
@@ -59,9 +64,8 @@ public class BusStationService {
         busStationLogsRepository.save(entityLog);
     }
 
-    public PublicTransitXml getBusStationXmlByVersionId(String versionId) {
-        String path = versionId + "/publicTransit.xml";
-        InputStream is = XmlUtils.loadXmlAsStream(path);
+    public PublicTransitXml getBusStationXmlByVersionId(String versionId) throws IOException {
+        InputStream is = new URL(remoteUrl + versionId + "/publicTransit.xml").openStream();
         return streamToDto(is);
     }
 

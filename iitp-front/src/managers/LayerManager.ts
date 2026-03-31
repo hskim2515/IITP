@@ -213,7 +213,8 @@ export class LayerManager {
         glbUrl: string = 'public/model_12.glb',
         correctionHpr?: Cesium.HeadingPitchRoll,
         vehicleType: string = 'default',
-        zOffset: number = 0
+        zOffset: number = 0,
+        scales?: number[]
     ) {
         const groupName = "analyze"
         const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
@@ -234,7 +235,7 @@ export class LayerManager {
             'MOTO':  2,
         };
         const targetSizeM = VEHICLE_TARGET_SIZE[vehicleType] ?? 4;
-        const primitive = new VehiclePrimitive(vehicleRoute, this.cesiumViewer, glbUrl, speedFactor, isRunning, correctionHpr, targetSizeM, zOffset);
+        const primitive = new VehiclePrimitive(vehicleRoute, this.cesiumViewer, glbUrl, speedFactor, isRunning, correctionHpr, targetSizeM, zOffset, scales);
         primitive.baseColor = VEHICLE_TYPE_COLORS[vehicleType] ?? [1, 1, 1];
         (primitive as any).vehicleType = vehicleType;
         this.primitiveLayerManager.add(primitive, groupName, "vehicle", true);
