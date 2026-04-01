@@ -1,15 +1,18 @@
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo } from "react";
 import { Table } from "antd";
 import type { ColumnsType } from "antd/es/table";
 
 import { useNavigationStore } from "@stores/useNavigationStore";
 import { useSelectionStore } from "@stores/useSelectionStore";
 import { useSchemaStore } from "@stores/useSchemaStore";
-
 import type { DrillFrame } from "@stores/useNavigationStore";
 
 import style from "@css/GridTable.module.css";
-import { buildColumnsFromDefinition, getChildrenStructure, getStructureByFeatureType } from "@component/util/JsonGrid";
+import {
+    buildColumnsFromDefinition,
+    getChildrenStructure,
+    getStructureByFeatureType,
+} from "@utils/gridUtils";
 
 type GridTableProps = {
     layerName: string;
@@ -27,27 +30,31 @@ export const GridTable = ({
                               onCellUpdate,
                           }: GridTableProps) => {
     const push = useNavigationStore((s) => s.push);
+    const navigateByPath = useNavigationStore((s) => s.navigateByPath);
+
     const selectedGuid = useSelectionStore((s) => s.selectedGuid);
     const setSelectedGuid = useSelectionStore((s) => s.setSelectedGuid);
-    const clearSelected = useSelectionStore((s) => s.clearSelected);
 
-    const {
-        getSchemaDefinitionByNames,
-        getSchemaColumnSpecByLayerName,
-        getStructureByLayerName,
-    } = useSchemaStore();
+    const getSchemaDefinitionByNames = useSchemaStore((s) => s.getSchemaDefinitionByNames);
+    const getSchemaColumnSpecByLayerName = useSchemaStore((s) => s.getSchemaColumnSpecByLayerName);
+    const getStructureByLayerName = useSchemaStore((s) => s.getStructureByLayerName);
 
-    const definition = useMemo(() => getSchemaDefinitionByNames(layerName, frame.levelName), [layerName, frame.levelName]);
-    const columnSpec = useMemo(() => getSchemaColumnSpecByLayerName(layerName), [layerName]);
-    const layerStructure = useMemo(() => getStructureByLayerName(layerName), [layerName]);
+    const definition = useMemo(() => getSchemaDefinitionByNames(layerName, frame.levelName), [getSchemaDefinitionByNames, layerName, frame.levelName]);
+    const columnSpec = useMemo(() => getSchemaColumnSpecByLayerName(layerName), [getSchemaColumnSpecByLayerName, layerName]);
+    const layerStructure = useMemo(() => getStructureByLayerName(layerName), [getStructureByLayerName, layerName]);
+
     const currentStructure = useMemo(() => getStructureByFeatureType(layerStructure, frame.levelName), [layerStructure, frame.levelName]);
     const childrenStructure = useMemo(() => getChildrenStructure(currentStructure), [currentStructure]);
 
+    const getChildrenFields = useCallback((levelName: string) => {
+        const struct = getStructureByLayerName(layerName);
+        const targetStruct = getStructureByFeatureType(struct, levelName);
+        return getChildrenStructure(targetStruct);
+    }, [getStructureByLayerName, layerName]);
+
     const handleDrillDown = useCallback((record: any, fieldName: string) => {
         const childRows = Array.isArray(record[fieldName]) ? record[fieldName] : [];
-        const layerStruct = getStructureByLayerName(layerName);
-        const nextStructure = getStructureByFeatureType(layerStruct, fieldName);
-        const nextChildren = getChildrenStructure(nextStructure);
+        const nextFields = getChildrenFields(fieldName);
         const idValue = record.id ?? record.__guid?.slice(-4) ?? "?";
 
         push({
@@ -56,9 +63,9 @@ export const GridTable = ({
             parentRecord: record,
             parentGuid: record.__guid,
             breadLabel: `${frame.levelName} #${idValue}`,
-            hasChildren: nextChildren.length > 0,
+            hasChildren: nextFields.length > 0,
         });
-    }, [frame.levelName, layerName, push, getStructureByLayerName]);
+    }, [frame.levelName, getChildrenFields, push]);
 
     const drillColumn = useMemo(() => {
         if (!frame.hasChildren || childrenStructure.length === 0) return [];
@@ -66,6 +73,7 @@ export const GridTable = ({
             title: "",
             key: "__drill",
             width: 160,
+            fixed: "left" as const,
             render: (_: any, record: any) => (
                 <div className={style.drillColumnCell}>
                     {childrenStructure
@@ -82,54 +90,71 @@ export const GridTable = ({
 
     const columns = useMemo<ColumnsType>(() => {
         const baseCols = buildColumnsFromDefinition(definition, columnSpec, onCellUpdate);
-        return [ ...baseCols, ...drillColumn];
+        return [...drillColumn, ...baseCols];
     }, [definition, columnSpec, onCellUpdate, drillColumn]);
+
+
+    const computedSelectedRowKeys = useMemo(() => {
+        if (!selectedGuid?.length) return [];
+        const guidSet = new Set(selectedGuid);
+        return frame.rows
+            .filter(row => guidSet.has(row.__guid))
+            .map(row => row.__guid);
+    }, [selectedGuid, frame.rows]);
 
     useEffect(() => {
         if (!selectedGuid || selectedGuid.length === 0) return;
         const targetGuid = selectedGuid[0];
 
-        const match = frame.rows.find(row =>
+        const match = frame.rows.find((row) =>
             targetGuid === row.__guid || targetGuid.startsWith(`${row.__guid}.`)
         );
 
-        if (match) {
-            const remainingPath = targetGuid.replace(`${match.__guid}.`, "");
-            if (remainingPath === targetGuid) {
-                clearSelected();
-                const timer = setTimeout(() => {
-                    const rowElement = document.querySelector(`tr[data-row-key="${match.__guid}"]`);
-                    rowElement?.scrollIntoView({ behavior: "smooth", block: "center" });
-                }, 100);
-                return () => clearTimeout(timer);
+        if (!match) {
+            const stack = useNavigationStore.getState().stack;
+            const rootFrame = stack[0];
+            if (rootFrame && stack.length > 1) {
+                navigateByPath(targetGuid, rootFrame, getChildrenFields);
             }
+            return;
+        }
 
-            const nextPart = remainingPath.split('.')[0];
-            const nextFieldName = childrenStructure.find(f => nextPart.startsWith(f));
+        if (targetGuid === match.__guid) {
+            const timer = setTimeout(() => {
+                const rowElement = document.querySelector(`tr[data-row-key="${match.__guid}"]`);
+                rowElement?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }, 150);
+            return () => clearTimeout(timer);
+        }
 
-            if (nextFieldName && Array.isArray(match[nextFieldName])) {
-                const idValue = match.id ?? match.__guid?.split('-').pop() ?? "?";
+        else {
+            const fields = getChildrenFields(frame.levelName);
+            const nextFieldName = fields.find((f) =>
+                Array.isArray(match[f]) &&
+                match[f].some((child: any) =>
+                    targetGuid === child.__guid || targetGuid.startsWith(`${child.__guid}.`)
+                )
+            );
+
+            if (nextFieldName) {
+                const idValue = match.id ?? match.__guid?.split("-").pop() ?? "?";
+                const nextFields = getChildrenFields(nextFieldName);
+
                 push({
                     levelName: nextFieldName,
                     rows: match[nextFieldName],
                     parentRecord: match,
                     parentGuid: match.__guid,
                     breadLabel: `${frame.levelName} #${idValue}`,
-                    hasChildren: true,
+                    hasChildren: nextFields.length > 0,
                 });
             }
         }
-    }, [selectedGuid, frame.rows, childrenStructure, push, frame.levelName, clearSelected]);
+    }, [selectedGuid, frame.rows, frame.levelName, navigateByPath, getChildrenFields, push]);
 
-    const handleSelect = useCallback((keys: React.Key[]) => setSelectedGuid(keys), [setSelectedGuid]);
-
-    const computedSelectedRowKeys = useMemo(() => {
-        if (!selectedGuid?.length) return [];
-        const target = selectedGuid[0];
-        return frame.rows
-            .filter(row => target === row.__guid || target.startsWith(`${row.__guid}.`))
-            .map(row => row.__guid as React.Key);
-    }, [selectedGuid, frame.rows]);
+    const handleSelect = useCallback((keys: React.Key[]) => {
+        setSelectedGuid(keys as string[]);
+    }, [setSelectedGuid]);
 
     return (
         <Table
@@ -145,7 +170,11 @@ export const GridTable = ({
                 onChange: handleSelect,
                 selectedRowKeys: computedSelectedRowKeys,
             }}
-            onRow={(record) => ({ ...(frame.hasChildren && { className: style.drillRow }) })}
+            onRow={(record) => ({
+                className: (frame.hasChildren && childrenStructure.some(f => Array.isArray(record[f]) && record[f].length > 0))
+                    ? style.drillRow
+                    : ""
+            })}
         />
     );
 };

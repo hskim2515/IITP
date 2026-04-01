@@ -22,7 +22,7 @@ import { EditableCell } from "@component/schema/EditableCell";
 const DEFAULT_CELL_WIDTH = 160;
 
 /** 현재 레벨의 structure 찾기 */
-export function getStructureByFeatureType(
+function getStructureByFeatureType(
     structures: SchemaStructure[] | null,
     targetName?: string
 ): SchemaStructure | null {
@@ -44,7 +44,7 @@ export function getStructureByFeatureType(
 }
 
 /** structure 기반 하위 필드 목록 추출 */
-export function getChildrenStructure(structure: SchemaStructure | null): string[] {
+function getChildrenStructure(structure: SchemaStructure | null): string[] {
     if (!structure) return [];
     const children = structure.children
     return (children ?? [])
@@ -53,7 +53,7 @@ export function getChildrenStructure(structure: SchemaStructure | null): string[
 }
 
 /** definition 기반 컬럼 생성 */
-export function buildColumnsFromDefinition(
+function buildColumnsFromDefinition(
     definition: SchemaDefinition | null,
     columnSpecList: SchemaColumn[] | null,
     onCellUpdate: (record: any, updates: Partial<Record<string, any>>) => void
@@ -113,14 +113,13 @@ export function buildColumnsFromDefinition(
     return cols;
 }
 
-export type JsonGridProps = {
+type JsonGridProps = {
     layerName: string;
     layerGroupName: string;
     rowData?: any[] | undefined;
     levelName?: string;
     parentGuid?: string | React.Key;
     depth?: number;
-    containerHeight?: number;
 };
 
 const JsonGrid = ({
@@ -130,7 +129,6 @@ const JsonGrid = ({
                       levelName,
                       parentGuid,
                       depth = 0,
-                      containerHeight = 600,
                   }: JsonGridProps) => {
     const setMessage = useMessageStore.getState().setMessage;
 
@@ -319,10 +317,7 @@ const JsonGrid = ({
                     }}
                     size="small"
                     pagination={false}
-                    scroll={{
-                        y: depth === 0 ? containerHeight - 200 : 300,
-                        x: "max-content"
-                    }}
+                    scroll={{y: 600}}
                     locale={{
                         emptyText: "데이터가 없습니다. [+] 버튼으로 새 항목 추가를 시작하세요.",
                     }}

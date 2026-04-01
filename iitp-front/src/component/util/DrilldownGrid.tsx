@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useState, useMemo } from "react";
+import React, { useCallback, useEffect, useState, useMemo } from "react";
 
 import { useNavigationStore, useCurrentFrame } from "@stores/useNavigationStore";
 import { useSelectionStore } from "@stores/useSelectionStore";
@@ -15,15 +15,20 @@ import { GridToolbar } from "./GridToolbar";
 import { GridTable } from "./GridTable";
 
 import style from "@css/DrilldownGrid.module.css";
-import { getChildrenStructure, getStructureByFeatureType } from "@component/util/JsonGrid";
+import { getChildrenStructure, getStructureByFeatureType } from "@utils/gridUtils";
 
 type DrilldownGridProps = {
     layerName: string;
     layerGroupName: string;
-    /** 전체 데이터 객체 { nodes: [], links: [] } */
     currentJsonData?: Record<string, any[]>;
     containerHeight?: number;
 };
+
+function guidBelongsToRows(rows: any[], targetGuid: string): boolean {
+    return rows.some(
+        (row) => targetGuid === row.__guid || targetGuid.startsWith(`${row.__guid}.`)
+    );
+}
 
 const DrilldownGrid = ({
                            layerName,
@@ -35,7 +40,9 @@ const DrilldownGrid = ({
     const dataStore = layerNameToStoreMap[layerName];
     const historyStore = layerNameToHistoryStoreMap[layerName];
 
-    const { init, clear, stack } = useNavigationStore();
+    const init = useNavigationStore((s) => s.init);
+    const clear = useNavigationStore((s) => s.clear);
+    const rebuildStack = useNavigationStore((s) => s.rebuildStack);
     const frame = useCurrentFrame();
 
     const selectedGuid = useSelectionStore((s) => s.selectedGuid);
@@ -43,23 +50,48 @@ const DrilldownGrid = ({
 
     const { getSchemaDefinitionByNames, getStructureByLayerName } = useSchemaStore();
 
-    // ── 내부 루트 탭 상태 관리 ──────────────────────────────────
-    const rootKeys = useMemo(() => Object.keys(currentJsonData ?? {}), [currentJsonData]);
+    const rootKeys = useMemo(() => {
+        const data = (currentJsonData ?? dataStore.getState().currentJsonData) as Record<string, any[]> | undefined;
+        return Object.keys(data ?? {}).filter(key => Array.isArray((data as any)?.[key]));
+    }, [currentJsonData, dataStore]);
     const [activeRootKey, setActiveRootKey] = useState<string | null>(null);
 
     useEffect(() => {
-        if (rootKeys.length > 0) {
-            setActiveRootKey(rootKeys[0]);
+        if (rootKeys.length > 0 && !rootKeys.includes(activeRootKey ?? "")) {
+            setActiveRootKey(rootKeys[0] ?? null);
         }
-    }, [rootKeys]);
+    }, [rootKeys, activeRootKey]);
 
     useEffect(() => {
-        if (!activeRootKey || !currentJsonData || !currentJsonData[activeRootKey]) return;
+        if (!selectedGuid?.length || !currentJsonData || !activeRootKey) return;
+        const targetGuid = selectedGuid[0] as string;
+        if (!targetGuid) return;
 
-        const rowData = currentJsonData[activeRootKey];
+        const currentRows = currentJsonData[activeRootKey] ?? [];
+        if (guidBelongsToRows(currentRows, targetGuid)) return;
+
+        for (const key of rootKeys) {
+            if (key === activeRootKey) continue;
+            if (guidBelongsToRows(currentJsonData[key] ?? [], targetGuid)) {
+                setActiveRootKey(key);
+                return;
+            }
+        }
+    }, [selectedGuid, currentJsonData, activeRootKey, rootKeys]);
+
+    const syncNavigationFromData = useCallback((data: Record<string, any[]> | undefined) => {
+        if (!activeRootKey || !data || !data[activeRootKey]) return;
+
+        const rowData = data[activeRootKey];
         const layerStructure = getStructureByLayerName(layerName);
         const rootStructure = getStructureByFeatureType(layerStructure, activeRootKey);
         const children = getChildrenStructure(rootStructure);
+
+        const currentStack = useNavigationStore.getState().stack;
+        if (currentStack.length > 1 && currentStack[0].levelName === activeRootKey) {
+            rebuildStack(rowData);
+            return;
+        }
 
         init({
             levelName: activeRootKey,
@@ -68,16 +100,31 @@ const DrilldownGrid = ({
             hasChildren: children.length > 0,
         });
 
-        clearSelected();
+        const pendingGuid = useSelectionStore.getState().selectedGuid[0] as string | undefined;
+        if (!pendingGuid || !guidBelongsToRows(rowData, pendingGuid)) {
+            clearSelected();
+        }
+    }, [layerName, activeRootKey, init, rebuildStack, clearSelected, getStructureByLayerName]);
 
-        return () => { };
-    }, [layerName, activeRootKey, currentJsonData, init, clearSelected]);
+    // feature store를 직접 구독하여 currentJsonData 변경 시 즉시 네비게이션 동기화
+    // (undo/redo 포함, React 렌더 사이클에 의존하지 않음)
+    useEffect(() => {
+        return dataStore.subscribe(
+            (state: any) => state.currentJsonData,
+            (newData: any) => {
+                syncNavigationFromData(newData as Record<string, any[]>);
+            }
+        );
+    }, [dataStore, syncNavigationFromData]);
+
+    useEffect(() => {
+        syncNavigationFromData(currentJsonData as Record<string, any[]>);
+    }, [layerName, activeRootKey, currentJsonData, syncNavigationFromData]);
 
     useEffect(() => {
         return () => clear();
     }, [layerName, clear]);
 
-    // ── 셀 업데이트 ─────────────────────────────────────────────
     const handleCellUpdate = useCallback(
         (record: any, partial: Partial<Record<string, any>>) => {
             const merged = { ...record, ...partial };
@@ -86,13 +133,11 @@ const DrilldownGrid = ({
         [dataStore, historyStore]
     );
 
-    // ── 추가/삭제/저장 핸들러 ────────────────────────────────────
     const handleAdd = useCallback(() => {
-        if (!frame) return;
-        const TOOLBAR_HEIGHT = 44;
-        const tableAreaHeight = containerHeight - TOOLBAR_HEIGHT;
+        const currentFrame = useNavigationStore.getState().stack.at(-1);
+        if (!currentFrame) return;
 
-        const targetSchema = getSchemaDefinitionByNames(layerName, frame.levelName);
+        const targetSchema = getSchemaDefinitionByNames(layerName, currentFrame.levelName);
         const template = generateTemplate(targetSchema);
         if (!template) {
             setMessage({ type: "error", text: "레이어에 스키마가 정의되어 있지 않습니다." });
@@ -100,24 +145,25 @@ const DrilldownGrid = ({
         }
         const tempRecord: Record<string, any> = {
             ...template,
-            featureType: frame.levelName,
+            featureType: currentFrame.levelName,
             id: Date.now(),
             __guid: undefined,
-            parentGuid: frame.parentGuid ?? null,
+            parentGuid: currentFrame.parentGuid ?? null,
         };
-        generateGuidWithParentGuid(frame.parentGuid, tempRecord, frame.rows);
+        generateGuidWithParentGuid(currentFrame.parentGuid, tempRecord, currentFrame.rows);
         createEventHandlers(tempRecord);
-    }, [frame, layerName, getSchemaDefinitionByNames, setMessage]);
+    }, [layerName, getSchemaDefinitionByNames, setMessage]);
 
     const handleDelete = useCallback(() => {
-        if (!selectedGuid || selectedGuid.length === 0) {
+        const currentSelectedGuid = useSelectionStore.getState().selectedGuid;
+        if (!currentSelectedGuid || currentSelectedGuid.length === 0) {
             setMessage({ type: "warn", text: "삭제할 항목을 선택해주세요." });
             return;
         }
-        dataStore.getState().removeRecordsByGuid(selectedGuid, historyStore);
-        setMessage({ type: "info", text: `${selectedGuid.length}개 항목이 삭제되었습니다.` });
+        dataStore.getState().removeRecordsByGuid(currentSelectedGuid, historyStore);
+        setMessage({ type: "info", text: `${currentSelectedGuid.length}개 항목이 삭제되었습니다.` });
         clearSelected();
-    }, [selectedGuid, dataStore, historyStore, clearSelected, setMessage]);
+    }, [dataStore, historyStore, clearSelected, setMessage]);
 
     const handleSave = useCallback(() => {
         dataStore.getState().save?.();
@@ -127,20 +173,6 @@ const DrilldownGrid = ({
 
     return (
         <div className={style.container}>
-            {/*{stack.length === 1 && rootKeys.length > 1 && (*/}
-            {/*    <div className={style.rootTabHeader}>*/}
-            {/*        {rootKeys.map((key) => (*/}
-            {/*            <button*/}
-            {/*                key={key}*/}
-            {/*                className={activeRootKey === key ? style.activeTab : style.tab}*/}
-            {/*                onClick={() => setActiveRootKey(key)}*/}
-            {/*            >*/}
-            {/*                {key.toUpperCase()} ({currentJsonData?.[key]?.length ?? 0})*/}
-            {/*            </button>*/}
-            {/*        ))}*/}
-            {/*    </div>*/}
-            {/*)}*/}
-
             <GridToolbar
                 onAdd={handleAdd}
                 onDelete={handleDelete}
@@ -159,7 +191,7 @@ const DrilldownGrid = ({
                     layerName={layerName}
                     layerGroupName={layerGroupName}
                     frame={frame}
-                    containerHeight={containerHeight }
+                    containerHeight={containerHeight}
                     onCellUpdate={handleCellUpdate}
                 />
             </div>
