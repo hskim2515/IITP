@@ -1,50 +1,81 @@
-/* ── Overlay ───────────────────────────────────────────────────── */
-.overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.72);
-    z-index: 2000;
+/* ── Side Panel ────────────────────────────────────────────────── */
+.sidePanel {
+    width: 680px;
+    flex-shrink: 0;
+    height: 100%;
+    background: #0d0f17;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
     display: flex;
-    align-items: center;
-    justify-content: center;
-    backdrop-filter: blur(4px);
-    animation: fadeIn 0.15s ease;
+    flex-direction: column;
+    overflow: hidden;
+    animation: slideIn 0.2s ease;
 }
 
-@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes slideIn {
+    from { opacity: 0; transform: translateX(-16px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
 
 /* ── Container ─────────────────────────────────────────────────── */
 .container {
-    background: #111318;
-    border: 1px solid rgba(255, 255, 255, 0.07);
-    border-radius: 14px;
-    padding: 24px;
-    width: 1040px;
-    max-width: 96vw;
-    max-height: 92vh;
-    overflow-y: auto;
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 14px 14px 0;
     color: #fff;
-    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(255,255,255,0.04);
-    animation: slideUp 0.2s ease;
 }
 
-.container::-webkit-scrollbar { width: 5px; }
-.container::-webkit-scrollbar-track { background: transparent; }
-.container::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
-
-@keyframes slideUp {
-    from { opacity: 0; transform: translateY(12px) }
-    to   { opacity: 1; transform: translateY(0) }
+/* ── Two-column body ───────────────────────────────────────────── */
+.twoCol {
+    display: flex;
+    gap: 12px;
+    flex: 1;
+    overflow: hidden;
+    padding-bottom: 14px;
 }
+
+.leftCol {
+    width: 300px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: #0d0f17;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    animation: slideIn 0.2s ease;
+}
+
+.leftCol::-webkit-scrollbar { width: 3px; }
+.leftCol::-webkit-scrollbar-track { background: transparent; }
+.leftCol::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+
+.rightCol {
+    width: 500px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    background: #0d0f17;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    animation: slideIn 0.2s ease;
+}
+
+.rightCol::-webkit-scrollbar { width: 3px; }
+.rightCol::-webkit-scrollbar-track { background: transparent; }
+.rightCol::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
 
 /* ── Header ────────────────────────────────────────────────────── */
 .header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 20px;
-    padding-bottom: 16px;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    flex-wrap: wrap;
+    gap: 8px;
+    flex-shrink: 0;
 }
 
 .headerLeft {
@@ -170,12 +201,26 @@
     margin-bottom: 16px;
 }
 
+.kpiRowSide {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+/* leftCol 안 KPI 그리드 (2열, margin 없음 - twoCol gap으로 처리) */
+.kpiGrid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 7px;
+}
+
 .kpiCard {
     background: #171b24;
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-top: 3px solid transparent;
     border-radius: 10px;
-    padding: 14px 16px;
+    padding: 11px 12px;
     transition: border-color 0.2s, transform 0.15s;
 }
 
@@ -236,7 +281,10 @@
 
 /* ── Progress ──────────────────────────────────────────────────── */
 .progressSection {
-    margin-bottom: 20px;
+    background: #171b24;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 10px;
+    padding: 12px;
 }
 
 .progressMeta {
@@ -321,8 +369,9 @@
 /* ── Tabs ──────────────────────────────────────────────────────── */
 .tabBar {
     display: flex;
+    flex-shrink: 0;
     gap: 2px;
-    margin-bottom: 18px;
+    margin-bottom: 0;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 8px;
@@ -395,6 +444,12 @@
     display: grid;
     grid-template-columns: 1fr 256px;
     gap: 14px;
+}
+
+.mainGridSide {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
 }
 
 .chartSection {
@@ -563,6 +618,12 @@
     gap: 10px;
 }
 
+.analyticsKpiRowSide {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+}
+
 .analyticsKpi {
     background: #161a22;
     border: 1px solid rgba(255, 255, 255, 0.06);
@@ -596,8 +657,9 @@
 .liveRow {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 10px 16px;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
     background: rgba(65, 105, 225, 0.07);
     border: 1px solid rgba(65, 105, 225, 0.2);
     border-radius: 10px;
@@ -693,6 +755,12 @@
     gap: 12px;
 }
 
+.analyticsChartGridSide {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+}
+
 .analyticsChartSection {
     background: #161a22;
     border: 1px solid rgba(255, 255, 255, 0.06);
@@ -768,3 +836,4 @@
     font-weight: 600;
     font-variant-numeric: tabular-nums;
 }
+

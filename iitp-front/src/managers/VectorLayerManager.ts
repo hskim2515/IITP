@@ -141,11 +141,10 @@ class VectorLayerManager {
 
         const layersToRemove = group.filter(layer => matchesCustomKeyValue(layer, 'layer', layerName));
         layersToRemove.forEach(layer => {
-            if (isVectorLayer(layer) || isWebGLVectorLayer(layer)) {
-                const source = layer.getSource();
-                if (source && typeof source.clear === 'function') {
-                    source.clear();
-                }
+            // 소스를 가진 모든 레이어 타입 (VectorLayer, WebGLVectorLayer, Heatmap 등) 소스 클리어
+            const source = (layer as any).getSource?.();
+            if (source && typeof source.clear === 'function') {
+                source.clear();
             }
             this.olMap.removeLayer(layer);
             const index = group.indexOf(layer);

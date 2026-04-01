@@ -114,7 +114,9 @@ class DataSourceLayerManager {
         const ds = group?.get(layerName);
         if (!group || !ds) return;
 
-        this.viewer.dataSources.remove(ds, true);
+        // ds는 DataSourceLayer 래퍼 인스턴스이므로 .dataSource로 실제 DataSource를 제거
+        const actualDs = (ds as any).dataSource ?? ds;
+        this.viewer.dataSources.remove(actualDs, true);
         group.delete(layerName);
 
         if (this.onRemove) {

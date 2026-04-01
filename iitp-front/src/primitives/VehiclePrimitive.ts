@@ -463,13 +463,15 @@ export default class VehiclePrimitive {
         this.destroyed = true;
 
         if (this.drawCommand) this.drawCommand.vertexArray = null;
+        // vertexArray.destroy()는 연결된 버퍼들을 암묵적으로 파괴하므로
+        // 먼저 버퍼 참조를 null로 초기화한 뒤 vertexArray를 파괴한다.
+        this.modelVertexBuffer = null;
+        this.modelNormalBuffer = null;
+        this.modelIndexBuffer = null;
+        this.offsetBuffer = null;
+        this.orientationBuffer = null;
+        this.scaleBuffer = null;
         this.vertexArray?.destroy();
-        this.modelVertexBuffer?.destroy();
-        this.modelNormalBuffer?.destroy();
-        this.modelIndexBuffer?.destroy();
-        this.offsetBuffer?.destroy();
-        this.orientationBuffer?.destroy();
-        this.scaleBuffer?.destroy();
         this.shaderProgram?.destroy();
 
         this._offsetArr = null;

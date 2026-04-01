@@ -111,7 +111,7 @@ export default class PointSpritePrimitive {
 
         if (!this.vertexBuffer || this._capacity < n) {
             // 용량 부족 시에만 재할당 (GPU 버퍼 크기 키우기만 함, 줄이지 않음)
-            this.vertexBuffer?.destroy();
+            this.vertexBuffer = null;   // vertexArray.destroy()가 버퍼를 암묵적으로 파괴하므로 선참조 해제
             this.vertexArray?.destroy();
 
             this.vertexBuffer = Cesium.Buffer.createVertexBuffer({
@@ -164,7 +164,9 @@ export default class PointSpritePrimitive {
     destroy(): void {
         if (this.destroyed) return;
         this.destroyed = true;
-        this.vertexBuffer?.destroy();
+        // vertexArray.destroy()가 연결된 vertexBuffer를 암묵적으로 파괴하므로
+        // 먼저 null로 초기화한 뒤 vertexArray만 파괴한다.
+        this.vertexBuffer = null;
         this.vertexArray?.destroy();
         this.shaderProgram?.destroy();
     }

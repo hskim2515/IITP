@@ -22,7 +22,10 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private running: boolean;
     private animationId: number | null = null;
     private lastUpdateTime: number = performance.now();
-    private positions: number[][] = [];
+    private positions: number[][] = [];        // 목표 위치 (worker에서 수신)
+    private prevPositions: number[][] = [];    // 이전 위치 (보간 시작점)
+    private lerpStartTime: number = 0;         // 마지막 위치 수신 시각
+    private readonly LERP_DURATION = 50;       // worker 전송 주기(ms)와 동기화
     private vehicleType: string;
 
     constructor(vehicleRoute: any[], vectorSource, speed: number, running: boolean, vehicleType: string = 'default') {
@@ -36,7 +39,7 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
                 "circle-radius": radius,
                 "circle-fill-color": color,
             },
-            zIndex: 110,
+            zIndex: 350,
         });
         this.vehicleType = vehicleType;
 
@@ -126,32 +129,66 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
         };
 
         const converted = latestPositions.positions.map((pos, idx) => {
-            try {
-                const validPos = handleUndefined(pos, idx);
-                return validPos ? this.convertToEPSG3857(validPos) : null;
-            } catch (err) {
-                // 에러 발생 시 이전 위치 유지
-                return this.positions[idx] || fromLonLat([0, 0]);
+            if (!pos) {
+                // 비활성 차량: 이전 위치 유지 (null 반환하면 인덱스 불일치 발생)
+                return this.positions[idx] ?? null;
             }
-        }).filter(p => p !== null) as number[][];
+            try {
+                return this.convertToEPSG3857(pos);
+            } catch {
+                return this.positions[idx] ?? null;
+            }
+        });
 
+        // lerp 시작점: 이전 위치가 없으면 현재와 동일하게(순간이동 방지)
+        this.prevPositions = this.positions.length > 0 ? this.positions : converted;
         this.positions = converted;
+        this.lerpStartTime = performance.now();
+
+        if (!this.running) {
+            this._syncFeatures();
+        } else if (this.animationId === null && this.positions.length > 0) {
+            this.animationId = requestAnimationFrame(this.updateAnimation);
+        }
     }
 
-    private updateAnimation = () => {
-        // 위치 업데이트는 항상 수행하고, 애니메이션은 running 상태에 따라 결정
-        const features = this.source.getFeatures();
-
-        features.forEach((feature, index) => {
+    private _syncFeatures() {
+        // source.getFeatures()는 공간인덱스 순서로 반환 → this.features 직접 사용
+        this.features.forEach((feature, index) => {
             const geom = feature.getGeometry() as Point;
             const target = this.positions[index];
             if (!geom || !target) return;
             geom.setCoordinates(target);
             feature.changed();
         });
+    }
 
-        // 애니메이션이 필요한 경우에만 다음 프레임을 요청
-        if (this.running && this.positions.length > 0) {
+    private updateAnimation = () => {
+        const t = Math.min((performance.now() - this.lerpStartTime) / this.LERP_DURATION, 1.0);
+
+        // source.getFeatures()는 공간인덱스 순서 → this.features 직접 사용
+        this.features.forEach((feature, index) => {
+            const geom = feature.getGeometry() as Point;
+            const target = this.positions[index];
+            if (!geom || !target) return;
+
+            const prev = this.prevPositions[index];
+            if (prev && t < 1.0) {
+                const dx = target[0] - prev[0];
+                const dy = target[1] - prev[1];
+                const distSq = dx * dx + dy * dy;
+                if (distSq > 1e10) {
+                    geom.setCoordinates(target);
+                } else {
+                    geom.setCoordinates([prev[0] + dx * t, prev[1] + dy * t]);
+                }
+            } else {
+                geom.setCoordinates(target);
+            }
+            feature.changed();
+        });
+
+        if (this.running) {
             this.animationId = requestAnimationFrame(this.updateAnimation);
         } else {
             this.animationId = null;

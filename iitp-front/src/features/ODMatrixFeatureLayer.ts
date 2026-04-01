@@ -146,14 +146,18 @@ export default class ODMatrixFeatureLayer extends WebGLVectorLayer {
             newOdMap.set(toKey, od);
         });
 
-        // 제거 대상 처리
+        // 제거 대상만 source에서 삭제
         existingFeatureMap.forEach((unusedFeature) => {
             this.source.removeFeature(unusedFeature);
         });
 
+        // 신규 feature만 추가 (기존 feature는 이미 좌표 업데이트됨)
+        const toAdd = newFeatures.filter(f => !this.features.includes(f));
+        if (toAdd.length > 0) {
+            this.source.addFeatures(toAdd);
+        }
+
         this.features = newFeatures;
-        this.source.clear();
-        this.source.addFeatures(newFeatures);
     }
 
     public setSpeed(speed: number) {

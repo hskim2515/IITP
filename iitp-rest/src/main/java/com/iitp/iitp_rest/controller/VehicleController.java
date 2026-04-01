@@ -111,12 +111,11 @@ public class VehicleController {
                 .flatMap(List::stream)
                 .mapToDouble(v -> v.getTimestep())
                 .max().orElse(600);
-        int simulationDuration = (int) Math.ceil(simMaxTime - simMinTime) + 10; // 여유 10초
+        // 신호 타임라인은 t=0 기준으로 생성 (offset은 시뮬레이션 t=0 기준 위상 오프셋)
+        // 사이클 커버 범위: t=0 ~ simMaxTime
+        int simulationDuration = (int) Math.ceil(simMaxTime) + 10; // 여유 10초
 
-        // 타임라인 생성 (dataPath 기준, 실제 시뮬레이션 duration 사용)
-        // Cesium 클럭은 baseEpoch + simMinTime 에서 시작하므로 신호 타임라인도 동일한 기준 시간 사용
-        long signalBaseEpoch = baseEpoch + (long) simMinTime;
-        List<SignalTimelineResponse> signalTimeline = signalTimelineService.generateSignalTimeline(signalBaseEpoch, "0", scenarioKey, simulationDuration);
+        List<SignalTimelineResponse> signalTimeline = signalTimelineService.generateSignalTimeline(baseEpoch, "0", scenarioKey, simulationDuration);
 
         AtomicReference<Instant> earliestStartRef = new AtomicReference<>(null);
         AtomicReference<Instant> latestStopRef = new AtomicReference<>(null);
@@ -328,7 +327,7 @@ public class VehicleController {
         );
         czml.addFirst(documentPacket);
 
-        vehicleRouteService.saveRoute(scenarioKey, czml, featureList, vehiclePathList, signalBaseEpoch, scenarioKey);
+        vehicleRouteService.saveRoute(scenarioKey, czml, featureList, vehiclePathList, baseEpoch, scenarioKey);
 
         Map<String, Object> response = new HashMap<>();
         response.put("czml", czml);
@@ -356,7 +355,7 @@ public class VehicleController {
         ObjectMapper mapper = new ObjectMapper();
 
         String dataPath = route.getDataPath() != null ? route.getDataPath() : scenarioKey;
-        List<SignalTimelineResponse> signalTimeline = signalTimelineService.generateSignalTimeline(route.getStartTime(), "0", dataPath, 600);
+        List<SignalTimelineResponse> signalTimeline = signalTimelineService.generateSignalTimeline(route.getStartTime(), "0", dataPath, 7200);
 
         try {
             Map<String, Object> response = new HashMap<>();

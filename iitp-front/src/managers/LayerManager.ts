@@ -99,7 +99,7 @@ export class LayerManager {
         }
         //ol
         const olHeatmap = new HeatmapFeatureLayer(vehicleRoute, vectorSource, speedFactor, isRunning, colors, blur);
-        const layers = this.vectorLayerManager.add(olHeatmap, groupName, layerName, heatmapSetting.basic);
+        const layers = this.vectorLayerManager.add(olHeatmap, groupName, layerName, olHeatmap.getVisible());
 
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
 
@@ -135,7 +135,7 @@ export class LayerManager {
         }
 
         const odLayer = new ODMatrixFeatureLayer(vehicleRoute, speedFactor, isRunning);
-        const layers = this.vectorLayerManager.add(odLayer, groupName, layerName, false);
+        const layers = this.vectorLayerManager.add(odLayer, groupName, layerName, odLayer.getVisible());
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
 
         layers.forEach((layer: BaseLayer) => {
@@ -495,7 +495,9 @@ export class LayerManager {
         this.removeHeatmapLayer();
         this.removeTripLayer();
         this.removeODArrows();
-        this.removeVehicleLayer()
+        this.removeVehicleLayer();
+        // OL 맵 강제 재렌더링 - WebGL 레이어 제거 후 화면 즉시 갱신
+        this.olMap?.render();
     }
 
 

@@ -16,7 +16,8 @@ import { propertyFormSchema } from "@schema/propertyFormSchema";
 import Maps from "@component/map/Maps";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
 import Taskbar from "@component/panel/Taskbar";
-import Dashboard from "@component/panel/Dashboard";
+import DashboardLeft from "@component/panel/DashboardLeft";
+import DashboardRight from "@component/panel/DashboardRight";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 
 function VersionPopup({ scenarioId, onSelect }: { scenarioId: number; onSelect: (v: ScenarioVersions) => void }) {
@@ -53,6 +54,7 @@ function VersionPopup({ scenarioId, onSelect }: { scenarioId: number; onSelect: 
 function App() {
 
     const [showDashboard, setShowDashboard] = useState(false);
+    const [mapMode, setMapMode] = useState<'2D' | '3D'>('2D');
 
     const selectedScenario = useScenarioStore((state) => state.selectedScenario);
     const selectedScenarioVersion = useScenarioStore((state) => state.selectedScenarioVersion);
@@ -86,8 +88,7 @@ function App() {
                         onSelect={setVersion}
                     />
                 )}
-                <Header onDashboard={() => setShowDashboard(true)}/>
-                {showDashboard && <Dashboard onClose={() => setShowDashboard(false)}/>}
+                <Header onDashboard={() => setShowDashboard(prev => !prev)} isDashboardOpen={showDashboard} dashboardMode={showDashboard}/>
                 <MessagePopup/>
                 <PropertyModal/>
                 <main
@@ -99,10 +100,10 @@ function App() {
                         bottom: "0",
                         display: "flex",
                         overflow: "hidden",
-                        height: "calc(100vh - 44px)"
                     }}
                 >
-                    {activeDropdownMenu && <LeftPanel/>}
+                    {!showDashboard && activeDropdownMenu && <LeftPanel/>}
+                    {showDashboard && <DashboardLeft onClose={() => setShowDashboard(false)}/>}
                     <div
                         style={{
                             flex: "1 1 auto",
@@ -111,10 +112,15 @@ function App() {
                             position: "relative",
                         }}
                     >
-                        <Maps/>
-                        <Taskbar/>
+                        <Maps
+                            singleMapMode={showDashboard}
+                            mapMode={mapMode}
+                            onMapModeChange={setMapMode}
+                        />
 
-                        {activeSession && (
+                        {!showDashboard && <Taskbar/>}
+
+                        {!showDashboard && activeSession && (
                             isDescendantOf(menu, 'SCHEMA_SETTING', activeSession.menuCode) ? (
                                 <SchemaSetting/>
                             ) : activeSession.menuCode === 'VEHICLE_TYPE' ? (
@@ -133,13 +139,15 @@ function App() {
                                 />
                             ) : menuCodeToStoreMap[activeSession.menuCode] ? (
                                 <PropertyPanel
-                                    activeSubmenu={activeSession.menu}  // ← 바로 사용
+                                    activeSubmenu={activeSession.menu}
                                     onClose={() => minimizeSession(activeSession.menuCode)}
                                 />
                             ) : null
                         )}
 
                     </div>
+                    {showDashboard && <DashboardRight onClose={() => setShowDashboard(false)}/>}
+
                 </main>
             </div>
         )

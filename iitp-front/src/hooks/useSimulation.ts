@@ -51,6 +51,7 @@ const useSimulation = () => {
     const czmlDataSourceRef = useRef(null);
     const vehicleDataRef = useRef(null);
     const vehicleRouteStartEndRef = useRef(null);
+    const needsReinitRef = useRef(false);
 
     // 최신 speed와 speedFactor를 참조하기 위한 ref
     const speedRef = useRef(speed);
@@ -66,6 +67,7 @@ const useSimulation = () => {
 
     // const changeModelWorkerRef = useRef<Worker | null>(null);
     const czmlPositionWorkerRef = useRef<Worker | null>(null);
+    const updateFrameFuncRef = useRef<(() => void) | null>(null);
     const makeOdDataWorkerRef = useRef<Worker | null>(null);
 
     useEffect(() => {
@@ -99,10 +101,15 @@ const useSimulation = () => {
     // Cesium 시뮬레이션 업데이트 (재생/일시정지/초기화 적용)
     useEffect(() => {
         if (viewer) {
+            try {
             layerManager.getLayerGroup("analyze").forEach((layer) => {
+                if ((layer as any).destroyed) return;
                 layer.setSpeed(speed * speedFactor);
                 layer.setStatus(isRunning);
             });
+            } catch (e) {
+                console.warn('[useSimulation] layer setSpeed/setStatus 오류(무시):', e);
+            }
 
             viewerClockMultiplier.current = speed;
 
@@ -111,8 +118,44 @@ const useSimulation = () => {
 
             if (isStop) {
                 viewer.clock.currentTime = viewer.clock.startTime;
+                viewer.clock.shouldAnimate = false;
                 useSimulationStore.getState().setCurrentTime(JulianDate.clone(viewer.clock.startTime));
                 useVehicleStore.getState().setActiveVehicleCount(0);
+
+                // worker 리셋
+                const startSimTime = Cesium.JulianDate.toDate(viewer.clock.startTime).getTime();
+                czmlPositionWorkerRef.current?.postMessage({ type: 'reset', currentTime: startSimTime });
+
+                // 신호 스타일 초기화
+                try {
+                    const signalTimeline = useSignalTimelineStore.getState().signalTimeline;
+                    if (signalTimeline?.length) {
+                        updateSignalStyles(layerManager as any, viewer, connectionFeatureMapRef.current, signalTimeline, startSimTime);
+                    }
+                } catch (e) {
+                    console.warn('[useSimulation] 신호 스타일 초기화 실패:', e);
+                }
+
+                // preRender 이벤트 먼저 제거 (destroyed 레이어 접근 방지)
+                viewer.scene.preRender.removeEventListener(updateFrameFunc);
+                // worker onmessage 해제 (destroyed 레이어에 setLatestPositions 방지)
+                if (czmlPositionWorkerRef.current) czmlPositionWorkerRef.current.onmessage = null;
+                if (makeOdDataWorkerRef.current) makeOdDataWorkerRef.current.onmessage = null;
+                // OL 시뮬레이션 레이어 전체 제거 (trail/heatmap 등 초기화)
+                layerManager?.removeSimulationLayers();
+
+                // Cesium CZML 엔티티 숨기기
+                if (czmlDataSourceRef.current) {
+                    czmlDataSourceRef.current.show = false;
+                }
+
+                needsReinitRef.current = true;
+            }
+
+            // 정지 후 재생 시 레이어 재초기화
+            if (isRunning && needsReinitRef.current) {
+                needsReinitRef.current = false;
+                setSimulation();
             }
         }
     }, [ isRunning, isStop, speed, speedFactor ]);
@@ -181,7 +224,13 @@ const useSimulation = () => {
 
     // Cesium과 OpenLayers 시뮬레이션 통합: 후처리 및 Cesium 관련 설정
     useEffect(() => {
-        const parsedVehicleRoute = parseRawODInputFromFlatArray(vehicleRoute);
+        if (!Array.isArray(vehicleRoute) || vehicleRoute.length === 0) return;
+
+        // 신규 포맷({path, type, ...})과 레거시 포맷(flat array) 모두 처리
+        const rawPaths = vehicleRoute.map((entry: any) =>
+            Array.isArray(entry) ? entry : (entry.path ?? [])
+        );
+        const parsedVehicleRoute = parseRawODInputFromFlatArray(rawPaths);
         const simplified = parsedVehicleRoute
             .map(route => {
                 if (route.length >= 2) {
@@ -190,28 +239,25 @@ const useSimulation = () => {
                     return route; // 길이가 1 이하인 경우 그대로 유지
                 }
             });
-        vehicleRouteStartEndRef.current = simplified
-        if (vehicleRoute.length > 0) {
-            setSimulation();
-        }
+        vehicleRouteStartEndRef.current = simplified;
+        setSimulation();
 
         // isRunning은 isRunningRef.current로 별도 처리
     }, [ vehicleRoute ]);
 
-    const updateFrameFunc = () => {
-
-        const currentTime = performance.now(); // 고해상도 시간 (ms)
+    // useRef로 안정적인 참조 유지 - 렌더마다 새 함수가 생성되면 removeEventListener가 동작 안함
+    updateFrameFuncRef.current = () => {
+        const currentTime = performance.now();
         const simTime = Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime()
 
-        if (currentTime - lastOdUpdateTime.current >= 1000) { // 1초(1000ms)마다 실행
+        if (currentTime - lastOdUpdateTime.current >= 1000) {
             lastOdUpdateTime.current = currentTime;
-
             const newVehicleRoute = vehicleRouteStartEndRef.current;
             const lastPositions = lastPositionsRef.current.positions;
+            console.log('[OD] postMessage lastPositions.length:', lastPositions?.length, 'newVehicleRoute.length:', newVehicleRoute?.length, 'sample route:', newVehicleRoute?.[0]);
             makeOdDataWorkerRef.current?.postMessage({ lastPositions, newVehicleRoute })
-
         }
-        if(currentTime - lastUpdateTime.current >= 50 && isRunningRef.current){
+        if (currentTime - lastUpdateTime.current >= 50 && isRunningRef.current) {
             lastUpdateTime.current = currentTime;
             czmlPositionWorkerRef.current.postMessage({ type: 'tick', currentTime: simTime });
             useSimulationStore.getState().setCurrentTime(JulianDate.clone(viewer.clock.currentTime));
@@ -226,6 +272,11 @@ const useSimulation = () => {
             }
         }
     };
+
+    // 고정된 wrapper 함수 - addEventListener/removeEventListener에 항상 같은 참조를 사용
+    const updateFrameFunc = useRef(() => {
+        updateFrameFuncRef.current?.();
+    }).current;
 
     const setSimulation = async () => {
         if (!viewer || !czml || vehicleRoute.length === 0 || !layerManager) return;
@@ -346,24 +397,36 @@ const useSimulation = () => {
                     const hasTypes = Array.isArray(result.types) && result.types.length > 0;
 
                     if (hasTypes) {
-                        // vehicleType별로 positions/headings 분류 (비활성 null 제외)
-                        // VehiclePrimitive는 null을 처리할 수 없으므로 활성 차량만 전달
+                        // vehicleType별로 positions/headings 분류 - null(비활성)도 포함하여 인덱스 보존
+                        // features[i] ↔ positions[i] 1:1 대응이 깨지면 차량이 날아다니는 버그 발생
                         const byType = new Map<string, { positions: any[], headings: any[] }>();
                         result.positions.forEach((pos: any, i: number) => {
-                            if (!pos) return; // 비활성 차량 제외 (인덱스 보존은 비-vehicleType 레이어에서 처리)
                             const t = result.types[i] ?? 'default';
                             if (!byType.has(t)) byType.set(t, { positions: [], headings: [] });
-                            byType.get(t)!.positions.push(pos);
+                            byType.get(t)!.positions.push(pos);        // null도 그대로 push
                             byType.get(t)!.headings.push(result.headings[i]);
+                        });
+
+                        // VehiclePrimitive(Cesium)용: null 제거한 압축 배열 별도 생성
+                        const byTypeCompact = new Map<string, { positions: any[], headings: any[] }>();
+                        result.positions.forEach((pos: any, i: number) => {
+                            if (!pos) return;
+                            const t = result.types[i] ?? 'default';
+                            if (!byTypeCompact.has(t)) byTypeCompact.set(t, { positions: [], headings: [] });
+                            byTypeCompact.get(t)!.positions.push(pos);
+                            byTypeCompact.get(t)!.headings.push(result.headings[i]);
                         });
 
                         layerManager.getLayerGroup("analyze").forEach((layer) => {
                             if (layer && typeof layer.setLatestPositions === "function") {
                                 const vType = (layer as any).vehicleType;
-                                // vehicleType이 있는 레이어(VehiclePrimitive 계열)만 타입별 분류 데이터를 받고,
-                                // 없는 레이어(HeatmapFeatureLayer, TrailFeatureLayer, HeatBarLayer 등)는 전체 positions를 받음
+                                const isOlLayer = layer.constructor?.name?.includes('FeatureLayer');
+                                // OL FeatureLayer(VehicleFeatureLayer 등): null 포함 인덱스 보존 배열
+                                // Cesium Primitive(VehiclePrimitive 등): null 제거 압축 배열
                                 const dataToSend = vType
-                                    ? (byType.get(vType) ?? { positions: [], headings: [] })
+                                    ? (isOlLayer
+                                        ? (byType.get(vType) ?? { positions: [], headings: [] })
+                                        : (byTypeCompact.get(vType) ?? { positions: [], headings: [] }))
                                     : result;
                                 try {
                                     layer.setLatestPositions(dataToSend);
@@ -393,8 +456,12 @@ const useSimulation = () => {
 
             makeOdDataWorkerRef.current.onmessage = (e) => {
                 const { odData } = e.data;
+                console.log('[OD] worker result odData.length:', odData?.length);
                 if (odData) {
-                    layerManager.getLayer("analyze", "od").forEach((layer)=> {
+                    // getLayer()는 레이어가 1개면 단일 객체, 2개 이상이면 배열을 반환하므로 항상 배열로 처리
+                    const odLayers = layerManager.getLayer("analyze", "od");
+                    const odLayerArray: any[] = Array.isArray(odLayers) ? odLayers : odLayers ? [odLayers] : [];
+                    odLayerArray.forEach((layer) => {
                         if (layer && typeof layer.setOdData === "function") {
                             try {
                                 layer.setOdData(odData);

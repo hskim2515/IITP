@@ -1,4 +1,4 @@
-import { GeoJsonDataSource, Viewer } from "cesium";
+import { Viewer } from "cesium";
 import * as Cesium from "cesium";
 import {layerNameToStoreMap, menuCodeToStoreMap} from "@hooks/useLayerInit";
 import {useScenarioStore} from "@stores/useScenarioStore";
@@ -6,14 +6,14 @@ import { Network } from "@type/Network";
 
 export default class NetworkDataSourceLayer {
     private readonly LAYER_NAME = "network";
-    private dataSource: GeoJsonDataSource;
+    private dataSource: Cesium.CustomDataSource;
     private unsubscribe: (() => void) | undefined;
     private static readonly EPSILON = 1e-9;
     private selectedScenario = useScenarioStore.getState().selectedScenario
     private selectedScenarioVersion = useScenarioStore.getState().selectedScenarioVersion
 
     constructor(private viewer: Viewer) {
-        this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
+        this.dataSource = new Cesium.CustomDataSource(this.LAYER_NAME);
         this.viewer.dataSources.add(this.dataSource);
 
         this.load(); // 초기 로드
@@ -128,6 +128,9 @@ export default class NetworkDataSourceLayer {
             const nodes = network.nodes;
             const links = network.links;
 
+            // 레인별 Cartesian3 위치를 스토어 뮤테이션 없이 로컬로 관리
+            // key: `${linkId}_${laneIdx}`, value: { source, target }
+            const lanePositionMap = new Map<string, { source: Cesium.Cartesian3; target: Cesium.Cartesian3 }>();
 
             // 링크 그리기
             for (const link of links) {
@@ -173,9 +176,8 @@ export default class NetworkDataSourceLayer {
                     const offsetVec = Cesium.Cartesian3.multiplyByScalar(right, offset, new Cesium.Cartesian3());
                     const shiftedP1 = Cesium.Cartesian3.add(p1, offsetVec, new Cesium.Cartesian3());
                     const shiftedP2 = Cesium.Cartesian3.add(p2, offsetVec, new Cesium.Cartesian3());
-                    lane.linkRef = link.id
-                    lane.laneSource = shiftedP1;
-                    lane.laneTarget = shiftedP2;
+                    // 스토어 뮤테이션 없이 로컬 Map에 레인 위치 저장
+                    lanePositionMap.set(`${link.id}_${i}`, { source: shiftedP1, target: shiftedP2 });
 
                     this.dataSource.entities.add({
                         id: lane.__guid,
@@ -189,37 +191,40 @@ export default class NetworkDataSourceLayer {
                         properties: lane
                     });
 
-                    if (lane.cells?.length > 0) {
-                        for (const cell of lane.cells) {
-                            const corridor = createCorridorAlongLane({
-                                id: cell.__guid,
-                                source: lane.laneSource,
-                                target: lane.laneTarget,
-                                offset: cell.offset ?? 0,
-                                length: cell.length ?? 5,
-                                width: 0.8, // 임의의 cell 폭
-                                material: Cesium.Color.RED.withAlpha(0.6),
-                                properties: cell,
-                            });
-                            this.dataSource.entities.add(corridor);
+                    const lanePos = lanePositionMap.get(`${link.id}_${i}`);
+                    if (lanePos) {
+                        if (lane.cells?.length > 0) {
+                            for (const cell of lane.cells) {
+                                const corridor = createCorridorAlongLane({
+                                    id: cell.__guid,
+                                    source: lanePos.source,
+                                    target: lanePos.target,
+                                    offset: cell.offset ?? 0,
+                                    length: cell.length ?? 5,
+                                    width: 0.8,
+                                    material: Cesium.Color.RED.withAlpha(0.6),
+                                    properties: cell,
+                                });
+                                this.dataSource.entities.add(corridor);
+                            }
                         }
-                    }
 
-                    if (lane.segments?.length > 0) {
-                        for (const segment of lane.segments) {
-                            const corridor = createCorridorAlongLane({
-                                id: segment.__guid,
-                                source: lane.laneSource,
-                                target: lane.laneTarget,
-                                offset: segment.initPoint ?? 0,
-                                length: (segment.endPoint ?? 0) - (segment.initPoint ?? 0),
-                                width: 1.5,
-                                material: segment.block
-                                    ? Cesium.Color.YELLOW.withAlpha(0.8)
-                                    : Cesium.Color.BLUE.withAlpha(0.5),
-                                properties: segment,
-                            });
-                            this.dataSource.entities.add(corridor);
+                        if (lane.segments?.length > 0) {
+                            for (const segment of lane.segments) {
+                                const corridor = createCorridorAlongLane({
+                                    id: segment.__guid,
+                                    source: lanePos.source,
+                                    target: lanePos.target,
+                                    offset: segment.initPoint ?? 0,
+                                    length: (segment.endPoint ?? 0) - (segment.initPoint ?? 0),
+                                    width: 1.5,
+                                    material: segment.block
+                                        ? Cesium.Color.YELLOW.withAlpha(0.8)
+                                        : Cesium.Color.BLUE.withAlpha(0.5),
+                                    properties: segment,
+                                });
+                                this.dataSource.entities.add(corridor);
+                            }
                         }
                     }
                 }
@@ -280,13 +285,15 @@ export default class NetworkDataSourceLayer {
 
                         if (!fromLink || !toLink) continue;
 
-                        const fromLane = fromLink.lanes?.[conn.fromLane];
-                        const toLane = toLink.lanes?.[conn.toLane];
+                        const fromLaneIdx = conn.fromLane;
+                        const toLaneIdx = conn.toLane;
+                        const fromLanePos = lanePositionMap.get(`${fromLink.id}_${fromLaneIdx}`);
+                        const toLanePos = lanePositionMap.get(`${toLink.id}_${toLaneIdx}`);
 
-                        if (!fromLane || !toLane || !fromLane.laneTarget || !toLane.laneSource) continue;
+                        if (!fromLanePos || !toLanePos) continue;
 
-                        const fromPt = fromLane.laneTarget;
-                        const toPt = toLane.laneSource;
+                        const fromPt = fromLanePos.target;
+                        const toPt = toLanePos.source;
                         let positions: Cesium.Cartesian3[];
 
                         if (conn.turning === 'Straight') {
