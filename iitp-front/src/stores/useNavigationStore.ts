@@ -16,6 +16,8 @@ type NavigationState = {
   goTo: (index: number) => void;
   clear: () => void;
   init: (rootFrame: DrillFrame) => void;
+  updateRootRows: (rows: any[]) => void;
+  rebuildStack: (rootRows: any[]) => void;
   navigateByPath: (
       targetGuid: string,
       rootFrame: DrillFrame,
@@ -40,11 +42,42 @@ export const useNavigationStore = create<NavigationState>((set) => ({
 
   init: (rootFrame) => set({ stack: [rootFrame] }),
 
+  updateRootRows: (rows) => set((s) => {
+    if (s.stack.length === 0) return s;
+    const [root, ...rest] = s.stack;
+    return { stack: [{ ...root, rows }, ...rest] };
+  }),
+
+  rebuildStack: (rootRows) => set((s) => {
+    if (s.stack.length === 0) return s;
+
+    const newStack: DrillFrame[] = [];
+    let currentRows = rootRows;
+
+    for (let i = 0; i < s.stack.length; i++) {
+      const frame = s.stack[i];
+      if (i === 0) {
+        newStack.push({ ...frame, rows: rootRows });
+        currentRows = rootRows;
+      } else {
+        const parentRecord = currentRows.find((r: any) => r.__guid === frame.parentGuid);
+        const newRows = parentRecord && Array.isArray(parentRecord[frame.levelName])
+          ? parentRecord[frame.levelName]
+          : frame.rows;
+        newStack.push({ ...frame, rows: newRows, parentRecord: parentRecord ?? frame.parentRecord });
+        currentRows = newRows;
+      }
+    }
+
+    return { stack: newStack };
+  }),
+
   navigateByPath: (targetGuid, rootFrame, childrenFieldsFinder) => {
     set((state) => {
-      const newStack: DrillFrame[] = [rootFrame];
-      let currentRows = rootFrame.rows;
-      let currentLevel = rootFrame.levelName;
+      const actualRoot = state.stack[0] ?? rootFrame;
+      const newStack: DrillFrame[] = [actualRoot];
+      let currentRows = actualRoot.rows;
+      let currentLevel = actualRoot.levelName;
 
       let safetyCounter = 0;
 
@@ -64,13 +97,14 @@ export const useNavigationStore = create<NavigationState>((set) => ({
 
         if (nextField) {
           const idValue = match.id ?? match.__guid?.split('-').pop() ?? "?";
+          const grandChildFields = childrenFieldsFinder(nextField);
           const nextFrame: DrillFrame = {
             levelName: nextField,
             rows: match[nextField],
             parentRecord: match,
             parentGuid: match.__guid,
             breadLabel: `${currentLevel} #${idValue}`,
-            hasChildren: true,
+            hasChildren: grandChildFields.length > 0,
           };
           newStack.push(nextFrame);
 

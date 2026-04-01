@@ -11,8 +11,8 @@ import style from "@css/GridTable.module.css";
 import {
     buildColumnsFromDefinition,
     getChildrenStructure,
-    getStructureByFeatureType
-} from "@component/util/JsonGrid";
+    getStructureByFeatureType,
+} from "@utils/gridUtils";
 
 type GridTableProps = {
     layerName: string;
@@ -35,11 +35,9 @@ export const GridTable = ({
     const selectedGuid = useSelectionStore((s) => s.selectedGuid);
     const setSelectedGuid = useSelectionStore((s) => s.setSelectedGuid);
 
-    const {
-        getSchemaDefinitionByNames,
-        getSchemaColumnSpecByLayerName,
-        getStructureByLayerName,
-    } = useSchemaStore();
+    const getSchemaDefinitionByNames = useSchemaStore((s) => s.getSchemaDefinitionByNames);
+    const getSchemaColumnSpecByLayerName = useSchemaStore((s) => s.getSchemaColumnSpecByLayerName);
+    const getStructureByLayerName = useSchemaStore((s) => s.getStructureByLayerName);
 
     const definition = useMemo(() => getSchemaDefinitionByNames(layerName, frame.levelName), [getSchemaDefinitionByNames, layerName, frame.levelName]);
     const columnSpec = useMemo(() => getSchemaColumnSpecByLayerName(layerName), [getSchemaColumnSpecByLayerName, layerName]);
@@ -75,6 +73,7 @@ export const GridTable = ({
             title: "",
             key: "__drill",
             width: 160,
+            fixed: "left" as const,
             render: (_: any, record: any) => (
                 <div className={style.drillColumnCell}>
                     {childrenStructure
@@ -91,14 +90,15 @@ export const GridTable = ({
 
     const columns = useMemo<ColumnsType>(() => {
         const baseCols = buildColumnsFromDefinition(definition, columnSpec, onCellUpdate);
-        return [...baseCols, ...drillColumn];
+        return [...drillColumn, ...baseCols];
     }, [definition, columnSpec, onCellUpdate, drillColumn]);
+
 
     const computedSelectedRowKeys = useMemo(() => {
         if (!selectedGuid?.length) return [];
-        const target = selectedGuid[0];
+        const guidSet = new Set(selectedGuid);
         return frame.rows
-            .filter(row => target === row.__guid)
+            .filter(row => guidSet.has(row.__guid))
             .map(row => row.__guid);
     }, [selectedGuid, frame.rows]);
 
@@ -113,8 +113,7 @@ export const GridTable = ({
         if (!match) {
             const stack = useNavigationStore.getState().stack;
             const rootFrame = stack[0];
-            // 무한 루프 방지: 현재가 루트가 아닐 때만 루트 재탐색
-            if (rootFrame && frame.levelName !== rootFrame.levelName) {
+            if (rootFrame && stack.length > 1) {
                 navigateByPath(targetGuid, rootFrame, getChildrenFields);
             }
             return;
@@ -129,9 +128,6 @@ export const GridTable = ({
         }
 
         else {
-            const remainingPath = targetGuid.slice(match.__guid.length + 1);
-            const nextPart = remainingPath.split(".")[0];
-
             const fields = getChildrenFields(frame.levelName);
             const nextFieldName = fields.find((f) =>
                 Array.isArray(match[f]) &&

@@ -107,22 +107,45 @@
     align-items: center;
 }
 
-.back {
+/* ── 뒤로 가기 버튼 ─────────────────────────────────────── */
+.backBtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
     flex-shrink: 0;
-    padding: 3px 10px;
+    padding: 3px 8px 3px 5px;
     font-size: 11px;
     color: rgba(255, 255, 255, 0.5);
     background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 4px;
     cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
 }
 
-.back:hover {
-    color: #fff;
+.backBtn:hover {
+    color: rgba(255, 255, 255, 0.9);
     border-color: rgba(255, 255, 255, 0.3);
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.06);
 }
+
+.backIcon {
+    font-size: 14px;
+    line-height: 1;
+    color: inherit;
+    margin-top: -1px;
+}
+
+.backLabel {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    color: inherit;
+}
+
+/* 미사용 레거시 (참조 유지) */
+.back { display: none; }
 
 .crumb {
     font-size: 12px;
@@ -153,10 +176,35 @@
     color: rgba(255, 255, 255, 0.15);
     margin: 0 2px;
 }
+/* ── 현재 위치 표시 ──────────────────────────────────────── */
 .activeBreadcrumb {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+}
+
+/* 레벨 타입 뱃지: [LANES] */
+.currentLevelName {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: rgba(100, 180, 255, 1);
+    background: rgba(100, 180, 255, 0.12);
+    border: 1px solid rgba(100, 180, 255, 0.25);
+    padding: 2px 7px;
+    border-radius: 3px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+/* 부모 컨텍스트: links #20001516 */
+.currentLabel {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.4);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 180px;
 }
 
 .switcher {
@@ -178,10 +226,18 @@
     text-transform: uppercase;
 }
 
+.active { /* CSS Modules 식별자 등록용 */ }
+
 .switchBtn.active {
     background: rgba(255, 255, 255, 0.1);
     color: #fff;
     font-weight: 600;
+}
+
+/* 탭이 1개일 때: 클릭 불가·호버 없음으로 표시만 */
+.singleTab {
+    cursor: default;
+    pointer-events: none;
 }
 
 .rowCount {
