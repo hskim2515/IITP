@@ -18,6 +18,9 @@ public class VehicleRoute {
     @Column(name = "version_id")
     private String versionId;
 
+    @Column(name = "data_path")
+    private String dataPath;
+
     @Column(columnDefinition = "text")
     private String czml;
 

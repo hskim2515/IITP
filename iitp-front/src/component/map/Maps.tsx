@@ -16,7 +16,13 @@ import Divider from "@component/map/Divider";
 import ToolsPanel from "@component/tool/ToolsPanel";
 import { useNetworkDraw } from "@hooks/useNetworkDraw";
 
-const Maps = () => {
+interface MapsProps {
+    singleMapMode?: boolean;
+    mapMode?: '2D' | '3D';
+    onMapModeChange?: (mode: '2D' | '3D') => void;
+}
+
+const Maps = ({ singleMapMode = false, mapMode = '2D', onMapModeChange }: MapsProps) => {
 
     const containerRef = useRef<HTMLDivElement | null>(null);
     const openlayersMapRef = useRef<HTMLDivElement | undefined>(undefined);
@@ -90,31 +96,49 @@ const Maps = () => {
     const leftWidth = `${dividerX}px`;
     const rightWidth = `${Math.max(containerWidth - (dividerX ?? 0), 0)}px`;
 
+    const olStyle = singleMapMode
+        ? { flex: mapMode === '2D' ? '1 1 auto' : '0 0 0px', width: mapMode === '2D' ? undefined : 0, overflow: 'hidden' as const }
+        : { width: leftWidth, transition: isResizing.current ? "none" : "width 0.3s ease" };
+
+    const cesiumStyle = singleMapMode
+        ? { flex: mapMode === '3D' ? '1 1 auto' : '0 0 0px', width: mapMode === '3D' ? undefined : 0, overflow: 'hidden' as const }
+        : { width: rightWidth, transition: isResizing.current ? "none" : "width 0.3s ease" };
+
     return (
         <div
             ref={containerRef}
             className={styles['container']}
         >
             <ToolsPanel/>
+
+            {singleMapMode && (
+                <div className={styles.mapModeToggle}>
+                    <button
+                        className={mapMode === '2D' ? styles.mapModeBtnActive : styles.mapModeBtn}
+                        onClick={() => onMapModeChange?.('2D')}
+                    >
+                        2D
+                    </button>
+                    <button
+                        className={mapMode === '3D' ? styles.mapModeBtnActive : styles.mapModeBtn}
+                        onClick={() => onMapModeChange?.('3D')}
+                    >
+                        3D
+                    </button>
+                </div>
+            )}
+
             <MapOL
                 ref={openlayersMapRef}
-                style={{
-                    width: leftWidth,
-                    transition: isResizing.current ? "none" : "width 0.3s ease"
-                }}
+                style={olStyle}
                 className={styles['map']}
             />
 
-            <Divider
-                onMouseDown={handleMouseDown}
-            />
+            {!singleMapMode && <Divider onMouseDown={handleMouseDown}/>}
 
             <MapCesium
                 ref={cesiumMapRef}
-                style={{
-                    width: rightWidth,
-                    transition: isResizing.current ? "none" : "width 0.3s ease"
-                }}
+                style={cesiumStyle}
                 className={styles['map']}
             />
         </div>

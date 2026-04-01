@@ -19,11 +19,12 @@ public class VehicleRouteService {
         return repository.findByVersionId(versionId);
     }
 
-    public VehicleRoute saveRoute(String versionId, Object czml, Object features, Object positions, long startTime) throws JsonProcessingException, JsonProcessingException {
+    public VehicleRoute saveRoute(String versionId, Object czml, Object features, Object positions, long startTime, String dataPath) throws JsonProcessingException {
         ObjectMapper mapper = new ObjectMapper();
 
-        VehicleRoute route = new VehicleRoute();
+        VehicleRoute route = repository.findByVersionId(versionId).orElse(new VehicleRoute());
         route.setVersionId(versionId);
+        route.setDataPath(dataPath);
         route.setCzml(mapper.writeValueAsString(czml));
         route.setFeatures(mapper.writeValueAsString(features));
         route.setPositions(mapper.writeValueAsString(positions));

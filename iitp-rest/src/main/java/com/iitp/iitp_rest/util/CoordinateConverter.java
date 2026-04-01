@@ -6,6 +6,8 @@ import org.locationtech.proj4j.CoordinateTransform;
 import org.locationtech.proj4j.CoordinateTransformFactory;
 import org.locationtech.proj4j.ProjCoordinate;
 
+import java.util.List;
+
 public class CoordinateConverter {
 
     private double baseLon;
@@ -69,5 +71,38 @@ public class CoordinateConverter {
         return new ProjCoordinate(lon, lat, 0);
     }
 
+    /**
+     * 차선 중심선 shape 폴리라인을 따라 posX 거리만큼 이동한 위치를 반환합니다.
+     * laneShape: 차선 중심선의 로컬 좌표 점 목록 ([x, y])
+     * posX: 차선 시작점으로부터의 진행 거리(m)
+     */
+    public static ProjCoordinate interpolateAlongLane(List<double[]> laneShape, double posX, double baseLon, double baseLat) {
+        if (laneShape == null || laneShape.isEmpty()) return null;
+        if (laneShape.size() == 1) {
+            return toWgs84(laneShape.get(0)[0], laneShape.get(0)[1], baseLon, baseLat);
+        }
+
+        double remaining = posX;
+        for (int i = 0; i < laneShape.size() - 1; i++) {
+            double[] from = laneShape.get(i);
+            double[] to   = laneShape.get(i + 1);
+            double dx = to[0] - from[0];
+            double dy = to[1] - from[1];
+            double segLen = Math.sqrt(dx * dx + dy * dy);
+
+            if (remaining <= segLen || i == laneShape.size() - 2) {
+                double t = segLen > 0 ? Math.min(remaining / segLen, 1.0) : 0.0;
+                return toWgs84(from[0] + t * dx, from[1] + t * dy, baseLon, baseLat);
+            }
+            remaining -= segLen;
+        }
+
+        double[] last = laneShape.get(laneShape.size() - 1);
+        return toWgs84(last[0], last[1], baseLon, baseLat);
+    }
+
+    private static ProjCoordinate toWgs84(double localX, double localY, double baseLon, double baseLat) {
+        return new ProjCoordinate(baseLon + localX / 88000.0, baseLat + localY / 111000.0, 0);
+    }
 
 }

@@ -21,7 +21,7 @@ public class BusStationController {
     private final BusStationMapper busStationMapper;
 
     @GetMapping("/{versionId}")
-    public ResponseEntity<PublicTransitResponse> getBusStationsByVersionId(@PathVariable String versionId) {
+    public ResponseEntity<PublicTransitResponse> getBusStationsByVersionId(@PathVariable String versionId) throws java.io.IOException {
         log.info("[getBusStationsByVersionId] versionId: {}", versionId);
 
         PublicTransitXml xml = busStationService.getBusStationXmlByVersionId(versionId);

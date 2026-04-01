@@ -23,7 +23,18 @@ public class VehicleDataReader {
     @Value("${database.vehicle_sim.remoteUrl}")
     private String remoteUrl;
 
+    @Value("${database.vehicle_sim.localPath:}")
+    private String localPath;
+
     private File prepareDbFile(String versionId) throws IOException {
+        // 로컬 파일이 설정되어 있으면 원격 다운로드 없이 직접 사용
+        if (localPath != null && !localPath.isBlank()) {
+            File localFile = new File(localPath);
+            if (localFile.exists()) {
+                return localFile;
+            }
+            logger.warn("Local DB file not found: {}, falling back to remote", localPath);
+        }
 
         File tempDbFile = File.createTempFile("vehicle_sim_temp", ".db");
         tempDbFile.deleteOnExit();
@@ -41,38 +52,58 @@ public class VehicleDataReader {
         return tempDbFile;
     }
 
+    /** 테이블 존재 여부 확인 */
+    private boolean tableExists(Connection conn, String schema, String tableName) {
+        try (ResultSet rs = conn.getMetaData().getTables(null, null, tableName, null)) {
+            while (rs.next()) {
+                if (tableName.equalsIgnoreCase(rs.getString("TABLE_NAME"))) return true;
+            }
+        } catch (SQLException ignored) {}
+        // ATTACH된 스키마는 메타데이터로 안 보일 수 있어 직접 쿼리로 확인
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute("SELECT 1 FROM " + schema + "." + tableName + " LIMIT 1");
+            return true;
+        } catch (SQLException e) {
+            return false;
+        }
+    }
+
     // vehicle_event
     public List<VehicleEvent> readVehicleEvent(String versionId) {
         List<VehicleEvent> vehicleEventList = new ArrayList<>();
 
         try {
-            File tempDbFile = prepareDbFile(versionId);
-            tempDbFile.deleteOnExit();
+            File dbFile = prepareDbFile(versionId);
+            boolean isTempFile = !dbFile.getAbsolutePath().equals(localPath != null ? new File(localPath).getAbsolutePath() : "");
 
             String memoryUrl = "jdbc:sqlite::memory:";
             try (Connection conn = DriverManager.getConnection(memoryUrl);
                  Statement stmt = conn.createStatement()) {
 
-                String attachSQL = "ATTACH DATABASE '" + tempDbFile.getAbsolutePath() + "' AS vehicle_sim_db";
+                String attachSQL = "ATTACH DATABASE '" + dbFile.getAbsolutePath() + "' AS vehicle_sim_db";
                 stmt.execute(attachSQL);
 
+                // 테이블명 감지: VehicleEvent(신규) 또는 VehicleEventDebugging(구형)
+                boolean isNewSchema = tableExists(conn, "vehicle_sim_db", "VehicleEvent");
+                String tableName = isNewSchema ? "VehicleEvent" : "VehicleEventDebugging";
+
                 List<String> limitedIds = new ArrayList<>();
-                String idQuery = "SELECT DISTINCT veh_id FROM vehicle_sim_db.VehicleEventDebugging";
-                try (PreparedStatement pstmt = conn.prepareStatement(idQuery)) {
-                    try (ResultSet rs = pstmt.executeQuery()) {
-                        while (rs.next()) {
-                            limitedIds.add(rs.getString("veh_id"));
-                        }
+                String idQuery = "SELECT DISTINCT veh_id FROM vehicle_sim_db." + tableName;
+                try (PreparedStatement pstmt = conn.prepareStatement(idQuery);
+                     ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        limitedIds.add(rs.getString("veh_id"));
                     }
                 }
 
                 if (limitedIds.isEmpty()) return vehicleEventList;
 
                 String inClause = String.join(",", Collections.nCopies(limitedIds.size(), "?"));
-                String dataQuery = """
-                SELECT veh_id, type, timestep, link_id, lane_id, pos_x, pos_y, spd, acc, spacing, mode, leader_id, target_lane_id
-                FROM vehicle_sim_db.VehicleEventDebugging
-                WHERE veh_id IN (""" + inClause + ")";
+
+                String dataQuery = isNewSchema
+                        ? "SELECT veh_id, timestep, link_id, lane_id, pos_x, pos_y FROM vehicle_sim_db.VehicleEvent WHERE veh_id IN (" + inClause + ") ORDER BY veh_id, timestep"
+                        : "SELECT veh_id, type, timestep, link_id, lane_id, pos_x, pos_y, spd, acc, spacing, mode, leader_id, target_lane_id FROM vehicle_sim_db.VehicleEventDebugging WHERE veh_id IN (" + inClause + ")";
+
                 try (PreparedStatement pstmt = conn.prepareStatement(dataQuery)) {
                     for (int i = 0; i < limitedIds.size(); i++) {
                         pstmt.setString(i + 1, limitedIds.get(i));
@@ -82,28 +113,62 @@ public class VehicleDataReader {
                         while (rs.next()) {
                             VehicleEvent v = new VehicleEvent();
                             v.setId(rs.getString("veh_id"));
-                            v.setType(rs.getString("type"));
                             v.setTimestep(rs.getDouble("timestep"));
                             v.setLinkId(rs.getString("link_id"));
                             v.setLaneId(rs.getString("lane_id"));
                             v.setPosX(rs.getFloat("pos_x"));
                             v.setPosY(rs.getFloat("pos_y"));
-                            v.setSpeed(rs.getFloat("spd"));
-                            v.setAcc(rs.getFloat("acc"));
-                            v.setSpacing(rs.getString("spacing"));
-                            v.setDriveMode(rs.getString("mode"));
-                            v.setLeaderId(rs.getString("leader_id"));
-                            v.setTargetlaneId(rs.getString("target_lane_id"));
+                            if (!isNewSchema) {
+                                v.setType(rs.getString("type"));
+                                v.setSpeed(rs.getFloat("spd"));
+                                v.setAcc(rs.getFloat("acc"));
+                                v.setSpacing(rs.getString("spacing"));
+                                v.setDriveMode(rs.getString("mode"));
+                                v.setLeaderId(rs.getString("leader_id"));
+                                v.setTargetlaneId(rs.getString("target_lane_id"));
+                            }
                             vehicleEventList.add(v);
                         }
                     }
                 }
             }
+
+            if (isTempFile) dbFile.delete();
         } catch (SQLException | IOException e) {
             logger.error("Error while reading limited vehicle data", e);
         }
 
         return vehicleEventList;
+    }
+
+    /** veh_id → VehicleInfo (length, width 등) 맵 반환 */
+    public Map<String, VehicleInfo> readVehicleInfoMap(String versionId) {
+        Map<String, VehicleInfo> map = new HashMap<>();
+        try {
+            File dbFile = prepareDbFile(versionId);
+            String memoryUrl = "jdbc:sqlite::memory:";
+            try (Connection conn = DriverManager.getConnection(memoryUrl);
+                 Statement stmt = conn.createStatement()) {
+
+                stmt.execute("ATTACH DATABASE '" + dbFile.getAbsolutePath() + "' AS vehicle_sim_db");
+
+                String query = "SELECT veh_id, veh_type, length, width FROM vehicle_sim_db.VehicleInfo";
+                try (PreparedStatement pstmt = conn.prepareStatement(query);
+                     ResultSet rs = pstmt.executeQuery()) {
+                    while (rs.next()) {
+                        VehicleInfo info = new VehicleInfo();
+                        info.setId(rs.getInt("veh_id"));
+                        info.setType(rs.getString("veh_type"));
+                        info.setLength(rs.getDouble("length"));
+                        info.setWidth(rs.getDouble("width"));
+                        map.put(rs.getString("veh_id"), info);
+                    }
+                }
+            }
+        } catch (SQLException | IOException e) {
+            logger.error("Error while reading VehicleInfo", e);
+        }
+        return map;
     }
 
     // 링크별 교통량 통계 집계 (SQLite GROUP BY 활용 - 전체 이벤트 로드 없이 효율적으로 처리)

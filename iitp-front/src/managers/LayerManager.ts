@@ -99,7 +99,7 @@ export class LayerManager {
         }
         //ol
         const olHeatmap = new HeatmapFeatureLayer(vehicleRoute, vectorSource, speedFactor, isRunning, colors, blur);
-        const layers = this.vectorLayerManager.add(olHeatmap, groupName, layerName, heatmapSetting.basic);
+        const layers = this.vectorLayerManager.add(olHeatmap, groupName, layerName, olHeatmap.getVisible());
 
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
 
@@ -135,7 +135,7 @@ export class LayerManager {
         }
 
         const odLayer = new ODMatrixFeatureLayer(vehicleRoute, speedFactor, isRunning);
-        const layers = this.vectorLayerManager.add(odLayer, groupName, layerName, false);
+        const layers = this.vectorLayerManager.add(odLayer, groupName, layerName, odLayer.getVisible());
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
 
         layers.forEach((layer: BaseLayer) => {
@@ -213,7 +213,8 @@ export class LayerManager {
         glbUrl: string = 'public/model_12.glb',
         correctionHpr?: Cesium.HeadingPitchRoll,
         vehicleType: string = 'default',
-        zOffset: number = 0
+        zOffset: number = 0,
+        scales?: number[]
     ) {
         const groupName = "analyze"
         const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
@@ -234,7 +235,7 @@ export class LayerManager {
             'MOTO':  2,
         };
         const targetSizeM = VEHICLE_TARGET_SIZE[vehicleType] ?? 4;
-        const primitive = new VehiclePrimitive(vehicleRoute, this.cesiumViewer, glbUrl, speedFactor, isRunning, correctionHpr, targetSizeM, zOffset);
+        const primitive = new VehiclePrimitive(vehicleRoute, this.cesiumViewer, glbUrl, speedFactor, isRunning, correctionHpr, targetSizeM, zOffset, scales);
         primitive.baseColor = VEHICLE_TYPE_COLORS[vehicleType] ?? [1, 1, 1];
         (primitive as any).vehicleType = vehicleType;
         this.primitiveLayerManager.add(primitive, groupName, "vehicle", true);
@@ -494,7 +495,9 @@ export class LayerManager {
         this.removeHeatmapLayer();
         this.removeTripLayer();
         this.removeODArrows();
-        this.removeVehicleLayer()
+        this.removeVehicleLayer();
+        // OL 맵 강제 재렌더링 - WebGL 레이어 제거 후 화면 즉시 갱신
+        this.olMap?.render();
     }
 
 

@@ -66,16 +66,24 @@ const Facility = ({ fields }: FacilityProps) => {
         const children = nestedArrayFieldsMap[parentKey] || [];
         if (checked) {
             addActiveLayerName(parentKey);
-            children.forEach(child => {
-                addActiveLayerName(`${parentKey}.${child}`);
-                layerManager?.toggleByFeatureType('facility', parentKey, child, true);
-            });
+            if (children.length > 0) {
+                children.forEach(child => {
+                    addActiveLayerName(`${parentKey}.${child}`);
+                    layerManager?.toggleByFeatureType('facility', parentKey, child, true);
+                });
+            } else {
+                layerManager?.showLayer('facility', parentKey);
+            }
         } else {
             removeActiveLayerName(parentKey);
-            children.forEach(child => {
-                removeActiveLayerName(`${parentKey}.${child}`);
-                layerManager?.toggleByFeatureType('facility', parentKey, child, false);
-            });
+            if (children.length > 0) {
+                children.forEach(child => {
+                    removeActiveLayerName(`${parentKey}.${child}`);
+                    layerManager?.toggleByFeatureType('facility', parentKey, child, false);
+                });
+            } else {
+                layerManager?.hideLayer('facility', parentKey);
+            }
         }
     };
 

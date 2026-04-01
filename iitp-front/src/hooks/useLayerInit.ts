@@ -51,6 +51,7 @@ const useLayerInit = (): void => {
     const lodLevels = [1.0, 0.5, 0.2];
 
     const selectedScenario = useScenarioStore.getState().selectedScenario;
+    const selectedScenarioVersion = useScenarioStore.getState().selectedScenarioVersion;
     const menuCodes = Object.keys(propertyFormSchema as Record<string, PropertyFormSchemaProps>);
     const layerGroups = useLayerSchemaStore.state.groups();
 
@@ -74,7 +75,7 @@ const useLayerInit = (): void => {
                 const api = apiConfig[menuCode as ApiMenuKey].list;
                 const response = await axiosInstance({
                     method: api.method,
-                    url: api.url + '/' + selectedScenario.key,
+                    url: api.url + '/' + (selectedScenarioVersion?.key ?? selectedScenario.key),
                 });
 
                 store.getState().setOriginData(response.data);

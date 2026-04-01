@@ -6,5 +6,5 @@ import java.time.Instant;
 import java.util.List;
 
 public interface SignalTimelineService {
-    List<SignalTimelineResponse> generateSignalTimeline(long simulationStartTime, String targetPlanId);
+    List<SignalTimelineResponse> generateSignalTimeline(long simulationStartTime, String targetPlanId, String dataPath, int simulationDurationSeconds);
 }

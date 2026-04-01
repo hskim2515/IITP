@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import './App.css'
+import { ScenarioVersions } from "@type/Scenario";
 import Header from "./component/header/Header";
 import LeftPanel from "./component/panel/LeftPanel";
 import { useScenarioStore } from "@stores/useScenarioStore";
@@ -15,17 +16,49 @@ import { propertyFormSchema } from "@schema/propertyFormSchema";
 import Maps from "@component/map/Maps";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
 import Taskbar from "@component/panel/Taskbar";
-import Dashboard from "@component/panel/Dashboard";
+import DashboardLeft from "@component/panel/DashboardLeft";
+import DashboardRight from "@component/panel/DashboardRight";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
+
+function VersionPopup({ scenarioId, onSelect }: { scenarioId: number; onSelect: (v: ScenarioVersions) => void }) {
+    const [versions, setVersions] = useState<ScenarioVersions[]>([]);
+
+    useEffect(() => {
+        fetch(process.env.VITE_API_URL + `/scenario/${scenarioId}/versions`, {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+        }).then((r) => r.json()).then(setVersions);
+    }, [scenarioId]);
+
+    return (
+        <div className="version-popup">
+            <div className="version-popup-content">
+                <h2>시나리오 버전을 선택하세요</h2>
+                <select
+                    defaultValue=""
+                    onChange={(e) => {
+                        const selected = versions.find((v) => v.key === e.target.value);
+                        if (selected) onSelect(selected);
+                    }}
+                >
+                    <option value="" disabled>버전을 선택하세요</option>
+                    {versions.map((v) => (
+                        <option key={v.key} value={v.key}>{v.label}</option>
+                    ))}
+                </select>
+            </div>
+        </div>
+    );
+}
 
 function App() {
 
     const [showDashboard, setShowDashboard] = useState(false);
-
-    const version = useScenarioStore((state) => state.selectedScenarioVersion);
-    const setVersion = useScenarioStore((state) => state.setVersion);
+    const [mapMode, setMapMode] = useState<'2D' | '3D'>('2D');
 
     const selectedScenario = useScenarioStore((state) => state.selectedScenario);
+    const selectedScenarioVersion = useScenarioStore((state) => state.selectedScenarioVersion);
+    const setVersion = useScenarioStore((state) => state.setVersion);
 
     const fetchSchema = useSchemaStore((state) => state.fetchSchema)
 
@@ -49,28 +82,13 @@ function App() {
             <ScenarioSelector/>
         ) : (
             <div>
-                {!version && (
-                    <div className="version-popup">
-                        <div className="version-popup-content">
-                            <h2>시나리오 버전을 선택하세요</h2>
-                            <select
-                                defaultValue=""
-                                onChange={(e) => {
-                                    const selected = e.target.value;
-                                    if (selected) {
-                                        setVersion(selected);
-                                    }
-                                }}
-                            >
-                                <option value="" disabled>버전을 선택하세요</option>
-                                <option value="v1">version-1</option>
-                                <option value="v2">version-2</option>
-                            </select>
-                        </div>
-                    </div>
+                {!selectedScenarioVersion && (
+                    <VersionPopup
+                        scenarioId={selectedScenario.id}
+                        onSelect={setVersion}
+                    />
                 )}
-                <Header onDashboard={() => setShowDashboard(true)}/>
-                {showDashboard && <Dashboard onClose={() => setShowDashboard(false)}/>}
+                <Header onDashboard={() => setShowDashboard(prev => !prev)} isDashboardOpen={showDashboard} dashboardMode={showDashboard}/>
                 <MessagePopup/>
                 <PropertyModal/>
                 <main
@@ -82,10 +100,10 @@ function App() {
                         bottom: "0",
                         display: "flex",
                         overflow: "hidden",
-                        height: "calc(100vh - 44px)"
                     }}
                 >
-                    {activeDropdownMenu && <LeftPanel/>}
+                    {!showDashboard && activeDropdownMenu && <LeftPanel/>}
+                    {showDashboard && <DashboardLeft onClose={() => setShowDashboard(false)}/>}
                     <div
                         style={{
                             flex: "1 1 auto",
@@ -94,10 +112,15 @@ function App() {
                             position: "relative",
                         }}
                     >
-                        <Maps/>
-                        <Taskbar/>
+                        <Maps
+                            singleMapMode={showDashboard}
+                            mapMode={mapMode}
+                            onMapModeChange={setMapMode}
+                        />
 
-                        {activeSession && (
+                        {!showDashboard && <Taskbar/>}
+
+                        {!showDashboard && activeSession && (
                             isDescendantOf(menu, 'SCHEMA_SETTING', activeSession.menuCode) ? (
                                 <SchemaSetting/>
                             ) : activeSession.menuCode === 'VEHICLE_TYPE' ? (
@@ -116,13 +139,15 @@ function App() {
                                 />
                             ) : menuCodeToStoreMap[activeSession.menuCode] ? (
                                 <PropertyPanel
-                                    activeSubmenu={activeSession.menu}  // ← 바로 사용
+                                    activeSubmenu={activeSession.menu}
                                     onClose={() => minimizeSession(activeSession.menuCode)}
                                 />
                             ) : null
                         )}
 
                     </div>
+                    {showDashboard && <DashboardRight onClose={() => setShowDashboard(false)}/>}
+
                 </main>
             </div>
         )

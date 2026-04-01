@@ -17,6 +17,7 @@ import { Point } from "ol/geom";
 import { generateGUIDWithType } from "@utils/guid";
 import deepEqual from "deep-equal";
 import {SignalData} from "@type/Signal";
+import { useNetworkStore } from "@stores/useNetworkStore";
 
 export class SignalFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -38,14 +39,26 @@ export class SignalFeatureLayer extends VectorLayer {
 
         const store = layerNameToStoreMap[this.LAYER_NAME];
 
+        const buildNodeCoordMap = () => {
+            const networkData = useNetworkStore.getState().currentJsonData;
+            const nodeCoordMap = new Map<string, { lat: number; lng: number }>();
+            networkData?.nodes?.forEach((node: any) => {
+                if (node.id != null && node.coordinates) {
+                    nodeCoordMap.set(String(node.id), node.coordinates);
+                }
+            });
+            return nodeCoordMap;
+        };
+
         const listener = (
             updated: Record<string, Array<Record<string, unknown>>>,
             origin: Record<string, Array<Record<string, unknown>>>
         ) => {
             if (!updated) return;
+            const nodeCoordMap = buildNodeCoordMap();
             Object.keys(updated).forEach((objectName) => {
                 const updatedList = updated[objectName] ?? [];
-                const originList = origin[objectName] ?? [];
+                const originList = origin?.[objectName] ?? [];
 
                 const updatedMap = new Map<string, Record<string, unknown>>();
                 const originMap = new Map<string, Record<string, unknown>>();
@@ -116,8 +129,8 @@ export class SignalFeatureLayer extends VectorLayer {
 
                 added.forEach((item) => {
                     const dto = this.recordToDto(item);
-                    const feature = this.createFeature(dto);
-                    src.addFeature(feature);
+                    const feature = this.createFeature(dto, nodeCoordMap);
+                    if (feature) src.addFeature(feature);
                 });
             });
         };
@@ -135,30 +148,46 @@ export class SignalFeatureLayer extends VectorLayer {
         const currentJsonData = store.getState().currentJsonData;
         if (!currentJsonData) return;
         const { signals } = currentJsonData;
+        if (!signals?.length) return;
+
+        // nodeId → coordinates 맵 (network store에서 조회)
+        const networkData = useNetworkStore.getState().currentJsonData;
+        const nodeCoordMap = new Map<string, { lat: number; lng: number }>();
+        networkData?.nodes?.forEach((node: any) => {
+            if (node.id != null && node.coordinates) {
+                nodeCoordMap.set(String(node.id), node.coordinates);
+            }
+        });
 
         const source = this.source;
         source.clear();
 
         const features = signals
-            .map((data) => this.createFeature(data))
-            .filter((f): f is Feature => !!f); // undefined 필터링
+            .map((data) => this.createFeature(data, nodeCoordMap))
+            .filter((f): f is Feature => !!f);
 
         source.addFeatures(features);
-
     }
 
     /**
      * DTO로부터 Point Feature와 속성을 생성
      */
-    public createFeature(data: SignalData): Feature | undefined {
+    public createFeature(data: SignalData, nodeCoordMap?: Map<string, { lat: number; lng: number }>): Feature | undefined {
 
         const props: SignalData = {
             ...data,
             featureType: data.featureType ?? FEATURE_TYPE.SIGNAL,
         };
         const feature = new Feature();
-
         feature.setProperties(props);
+
+        // nodeId로 좌표 설정
+        if (data.nodeId && nodeCoordMap) {
+            const coord = nodeCoordMap.get(String(data.nodeId));
+            if (coord) {
+                feature.setGeometry(new Point(fromLonLat([coord.lng, coord.lat])));
+            }
+        }
 
         return feature;
     }

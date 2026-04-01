@@ -28,6 +28,9 @@ public class ScenarioVersion {
     @Column(nullable = false)
     private String label;
 
+    @Column(name = "data_path")
+    private String dataPath;
+
     @Column(name = "insert_date", nullable = false)
     private LocalDateTime insertDate;
 

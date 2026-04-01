@@ -125,7 +125,10 @@ export default class ParabolicArrowPrimitive {
         };
     }
 
+    destroyed = false;
+
     update(frameState: Cesium.FrameState) {
+        if (this.destroyed) return;
         if(this.odData && this.show){
             this.cleanupResources();
 
@@ -167,6 +170,8 @@ export default class ParabolicArrowPrimitive {
     }
 
     destroy() {
+        this.destroyed = true;
+        this.cleanupResources();
         this.vertexBuffer?.destroy();
         this.vertexArray?.destroy();
         this.shaderProgram?.destroy();

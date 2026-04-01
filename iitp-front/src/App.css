@@ -55,7 +55,7 @@ body {
 
 .scenario-container {
   text-align: center;
-  padding: 300px 350px;
+  width: 100vw;
 }
 
 .title {

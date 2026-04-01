@@ -282,6 +282,26 @@
     margin: 8px 0;
 }
 
+/* ── Layer Item Setting Button ────────────────────────────────── */
+.layerItemSettingBtn {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: #555;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: color 0.12s, background 0.12s;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+}
+
+.layerItemSettingBtn:hover {
+    color: #7aa2ff;
+    background: rgba(122, 162, 255, 0.1);
+}
+
 /* ── Color Bar Row ────────────────────────────────────────────── */
 .colorBarRow {
     display: flex;

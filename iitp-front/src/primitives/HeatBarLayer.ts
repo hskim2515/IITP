@@ -118,6 +118,7 @@ export default class HeatBarLayer {
     private colors:       Cesium.Cartesian3[];
 
     show = false;
+    destroyed = false;
 
     private _frameCount = 0;
     private static readonly NOISE_UPDATE_INTERVAL = 3;
@@ -249,8 +250,6 @@ export default class HeatBarLayer {
             uniform vec2  u_noiseOffset;
             uniform vec2  u_noiseScale;
             uniform float exaggeration;
-            uniform float u_time;
-
             out float v_height;
             out float v_density;
             out float v_topFace;
@@ -267,15 +266,7 @@ export default class HeatBarLayer {
                 float noise = texture(noiseTexture, texCoord).r;
                 float baseH = noise * ${BOX_HEIGHT_MAX.toFixed(1)} * exaggeration;
 
-                // 밀도 높을수록 위상 앞섬 → 고밀도→저밀도 방향으로 흐름
-                float phaseShift = noise * 4.0;
-                float px = u_noiseOffset.x, py = u_noiseOffset.y, t = u_time;
-                float w1 = sin(px * 20.0 + py * 13.0 - t * 2.4 + phaseShift);
-                float w2 = sin(px * 11.0 - py * 17.0 + t * 1.8 + phaseShift * 0.7);
-                float w3 = sin((px + py) * 15.0      - t * 1.6 + phaseShift * 0.5);
-                float wave = (w1 * 0.42 + w2 * 0.34 + w3 * 0.24) * 0.5 + 0.5;
-
-                float height = baseH * (0.50 + wave * 1.00);
+                float height = baseH;
 
                 v_height  = height;
                 v_density = noise;
@@ -296,7 +287,6 @@ export default class HeatBarLayer {
             in float v_topFace;
             in vec2  v_cellUv;
 
-            uniform float u_time;
             uniform vec3  grade1Color;
             uniform vec3  grade2Color;
             uniform vec3  grade3Color;
@@ -321,18 +311,6 @@ export default class HeatBarLayer {
                 // 측면 음영
                 float shade = 0.30 + v_topFace * 1.40;
                 baseColor *= shade;
-
-                // 3파 스펙큘러 (꼭대기만)
-                float phaseShift = v_density * 4.0;
-                float px = v_cellUv.x, py = v_cellUv.y, t = u_time;
-                float r1 = sin(px * 20.0 + py * 13.0 - t * 2.4 + phaseShift);
-                float r2 = sin(px * 11.0 - py * 17.0 + t * 1.8 + phaseShift * 0.7);
-                float r3 = sin((px + py) * 15.0      - t * 1.6 + phaseShift * 0.5);
-                float ripple  = (r1 * 0.42 + r2 * 0.34 + r3 * 0.24) * 0.5 + 0.5;
-                float specular = v_topFace > 0.3
-                    ? pow(max(0.0, ripple - 0.55), 2.0) * 2.5
-                    : 0.0;
-                baseColor += vec3(0.80, 0.92, 1.00) * specular * 0.45;
 
                 fragColor = vec4(baseColor, 0.5);
             }
@@ -399,7 +377,6 @@ export default class HeatBarLayer {
                             Cesium.Matrix4.multiply(proj, HeatBarLayer._scratchMv, HeatBarLayer._scratchMvp);
                             return HeatBarLayer._scratchMvp;
                         },
-                        u_time:        () => performance.now() / 1000.0,
                         noiseTexture:  () => this.noiseTexture,
                         u_noiseOffset: () => entry.noiseOffset,
                         u_noiseScale:  () => entry.noiseScale,
@@ -485,7 +462,7 @@ export default class HeatBarLayer {
     // 매 프레임 업데이트
     // ──────────────────────────────────────────
     update(frameState: any): void {
-        if (!this.show || !this.latestPositions) return;
+        if (this.destroyed || !this.show || !this.latestPositions) return;
         if (this.latestPositions.filter(p => p != null).length === 0) return;
 
         // ④ 네트워크 bbox가 없을 때만 positions로 보정 (1회)
@@ -535,6 +512,8 @@ export default class HeatBarLayer {
     // 리소스 해제
     // ──────────────────────────────────────────
     destroy(): void {
+        if (this.destroyed) return;
+        this.destroyed     = true;
         this.noiseTexture?.destroy();
         this.noiseTexture  = null;
         this.vertexArray?.destroy();

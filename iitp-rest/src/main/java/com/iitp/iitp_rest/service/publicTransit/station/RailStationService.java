@@ -6,18 +6,22 @@ import com.iitp.iitp_rest.model.publicTransit.rail.RailStationLogs;
 import com.iitp.iitp_rest.model.publicTransit.rail.RailStationSaveRequest;
 import com.iitp.iitp_rest.model.publicTransit.rail.RailStationVersion;
 import com.iitp.iitp_rest.model.scenario.Scenario;
+import com.iitp.iitp_rest.model.scenario.ScenarioVersion;
 import com.iitp.iitp_rest.repository.RailStationLogsRepository;
 import com.iitp.iitp_rest.repository.RailStationVersionsRepository;
 import com.iitp.iitp_rest.repository.ScenarioRepository;
+import com.iitp.iitp_rest.repository.ScenarioVersionRepository;
 import com.iitp.iitp_rest.service.network.RoadService;
 import com.iitp.iitp_rest.util.CoordinateUtils;
-import com.iitp.iitp_rest.util.XmlUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
 import java.util.List;
 
 @Slf4j
@@ -26,10 +30,14 @@ import java.util.List;
 public class RailStationService {
 
     private final ScenarioRepository scenarioRepository;
+    private final ScenarioVersionRepository scenarioVersionRepository;
     private final RailStationVersionsRepository railStationVersionsRepository;
     private final RailStationLogsRepository railStationLogsRepository;
     private final RailStationJaxbParser railStationJaxbParser;
     private final RoadService roadService;
+
+    @Value("${database.vehicle_sim.remoteUrl}")
+    private String remoteUrl;
 
     public RailStationVersion getByVersionId(String id) {
         return railStationVersionsRepository.findByVersionId(id).orElse(new RailStationVersion());
@@ -63,9 +71,8 @@ public class RailStationService {
         railStationLogsRepository.save(entityLog);
     }
 
-    public RailPublicTransitXml getRailStationXmlByVersionId(String versionId) {
-        String path = versionId + "/railPublicTransit.xml";
-        InputStream is = XmlUtils.loadXmlAsStream(path);
+    public RailPublicTransitXml getRailStationXmlByVersionId(String versionId) throws IOException {
+        InputStream is = new URL(remoteUrl + versionId + "/railPublicTransit.xml").openStream();
         RailPublicTransitXml railPublicTransitDto = streamToDto(is);
         return transformRailPublicTransitCoordinates(versionId, railPublicTransitDto);
     }
@@ -78,8 +85,10 @@ public class RailStationService {
         return dto;
     }
 
-    public RailPublicTransitXml transformRailPublicTransitCoordinates(String key, RailPublicTransitXml dto) {
-        Scenario scenario = scenarioRepository.findByKey(key).orElse(new Scenario());
+    public RailPublicTransitXml transformRailPublicTransitCoordinates(String versionKey, RailPublicTransitXml dto) {
+        Scenario scenario = scenarioVersionRepository.findByKey(versionKey)
+                .map(ScenarioVersion::getScenario)
+                .orElseGet(() -> scenarioRepository.findByKey(versionKey).orElse(new Scenario()));
         double baseLatitude = scenario.getLatitude();
         double baseLongitude = scenario.getLongitude();
 

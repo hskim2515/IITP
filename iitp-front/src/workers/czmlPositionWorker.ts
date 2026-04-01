@@ -72,6 +72,24 @@ self.onmessage = function (e) {
         lastElapsed = elapsed;
         referenceTime = data.currentTime;
     }
+
+    else if (data.type === "reset") {
+        elapsed = 0;
+        lastElapsed = 0;
+        referenceTime = data.currentTime;
+        // t=0 위치로 즉시 업데이트
+        if (sampledPositionsList && sampledPositionsList.length > 0) {
+            const interps = sampledPositionsList.map(({ vehicleType, sampled }) => ({
+                interp: interpolatePosition(sampled, 0),
+                vehicleType,
+            }));
+            const positions = interps.map(({ interp }) => interp ? interp.position : null);
+            const headings  = interps.map(({ interp }) => interp ? interp.heading  : null);
+            const speeds    = interps.map(({ interp }) => interp ? interp.speed    : null);
+            const types     = interps.map(({ vehicleType }) => vehicleType);
+            self.postMessage({ positions, headings, speeds, types });
+        }
+    }
 };
 
 // 샘플 데이터 추출 (heading 사전 계산 포함)
