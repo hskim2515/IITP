@@ -16,7 +16,7 @@ public class ExitXml {
     @XmlAttribute
     private Double offset;
     @XmlAttribute
-    private Long accessTime;
+    private Double accessTime;
     @XmlAttribute
     private String coord;
 }

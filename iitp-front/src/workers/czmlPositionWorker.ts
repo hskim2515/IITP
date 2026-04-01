@@ -15,6 +15,8 @@ self.onmessage = function (e) {
 
         czmlData = data.czmlPackets; // [{id, type, path:[t,x,y,z,...]}, ...] 또는 구버전 [[t,x,y,z,...], ...]
         referenceTime = data.currentTime;
+        lastElapsed = 0;
+        elapsed = 0;
 
         sampledPositionsList = czmlData.map((track, idx) => {
             // 신버전: {id, type, path:[...]}  구버전: [t, x, y, z, ...]

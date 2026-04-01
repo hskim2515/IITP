@@ -60,6 +60,8 @@ const useSimulation = () => {
     const lastOdUpdateTime = useRef(0);
     const entityMapRef = useRef<Map<string, Cesium.Entity>>(new Map());
     const lastPositionsRef = useRef([]);
+    /** stop→play 전환 감지용: isRunning이 false→true 전환 시에만 워커 재초기화 */
+    const wasRunningRef = useRef(false);
 
     // const changeModelWorkerRef = useRef<Worker | null>(null);
     const czmlPositionWorkerRef = useRef<Worker | null>(null);
@@ -67,6 +69,8 @@ const useSimulation = () => {
     const makeOdDataWorkerRef = useRef<Worker | null>(null);
     /** 시뮬레이션 자연 종료 감지용 clock.onTick 리스너 참조 */
     const clockEndListenerRef = useRef<((clock: Cesium.Clock) => void) | null>(null);
+    /** preRender 리스너 참조 — React 리렌더 시 함수 참조 변경으로 인한 누수 방지 */
+    const updateFrameFuncRef = useRef<(() => void) | null>(null);
 
     useEffect(() => {
         if (!czmlPositionWorkerRef.current) {
@@ -115,15 +119,34 @@ const useSimulation = () => {
 
             if (isStop) {
                 viewer.clock.currentTime = viewer.clock.startTime;
+                useSimulationStore.getState().setCurrentTime(JulianDate.clone(viewer.clock.startTime));
+                useVehicleStore.getState().setActiveVehicleCount(0);
                 lastPositionsRef.current = [];
+                wasRunningRef.current = false;
                 layerManager.getLayerGroup("analyze").forEach((layer) => {
                     if (typeof (layer as any).stop === "function") (layer as any).stop();
                 });
+                if (czmlDataSourceRef.current) {
+                    (czmlDataSourceRef.current as any).show = false;
+                }
             } else if (isRunning) {
-                // stop → play 재시작: _stopped 플래그 초기화
+                // stop/drain → play 전환: 워커 세대를 갱신하여 스테일 응답 무효화
+                if (!wasRunningRef.current && vehicleRoute.length > 0) {
+                    const newGen = ++workerGenerationRef.current;
+                    czmlPositionWorkerRef.current?.postMessage({
+                        type: 'init',
+                        czmlPackets: vehicleRoute,
+                        currentTime: Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime(),
+                        generation: newGen,
+                    });
+                }
+                wasRunningRef.current = true;
                 layerManager.getLayerGroup("analyze").forEach((layer) => {
                     if (typeof (layer as any).start === "function") (layer as any).start();
                 });
+                if (czmlDataSourceRef.current) {
+                    (czmlDataSourceRef.current as any).show = true;
+                }
             }
         }
     }, [ isRunning, isStop, speed, speedFactor ]);
@@ -154,7 +177,7 @@ const useSimulation = () => {
     }, [ heatmapSetting.colors, heatmapSetting.blur, heatmapSetting.exaggeration ]);
 
     useEffect(() => {
-        fetch(process.env.VITE_API_URL + "/vehicle/vehicle-route/" + selectedScenario.key, { // generate-czml
+        fetch(process.env.VITE_API_URL + "/vehicle/vehicle-route/" + selectedScenario.key, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ numVehicle, speedFactor, czml }),
@@ -290,7 +313,7 @@ const useSimulation = () => {
         czmlPositionWorkerRef.current.onmessage = (e) => {
             // 워커 응답의 generation이 현재 세대와 다르면 스테일 메시지 — 무시
             const result = e.data;
-            if (!result || result.generation !== generation) return;
+            if (!result || result.generation !== workerGenerationRef.current) return;
 
             {
                 const hasTypes = Array.isArray(result.types) && result.types.length > 0;
@@ -428,7 +451,9 @@ const useSimulation = () => {
 
         return czmlSource.load(czml).then(() => {
             return viewer.dataSources.add(czmlSource).then((d) => {
-                viewer?.scene.preRender.removeEventListener(updateFrameFunc);
+                if (updateFrameFuncRef.current) {
+                    viewer?.scene.preRender.removeEventListener(updateFrameFuncRef.current);
+                }
                 czmlDataSourceRef.current = czmlSource;
 
                 const map = new Map();
@@ -445,9 +470,10 @@ const useSimulation = () => {
                     type: 'init',
                     czmlPackets: vehicleRoute,
                     currentTime: Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime(),
-                    generation,
+                    generation: workerGenerationRef.current,
                 });
 
+                updateFrameFuncRef.current = updateFrameFunc;
                 viewer.scene.preRender.addEventListener(updateFrameFunc);
 
                 // 이전 리스너 제거 후 자연 종료 감지 리스너 등록
@@ -456,19 +482,17 @@ const useSimulation = () => {
                 }
                 clockEndListenerRef.current = (clock: Cesium.Clock) => {
                     if (!isRunningRef.current) return;
-                    // shouldAnimate 의존 제거 — clockRange 설정과 무관하게 stopTime 도달로 판단
                     if (Cesium.JulianDate.compare(clock.currentTime, clock.stopTime) < 0) return;
-                    // 한 번만 실행
                     viewer.clock.onTick.removeEventListener(clockEndListenerRef.current!);
                     clockEndListenerRef.current = null;
-                    // 자연 종료: 레이어 드레인 → 클록 리셋 → 스토어 pause
                     layerManager.getLayerGroup("analyze").forEach((layer) => {
                         if (typeof (layer as any).drain === "function") (layer as any).drain();
                     });
-                    // 클록을 시작점으로 되돌려 다음 재생 시 처음부터 시작 가능하게
                     viewer.clock.currentTime = Cesium.JulianDate.clone(viewer.clock.startTime);
                     viewer.clock.shouldAnimate = false;
-                    // isRunning: true → false 로 전환 → 재생 버튼 누를 때 useEffect 재트리거
+                    lastPositionsRef.current = [];
+                    wasRunningRef.current = false;
+                    useVehicleStore.getState().setActiveVehicleCount(0);
                     useSimulationStore.getState().pause();
                 };
                 viewer.clock.onTick.addEventListener(clockEndListenerRef.current);

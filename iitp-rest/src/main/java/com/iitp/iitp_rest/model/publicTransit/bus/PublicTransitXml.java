@@ -6,10 +6,9 @@ import lombok.Data;
 import java.util.List;
 
 @Data
-@XmlRootElement(name = "PublicTransit")
+@XmlRootElement(name = "stations")
 @XmlAccessorType(XmlAccessType.FIELD)
 public class PublicTransitXml {
-    @XmlElementWrapper(name = "Stations")
     @XmlElement(name = "station")
     private List<BusStationXml> busStations;
 }

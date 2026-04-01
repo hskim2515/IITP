@@ -68,6 +68,8 @@ export default class TailPrimitive {
     private trails: TrailResources[];
     private latestPositions: (number[] | undefined)[] | null;
     private _stopped: boolean;
+    private _drainingSet: Set<number>;
+    private _lastDrainTime: number;
 
     constructor(
         positions:    number[][],
@@ -88,6 +90,8 @@ export default class TailPrimitive {
         this.show         = false;
         this.latestPositions = null;
         this._stopped = false;
+        this._drainingSet = new Set();
+        this._lastDrainTime = 0;
 
         this.MAX_TRAIL_LENGTH = 50;
         this.trails = [];
@@ -129,20 +133,18 @@ export default class TailPrimitive {
         const flatFade      = new Float32Array(N * 2);
         const flatOffsets   = new Float32Array(N * 2);
 
-        // 초기값 채우기 (모두 initialPosition, 오프셋 0)
+        // 초기값: 모두 initialPosition, fade=0, offset=0 (count=0이므로 렌더링 안 됨)
         for (let i = 0; i < N; i++) {
-            // 왼쪽 꼭짓점 (짝수 인덱스)
             flatPositions[i * 6]     = initialPosition.x;
             flatPositions[i * 6 + 1] = initialPosition.y;
             flatPositions[i * 6 + 2] = initialPosition.z;
-            flatFade[i * 2]          = i / N;
-            flatOffsets[i * 2]       = -5;
-            // 오른쪽 꼭짓점 (홀수 인덱스)
             flatPositions[i * 6 + 3] = initialPosition.x;
             flatPositions[i * 6 + 4] = initialPosition.y;
             flatPositions[i * 6 + 5] = initialPosition.z;
-            flatFade[i * 2 + 1]      = i / N;
-            flatOffsets[i * 2 + 1]   =  5;
+            flatFade[i * 2]     = 0;
+            flatFade[i * 2 + 1] = 0;
+            flatOffsets[i * 2]     = 0;
+            flatOffsets[i * 2 + 1] = 0;
         }
 
         // GPU 버퍼 직접 생성 및 참조 저장 → Cesium 내부 _attributes 접근 불필요
@@ -279,26 +281,50 @@ export default class TailPrimitive {
     // ──────────────────────────────────────────
     // 매 프레임 업데이트
     // ──────────────────────────────────────────
-    update(frameState: any): void {
-        if (this.destroyed || !this.show || !this.latestPositions || this._stopped) return;
+    private static readonly DRAIN_INTERVAL = 50;
 
-        this.trails.forEach((trail, index) => {
-            if (this.latestPositions![index]) {
-                this.updateTrail(frameState, trail, index);
+    update(frameState: any): void {
+        if (this.destroyed || !this.show) return;
+
+        if (this._hasNewPositions && this.latestPositions && !this._stopped) {
+            this._hasNewPositions = false;
+            this.trails.forEach((trail, index) => {
+                if (this.latestPositions![index]) {
+                    this._drainingSet.delete(index);
+                    this.updateTrail(trail, index);
+                } else if (trail.buffer.count > 0) {
+                    this._drainingSet.add(index);
+                }
+            });
+        }
+
+        if (this._drainingSet.size > 0) {
+            const now = performance.now();
+            if (now - this._lastDrainTime >= TailPrimitive.DRAIN_INTERVAL) {
+                this._lastDrainTime = now;
+                for (const index of this._drainingSet) {
+                    const trail = this.trails[index]!;
+                    if (trail.buffer.count > 0) {
+                        this._drainOneStep(trail);
+                    } else {
+                        this._drainingSet.delete(index);
+                    }
+                }
             }
-        });
+        }
+
+        for (const trail of this.trails) {
+            if (trail.buffer.count >= 2) {
+                frameState.commandList.push(trail.drawCommand);
+            }
+        }
     }
 
-    private updateTrail(
-        frameState: any,
-        trail:      TrailResources,
-        index:      number
-    ): void {
+    private updateTrail(trail: TrailResources, index: number): void {
         const N   = this.MAX_TRAIL_LENGTH;
         const pos = this.latestPositions![index]!;
         const buf = trail.buffer;
 
-        // 원형 버퍼에 새 위치 기록 (O(1), shift() 제거)
         const slot = buf.positions[buf.head]!;
         slot.x = pos[0]!;
         slot.y = pos[1]!;
@@ -306,25 +332,22 @@ export default class TailPrimitive {
         buf.head = (buf.head + 1) % N;
         if (buf.count < N) buf.count++;
 
-        // 꼬리가 오래될수록 넓어지도록 최대 폭 고정
         const MAX_WIDTH = 5.0;
-        const offsetFactor = MAX_WIDTH / N;
+        const fadeLen    = Math.max(buf.count, 1);
+        const widthStep  = MAX_WIDTH / N;
 
-        // 각 위치마다 왼쪽/오른쪽 꼭짓점 2개 기록 → TRIANGLE_STRIP 리본
-        for (let i = 0; i < N; i++) {
+        for (let i = 0; i < buf.count; i++) {
             const idx = (buf.head - buf.count + i + N) % N;
             const p   = buf.positions[idx]!;
-            const fadeVal   = i / N;
-            const halfWidth = i * offsetFactor;
+            const fadeVal   = i / fadeLen;
+            const halfWidth = i * widthStep;
 
-            // 왼쪽 꼭짓점
             trail.flatPositions[i * 6]     = p.x;
             trail.flatPositions[i * 6 + 1] = p.y;
             trail.flatPositions[i * 6 + 2] = p.z;
             trail.flatFade[i * 2]          = fadeVal;
             trail.flatOffsets[i * 2]       = -halfWidth;
 
-            // 오른쪽 꼭짓점
             trail.flatPositions[i * 6 + 3] = p.x;
             trail.flatPositions[i * 6 + 4] = p.y;
             trail.flatPositions[i * 6 + 5] = p.z;
@@ -332,18 +355,54 @@ export default class TailPrimitive {
             trail.flatOffsets[i * 2 + 1]   =  halfWidth;
         }
 
-        // GPU 버퍼 갱신 (직접 저장된 참조 → Cesium private API 없음)
         trail.positionBuffer.copyFromArrayView(trail.flatPositions);
         trail.fadeBuffer.copyFromArrayView(trail.flatFade);
         trail.offsetBuffer.copyFromArrayView(trail.flatOffsets);
 
-        // 유효한 위치 수만큼만 그림 (count * 2 = 왼쪽/오른쪽 꼭짓점 쌍)
-        // TRIANGLE_STRIP은 최소 2개 꼭짓점 필요
         trail.drawCommand.vertexCount = Math.max(buf.count * 2, 0);
+    }
 
-        if (buf.count >= 2) {
-            frameState.commandList.push(trail.drawCommand);
+    private _drainOneStep(trail: TrailResources): void {
+        const buf = trail.buffer;
+        if (buf.count <= 0) return;
+
+        buf.count--;
+
+        if (buf.count < 2) {
+            trail.drawCommand.vertexCount = 0;
+            buf.count = 0;
+            return;
         }
+
+        const N = this.MAX_TRAIL_LENGTH;
+        const MAX_WIDTH = 5.0;
+        const fadeLen   = buf.count;
+        const widthStep = MAX_WIDTH / N;
+
+        for (let i = 0; i < buf.count; i++) {
+            const idx = (buf.head - buf.count + i + N) % N;
+            const p   = buf.positions[idx]!;
+            const fadeVal   = i / fadeLen;
+            const halfWidth = i * widthStep;
+
+            trail.flatPositions[i * 6]     = p.x;
+            trail.flatPositions[i * 6 + 1] = p.y;
+            trail.flatPositions[i * 6 + 2] = p.z;
+            trail.flatFade[i * 2]          = fadeVal;
+            trail.flatOffsets[i * 2]       = -halfWidth;
+
+            trail.flatPositions[i * 6 + 3] = p.x;
+            trail.flatPositions[i * 6 + 4] = p.y;
+            trail.flatPositions[i * 6 + 5] = p.z;
+            trail.flatFade[i * 2 + 1]      = fadeVal;
+            trail.flatOffsets[i * 2 + 1]   =  halfWidth;
+        }
+
+        trail.positionBuffer.copyFromArrayView(trail.flatPositions);
+        trail.fadeBuffer.copyFromArrayView(trail.flatFade);
+        trail.offsetBuffer.copyFromArrayView(trail.flatOffsets);
+
+        trail.drawCommand.vertexCount = buf.count * 2;
     }
 
     // ──────────────────────────────────────────
@@ -352,33 +411,65 @@ export default class TailPrimitive {
     setSpeed(speed: number): void   { this.speed  = speed; }
     setStatus(status: string): void { this.status = status; }
 
+    private _hasNewPositions = false;
+
     setLatestPositions(latestPositions: { positions: (number[] | undefined)[] }): void {
         if (this._stopped) return;
         this.latestPositions = latestPositions.positions;
+        this._hasNewPositions = true;
     }
 
     start(): void {
         this._stopped = false;
-        // 재생 시작 시 circular buffer 초기화 — 이전 trail 데이터가 새 시작점에 연결되지 않도록
-        this._resetBuffers();
+        this._drainingSet.clear();
     }
 
     stop(): void {
         this._stopped = true;
         this.latestPositions = null;
+        this._drainingSet.clear();
         this._resetBuffers();
     }
 
     drain(): void {
         this._stopped = true;
         this.latestPositions = null;
-        this._resetBuffers();
+        this.trails.forEach((trail, index) => {
+            if (trail.buffer.count > 0) {
+                this._drainingSet.add(index);
+            }
+        });
     }
 
     private _resetBuffers(): void {
-        for (const trail of this.trails) {
+        const N = this.MAX_TRAIL_LENGTH;
+        for (let t = 0; t < this.trails.length; t++) {
+            const trail = this.trails[t]!;
+            const initPos = this.positions[t]!;
+            const ix = initPos[1]!, iy = initPos[2]!, iz = initPos[3]!;
+
             trail.buffer.head  = 0;
             trail.buffer.count = 0;
+            if (trail.drawCommand) trail.drawCommand.vertexCount = 0;
+
+            for (const p of trail.buffer.positions) {
+                p.x = ix; p.y = iy; p.z = iz;
+            }
+            for (let i = 0; i < N; i++) {
+                trail.flatPositions[i * 6]     = ix;
+                trail.flatPositions[i * 6 + 1] = iy;
+                trail.flatPositions[i * 6 + 2] = iz;
+                trail.flatPositions[i * 6 + 3] = ix;
+                trail.flatPositions[i * 6 + 4] = iy;
+                trail.flatPositions[i * 6 + 5] = iz;
+                trail.flatFade[i * 2]     = 0;
+                trail.flatFade[i * 2 + 1] = 0;
+                trail.flatOffsets[i * 2]     = 0;
+                trail.flatOffsets[i * 2 + 1] = 0;
+            }
+            trail.positionBuffer.copyFromArrayView(trail.flatPositions);
+            trail.fadeBuffer.copyFromArrayView(trail.flatFade);
+            trail.offsetBuffer.copyFromArrayView(trail.flatOffsets);
         }
     }
 
