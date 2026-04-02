@@ -1,4 +1,8 @@
 
+// SQLite type 컬럼이 숫자 ID("1","2",...) 로 저장된 경우를 대비한 매핑
+const NUMERIC_TYPE_MAP: Record<string, string> = { '1':'CAR','2':'TAXI','3':'BUS','4':'TRUCK','5':'MOTO' };
+const normalizeVehicleType = (raw: string): string => NUMERIC_TYPE_MAP[raw] ?? raw;
+
 let czmlData = null;
 let sampledPositionsList = []; // 각 객체별 { vehicleType, sampled }
 let referenceTime = null;
@@ -32,7 +36,7 @@ self.onmessage = function (e) {
                 else if (mod < 99)  vehicleType = 'TRUCK';
                 else                vehicleType = 'MOTO';
             } else if (track.type) {
-                vehicleType = track.type;
+                vehicleType = normalizeVehicleType(String(track.type).toUpperCase());
             } else {
                 // type 없는 캐시 데이터 → 백엔드와 동일한 ID 기반 배정
                 const numId = parseInt(String(track.id ?? '0').replace(/\D/g, '')) || 0;

@@ -2,12 +2,13 @@ package com.iitp.iitp_rest.controller;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.iitp.iitp_rest.model.*;
-import com.iitp.iitp_rest.model.network.road.RoadResponse;
+import com.iitp.iitp_rest.model.VehicleEvent;
+import com.iitp.iitp_rest.model.VehicleRoute;
 import com.iitp.iitp_rest.model.geometry.Cartesian3;
-import com.iitp.iitp_rest.model.vehicle.route.VehicleRequest;
+import com.iitp.iitp_rest.model.network.road.RoadResponse;
 import com.iitp.iitp_rest.model.scenario.Scenario;
 import com.iitp.iitp_rest.model.signal.SignalTimelineResponse;
+import com.iitp.iitp_rest.model.vehicle.route.VehicleRequest;
 import com.iitp.iitp_rest.service.scenario.ScenarioService;
 import com.iitp.iitp_rest.service.signal.SignalTimelineService;
 import com.iitp.iitp_rest.service.vehicle.VehicleRouteService;
@@ -37,6 +38,7 @@ import java.util.stream.Collectors;
 @RequestMapping("/vehicle")
 @AllArgsConstructor
 public class VehicleController {
+
 
     private final VehicleDataReader vehicleDataReader;
     private final ScenarioService scenarioService;
@@ -75,7 +77,9 @@ public class VehicleController {
             converterCache.put(key, converter);
         });
 
-        Map<String, List<VehicleEvent>> grouped = vehicleDataReader.readVehicleEvent(versionId).stream()
+        List<VehicleEvent> allEvents = vehicleDataReader.readVehicleEvent(versionId);
+
+        Map<String, List<VehicleEvent>> grouped = allEvents.stream()
                 .collect(Collectors.groupingBy(VehicleEvent::getId));
 
         List<Map<String, Object>> czml = Collections.synchronizedList(new ArrayList<>());
@@ -289,24 +293,44 @@ public class VehicleController {
         }
     }
 
+    // SQLite VehicleEventDebugging.type 컬럼에 숫자 ID가 저장된 경우 문자열 코드로 변환
+    // PostgreSQL vehicle_type 테이블의 id-vehicle_id 매핑과 동일 (1=CAR, 2=TAXI, 3=BUS, 4=TRUCK, 5=MOTO)
+    private static final Map<String, String> NUMERIC_TYPE_MAP = Map.of(
+            "1", "CAR", "2", "TAXI", "3", "BUS", "4", "TRUCK", "5", "MOTO"
+    );
+
+    // 유효한 차량 유형 코드 집합 — 이 외의 값은 ID 기반 fallback으로 처리
+    private static final Set<String> VALID_TYPE_CODES = Set.of("CAR", "TAXI", "BUS", "TRUCK", "MOTO");
+
     /**
      * vehicle ID 또는 DB의 type 값을 기반으로 차량 유형을 결정합니다.
-     * DB에 type 컬럼이 없거나 null인 경우 vehicle ID 숫자로 분포 배정합니다.
+     * "0" 또는 인식 불가 값은 null/blank와 동일하게 vehicle ID 기반 배정으로 fallback합니다.
      * 배정 비율: CAR 70%, TAXI 15%, BUS 10%, TRUCK 4%, MOTO 1%
      */
     private String resolveVehicleType(String vehicleId, String dbType) {
         if (dbType != null && !dbType.isBlank()) {
-            return dbType.toUpperCase();
+            String trimmed = dbType.trim().toUpperCase();
+            // 숫자 ID인 경우 ("1"~"5") 차종 문자열로 변환
+            String mapped = NUMERIC_TYPE_MAP.get(trimmed);
+            if (mapped != null) {
+                return mapped;
+            }
+            // 유효한 문자열 코드인 경우 그대로 반환
+            if (VALID_TYPE_CODES.contains(trimmed)) {
+                return trimmed;
+            }
         }
-        // DB에 type 없을 때 vehicle ID 기반으로 배정
+        // type 없음 / "0" / 인식 불가 → vehicle ID 숫자 기반 배정
         try {
             int id = Integer.parseInt(vehicleId.replaceAll("[^0-9]", ""));
             int mod = id % 100;
-            if (mod < 70)  return "CAR";
-            if (mod < 85)  return "TAXI";
-            if (mod < 95)  return "BUS";
-            if (mod < 99)  return "TRUCK";
-            return "MOTO";
+            String result;
+            if (mod < 70)       result = "CAR";
+            else if (mod < 85)  result = "TAXI";
+            else if (mod < 95)  result = "BUS";
+            else if (mod < 99)  result = "TRUCK";
+            else                result = "MOTO";
+            return result;
         } catch (NumberFormatException e) {
             return "CAR";
         }

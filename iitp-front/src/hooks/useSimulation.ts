@@ -269,9 +269,16 @@ const useSimulation = () => {
             }
         }
 
+        // 모델 fetch 중 새 setSimulation이 시작됐으면 이 호출은 스테일 → 중단
+        if (generation !== workerGenerationRef.current) return;
+
         // ── 즉시 실행: OL 레이어 + 워커 핸들러 (CZML 로드 대기 없음) ──────────
         layerManager.removeSimulationLayers();
         const vectorSource = new VectorSource();
+
+        // SQLite type 컬럼이 숫자 ID("1","2",...) 로 저장된 경우를 대비한 매핑
+        const NUMERIC_TYPE_MAP: Record<string, string> = { '1':'CAR','2':'TAXI','3':'BUS','4':'TRUCK','5':'MOTO' };
+        const normalizeVehicleType = (raw: string): string => NUMERIC_TYPE_MAP[raw] ?? raw;
 
         const typeGroups = new Map<string, any[]>();
         const vehicleTypeArray: string[] = [];
@@ -287,7 +294,7 @@ const useSimulation = () => {
                 else if (mod < 99)  vType = 'TRUCK';
                 else                vType = 'MOTO';
             } else if (entry.type) {
-                vType = entry.type;
+                vType = normalizeVehicleType(String(entry.type).toUpperCase());
             } else {
                 const numId = parseInt(String(entry.id ?? '0').replace(/\D/g, '')) || 0;
                 const mod = numId % 100;

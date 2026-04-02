@@ -159,7 +159,8 @@ export class LayerManager {
             new PointSpritePrimitive(this.cesiumViewer.scene.context, { color: [1.0, 1.0, 0.0], alpha: 0.7, pointSize: 9 }),
             groupName, "trip"
         );
-        this.primitiveLayerManager.add(new TailPrimitive(vehicleRoute, this.cesiumViewer.scene.context, speedFactor, isRunning, vehicleTypeArray ?? []), groupName, "trip");
+        const tailPaths = vehicleRoute.map((entry: any) => Array.isArray(entry) ? entry : entry.path);
+        this.primitiveLayerManager.add(new TailPrimitive(tailPaths, this.cesiumViewer.scene.context, speedFactor, isRunning, vehicleTypeArray ?? []), groupName, "trip");
         // 속도 히트맵 레이어: Cesium 3D
         const primitiveCollections = this.primitiveLayerManager.add(new SpeedHeatmapLayer(this.cesiumViewer), groupName, "speed");
         const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
