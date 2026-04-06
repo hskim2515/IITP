@@ -20,7 +20,7 @@ public class NetworkController {
     private final NetworkMapper networkMapper;
 
     @GetMapping("/{versionId}")
-    public ResponseEntity<NetworkResponse> getNetworkByScenarioKey(@PathVariable String versionId) {
+    public ResponseEntity<NetworkResponse> getNetworkByScenarioKey(@PathVariable String versionId) throws java.io.IOException {
         NetworkXml xml = networkService.getNetworkXmlByVersionId(versionId);
         NetworkResponse body = networkMapper.toResponse(xml);
         return ResponseEntity.ok(body);

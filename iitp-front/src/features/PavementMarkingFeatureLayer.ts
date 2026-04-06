@@ -69,7 +69,7 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
             if (!updated) return;
             Object.keys(updated).forEach((objectName) => {
                 const updatedList = updated[objectName] ?? [];
-                const originList = origin[objectName] ?? [];
+                const originList = origin?.[objectName] ?? [];
 
                 const updatedMap = new Map<string, Record<string, unknown>>();
                 const originMap = new Map<string, Record<string, unknown>>();

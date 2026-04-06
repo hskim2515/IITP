@@ -88,13 +88,24 @@ class DataSourceLayerManager {
         const ds = this.get(groupName, layerName);
         if (!ds) return;
 
+        // 부모 DataSource가 숨겨진 상태면 entity 토글이 무의미함
+        // visible=true일 때 부모도 함께 show
+        if (visible && !ds.show) {
+            ds.show = true;
+        }
+
         ds.entities.values.forEach(entity => {
             const entityFeatureType = entity?.properties?.featureType?.getValue?.();
-
             if (entityFeatureType === featureType) {
                 entity.show = visible;
             }
         });
+
+        // 모든 entity가 숨겨진 경우 부모 DataSource도 hide
+        if (!visible) {
+            const anyVisible = ds.entities.values.some(e => e.show);
+            if (!anyVisible) ds.show = false;
+        }
     }
 
 
@@ -103,7 +114,9 @@ class DataSourceLayerManager {
         const ds = group?.get(layerName);
         if (!group || !ds) return;
 
-        this.viewer.dataSources.remove(ds, true);
+        // ds는 DataSourceLayer 래퍼 인스턴스이므로 .dataSource로 실제 DataSource를 제거
+        const actualDs = (ds as any).dataSource ?? ds;
+        this.viewer.dataSources.remove(actualDs, true);
         group.delete(layerName);
 
         if (this.onRemove) {

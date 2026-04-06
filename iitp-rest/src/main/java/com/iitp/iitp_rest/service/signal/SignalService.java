@@ -4,9 +4,9 @@ import com.iitp.iitp_rest.model.BaseVersion;
 import com.iitp.iitp_rest.model.signal.*;
 import com.iitp.iitp_rest.repository.SignalLogsRepository;
 import com.iitp.iitp_rest.repository.SignalVersionsRepository;
-import com.iitp.iitp_rest.util.XmlUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.w3c.dom.Document;
@@ -15,7 +15,9 @@ import org.w3c.dom.NodeList;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
 import java.util.*;
 
 
@@ -26,6 +28,9 @@ public class SignalService {
     private final SignalLogsRepository signalLogsRepository;
     private final SignalVersionsRepository signalVersionsRepository;
     private final SignalJaxbParser signalJaxbParser;
+
+    @Value("${database.vehicle_sim.remoteUrl}")
+    private String remoteUrl;
 
     public List<SignalLogs> getLogsByVersion(String id) {
         return signalLogsRepository.findByVersionId(id);
@@ -68,11 +73,9 @@ public class SignalService {
         signalLogsRepository.save(newLog);
     }
 
-    public SignalXml getSignalXmlByScenarioKey(String scenarioKey) {
-        String path = scenarioKey + "/signal.xml";
-        InputStream is = XmlUtils.loadXmlAsStream(path);
-        SignalXml dto = streamToDto(is);
-        return dto;
+    public SignalXml getSignalXmlByScenarioKey(String scenarioKey) throws IOException {
+        InputStream is = new URL(remoteUrl + scenarioKey + "/signal.xml").openStream();
+        return streamToDto(is);
     }
 
     public SignalXml streamToDto(InputStream is) {
@@ -87,7 +90,7 @@ public class SignalService {
     public List<SignalResponse> getDataFromXml(String versionId) throws Exception {
         List<SignalResponse> signalResponses = new ArrayList<>();
 
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream(versionId + "/signal.xml")) {
+        try (InputStream is = new URL(remoteUrl + versionId + "/signal.xml").openStream()) {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document doc = builder.parse(is);

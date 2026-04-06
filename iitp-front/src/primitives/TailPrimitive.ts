@@ -486,10 +486,11 @@ export default class TailPrimitive {
         }
 
         for (const trail of this.trails) {
-            // GPU 버퍼를 직접 해제 (vertexArray 는 버퍼를 소유하지 않을 수 있으므로 개별 해제)
-            trail.positionBuffer.destroy();
-            trail.fadeBuffer.destroy();
-            trail.offsetBuffer.destroy();
+            // vertexArray.destroy()가 연결된 버퍼들을 암묵적으로 파괴하므로
+            // 버퍼 참조를 null로 초기화한 뒤 vertexArray만 파괴한다.
+            trail.positionBuffer = null;
+            trail.fadeBuffer     = null;
+            trail.offsetBuffer   = null;
             trail.vertexArray.destroy();
         }
 

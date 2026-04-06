@@ -3,6 +3,23 @@ import VectorSource from "ol/source/Vector";
 import { useLayerStore } from "@stores/useLayerStore";
 import { Feature } from "ol";
 import { Point } from "ol/geom";
+import { fromLonLat } from "ol/proj";
+
+// WGS84 constants for ECEF → lon/lat conversion
+const WGS84_A  = 6378137.0;
+const WGS84_E2 = 0.00669437999014;
+
+function ecefToOlCoord(x: number, y: number, z: number): [number, number] {
+    const lon = Math.atan2(y, x) * (180 / Math.PI);
+    const p   = Math.sqrt(x * x + y * y);
+    let lat   = Math.atan2(z, p * (1 - WGS84_E2));
+    for (let i = 0; i < 5; i++) {
+        const sinLat = Math.sin(lat);
+        const N = WGS84_A / Math.sqrt(1 - WGS84_E2 * sinLat * sinLat);
+        lat = Math.atan2(z + WGS84_E2 * N * sinLat, p);
+    }
+    return fromLonLat([lon, lat * (180 / Math.PI)]) as [number, number];
+}
 
 export default class HeatmapFeatureLayer extends Heatmap {
     private source: VectorSource;
@@ -42,8 +59,18 @@ export default class HeatmapFeatureLayer extends Heatmap {
         }
     }
 
-    public setLatestPositions(latestPositions) {
+    public setLatestPositions(data: { positions: (number[] | undefined)[] }) {
+        const source = this.getSource();
+        if (!source) return;
 
+        source.clear();
+        const newFeatures: Feature<Point>[] = [];
+        for (const pos of data.positions) {
+            if (!pos) continue;
+            const coord = ecefToOlCoord(pos[0], pos[1], pos[2]);
+            newFeatures.push(new Feature(new Point(coord)));
+        }
+        source.addFeatures(newFeatures);
     }
 
     public setColors(colors: string[]) {

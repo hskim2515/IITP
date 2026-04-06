@@ -41,6 +41,9 @@ public ResponseEntity<SignalNodeResponseData> getSignal(@PathVariable String ver
         }
         return ResponseEntity.ok(result);
 
+    } catch (java.io.FileNotFoundException e) {
+        logger.warn("[getSignal] 원격 데이터 없음: {}", versionId);
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
     } catch (Exception e) {
         e.printStackTrace();
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();

@@ -33,6 +33,7 @@ const useHistoryInit = (reloadFlag:boolean) => {
 
         const menuCodes = Object.keys(propertyFormSchema as Record<string, PropertyFormSchemaProps>);
         const selectedScenario = useScenarioStore.getState().selectedScenario;
+        const selectedScenarioVersion = useScenarioStore.getState().selectedScenarioVersion;
         const initMenuCodesHistory = async () => {
             for (const menuCode of menuCodes) {
                 const store = menuCodeToHistoryStoreMap[menuCode];
@@ -42,7 +43,7 @@ const useHistoryInit = (reloadFlag:boolean) => {
                     const api = apiConfig[menuCode as ApiMenuKey].historyList;
                     const response = await axiosInstance({
                         method: api.method,
-                        url: api.url + '/' + selectedScenario.key,
+                        url: api.url + '/' + (selectedScenarioVersion?.key ?? selectedScenario.key),
                     });
 
                     // store를 동적으로 선언하기 때문에, store 메서드를 동적으로 호출

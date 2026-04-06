@@ -37,5 +37,11 @@ public class ScenarioServiceImpl implements ScenarioService {
         return scenarioRepository.findByKey(key)
                 .orElseThrow(() -> new RuntimeException("Scenario not found key: " + key));
     }
+
+    @Override
+    public ScenarioVersion getVersionByKey(String key) {
+        return versionRepository.findByKey(key)
+                .orElseThrow(() -> new RuntimeException("ScenarioVersion not found key: " + key));
+    }
 }
 

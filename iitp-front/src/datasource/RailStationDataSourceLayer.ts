@@ -38,6 +38,7 @@ export default class RailStationDataSourceLayer {
             const networkDataSource = this.viewer.dataSources.getByName("network")[0];
             if (!networkDataSource) return;
 
+            if (!railStations) return;
             for (const railStation of railStations) {
                 const coord = railStation.coordinates;
                 const stationPosition = Cartesian3.fromDegrees(coord.lng, coord.lat);

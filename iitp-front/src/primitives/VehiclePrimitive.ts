@@ -6,10 +6,13 @@ import type { BufferGeometry } from "three";
  * GLB 인스턴싱 기반 차량 Primitive
  *
  * 핵심 구현:
+ *  - RTC(Relative-to-Center): ECEF float32 정밀도 문제 해결
+ *    · instanceOffset = position - referenceCenter  (작은 값, float32 OK)
+ *    · u_rtcCenter    = referenceCenter - cameraEye (JS double 연산 후 float32)
+ *    · shader: posEye = mat3(view) * (rtcCenter + offset + rotatedModel)
  *  - GPU instanced draw: 모든 인스턴스 1회 DrawCall
  *  - scratch 객체 재사용: 매 프레임 GC 방지
  *  - GLB 자동 스케일: 목표 크기(targetSizeM)에 맞게 자동 조정
- *  - modelViewProjection 기반 렌더링 (PointSpritePrimitive와 동일 패턴)
  */
 export default class VehiclePrimitive {
     // ─── Cesium 렌더링 리소스 ──────────────────────────────────────────────
@@ -29,7 +32,6 @@ export default class VehiclePrimitive {
 
     latestPositions?: number[][];   // [x, y, z] ECEF
     latestHeadings?:  number[];     // ENU 기준 north=0, 시계방향
-    private _stopped = false;
 
     baseColor:   [number, number, number] = [1, 1, 1];
     vehicleType  = 'default';
@@ -42,11 +44,15 @@ export default class VehiclePrimitive {
     zOffset: number;
 
     // ─── GPU 버퍼 ─────────────────────────────────────────────────────────
-    private offsetBuffer:      any = null;   // ECEF position (instance)
+    private offsetBuffer:      any = null;   // RTC offset (instance)
     private modelVertexBuffer: any = null;
     private modelNormalBuffer: any = null;
     private modelIndexBuffer:  any = null;
     private orientationBuffer: any = null;
+    private scaleBuffer:       any = null;   // per-instance scale (instance)
+
+    // ─── RTC 기준점 (ECEF) ────────────────────────────────────────────────
+    private referenceCenter = new Cesium.Cartesian3();
 
     // ─── CPU 재사용 배열 (GC 방지) ────────────────────────────────────────
     private _offsetArr: Float32Array | null = null;
@@ -57,11 +63,15 @@ export default class VehiclePrimitive {
     private static readonly _shpr  = new Cesium.HeadingPitchRoll(0, 0, 0);
     private static readonly _sqBase = new Cesium.Quaternion();
     private static readonly _sqRes  = new Cesium.Quaternion();
+    private static readonly _srtc   = new Cesium.Cartesian3();
 
     // correctionHpr → Quaternion (initialize() 에서 1회 계산)
     private correctionQ = new Cesium.Quaternion();
 
     // ─── 생성자 ───────────────────────────────────────────────────────────
+    /** per-instance scale (targetSizeM 기준 상대값). 없으면 모두 1.0 */
+    private instanceScales: Float32Array;
+
     constructor(
         paths: number[][],
         viewer: any,
@@ -70,7 +80,8 @@ export default class VehiclePrimitive {
         status: string,
         correctionHpr?: Cesium.HeadingPitchRoll,
         targetSizeM = 5.0,
-        zOffset = 0.0
+        zOffset = 0.0,
+        scales?: number[]
     ) {
         this.viewer        = viewer;
         this.context       = viewer.scene.context;
@@ -83,6 +94,13 @@ export default class VehiclePrimitive {
         this.targetSizeM   = targetSizeM;
         this.zOffset       = zOffset;
 
+        // per-instance scale: 제공된 length / targetSizeM, 0이거나 없으면 1.0
+        this.instanceScales = new Float32Array(paths.length);
+        for (let i = 0; i < paths.length; i++) {
+            const len = scales?.[i];
+            this.instanceScales[i] = (len && len > 0) ? len / targetSizeM : 1.0;
+        }
+
         console.log(`[VehiclePrimitive] correctionHpr H=${this.correctionHpr.heading.toFixed(3)} P=${this.correctionHpr.pitch.toFixed(3)} R=${this.correctionHpr.roll.toFixed(3)}`);
 
         this.initialize(glbUrl);
@@ -92,6 +110,14 @@ export default class VehiclePrimitive {
     async initialize(glbUrl: string) {
         if (this.destroyed) return;
 
+        // RTC 기준점: 첫 번째 유효 waypoint
+        const first = this.paths.find(p => p.length >= 4);
+        if (first) {
+            this.referenceCenter.x = first[1];
+            this.referenceCenter.y = first[2];
+            this.referenceCenter.z = first[3];
+        }
+
         // correctionHpr → Quaternion (고정, 1회만 계산)
         const corrM = Cesium.Matrix3.fromHeadingPitchRoll(this.correctionHpr);
         Cesium.Quaternion.fromRotationMatrix(corrM, this.correctionQ);
@@ -99,23 +125,14 @@ export default class VehiclePrimitive {
         // ── GLB fetch ────────────────────────────────────────────────────
         let arrayBuffer: ArrayBuffer;
         try {
-            console.log(`[VehiclePrimitive] GLB fetch 시작: ${glbUrl}`);
             const res = await fetch(glbUrl);
-            if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
             arrayBuffer = await res.arrayBuffer();
-            console.log(`[VehiclePrimitive] GLB fetch 성공: ${arrayBuffer.byteLength} bytes`);
         } catch (e) {
             console.error(`[VehiclePrimitive] GLB fetch 실패 (${glbUrl}):`, e);
             return;
         }
         if (this.destroyed) return;
-
-        // GLB magic number 검증 (0x46546C67 = "glTF")
-        const magic = new DataView(arrayBuffer).getUint32(0, true);
-        if (magic !== 0x46546C67) {
-            console.error(`[VehiclePrimitive] 유효하지 않은 GLB 파일 (magic=0x${magic.toString(16)}): ${glbUrl}`);
-            return;
-        }
 
         // ── GLB 파싱 (three.js GLTFLoader) ──────────────────────────────
         let gltf: any;
@@ -123,7 +140,6 @@ export default class VehiclePrimitive {
             gltf = await new Promise<any>((resolve, reject) =>
                 new GLTFLoader().parse(arrayBuffer, '', resolve, reject)
             );
-            console.log('[VehiclePrimitive] GLB 파싱 성공');
         } catch (e) {
             console.error('[VehiclePrimitive] GLB 파싱 실패:', e);
             return;
@@ -178,7 +194,6 @@ export default class VehiclePrimitive {
         }
 
         if (!hasMesh) { console.error('[VehiclePrimitive] Mesh 없음:', glbUrl); return; }
-        console.log(`[VehiclePrimitive] Mesh 수집 완료: vertices=${allPos.length / 3} indices=${allIdx.length}`);
         if (this.destroyed) return;
 
         // ── 모델 중심화 + 자동 스케일 ────────────────────────────────────
@@ -220,118 +235,138 @@ export default class VehiclePrimitive {
             orientInit[i*4]=q.x; orientInit[i*4+1]=q.y; orientInit[i*4+2]=q.z; orientInit[i*4+3]=q.w;
         }
 
-        // ── 초기 ECEF 위치 ────────────────────────────────────────────────
+        // ── 초기 RTC offset 계산 ─────────────────────────────────────────
+        const rc = this.referenceCenter;
         const offsetInit = new Float32Array(this.instanceCount * 3);
         for (let i = 0; i < this.instanceCount; i++) {
             const p = this.paths[i];
-            offsetInit[i*3]   = p[1];
-            offsetInit[i*3+1] = p[2];
-            offsetInit[i*3+2] = p[3];
+            offsetInit[i*3]   = p[1] - rc.x;
+            offsetInit[i*3+1] = p[2] - rc.y;
+            offsetInit[i*3+2] = p[3] - rc.z;
         }
 
         // ── GPU 버퍼 생성 ─────────────────────────────────────────────────
         const ctx = this.context;
-        const CBuffer = (Cesium as any).Buffer;
-        const BU  = (Cesium as any).BufferUsage;
+        const BU  = Cesium.BufferUsage;
 
-        try {
-            this.modelVertexBuffer = CBuffer.createVertexBuffer({ context: ctx, typedArray: verts,       usage: BU.STATIC_DRAW });
-            this.modelNormalBuffer = CBuffer.createVertexBuffer({ context: ctx, typedArray: norms,       usage: BU.STATIC_DRAW });
-            this.modelIndexBuffer  = CBuffer.createIndexBuffer({
-                context: ctx, typedArray: indicesTyped,
-                indexDatatype: indicesTyped instanceof Uint32Array
-                    ? Cesium.IndexDatatype.UNSIGNED_INT
-                    : Cesium.IndexDatatype.UNSIGNED_SHORT,
-                usage: BU.STATIC_DRAW,
-            });
-            this.offsetBuffer      = CBuffer.createVertexBuffer({ context: ctx, typedArray: offsetInit, usage: BU.DYNAMIC_DRAW });
-            this.orientationBuffer = CBuffer.createVertexBuffer({ context: ctx, typedArray: orientInit, usage: BU.DYNAMIC_DRAW });
-        } catch (e) {
-            console.error('[VehiclePrimitive] GPU 버퍼 생성 실패:', e);
-            return;
-        }
+        this.modelVertexBuffer = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: verts,       usage: BU.STATIC_DRAW });
+        this.modelNormalBuffer = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: norms,       usage: BU.STATIC_DRAW });
+        this.modelIndexBuffer  = Cesium.Buffer.createIndexBuffer({
+            context: ctx, typedArray: indicesTyped,
+            indexDatatype: indicesTyped instanceof Uint32Array
+                ? Cesium.IndexDatatype.UNSIGNED_INT
+                : Cesium.IndexDatatype.UNSIGNED_SHORT,
+            usage: BU.STATIC_DRAW,
+        });
+        this.offsetBuffer      = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: offsetInit,        usage: BU.DYNAMIC_DRAW });
+        this.orientationBuffer = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: orientInit,        usage: BU.DYNAMIC_DRAW });
+        this.scaleBuffer       = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: this.instanceScales, usage: BU.STATIC_DRAW });
 
         // CPU 재사용 배열
         this._offsetArr = new Float32Array(this.instanceCount * 3);
         this._orientArr = new Float32Array(this.instanceCount * 4);
 
         // ── VertexArray ──────────────────────────────────────────────────
-        try {
-            this.vertexArray = new (Cesium as any).VertexArray({
-                context: ctx,
-                attributes: [
-                    { index: 0, vertexBuffer: this.modelVertexBuffer, componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT },
-                    { index: 1, vertexBuffer: this.modelNormalBuffer, componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT },
-                    { index: 2, vertexBuffer: this.offsetBuffer,      componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
-                    { index: 3, vertexBuffer: this.orientationBuffer, componentsPerAttribute: 4, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
-                ],
-                indexBuffer: this.modelIndexBuffer,
-            });
-        } catch (e) {
-            console.error('[VehiclePrimitive] VertexArray 생성 실패:', e);
-            return;
-        }
+        this.vertexArray = new Cesium.VertexArray({
+            context: ctx,
+            attributes: [
+                // 모델 geometry (per-vertex)
+                { index: 0, vertexBuffer: this.modelVertexBuffer, componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT },
+                { index: 1, vertexBuffer: this.modelNormalBuffer, componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT },
+                // 인스턴스 데이터 (per-instance, instanceDivisor=1)
+                { index: 2, vertexBuffer: this.offsetBuffer,      componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
+                { index: 3, vertexBuffer: this.orientationBuffer, componentsPerAttribute: 4, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
+                { index: 4, vertexBuffer: this.scaleBuffer,       componentsPerAttribute: 1, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
+            ],
+            indexBuffer: this.modelIndexBuffer,
+        });
 
         // ── ShaderProgram ────────────────────────────────────────────────
-        // PointSpritePrimitive와 동일 패턴: #version 생략 (Cesium ShaderSource가 자동 처리)
-        try {
-            this.shaderProgram = (Cesium as any).ShaderProgram.fromCache({
-                context: ctx,
-                vertexShaderSource: `
-                    precision highp float;
+        //
+        // RTC 렌더링 원리:
+        //   posRel  = u_rtcCenter + a_instanceOffset + rotatedModel
+        //           = (refCenter - cameraEye) + (position - refCenter) + model
+        //           = position - cameraEye + model   ← camera-relative (정밀)
+        //   posEye  = mat3(u_view) * posRel           ← view 회전만 적용 (translation 불필요)
+        //   clip    = u_projection * vec4(posEye, 1)
+        //
+        this.shaderProgram = Cesium.ShaderProgram.fromCache({
+            context: ctx,
+            vertexShaderSource: `
+                #version 300 es
 
-                    in vec3 a_modelPosition;
-                    in vec3 a_modelNormal;
-                    in vec3 a_instanceOffset;
-                    in vec4 a_instanceOrientation;
+                layout(location=0) in vec3 a_modelPosition;
+                layout(location=1) in vec3 a_modelNormal;
+                layout(location=2) in vec3 a_instanceOffset;       // position - referenceCenter
+                layout(location=3) in vec4 a_instanceOrientation;  // WXYZ quaternion
+                layout(location=4) in float a_instanceScale;       // per-vehicle scale
 
-                    uniform mat4 u_mvp;
+                uniform mat4 u_view;
+                uniform mat4 u_projection;
+                uniform vec3 u_rtcCenter;   // referenceCenter - cameraEye (JS double → float32)
 
-                    vec3 quatRotate(vec3 v, vec4 q) {
-                        return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
-                    }
+                // quaternion 회전
+                vec3 quatRotate(vec3 v, vec4 q) {
+                    return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
+                }
 
-                    void main() {
-                        vec3 rotated = quatRotate(a_modelPosition, a_instanceOrientation);
-                        vec3 worldPos = a_instanceOffset + rotated;
-                        gl_Position = u_mvp * vec4(worldPos, 1.0);
-                    }
-                `,
-                fragmentShaderSource: `
-                    precision highp float;
-                    uniform vec3 u_baseColor;
-                    out vec4 fragColor;
-                    void main() {
-                        fragColor = vec4(u_baseColor, 0.9);
-                    }
-                `,
-                attributeLocations: {
-                    a_modelPosition:       0,
-                    a_modelNormal:         1,
-                    a_instanceOffset:      2,
-                    a_instanceOrientation: 3,
-                },
-            });
-        } catch (e) {
-            console.error('[VehiclePrimitive] ShaderProgram 생성 실패:', e);
-            return;
-        }
+                void main() {
+                    // per-instance scale 적용 후 회전
+                    vec3 rotated = quatRotate(a_modelPosition * a_instanceScale, a_instanceOrientation);
+
+                    // camera-relative 위치 (RTC: 정밀도 보존)
+                    vec3 posRel = u_rtcCenter + a_instanceOffset + rotated;
+
+                    // view 회전만 적용 (mat3 = upper-left 3x3, translation 없음)
+                    vec3 posEye = mat3(u_view) * posRel;
+
+                    gl_Position = u_projection * vec4(posEye, 1.0);
+                }
+            `,
+            fragmentShaderSource: `
+                #version 300 es
+                precision highp float;
+                uniform vec3 u_baseColor;
+                out vec4 fragColor;
+                void main() {
+                    fragColor = vec4(u_baseColor, 0.9);
+                }
+            `,
+            attributeLocations: {
+                a_modelPosition:       0,
+                a_modelNormal:         1,
+                a_instanceOffset:      2,
+                a_instanceOrientation: 3,
+                a_instanceScale:       4,
+            },
+        });
 
         // ── DrawCommand ──────────────────────────────────────────────────
         const self = this;
+        const sRTC = VehiclePrimitive._srtc;
 
-        this.drawCommand = new (Cesium as any).DrawCommand({
+        this.drawCommand = new Cesium.DrawCommand({
             vertexArray:   this.vertexArray,
             shaderProgram: this.shaderProgram,
             uniformMap: {
-                u_mvp:       () => ctx.uniformState.modelViewProjection,
+                // view 행렬 (회전+이동 포함, shader에서는 mat3으로 회전만 사용)
+                u_view:       () => ctx.uniformState.view,
+                u_projection: () => ctx.uniformState.projection,
+                // RTC center: referenceCenter - cameraEye (JS double precision)
+                u_rtcCenter: () => {
+                    const cam = self.viewer.scene.camera.positionWC;
+                    sRTC.x = self.referenceCenter.x - cam.x;
+                    sRTC.y = self.referenceCenter.y - cam.y;
+                    sRTC.z = self.referenceCenter.z - cam.z;
+                    return sRTC;
+                },
                 u_baseColor: () => new Cesium.Cartesian3(self.baseColor[0], self.baseColor[1], self.baseColor[2]),
             },
             primitiveType: Cesium.PrimitiveType.TRIANGLES,
             count:         indicesTyped.length,
             instanceCount: this.instanceCount,
-            pass:          (Cesium as any).Pass.OPAQUE,
-            renderState:   (Cesium as any).RenderState.fromCache({
+            pass:          Cesium.Pass.OPAQUE,
+            renderState:   Cesium.RenderState.fromCache({
                 depthTest: { enabled: true },
                 cull:      { enabled: false },
                 blending:  Cesium.BlendingState.ALPHA_BLEND,
@@ -343,7 +378,7 @@ export default class VehiclePrimitive {
 
     // ─── 매 프레임 호출 ───────────────────────────────────────────────────
     update(frameState: any) {
-        if (this.destroyed || !this.show || this._stopped) return;
+        if (this.destroyed || !this.show) return;
         if (!this.drawCommand || !this.offsetBuffer || !this.orientationBuffer) return;
         if (!this._offsetArr || !this._orientArr) return;
 
@@ -351,6 +386,7 @@ export default class VehiclePrimitive {
         if (!positions || positions.length === 0) return;
 
         const headings = this.latestHeadings;
+        const rc       = this.referenceCenter;
         const corrQ    = this.correctionQ;
         const count    = positions.length;
 
@@ -364,6 +400,7 @@ export default class VehiclePrimitive {
         for (let i = 0; i < count; i++) {
             const p = positions[i];
 
+            // Z-offset: ECEF 위치를 ENU Up 방향(= ECEF 단위벡터)으로 zOffset(m) 이동
             let px = p[0], py = p[1], pz = p[2];
             if (zo !== 0) {
                 const r = Math.sqrt(px * px + py * py + pz * pz);
@@ -375,10 +412,10 @@ export default class VehiclePrimitive {
                 }
             }
 
-            // full ECEF 위치
-            this._offsetArr[i*3]   = px;
-            this._offsetArr[i*3+1] = py;
-            this._offsetArr[i*3+2] = pz;
+            // RTC offset 갱신
+            this._offsetArr[i*3]   = px - rc.x;
+            this._offsetArr[i*3+1] = py - rc.y;
+            this._offsetArr[i*3+2] = pz - rc.z;
 
             // orientation 갱신
             sfrom.x = p[0]; sfrom.y = p[1]; sfrom.z = p[2];
@@ -406,26 +443,8 @@ export default class VehiclePrimitive {
 
     // ─── 외부 인터페이스 ──────────────────────────────────────────────────
     setLatestPositions(data: { positions: number[][]; headings: number[] }) {
-        if (this._stopped) return;
         this.latestPositions = data.positions;
         this.latestHeadings  = data.headings;
-    }
-
-    start(): void {
-        this._stopped = false;
-        this.latestPositions = undefined;
-        this.latestHeadings  = undefined;
-    }
-
-    stop(): void {
-        this._stopped = true;
-        this.latestPositions = undefined;
-        this.latestHeadings  = undefined;
-        if (this.drawCommand) this.drawCommand.instanceCount = 0;
-    }
-
-    drain(): void {
-        this.stop();
     }
 
     setSpeed(speed: number)   { this.speed  = speed;  }
@@ -444,12 +463,15 @@ export default class VehiclePrimitive {
         this.destroyed = true;
 
         if (this.drawCommand) this.drawCommand.vertexArray = null;
+        // vertexArray.destroy()는 연결된 버퍼들을 암묵적으로 파괴하므로
+        // 먼저 버퍼 참조를 null로 초기화한 뒤 vertexArray를 파괴한다.
+        this.modelVertexBuffer = null;
+        this.modelNormalBuffer = null;
+        this.modelIndexBuffer = null;
+        this.offsetBuffer = null;
+        this.orientationBuffer = null;
+        this.scaleBuffer = null;
         this.vertexArray?.destroy();
-        this.modelVertexBuffer?.destroy();
-        this.modelNormalBuffer?.destroy();
-        this.modelIndexBuffer?.destroy();
-        this.offsetBuffer?.destroy();
-        this.orientationBuffer?.destroy();
         this.shaderProgram?.destroy();
 
         this._offsetArr = null;
@@ -469,7 +491,7 @@ function computeHeading(from: Cesium.Cartesian3, to: Cesium.Cartesian3): number 
     const dLon = tc.longitude - fc.longitude;
     const y = Math.sin(dLon) * Math.cos(tc.latitude);
     const x = Math.cos(fc.latitude) * Math.sin(tc.latitude)
-            - Math.sin(fc.latitude) * Math.cos(tc.latitude) * Math.cos(dLon);
+        - Math.sin(fc.latitude) * Math.cos(tc.latitude) * Math.cos(dLon);
     return Math.atan2(y, x);
 }
 

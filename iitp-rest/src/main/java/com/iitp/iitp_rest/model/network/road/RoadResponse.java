@@ -30,7 +30,7 @@ public class RoadResponse {
         private Double targetNorthing;
 
         private Double halfWidth;
-
+        private int numLane;
 
     }
 

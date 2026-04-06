@@ -12,6 +12,7 @@ export interface ScenarioVersions {
     id: number,
     key: string,
     label: string,
+    dataPath: string | null,
     insertDate: string,
     modifyDate: string
 }

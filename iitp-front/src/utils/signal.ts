@@ -7,70 +7,93 @@ import {Feature} from "ol";
 
 export type SignalState = "green" | "yellow" | "red" | "default";
 
-export const updateSignalStyles = (layerManager:LayerManager, viewer:Cesium.Viewer, connectionFeatureMapRef:Map<string, Feature>, signalTimeline:SignalTimelineResponse, currentSimTime: number) => {
+interface ParsedEntry {
+    start: number;
+    end: number;
+    connKeys: string[];
+    state: string;
+}
+
+interface SignalCache {
+    signalConnectionSet: Set<string>;
+    entries: ParsedEntry[];
+}
+
+let signalCache: SignalCache | null = null;
+let lastCachedTimeline: SignalTimelineResponse[] | null = null;
+
+export const buildSignalCache = (signalTimeline: SignalTimelineResponse[]): SignalCache => {
     const signalConnectionSet = new Set<string>();
+    const entries: ParsedEntry[] = [];
+
+    signalTimeline?.forEach(sig => {
+        // turn id → connKeys 맵 (한 번만 계산)
+        const turnConnMap = new Map<string | number, string[]>();
+        sig.turnInfo.forEach(turn => {
+            const keys = turn.connList.map(connId => `${sig.nodeId}_${connId}`);
+            keys.forEach(k => signalConnectionSet.add(k));
+            turnConnMap.set(turn.id, keys);
+        });
+
+        sig.signalTimeline.forEach(timeline => {
+            const start = new Date(timeline.startTime).getTime();
+            const end = new Date(timeline.endTime).getTime();
+            const connKeys: string[] = [];
+            timeline.activeTurns.forEach(turnId => {
+                const keys = turnConnMap.get(turnId) ?? turnConnMap.get(Number(turnId));
+                if (keys) keys.forEach(k => connKeys.push(k));
+            });
+            if (connKeys.length > 0) {
+                entries.push({ start, end, connKeys, state: timeline.signalState });
+            }
+        });
+    });
+
+    return { signalConnectionSet, entries };
+};
+
+export const updateSignalStyles = (layerManager: LayerManager, viewer: Cesium.Viewer, connectionFeatureMapRef: Map<string, Feature>, signalTimeline: SignalTimelineResponse[], currentSimTime: number) => {
     if (connectionFeatureMapRef.size === 0) {
         const networkLayer = layerManager.getLayer("facility", "network")?.[0];
         if (!networkLayer) return;
 
         const styleFunction = networkLayer.getStyleFunction();
-
-        const features = getFeaturesByProperties(networkLayer, { featureType: networkLayer.getConnectionFeatureType() });
+        const features = getFeaturesByProperties(networkLayer, { featureType: "connections" });
         features.forEach(f => {
             const nodeId = f.get("nodeId");
             const connId = f.get("id");
-            const key = `${nodeId}_${connId}`;
-            connectionFeatureMapRef.set(key, f);
+            connectionFeatureMapRef.set(`${nodeId}_${connId}`, f);
             if (!f.get('__originalStyle')) {
                 const originalStyle = styleFunction(f, 1);
                 f.set('__originalStyle', Array.isArray(originalStyle) ? originalStyle : [originalStyle]);
-
             }
         });
     }
-    signalTimeline?.forEach(sig => {
-        sig.turnInfo.forEach(turn => {
-            turn.connList.forEach(connIdStr => {
-                const key = `${sig.nodeId}_${connIdStr}`;
-                signalConnectionSet.add(key);
-            });
-        });
-    });
 
-    const activeConnectionsMap = new Map<string, { nodeId: string, connId: number, signalState: string }>();
-    signalTimeline?.forEach(sig => {
-        sig.signalTimeline.forEach(timeline => {
-            const start = new Date(timeline.startTime).getTime();
-            const end = new Date(timeline.endTime).getTime();
+    // timeline이 바뀐 경우에만 캐시 재빌드
+    if (signalTimeline !== lastCachedTimeline) {
+        signalCache = buildSignalCache(signalTimeline);
+        lastCachedTimeline = signalTimeline;
+    }
+    if (!signalCache) return;
 
-            if (currentSimTime >= start && currentSimTime < end) {
-                timeline.activeTurns.forEach(turnId => {
-                    const turn = sig.turnInfo.find(t => t.id == turnId);
-                    if (turn?.connList) {
-                        turn.connList.forEach(connIdStr => {
-                            const key = `${sig.nodeId}_${connIdStr}`;
-                            if (!activeConnectionsMap.has(key)) {
-                                activeConnectionsMap.set(key, { nodeId: sig.nodeId, connId: Number(connIdStr), signalState: timeline.signalState });
-                            }
-                        });
-                    }
-                });
+    const { signalConnectionSet, entries } = signalCache;
+
+    // 현재 시간에 active한 connection → state 매핑
+    const activeMap = new Map<string, string>();
+    for (const entry of entries) {
+        if (currentSimTime >= entry.start && currentSimTime < entry.end) {
+            for (const key of entry.connKeys) {
+                if (!activeMap.has(key)) activeMap.set(key, entry.state);
             }
-        });
-    });
+        }
+    }
 
     connectionFeatureMapRef.forEach((feature, key) => {
-        if (signalConnectionSet.has(key)) {
-            const activeConn = activeConnectionsMap.get(key);
-            if (activeConn) {
-                applyOlSignalStyle(feature, activeConn.signalState);
-                applyCesiumSignalStyle(viewer, feature.get('__guid'), activeConn.signalState);
-            } else {
-                applyOlSignalStyle(feature, "red");
-                applyCesiumSignalStyle(viewer, feature.get('__guid'), "red");
-            }
-        } else {
-        }
+        if (!signalConnectionSet.has(key)) return;
+        const state = activeMap.get(key) ?? "red";
+        applyOlSignalStyle(feature, state as SignalState);
+        applyCesiumSignalStyle(viewer, feature.get('__guid'), state as SignalState);
     });
 };
 

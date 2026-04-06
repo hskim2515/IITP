@@ -23,3 +23,44 @@
 .divider:hover {
     background: #bdbdc0;
 }
+
+/* ── 2D/3D Mode Toggle ─────────────────────────────────────────── */
+.mapModeToggle {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    display: flex;
+    gap: 2px;
+    background: rgba(8, 10, 20, 0.88);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 3px;
+}
+
+.mapModeBtn {
+    padding: 5px 18px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #666;
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    transition: color 0.15s, background 0.15s;
+}
+
+.mapModeBtn:hover {
+    color: #bbb;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.mapModeBtnActive {
+    composes: mapModeBtn;
+    color: #fff;
+    background: rgba(65, 105, 225, 0.3);
+    border: 1px solid rgba(65, 105, 225, 0.5);
+}

@@ -158,6 +158,7 @@ export default class TrafficHeatmapCesiumLayer {
 
     // ── update (PrimitiveCollection이 매 프레임 호출) ────────────
     update(_frameState: any) {
+        if (this.destroyed) return;
         if (this.linkSegments.length === 0) { this._buildFromStore(); return; }
 
         this._frameCount++;
@@ -193,7 +194,10 @@ export default class TrafficHeatmapCesiumLayer {
     public setSpeed(_v: number) {}
     public setStatus(_s: any) {}
 
+    destroyed = false;
+
     public destroy() {
+        this.destroyed = true;
         if (this._wallPrimitive && !this._wallPrimitive.isDestroyed()) {
             this._scene.primitives.remove(this._wallPrimitive);
         }

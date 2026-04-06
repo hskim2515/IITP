@@ -2,30 +2,33 @@ package com.iitp.iitp_rest.controller;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.iitp.iitp_rest.model.VehicleEvent;
-import com.iitp.iitp_rest.model.VehicleRoute;
-import com.iitp.iitp_rest.model.geometry.Cartesian3;
+import com.iitp.iitp_rest.model.*;
+import com.iitp.iitp_rest.model.VehicleInfo;
 import com.iitp.iitp_rest.model.network.road.RoadResponse;
+import com.iitp.iitp_rest.model.geometry.Cartesian3;
+import com.iitp.iitp_rest.model.vehicle.route.VehicleRequest;
 import com.iitp.iitp_rest.model.scenario.Scenario;
 import com.iitp.iitp_rest.model.signal.SignalTimelineResponse;
-import com.iitp.iitp_rest.model.vehicle.route.VehicleRequest;
 import com.iitp.iitp_rest.service.scenario.ScenarioService;
 import com.iitp.iitp_rest.service.signal.SignalTimelineService;
 import com.iitp.iitp_rest.service.vehicle.VehicleRouteService;
 import com.iitp.iitp_rest.util.CoordinateConverter;
 import com.iitp.iitp_rest.util.GeoJsonUtils;
 import com.iitp.iitp_rest.util.VehicleDataReader;
-import com.iitp.iitp_rest.util.XmlUtils;
-import lombok.AllArgsConstructor;
+import lombok.RequiredArgsConstructor;
 import org.apache.commons.math3.complex.Quaternion;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.apache.commons.math3.geometry.euclidean.threed.Vector3D;
 import org.locationtech.proj4j.ProjCoordinate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
@@ -36,28 +39,37 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/vehicle")
-@AllArgsConstructor
+@RequiredArgsConstructor
 public class VehicleController {
 
+    private static final Logger logger = LoggerFactory.getLogger(VehicleController.class);
 
     private final VehicleDataReader vehicleDataReader;
     private final ScenarioService scenarioService;
     private final VehicleRouteService vehicleRouteService;
     private final SignalTimelineService signalTimelineService;
 
-    @PostMapping("/generate-vehicle-route/{versionId}")
+    @Value("${database.vehicle_sim.remoteUrl}")
+    private String remoteUrl;
+
+    @PostMapping("/generate-vehicle-route/{scenarioKey}")
     public ResponseEntity<Map<String, Object>> generateVehicleRoute(
             @RequestBody VehicleRequest request,
-            @PathVariable String versionId) throws IOException {
+            @PathVariable String scenarioKey) throws IOException {
 
-        Scenario scenario = scenarioService.getScenarioByKey(versionId);
+        Scenario scenario = scenarioService.getScenarioByKey(scenarioKey);
 
-        if (scenario == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Scenario not found"));
+        String networkXmlUrl = remoteUrl + scenarioKey + "/network.xml";
+        logger.info("[generateVehicleRoute] scenarioKey={}, networkXmlUrl={}", scenarioKey, networkXmlUrl);
+
+        InputStream is;
+        try {
+            is = new URL(networkXmlUrl).openStream();
+        } catch (java.io.FileNotFoundException e) {
+            logger.warn("[generateVehicleRoute] 원격 데이터 없음: {}", networkXmlUrl);
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "데이터가 없습니다: " + scenarioKey));
         }
-
-        String classpathLocation = versionId + "/network.xml";
-        InputStream is = XmlUtils.loadXmlAsStream(classpathLocation);
 
         List<RoadResponse.Road> roadEntities = GeoJsonUtils.parseXmlToRoads(is);
 
@@ -77,10 +89,10 @@ public class VehicleController {
             converterCache.put(key, converter);
         });
 
-        List<VehicleEvent> allEvents = vehicleDataReader.readVehicleEvent(versionId);
-
-        Map<String, List<VehicleEvent>> grouped = allEvents.stream()
+        Map<String, List<VehicleEvent>> grouped = vehicleDataReader.readVehicleEvent(scenarioKey).stream()
                 .collect(Collectors.groupingBy(VehicleEvent::getId));
+
+        Map<String, VehicleInfo> vehicleInfoMap = vehicleDataReader.readVehicleInfoMap(scenarioKey);
 
         List<Map<String, Object>> czml = Collections.synchronizedList(new ArrayList<>());
         List<Map<String, Object>> featureList = Collections.synchronizedList(new ArrayList<>());
@@ -90,8 +102,20 @@ public class VehicleController {
 
         long baseEpoch = startTime.getEpochSecond();
 
-        // 타임라인 생성
-        List<SignalTimelineResponse> signalTimeline = signalTimelineService.generateSignalTimeline(baseEpoch,"0");
+        // 시뮬레이션 실제 시간 범위 계산
+        double simMinTime = grouped.values().stream()
+                .flatMap(List::stream)
+                .mapToDouble(v -> v.getTimestep())
+                .min().orElse(0);
+        double simMaxTime = grouped.values().stream()
+                .flatMap(List::stream)
+                .mapToDouble(v -> v.getTimestep())
+                .max().orElse(600);
+        // 신호 타임라인은 t=0 기준으로 생성 (offset은 시뮬레이션 t=0 기준 위상 오프셋)
+        // 사이클 커버 범위: t=0 ~ simMaxTime
+        int simulationDuration = (int) Math.ceil(simMaxTime) + 10; // 여유 10초
+
+        List<SignalTimelineResponse> signalTimeline = signalTimelineService.generateSignalTimeline(baseEpoch, "0", scenarioKey, simulationDuration);
 
         AtomicReference<Instant> earliestStartRef = new AtomicReference<>(null);
         AtomicReference<Instant> latestStopRef = new AtomicReference<>(null);
@@ -117,16 +141,35 @@ public class VehicleController {
 
             List<Map.Entry<Double, Cartesian3>> path = new ArrayList<>();
             List<Cartesian3> path2d = new ArrayList<>();
+            Cartesian3 lastValidPos = null;
 
             for (VehicleEvent vehicle : vehicles) {
                 String key = vehicle.getLinkId();
+
+                // 교차로 구간: DB link_id가 node_id인 경우 "nodeId_laneId" 키로 조회
+                if (!roadMap.containsKey(key)) {
+                    key = vehicle.getLinkId() + "_" + vehicle.getLaneId();
+                }
+
                 RoadResponse.Road baseRoad = roadMap.get(key);
-                if (baseRoad == null) continue;
+                if (baseRoad == null) {
+                    // 네트워크에 없는 링크(교차로 내부 등): 마지막 유효 위치를 유지하여
+                    // 보간 시 차량이 멈춰 있도록 처리
+                    if (lastValidPos != null) {
+                        path.add(Map.entry(vehicle.getTimestep(), lastValidPos));
+                        path2d.add(lastValidPos);
+                    }
+                    continue;
+                }
 
                 CoordinateConverter converter = converterCache.get(key);
-                ProjCoordinate actualCoord = converter.toAbsolute(vehicle.getPosX(), vehicle.getPosY());
-                //System.out.println(actualCoord);
+
+                double posY = vehicle.getPosY();
+
+                ProjCoordinate actualCoord = converter.toAbsolute(vehicle.getPosX(), posY);
+
                 Cartesian3 pos = Cartesian3.fromDegrees(actualCoord.x, actualCoord.y, 0);
+                lastValidPos = pos;
 
                 path.add(Map.entry(vehicle.getTimestep(), pos));
                 path2d.add(pos);  // 재사용
@@ -134,6 +177,30 @@ public class VehicleController {
             }
 
             if (path2d.isEmpty()) return;
+
+            // 7초 이상 gap이 있는 구간에서 availability 구간을 분리
+            // → 차량이 날아가는 대신 사라졌다가 다시 나타남
+            final double GAP_THRESHOLD = 7.0;
+            List<String> availabilityIntervals = new ArrayList<>();
+            double segStart = path.get(0).getKey();
+            double prevTime = segStart;
+            for (int i = 1; i < path.size(); i++) {
+                double currTime = path.get(i).getKey();
+                if (currTime - prevTime > GAP_THRESHOLD) {
+                    availabilityIntervals.add(
+                            Instant.ofEpochSecond(baseEpoch + (long) segStart) + "/" +
+                                    Instant.ofEpochSecond(baseEpoch + (long) prevTime));
+                    segStart = currTime;
+                }
+                prevTime = currTime;
+            }
+            availabilityIntervals.add(
+                    Instant.ofEpochSecond(baseEpoch + (long) segStart) + "/" +
+                            Instant.ofEpochSecond(baseEpoch + path.get(path.size() - 1).getKey().longValue()));
+
+            Object availability = availabilityIntervals.size() == 1
+                    ? availabilityIntervals.get(0)
+                    : availabilityIntervals;
 
             List<Double> cartesianArray = new ArrayList<>(path.size() * 4);
             for (Map.Entry<Double, Cartesian3> p : path) {
@@ -200,7 +267,7 @@ public class VehicleController {
 
             Map<String, Object> czmlPacket = Map.of(
                     "id", vehicleId,
-                    "availability", vehicleStart + "/" + vehicleStop,
+                    "availability", availability,
                     "position", Map.of(
                             "epoch", startTime.toString(),
                             "interpolationAlgorithm", "LINEAR",
@@ -223,7 +290,7 @@ public class VehicleController {
                     ),
                     "properties", Map.of(
                             "id", vehicleId,
-                            "availability", vehicleStart + "/" + vehicleStop,
+                            "availability", availability,
                             "positionsInterval", positionsInterval
                     )
             );
@@ -235,6 +302,11 @@ public class VehicleController {
             vehicleEntry.put("id", vehicleId);
             vehicleEntry.put("type", resolveVehicleType(vehicleId, vehicles.get(0).getType()));
             vehicleEntry.put("path", cartesianArray);
+            VehicleInfo info = vehicleInfoMap.get(vehicleId);
+            if (info != null) {
+                vehicleEntry.put("length", info.getLength());
+                vehicleEntry.put("width", info.getWidth());
+            }
             vehiclePathList.add(vehicleEntry);
         });
 
@@ -255,7 +327,7 @@ public class VehicleController {
         );
         czml.addFirst(documentPacket);
 
-        vehicleRouteService.saveRoute(versionId, czml, featureList, vehiclePathList, baseEpoch);
+        vehicleRouteService.saveRoute(scenarioKey, czml, featureList, vehiclePathList, baseEpoch, scenarioKey);
 
         Map<String, Object> response = new HashMap<>();
         response.put("czml", czml);
@@ -267,18 +339,23 @@ public class VehicleController {
         return ResponseEntity.ok(response);
     }
 
-    @PostMapping("/vehicle-route/{versionId}")
-    public ResponseEntity<Map<String, Object>> getVehicleRoute(@PathVariable String versionId) {
-        Optional<VehicleRoute> optional = vehicleRouteService.getByVersionId(versionId);
+    @PostMapping("/vehicle-route/{scenarioKey}")
+    public ResponseEntity<Map<String, Object>> getVehicleRoute(
+            @RequestBody VehicleRequest request,
+            @PathVariable String scenarioKey) throws IOException {
+
+        Optional<VehicleRoute> optional = vehicleRouteService.getByVersionId(scenarioKey);
 
         if (optional.isEmpty()) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "Vehicle route not found"));
+            // 캐시 없으면 바로 생성
+            return generateVehicleRoute(request, scenarioKey);
         }
 
         VehicleRoute route = optional.get();
         ObjectMapper mapper = new ObjectMapper();
 
-        List<SignalTimelineResponse> signalTimeline = signalTimelineService.generateSignalTimeline(route.getStartTime(),"0");
+        String dataPath = route.getDataPath() != null ? route.getDataPath() : scenarioKey;
+        List<SignalTimelineResponse> signalTimeline = signalTimelineService.generateSignalTimeline(route.getStartTime(), "0", dataPath, 7200);
 
         try {
             Map<String, Object> response = new HashMap<>();
@@ -293,44 +370,24 @@ public class VehicleController {
         }
     }
 
-    // SQLite VehicleEventDebugging.type 컬럼에 숫자 ID가 저장된 경우 문자열 코드로 변환
-    // PostgreSQL vehicle_type 테이블의 id-vehicle_id 매핑과 동일 (1=CAR, 2=TAXI, 3=BUS, 4=TRUCK, 5=MOTO)
-    private static final Map<String, String> NUMERIC_TYPE_MAP = Map.of(
-            "1", "CAR", "2", "TAXI", "3", "BUS", "4", "TRUCK", "5", "MOTO"
-    );
-
-    // 유효한 차량 유형 코드 집합 — 이 외의 값은 ID 기반 fallback으로 처리
-    private static final Set<String> VALID_TYPE_CODES = Set.of("CAR", "TAXI", "BUS", "TRUCK", "MOTO");
-
     /**
      * vehicle ID 또는 DB의 type 값을 기반으로 차량 유형을 결정합니다.
-     * "0" 또는 인식 불가 값은 null/blank와 동일하게 vehicle ID 기반 배정으로 fallback합니다.
+     * DB에 type 컬럼이 없거나 null인 경우 vehicle ID 숫자로 분포 배정합니다.
      * 배정 비율: CAR 70%, TAXI 15%, BUS 10%, TRUCK 4%, MOTO 1%
      */
     private String resolveVehicleType(String vehicleId, String dbType) {
         if (dbType != null && !dbType.isBlank()) {
-            String trimmed = dbType.trim().toUpperCase();
-            // 숫자 ID인 경우 ("1"~"5") 차종 문자열로 변환
-            String mapped = NUMERIC_TYPE_MAP.get(trimmed);
-            if (mapped != null) {
-                return mapped;
-            }
-            // 유효한 문자열 코드인 경우 그대로 반환
-            if (VALID_TYPE_CODES.contains(trimmed)) {
-                return trimmed;
-            }
+            return dbType.toUpperCase();
         }
-        // type 없음 / "0" / 인식 불가 → vehicle ID 숫자 기반 배정
+        // DB에 type 없을 때 vehicle ID 기반으로 배정
         try {
             int id = Integer.parseInt(vehicleId.replaceAll("[^0-9]", ""));
             int mod = id % 100;
-            String result;
-            if (mod < 70)       result = "CAR";
-            else if (mod < 85)  result = "TAXI";
-            else if (mod < 95)  result = "BUS";
-            else if (mod < 99)  result = "TRUCK";
-            else                result = "MOTO";
-            return result;
+            if (mod < 70)  return "CAR";
+            if (mod < 85)  return "TAXI";
+            if (mod < 95)  return "BUS";
+            if (mod < 99)  return "TRUCK";
+            return "MOTO";
         } catch (NumberFormatException e) {
             return "CAR";
         }

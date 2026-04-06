@@ -22,10 +22,8 @@ export default function TimelineTrack() {
 
     const [active, setActive] = useState({ start: 0, end: endTime?.secondsOfDay - startTime?.secondsOfDay });
 
-    const [jump, setJump] = useState<{ start: number; end: number } | null>({
-        start: 60,
-        end: 200,
-    });
+    const [jump, setJump] = useState<{ start: number; end: number } | null>(null);
+
     const [jumpHovered, setJumpHovered] = useState(false);
     const [activeHovered, setActiveHovered] = useState(false);
 

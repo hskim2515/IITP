@@ -4,19 +4,36 @@ self.onmessage = function (e) {
 
     const targetPositions = [];
 
-    if (data.lastPositions && data.lastPositions.filter(item => item !== undefined).length > 0) {
+    if (data.lastPositions && data.newVehicleRoute) {
         data.lastPositions.forEach((item, index) => {
-            if(item){
-                const convertPos = ecefToLonLatHeight(item[0], item[1], item[2]);
-                const latestStartEndPosition = [{x:convertPos.lon, y:convertPos.lat, z:convertPos.height}, data.newVehicleRoute[index][1]]
-                targetPositions.push(latestStartEndPosition);
+            if (!item) return;
+
+            const route = data.newVehicleRoute[index];
+            if (!route || route.length < 2) return;
+
+            const startPoint = route[0];
+            const endPoint   = route[route.length - 1];
+            if (!startPoint || !endPoint) return;
+
+            const convertPos = ecefToLonLatHeight(item[0], item[1], item[2]);
+            const currentPoint = { x: convertPos.lon, y: convertPos.lat, z: convertPos.height };
+
+            // endPoint가 ECEF 배열이면 변환, 아니면 {x,y,z} 그대로 사용
+            let endGeo;
+            if (Array.isArray(endPoint)) {
+                const ep = ecefToLonLatHeight(endPoint[0], endPoint[1], endPoint[2]);
+                endGeo = { x: ep.lon, y: ep.lat, z: ep.height };
+            } else {
+                endGeo = endPoint;
             }
+
+            targetPositions.push([currentPoint, endGeo]);
         });
     }
 
-    if(targetPositions.length > 0){
+    if (targetPositions.length > 0) {
         const odData = computeODMatrix(targetPositions);
-        self.postMessage({ odData: odData });
+        self.postMessage({ odData });
     }
 };
 
