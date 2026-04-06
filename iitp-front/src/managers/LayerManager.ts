@@ -2,7 +2,6 @@ import HeatBarLayer from "@primitives/HeatBarLayer";
 import ParabolicArrowPrimitive from "@primitives/ParabolicArrowPrimitive";
 import TailPrimitive from "@primitives/TailPrimitive";
 import VehiclePrimitive from "@primitives/VehiclePrimitive";
-import PointSpritePrimitive from "@primitives/PointSpritePrimitive";
 import SpeedHeatmapLayer from "@primitives/SpeedHeatmapLayer";
 import TrafficHeatmapCesiumLayer from "@primitives/TrafficHeatmapCesiumLayer";
 import SpeedHeatmapOlLayer from "@features/SpeedHeatmapOlLayer";
@@ -154,11 +153,6 @@ export class LayerManager {
         const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
         if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
 
-        // FieldPrimitive(노란 점) → PointSpritePrimitive(통합, 용량 기반 재할당)
-        this.primitiveLayerManager.add(
-            new PointSpritePrimitive(this.cesiumViewer.scene.context, { color: [1.0, 1.0, 0.0], alpha: 0.7, pointSize: 9 }),
-            groupName, "trip"
-        );
         const tailPaths = vehicleRoute.map((entry: any) => Array.isArray(entry) ? entry : entry.path);
         this.primitiveLayerManager.add(new TailPrimitive(tailPaths, this.cesiumViewer.scene.context, speedFactor, isRunning, vehicleTypeArray ?? []), groupName, "trip");
         // 속도 히트맵 레이어: Cesium 3D
