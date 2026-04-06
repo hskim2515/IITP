@@ -6,14 +6,48 @@ import { fromLonLat } from "ol/proj";
 import { Cartographic, Ellipsoid } from "cesium";
 import * as Cesium from "cesium";
 
-const TYPE_COLORS: Record<string, string> = {
-    'CAR':     'rgb(100, 160, 255)',
-    'TAXI':    'rgb(255, 220, 0)',
-    'BUS':     'rgb(255, 90, 90)',
-    'TRUCK':   'rgb(180, 120, 60)',
-    'MOTO':    'rgb(80, 220, 130)',
-    'default': 'rgb(251, 188, 96)',
+const TYPE_COLORS: Record<string, [number, number, number, number]> = {
+    'CAR':     [100, 160, 255, 0.92],
+    'TAXI':    [255, 220,   0, 0.92],
+    'BUS':     [255,  90,  90, 0.92],
+    'TRUCK':   [180, 120,  60, 0.92],
+    'MOTO':    [ 80, 220, 130, 0.92],
+    'default': [251, 188,  96, 0.92],
 };
+
+// 차종별 크기: [길이, 폭]
+const TYPE_REAL: Record<string, [number, number]> = {
+    'CAR':   [4.5, 1.8],
+    'TAXI':  [4.5, 1.8],
+    'BUS':   [12,  2.5],
+    'TRUCK': [8,   2.5],
+    'MOTO':  [2.2, 0.8],
+};
+
+// canvas roundRect 아이콘 기본 해상도(px) — 길이 방향
+const BASE_LEN = 32;
+
+/** 차종별 둥근 직사각형 아이콘을 canvas로 생성하여 data URL 반환 */
+function buildVehicleIcon(vehicleType: string): string {
+    const [r, g, b, a] = TYPE_COLORS[vehicleType] ?? TYPE_COLORS['default']!;
+    const [realLen, realW] = TYPE_REAL[vehicleType] ?? TYPE_REAL['CAR']!;
+    const aspect = realW / realLen;
+
+    const w = Math.round(BASE_LEN * aspect);
+    const h = BASE_LEN;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d')!;
+
+    const radius = Math.min(w, h) * 0.25;
+    ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
+    ctx.beginPath();
+    ctx.roundRect(0, 0, w, h, radius);
+    ctx.fill();
+
+    return canvas.toDataURL();
+}
 
 export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private source: VectorSource;
@@ -21,118 +55,91 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private speed: number;
     private running: boolean;
     private animationId: number | null = null;
-    private lastUpdateTime: number = performance.now();
-    private positions: number[][] = [];        // 목표 위치 (worker에서 수신)
-    private prevPositions: number[][] = [];    // 이전 위치 (보간 시작점)
-    private lerpStartTime: number = 0;         // 마지막 위치 수신 시각
-    private readonly LERP_DURATION = 50;       // worker 전송 주기(ms)와 동기화
-    private vehicleType: string;
+    private positions: number[][] = [];
+    private prevPositions: number[][] = [];
+    private lerpStartTime: number = 0;
+    private readonly LERP_DURATION = 50;
+    public readonly vehicleType: string;
 
-    constructor(vehicleRoute: any[], vectorSource, speed: number, running: boolean, vehicleType: string = 'default') {
-        const color = TYPE_COLORS[vehicleType] ?? TYPE_COLORS['default'];
-        const radius = (vehicleType === 'BUS' || vehicleType === 'TRUCK') ? 6 : 4;
+    constructor(vehicleRoute: any[], vectorSource: VectorSource, speed: number, running: boolean, vehicleType: string = 'default') {
+        const iconSrc = buildVehicleIcon(vehicleType);
+        const [realLen] = TYPE_REAL[vehicleType] ?? TYPE_REAL['CAR']!;
 
         super({
             source: vectorSource,
             visible: false,
             style: {
-                "circle-radius": radius,
-                "circle-fill-color": color,
+                "icon-src": iconSrc,
+                // 실세계 크기 유지: resolution(m/px) 기준 스케일
+                "icon-scale": [
+                    "clamp",
+                    ["/", realLen / 2, ["*", BASE_LEN / 2, ["resolution"]]],
+                    0.25,
+                    5.0,
+                ],
+                // zoom 15 이하(resolution > 5 m/px)에서 페이드아웃
+                "icon-opacity": [
+                    "interpolate", ["linear"], ["resolution"],
+                    3, 1,
+                    5, 0,
+                ],
+                // heading 회전 (North=0, CW 라디안)
+                "icon-rotation": ["get", "heading"],
+                "icon-rotation-alignment": "map",
             },
             zIndex: 350,
+            disableHitDetection: true,
         });
-        this.vehicleType = vehicleType;
 
+        this.vehicleType = vehicleType;
         this.source = vectorSource;
         this.speed = speed;
         this.running = running;
-        this.lastUpdateTime = performance.now();
 
         this.createResources(vehicleRoute);
 
-        // 초기 위치 설정
-        if (vehicleRoute && vehicleRoute.length > 0) {
-            const initialPositions = vehicleRoute.map(route => route[0]); // 각 vehicle의 첫 번째 위치
-            this.setLatestPositions({positions: initialPositions});
-        }
-
-        if (running) {
-        this.start();
-        }
+        if (running) this.start();
     }
 
     private convertToEPSG3857(position: number[]): number[] {
-        if (!position || position.length !== 3) {
-            // 기본값으로 0,0,0 사용
-            position = [0, 0, 0];
-        }
-
-        // 유효한 Cartesian3 좌표인지 확인
         try {
-            const carto = Cartographic.fromCartesian({ x: position[0], y: position[1], z: position[2] }, Ellipsoid.WGS84);
-            if (!carto) {
-                // 유효하지 않은 좌표인 경우 기본값으로 처리
-                return fromLonLat([0, 0]);
-            }
-            const lon = Cesium.Math.toDegrees(carto.longitude);
-            const lat = Cesium.Math.toDegrees(carto.latitude);
-            return fromLonLat([lon, lat]);
-        } catch (error) {
-            console.warn("[VehicleFeatureLayer] Failed to convert position:", error);
-            // 에러 발생 시 기본값으로 처리
+            const carto = Cartographic.fromCartesian(
+                { x: position[0], y: position[1], z: position[2] } as any,
+                Ellipsoid.WGS84,
+            );
+            return fromLonLat([
+                Cesium.Math.toDegrees(carto.longitude),
+                Cesium.Math.toDegrees(carto.latitude),
+            ]);
+        } catch {
             return fromLonLat([0, 0]);
         }
     }
 
     private createResources(vehicleRoute: any[]) {
-
         this.features = vehicleRoute.map((route, idx) => {
-            // 🟡 t === 0인 좌표만 찾기
             let initialPosition: number[] = [0, 0, 0];
             for (let i = 0; i < route.length; i += 4) {
-                const t = route[i];
-                const x = route[i + 1];
-                const y = route[i + 2];
-                const z = route[i + 3];
-
-                if (t === 0) {
-                    initialPosition = [x, y, z];
+                if (route[i] === 0) {
+                    initialPosition = [route[i + 1], route[i + 2], route[i + 3]];
                     break;
                 }
             }
 
             const coord = this.convertToEPSG3857(initialPosition);
+            const feature = new Feature<Point>({ geometry: new Point(coord) });
+            feature.setId(`vehicle${idx}`);
+            feature.set("vehicleType", this.vehicleType);
+            feature.set("heading", 0);
 
-            const pointFeature = new Feature<Point>({
-                geometry: new Point(coord),
-            });
-
-            pointFeature.setId(`vehicle${idx}`);
-            pointFeature.set("vehicleType", this.vehicleType);
-            pointFeature.set("initialCoordinate", coord);
-
-            this.source.addFeature(pointFeature);
-            return pointFeature;
+            this.source.addFeature(feature);
+            return feature;
         });
     }
 
-    setLatestPositions(latestPositions) {
-        const handleUndefined = (pos: number[] | undefined, idx: number): number[] | null => {
-            if (!pos) {
-                const prevPos = this.positions[idx];
-                if (prevPos) {
-                    return prevPos;
-                }
-                return fromLonLat([0, 0]);
-            }
-            return pos;
-        };
-
+    setLatestPositions(latestPositions: { positions: (number[] | undefined)[]; headings?: (number | null)[] }) {
         const converted = latestPositions.positions.map((pos, idx) => {
-            if (!pos) {
-                // 비활성 차량: 이전 위치 유지 (null 반환하면 인덱스 불일치 발생)
-                return this.positions[idx] ?? null;
-            }
+            if (!pos) return this.positions[idx] ?? null;
             try {
                 return this.convertToEPSG3857(pos);
             } catch {
@@ -140,10 +147,18 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
             }
         });
 
-        // lerp 시작점: 이전 위치가 없으면 현재와 동일하게(순간이동 방지)
         this.prevPositions = this.positions.length > 0 ? this.positions : converted;
         this.positions = converted;
         this.lerpStartTime = performance.now();
+
+        // heading 업데이트
+        if (latestPositions.headings) {
+            latestPositions.headings.forEach((h, idx) => {
+                if (h != null && this.features[idx]) {
+                    this.features[idx]!.set("heading", h);
+                }
+            });
+        }
 
         if (!this.running) {
             this._syncFeatures();
@@ -153,20 +168,17 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
     }
 
     private _syncFeatures() {
-        // source.getFeatures()는 공간인덱스 순서로 반환 → this.features 직접 사용
         this.features.forEach((feature, index) => {
             const geom = feature.getGeometry() as Point;
             const target = this.positions[index];
             if (!geom || !target) return;
             geom.setCoordinates(target);
-            feature.changed();
         });
     }
 
     private updateAnimation = () => {
         const t = Math.min((performance.now() - this.lerpStartTime) / this.LERP_DURATION, 1.0);
 
-        // source.getFeatures()는 공간인덱스 순서 → this.features 직접 사용
         this.features.forEach((feature, index) => {
             const geom = feature.getGeometry() as Point;
             const target = this.positions[index];
@@ -176,8 +188,7 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
             if (prev && t < 1.0) {
                 const dx = target[0] - prev[0];
                 const dy = target[1] - prev[1];
-                const distSq = dx * dx + dy * dy;
-                if (distSq > 1e10) {
+                if (dx * dx + dy * dy > 1e10) {
                     geom.setCoordinates(target);
                 } else {
                     geom.setCoordinates([prev[0] + dx * t, prev[1] + dy * t]);
@@ -185,7 +196,6 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
             } else {
                 geom.setCoordinates(target);
             }
-            feature.changed();
         });
 
         if (this.running) {
@@ -195,38 +205,25 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
         }
     };
 
-    public setSpeed(speed: number) {
-        this.speed = speed;
-    }
-
-    public setStatus(isRunning: boolean) {
+    setSpeed(speed: number) { this.speed = speed; }
+    setStatus(isRunning: boolean) {
         this.running = isRunning;
         if (isRunning && this.animationId === null) {
-            this.lastUpdateTime = performance.now();
             this.animationId = requestAnimationFrame(this.updateAnimation);
         } else if (!isRunning && this.animationId !== null) {
             cancelAnimationFrame(this.animationId);
             this.animationId = null;
         }
     }
-    public start() {
-        console.log("[VehicleFeatureLayer] start() called");
-        this.setStatus(true);
-    }
+    start() { this.setStatus(true); }
+    stop()  { this.setStatus(false); }
 
-    public stop() {
-        console.log("[VehicleFeatureLayer] stop() called");
-        this.setStatus(false);
-    }
-
-    public destroy() {
-        console.log("[VehicleFeatureLayer] Destroying layer");
+    destroy() {
         if (this.animationId !== null) {
             cancelAnimationFrame(this.animationId);
             this.animationId = null;
         }
         this.source.clear();
-        this.source.refresh();
         this.running = false;
     }
 }

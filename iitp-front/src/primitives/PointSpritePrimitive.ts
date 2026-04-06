@@ -36,6 +36,7 @@ export default class PointSpritePrimitive {
     private _capacity = 0;
 
     private latestPositions: (number[] | null)[] | null = null;
+    private _stopped = false;
 
     private readonly color:     [number, number, number];
     private readonly alpha:     number;
@@ -86,7 +87,25 @@ export default class PointSpritePrimitive {
     // setters
     // ──────────────────────────────────────────
     setLatestPositions(data: { positions: (number[] | null)[] }): void {
+        if (this._stopped) return;
         this.latestPositions = data.positions;
+    }
+
+    start(): void {
+        this._stopped = false;
+        this.latestPositions = null;
+    }
+    stop(): void {
+        this._stopped = true;
+        this.latestPositions = null;
+        this._capacity = 0;
+        if (this.drawCommand) this.drawCommand.vertexCount = 0;
+    }
+    drain(): void {
+        this._stopped = true;
+        this.latestPositions = null;
+        this._capacity = 0;
+        if (this.drawCommand) this.drawCommand.vertexCount = 0;
     }
 
     setSpeed(_speed: number): void   {}
@@ -96,7 +115,7 @@ export default class PointSpritePrimitive {
     // 매 프레임 업데이트
     // ──────────────────────────────────────────
     update(frameState: any): void {
-        if (this.destroyed || !this.show || !this.latestPositions) return;
+        if (this.destroyed || !this.show || !this.latestPositions || this._stopped) return;
 
         const active = this.latestPositions.filter((p): p is number[] => p != null);
         if (active.length === 0) return;

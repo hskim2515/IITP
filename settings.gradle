@@ -1,0 +1,3 @@
+rootProject.name = 'IITP'
+
+include 'iitp-rest'

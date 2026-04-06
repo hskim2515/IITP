@@ -102,11 +102,11 @@ const useSimulation = () => {
     useEffect(() => {
         if (viewer) {
             try {
-            layerManager.getLayerGroup("analyze").forEach((layer) => {
-                if ((layer as any).destroyed) return;
-                layer.setSpeed(speed * speedFactor);
-                layer.setStatus(isRunning);
-            });
+                layerManager.getLayerGroup("analyze").forEach((layer) => {
+                    if ((layer as any).destroyed) return;
+                    layer.setSpeed(speed * speedFactor);
+                    layer.setStatus(isRunning);
+                });
             } catch (e) {
                 console.warn('[useSimulation] layer setSpeed/setStatus 오류(무시):', e);
             }
@@ -309,6 +309,7 @@ const useSimulation = () => {
             const vectorSource = new VectorSource();
             const typeGroups  = new Map<string, any[]>();
             const scaleGroups = new Map<string, number[]>();  // per-vehicle length (m)
+            const vehicleTypeArray: string[] = [];  // 전체 차량 순서의 타입 배열 (TailPrimitive 색상용)
             vehicleRoute.forEach((entry: any, idx: number) => {
                 const isLegacy = Array.isArray(entry);
                 const path = isLegacy ? entry : entry.path;
@@ -333,6 +334,7 @@ const useSimulation = () => {
                     else if (mod < 99)  vType = 'TRUCK';
                     else                vType = 'MOTO';
                 }
+                vehicleTypeArray.push(vType);
                 if (!typeGroups.has(vType))  typeGroups.set(vType, []);
                 if (!scaleGroups.has(vType)) scaleGroups.set(vType, []);
                 typeGroups.get(vType)!.push(path);
@@ -383,7 +385,7 @@ const useSimulation = () => {
             }
             layerManager.addHeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, heatmapSetting);
             layerManager.addODArrows(vehicleRoute, speedFactor, isRunningRef.current);
-            layerManager.addTripLayer(vehicleRoute, speedFactor, isRunningRef.current);
+            layerManager.addTripLayer(vehicleRoute, speedFactor, isRunningRef.current, typeGroups, vehicleTypeArray);
             layerManager.addTrafficLayer();
 
             const VehicleModelData: { id: string; position: Cesium.Cartesian3; visible: boolean; model?: Cesium.Model }[] = [];
@@ -474,6 +476,8 @@ const useSimulation = () => {
             };
 
             layerManager?.showLayer("analyze", "default");
+            const { activeLayerName } = useLayerStore.getState();
+            (activeLayerName ?? []).forEach(name => layerManager?.showLayer("analyze", name));
         });
     };
 

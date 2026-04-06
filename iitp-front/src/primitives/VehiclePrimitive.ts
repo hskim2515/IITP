@@ -491,7 +491,7 @@ function computeHeading(from: Cesium.Cartesian3, to: Cesium.Cartesian3): number 
     const dLon = tc.longitude - fc.longitude;
     const y = Math.sin(dLon) * Math.cos(tc.latitude);
     const x = Math.cos(fc.latitude) * Math.sin(tc.latitude)
-            - Math.sin(fc.latitude) * Math.cos(tc.latitude) * Math.cos(dLon);
+        - Math.sin(fc.latitude) * Math.cos(tc.latitude) * Math.cos(dLon);
     return Math.atan2(y, x);
 }
 

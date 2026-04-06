@@ -13,6 +13,11 @@ import { diff } from "deep-object-diff";
 import { computePositionAtOffsetOl } from "@utils/offset";
 import { useLayerStore } from "@stores/useLayerStore";
 import { findFeatureByProperties } from "@utils/feature";
+import { getDistance } from "ol/sphere";
+import { toLonLat } from "ol/proj";
+import { Coordinate } from "ol/coordinate";
+
+const PARKING_LOT_LENGTH_M = 14;
 
 export default class BusStationFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -49,17 +54,32 @@ export default class BusStationFeatureLayer extends VectorLayer {
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
         const geom = feature.getGeometry();
         const styles: Style[] = [];
-        if (geom instanceof Point) {
+        if (!(geom instanceof Point)) return styles;
+
+        // 중심 점
+        styles.push(
+            new Style({
+                image: new CircleStyle({
+                    radius: 4,
+                    fill: new Fill({color: "rgb(255,0,0)"}),
+                    stroke: new Stroke({color: "rgba(0,0,0,0)", width: 0}),
+                }),
+            })
+        );
+
+        // 정류장 라인: modify 중에는 기존 위치 고정(stored coords), modifyend 후 load()로 갱신
+        const lineStart = feature.get('__lineStart') as Coordinate | undefined;
+        const lineEnd = feature.get('__lineEnd') as Coordinate | undefined;
+
+        if (lineStart && lineEnd) {
             styles.push(
                 new Style({
-                    image: new CircleStyle({
-                        radius: 6,
-                        fill: new Fill({color: "rgb(255,0,0)"}),
-                        stroke: new Stroke({color: "rgba(0,0,0,0)", width: Math.min(3, 0.5 / resolution)}),
-                    }),
+                    geometry: new LineString([lineStart, lineEnd]),
+                    stroke: new Stroke({color: "rgb(255,0,0)", width: 4}),
                 })
             );
         }
+
         return styles;
     }
 
@@ -103,8 +123,8 @@ export default class BusStationFeatureLayer extends VectorLayer {
             const laneCoord = laneGeom.getCoordinates();
             if (!laneCoord || !laneCoord[0] || !laneCoord[1]) continue;
 
-            const laneStart = laneCoord[0]
-            const laneEnd = laneCoord[1]
+            const laneStart = laneCoord[0] as Coordinate;
+            const laneEnd = laneCoord[1] as Coordinate;
             const offset = busStation.offset
             if (!offset) {
                 console.warn(`${busStation.id} 의 offset 이 존재하지 않습니다`)
@@ -112,9 +132,34 @@ export default class BusStationFeatureLayer extends VectorLayer {
             }
             const {offsetPosition} = computePositionAtOffsetOl(laneStart, laneEnd, offset)
 
+            // lane 방향 단위벡터 및 미터→EPSG:3857 변환 계수
+            const dx = laneEnd[0] - laneStart[0];
+            const dy = laneEnd[1] - laneStart[1];
+            const epsg3857Len = Math.sqrt(dx * dx + dy * dy);
+            const realLenM = getDistance(toLonLat(laneStart), toLonLat(laneEnd));
+            const laneUx = epsg3857Len > 0 ? dx / epsg3857Len : 1;
+            const laneUy = epsg3857Len > 0 ? dy / epsg3857Len : 0;
+            const unitsPerMeter = (epsg3857Len > 0 && realLenM > 0) ? epsg3857Len / realLenM : 1;
+
+            // 라인 끝점: 우측 통행이므로 진행 방향 역방향으로 연장
+            const parkingLots = busStation.parkingLots ?? 0;
+            const totalLen = parkingLots * PARKING_LOT_LENGTH_M * unitsPerMeter;
+            const lineEnd2: Coordinate = [
+                offsetPosition[0] - laneUx * totalLen,
+                offsetPosition[1] - laneUy * totalLen,
+            ];
+
             const busStationPoint = new Point(offsetPosition)
             const busStationPointFeature = new Feature(busStationPoint);
-            busStationPointFeature.setProperties({...template, ...busStation})
+            busStationPointFeature.setProperties({
+                ...template,
+                ...busStation,
+                __laneUx: laneUx,
+                __laneUy: laneUy,
+                __unitsPerMeter: unitsPerMeter,
+                __lineStart: offsetPosition as Coordinate,
+                __lineEnd: lineEnd2,
+            });
             if (busStationPointFeature) featureBuffer.push(busStationPointFeature);
         }
 

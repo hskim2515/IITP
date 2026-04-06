@@ -188,15 +188,15 @@ public class VehicleController {
                 double currTime = path.get(i).getKey();
                 if (currTime - prevTime > GAP_THRESHOLD) {
                     availabilityIntervals.add(
-                        Instant.ofEpochSecond(baseEpoch + (long) segStart) + "/" +
-                        Instant.ofEpochSecond(baseEpoch + (long) prevTime));
+                            Instant.ofEpochSecond(baseEpoch + (long) segStart) + "/" +
+                                    Instant.ofEpochSecond(baseEpoch + (long) prevTime));
                     segStart = currTime;
                 }
                 prevTime = currTime;
             }
             availabilityIntervals.add(
-                Instant.ofEpochSecond(baseEpoch + (long) segStart) + "/" +
-                Instant.ofEpochSecond(baseEpoch + path.get(path.size() - 1).getKey().longValue()));
+                    Instant.ofEpochSecond(baseEpoch + (long) segStart) + "/" +
+                            Instant.ofEpochSecond(baseEpoch + path.get(path.size() - 1).getKey().longValue()));
 
             Object availability = availabilityIntervals.size() == 1
                     ? availabilityIntervals.get(0)

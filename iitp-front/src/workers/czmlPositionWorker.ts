@@ -1,16 +1,26 @@
 
+// SQLite type 컬럼이 숫자 ID("1","2",...) 로 저장된 경우를 대비한 매핑
+const NUMERIC_TYPE_MAP: Record<string, string> = { '1':'CAR','2':'TAXI','3':'BUS','4':'TRUCK','5':'MOTO' };
+const normalizeVehicleType = (raw: string): string => NUMERIC_TYPE_MAP[raw] ?? raw;
+
 let czmlData = null;
 let sampledPositionsList = []; // 각 객체별 { vehicleType, sampled }
 let referenceTime = null;
 let elapsed = 0;
 let lastElapsed = 0;
+let workerGeneration = 0; // setSimulation 호출마다 갱신 — 스테일 메시지 식별용
 
 self.onmessage = function (e) {
     const data = e.data;
 
     if (data.type === "init") {
+        // generation이 전달된 경우 워커 세대 갱신 (빈 reset init 포함)
+        if (data.generation != null) workerGeneration = data.generation;
+
         czmlData = data.czmlPackets; // [{id, type, path:[t,x,y,z,...]}, ...] 또는 구버전 [[t,x,y,z,...], ...]
         referenceTime = data.currentTime;
+        lastElapsed = 0;
+        elapsed = 0;
 
         sampledPositionsList = czmlData.map((track, idx) => {
             // 신버전: {id, type, path:[...]}  구버전: [t, x, y, z, ...]
@@ -26,7 +36,7 @@ self.onmessage = function (e) {
                 else if (mod < 99)  vehicleType = 'TRUCK';
                 else                vehicleType = 'MOTO';
             } else if (track.type) {
-                vehicleType = track.type;
+                vehicleType = normalizeVehicleType(String(track.type).toUpperCase());
             } else {
                 // type 없는 캐시 데이터 → 백엔드와 동일한 ID 기반 배정
                 const numId = parseInt(String(track.id ?? '0').replace(/\D/g, '')) || 0;
@@ -65,7 +75,7 @@ self.onmessage = function (e) {
         const speeds    = interps.map(({ interp }) => interp ? interp.speed    : null);
         const types     = interps.map(({ vehicleType }) => vehicleType);
 
-        self.postMessage({ positions, headings, speeds, types });
+        self.postMessage({ positions, headings, speeds, types, generation: workerGeneration });
     }
 
     else if (data.type === "pause") {
