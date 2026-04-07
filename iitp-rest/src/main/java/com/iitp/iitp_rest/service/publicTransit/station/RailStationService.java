@@ -72,7 +72,7 @@ public class RailStationService {
     }
 
     public RailPublicTransitXml getRailStationXmlByVersionId(String versionId) throws IOException {
-        InputStream is = new URL(remoteUrl + versionId + "/railPublicTransit.xml").openStream();
+        InputStream is = new URL(remoteUrl + versionId + "/railStation.xml").openStream();
         RailPublicTransitXml railPublicTransitDto = streamToDto(is);
         return transformRailPublicTransitCoordinates(versionId, railPublicTransitDto);
     }

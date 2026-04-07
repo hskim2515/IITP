@@ -12,4 +12,8 @@ public class PublicTransitXml {
     @XmlElementWrapper(name = "Stations")
     @XmlElement(name = "station")
     private List<BusStationXml> busStations;
+
+    // roadStation.xml 의 <Garages>, <Drt_Stations> 등 추가 요소 — 파싱 시 무시
+    @XmlAnyElement(lax = true)
+    private List<Object> others;
 }

@@ -65,7 +65,7 @@ public class BusStationService {
     }
 
     public PublicTransitXml getBusStationXmlByVersionId(String versionId) throws IOException {
-        InputStream is = new URL(remoteUrl + versionId + "/publicTransit.xml").openStream();
+        InputStream is = new URL(remoteUrl + versionId + "/roadStation.xml").openStream();
         return streamToDto(is);
     }
 

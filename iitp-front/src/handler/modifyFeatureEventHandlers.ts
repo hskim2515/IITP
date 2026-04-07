@@ -65,6 +65,7 @@ const modifyFeatureHandlersInternal = {
         const layerName = "busStation"
         const layer = useLayerStore.getState().layerManager?.getLayerByName(layerName)
         if (!layer) return;
+        const networkLayer = useLayerStore.getState().layerManager?.getLayerByName(snapLayerName)
 
         const olModifyend = (e: ModifyEvent) => {
             const olMap = useOpenLayersStore.getState().map;
@@ -84,7 +85,8 @@ const modifyFeatureHandlersInternal = {
             const laneFeature = pickFromOpenLayers(
                 olMap,
                 pixel,
-                (feature) => feature.get('featureType')=='lanes'
+                (feature) => feature.get('featureType')=='lanes',
+                (l) => !!networkLayer && l === networkLayer
             );
 
             if (!laneFeature) {
@@ -305,6 +307,7 @@ const modifyFeatureHandlersInternal = {
         const layerName = "railStation"
         const layer = useLayerStore.getState().layerManager?.getLayerByName(layerName)
         if (!layer) return;
+        const networkLayer = useLayerStore.getState().layerManager?.getLayerByName(snapLayerName)
 
         const olModifyend = (e: ModifyEvent) => {
             const olMap = useOpenLayersStore.getState().map;
@@ -323,7 +326,8 @@ const modifyFeatureHandlersInternal = {
             const linkFeature = pickFromOpenLayers(
                 olMap,
                 pixel,
-                (feature) => feature.get('featureType') === 'links'
+                (feature) => feature.get('featureType') === 'links',
+                (l) => !!networkLayer && l === networkLayer
             );
             if (!linkFeature) {
                 setMessage({type: "warn", text: "출구는 link 위에만 위치할 수 있습니다."});

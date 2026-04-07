@@ -13,23 +13,30 @@ import lombok.Data;
 public class BusStationXml {
     @XmlAttribute
     private Long id;
+
     @XmlAttribute
     @XmlJavaTypeAdapter(TransitModeAdapter.class)
     private TransitMode transitMode = TransitMode.bus;
+
     @XmlAttribute(name = "link_ref")
     private Long linkRef;
+
     @XmlAttribute(name = "lane_ref")
     private String laneRef;
+
     @XmlAttribute(name = "pos")
     private Double offset;
+
     @XmlAttribute
     @XmlJavaTypeAdapter(StationTypeAdapter.class)
     private StationType type;
+
     @XmlAttribute
     private String parkingLots;
+
     @XmlAttribute
     private String center;
-//    @XmlElement(name = "line")
-    @XmlTransient
+
+    @XmlElement(name = "line")
     private BusLineXml line;
 }

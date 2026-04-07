@@ -395,9 +395,11 @@ export function getFeaturesByGuidPrefix(
 
     const features = extractFeaturesFromInput(input)
     if (!features) return new Collection<Feature>([]);
+    const childPrefix = `${prefix}.`;
     const matchedArray = features.filter((feature: Feature) => {
         const guid = feature.get('__guid');
-        return typeof guid === 'string' && guid.startsWith(prefix);
+        if (typeof guid !== 'string') return false;
+        return guid === prefix || guid.startsWith(childPrefix);
     });
 
     return new Collection<Feature>(matchedArray)

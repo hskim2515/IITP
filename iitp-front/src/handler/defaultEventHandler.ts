@@ -407,8 +407,9 @@ const getHighlightedOlStyle = (baseStyle: Style | Style[] | null | undefined, sc
     const styles = Array.isArray(baseStyle) ? baseStyle : [baseStyle];
 
     return styles.map((style) => {
-        const image = style.getImage();
-        const stroke = style.getStroke();
+        const cloned = style.clone();
+        const image = cloned.getImage();
+        const stroke = cloned.getStroke();
 
         if (image instanceof Icon) {
             const scaleValue = image.getScale();
@@ -435,6 +436,6 @@ const getHighlightedOlStyle = (baseStyle: Style | Style[] | null | undefined, sc
             const currentWidth = stroke.getWidth() ?? 1;
             stroke.setWidth(currentWidth * scale);
         }
-        return style;
+        return cloned;
     });
 };
