@@ -11,5 +11,9 @@ public interface ScenarioService {
     List<ScenarioVersion> getVersionsByScenarioId(Long scenarioId);
     Scenario getScenarioByKey(String key);
     ScenarioVersion getVersionByKey(String key);
+    Scenario createScenario(Scenario scenario);
+    Scenario updateScenario(Long id, Scenario scenario);
+    void deleteScenario(Long id);
+    boolean existsByKey(String key);
 }
 

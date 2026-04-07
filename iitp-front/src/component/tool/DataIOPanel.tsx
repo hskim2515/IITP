@@ -79,7 +79,7 @@ const DataIOPanel: React.FC = () => {
                         const layerData = parsed.data?.[cfg.key];
                         if (!layerData) continue;
                         assignPropertyToResponseData(layerData);
-                        cfg.store.getState().setCurrentJsonData(layerData);
+                        cfg.store.getState().setCurrentJsonDataWithFullBuild(layerData);
                         cfg.store.getState().setChange(true);
                         loaded++;
                     }
@@ -92,7 +92,7 @@ const DataIOPanel: React.FC = () => {
                         return;
                     }
                     assignPropertyToResponseData(parsed.data);
-                    cfg.store.getState().setCurrentJsonData(parsed.data);
+                    cfg.store.getState().setCurrentJsonDataWithFullBuild(parsed.data);
                     cfg.store.getState().setChange(true);
                     setImportStatus({ type: 'ok', text: `${cfg.label} 가져오기 완료` });
                 } else {

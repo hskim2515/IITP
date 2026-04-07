@@ -18,6 +18,9 @@ import {Fill, Stroke, Style} from "ol/style";
 import {Feature} from "ol";
 import {applyCesiumSignalStyle, applyOlSignalStyle, updateSignalStyles} from "@utils/signal";
 import { useVehicleModelStore, resolveGlbUrl, resolveModelByVehicleType } from "@stores/useVehicleModelStore";
+import { useSimulationScenarioStore } from "@stores/useSimulationScenarioStore";
+import { useSignalTodStore } from "@stores/useSignalTodStore";
+import { computeTodPeriods, mergeSignalTimelines } from "@utils/tod";
 
 const useSimulation = () => {
     const { isRunning, isStop, speed } = useSimulationStore();
@@ -192,6 +195,55 @@ const useSimulation = () => {
         const baseUrl = process.env.VITE_API_URL;
         const requestBody = JSON.stringify({ numVehicle, speedFactor, czml });
 
+        /**
+         * signalTOD 스토어 데이터를 기반으로 시뮬레이션 시간대에 맞는
+         * 신호 타임라인을 백엔드에서 가져와 스토어에 적용합니다.
+         * TOD 구간이 여러 개인 경우 각 구간별로 백엔드를 호출한 뒤 병합합니다.
+         */
+        const applyTodSignalTimeline = async (czmlData: any, key: string) => {
+            const simScenarioData = useSimulationScenarioStore.getState().currentJsonData as any;
+            const todData = useSignalTodStore.getState().currentJsonData as any;
+
+            if (!simScenarioData?.scenarios?.length || !todData?.nodes?.length) {
+                console.log('[useSimulation] TOD 또는 시나리오 데이터 없음 - signalTOD 연동 건너뜀');
+                return;
+            }
+
+            const simScenario = simScenarioData.scenarios[0];
+            const simWallClockStart: string = simScenario?.startTime;
+            if (!simWallClockStart) {
+                console.log('[useSimulation] 시나리오 startTime 없음 - signalTOD 연동 건너뜀');
+                return;
+            }
+
+            const czmlStartISO: string = czmlData[0].clock.currentTime;
+            const czmlEndISO: string = czmlData[0].clock.interval.split('/')[1];
+            const baseEpoch = Math.floor(new Date(czmlStartISO).getTime() / 1000);
+            const simDurationSeconds = Math.floor(new Date(czmlEndISO).getTime() / 1000) - baseEpoch;
+
+            const periods = computeTodPeriods(todData, simWallClockStart, simDurationSeconds, baseEpoch);
+            if (periods.length === 0) {
+                console.log('[useSimulation] 시뮬레이션 구간과 겹치는 TOD 계획 없음');
+                return;
+            }
+
+            console.log(`[useSimulation] TOD 구간 ${periods.length}개로 신호 타임라인 생성 시작`, periods);
+
+            const results = await Promise.all(
+                periods.map(period =>
+                    fetch(`${baseUrl}/vehicle/signal-timeline/${key}?baseEpoch=${period.baseEpochSeconds}&planId=${period.planId}&duration=${period.durationSeconds}`)
+                        .then(r => r.ok ? r.json() : [])
+                        .catch(() => [])
+                )
+            );
+
+            const merged = mergeSignalTimelines(results);
+            if (merged.length > 0) {
+                console.log(`[useSimulation] TOD 신호 타임라인 병합 완료: ${merged.length}개 노드`);
+                setSignalTimeline(merged);
+            }
+        };
+
         const applyRouteData = (data: any) => {
             if (!data || !data.czml) return;
             const { czml: czmlData, positions, features, signalTimeline } = data;
@@ -205,21 +257,36 @@ const useSimulation = () => {
             const end = JulianDate.fromIso8601(endTime);
             const current = JulianDate.fromIso8601(clock.currentTime);
             useSimulationStore.getState().setClock(start, end, current);
+            // signalTOD 연동: TOD 기반 신호 타임라인으로 교체
+            applyTodSignalTimeline(czmlData, scenarioKey);
         };
 
-        fetch(`${baseUrl}/vehicle/vehicle-route/${scenarioKey}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: requestBody,
-        })
-            .then((r) => {
+        const fetchWithRetry = (retryCount = 0) => {
+            fetch(`${baseUrl}/vehicle/vehicle-route/${scenarioKey}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: requestBody,
+            }).then((r) => {
+                if (r.status === 202) {
+                    // 생성 중 → 10초 후 재시도 (최대 60회 = 10분)
+                    if (retryCount < 60) {
+                        console.log(`[useSimulation] 경로 생성 중... ${retryCount + 1}회 대기 후 재시도`);
+                        setTimeout(() => fetchWithRetry(retryCount + 1), 10000);
+                    } else {
+                        console.warn(`[useSimulation] 경로 생성 대기 초과: ${scenarioKey}`);
+                    }
+                    return null;
+                }
                 if (!r.ok) {
                     console.warn(`[useSimulation] 차량 경로 로드 실패 (${r.status}):`, scenarioKey);
                     return null;
                 }
                 return r.json();
-            })
-            .then(applyRouteData);
+            }).then((data) => {
+                if (data) applyRouteData(data);
+            });
+        };
+        fetchWithRetry();
     }, [ numVehicle, speedFactor, selectedScenario?.key ]);
 
     // Cesium과 OpenLayers 시뮬레이션 통합: 후처리 및 Cesium 관련 설정
@@ -254,7 +321,6 @@ const useSimulation = () => {
             lastOdUpdateTime.current = currentTime;
             const newVehicleRoute = vehicleRouteStartEndRef.current;
             const lastPositions = lastPositionsRef.current.positions;
-            console.log('[OD] postMessage lastPositions.length:', lastPositions?.length, 'newVehicleRoute.length:', newVehicleRoute?.length, 'sample route:', newVehicleRoute?.[0]);
             makeOdDataWorkerRef.current?.postMessage({ lastPositions, newVehicleRoute })
         }
         if (currentTime - lastUpdateTime.current >= 50 && isRunningRef.current) {

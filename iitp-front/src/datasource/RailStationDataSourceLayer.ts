@@ -1,3 +1,5 @@
+import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
+import * as Cesium from "cesium";
 import { Cartesian3, Color, Entity, GeoJsonDataSource, Viewer } from "cesium";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { FEATURE_TYPE, RailPublicStationResponse, TRANSIT_MODE } from "@type/Station";
@@ -22,7 +24,7 @@ export default class RailStationDataSourceLayer {
                     console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
                     this.load();
                 },
-                {equalityFn: (a: RailPublicStationResponse, b: RailPublicStationResponse) => diff(a, b) === undefined}
+                { equalityFn: (a: any, b: any) => a === b }
             );
         }
     }
@@ -35,12 +37,23 @@ export default class RailStationDataSourceLayer {
 
             const store = layerNameToStoreMap[this.LAYER_NAME];
             const railStations = store.getState().currentJsonData?.railStations;
-            const networkDataSource = this.viewer.dataSources.getByName("network")[0];
-            if (!networkDataSource) return;
-
             if (!railStations) return;
+
+            // 링크 좌표는 entity lookup 대신 store에서 직접 조회
+            const networkStore = layerNameToStoreMap['network'];
+            const networkData = networkStore?.getState().currentJsonData as any;
+            const linkCoordMap = new Map<string, any[]>();
+            if (networkData?.links) {
+                for (const link of networkData.links) {
+                    if (link.coordinates?.length >= 2) {
+                        linkCoordMap.set(String(link.id), link.coordinates);
+                    }
+                }
+            }
+
             for (const railStation of railStations) {
                 const coord = railStation.coordinates;
+                if (!coord) continue;
                 const stationPosition = Cartesian3.fromDegrees(coord.lng, coord.lat);
 
                 this.dataSource.entities.add(
@@ -60,15 +73,15 @@ export default class RailStationDataSourceLayer {
                     })
                 );
                 for (const exit of railStation.exits) {
+                    const linkCoords = linkCoordMap.get(String(exit.linkRef));
+                    if (!linkCoords || linkCoords.length < 2) continue;
 
-                    const linkEntity = networkDataSource.entities.values.find(
-                        (e) =>
-                            e.properties?.featureType == "links" &&
-                            e.properties?.id == exit.linkRef
+                    const linkStart = Cesium.Cartesian3.fromDegrees(linkCoords[0].lng, linkCoords[0].lat);
+                    const linkEnd = Cesium.Cartesian3.fromDegrees(
+                        linkCoords[linkCoords.length - 1].lng,
+                        linkCoords[linkCoords.length - 1].lat
                     );
-                    const [linkStart, linkEnd] = linkEntity?.corridor?.positions?.getValue()
-
-                    const { offsetPosition } = computePositionAtOffsetCesium(linkStart, linkEnd, exit.offset)
+                    const { offsetPosition } = computePositionAtOffsetCesium(linkStart, linkEnd, exit.offset);
 
                     this.dataSource.entities.add(
                         new Entity({

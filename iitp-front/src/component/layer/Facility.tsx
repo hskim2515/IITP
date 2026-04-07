@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLayerStore } from '@stores/useLayerStore';
 import { LayerField } from "@stores/useLayerSchemaStore";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
@@ -28,13 +28,46 @@ const Facility = ({ fields }: FacilityProps) => {
     const nestedArrayFieldsMap: Record<string, string[]> = {};
     const [expandedParents, setExpandedParents] = useState<Record<string, boolean>>({});
 
+    // 레이어 source 피처 수 변화를 감지해 visibleFields 재계산
+    const [, setSourceTick] = useState(0);
+
+    useEffect(() => {
+        if (!layerManager) return;
+        const listeners: Array<() => void> = [];
+        fields.forEach(field => {
+            const layer = layerManager.getLayerByName(field.key);
+            const source = layer?.getSource?.();
+            if (!source) return;
+            const onChange = () => setSourceTick(t => t + 1);
+            source.on('addfeature', onChange);
+            source.on('removefeature', onChange);
+            source.on('clear', onChange);
+            listeners.push(() => {
+                source.un('addfeature', onChange);
+                source.un('removefeature', onChange);
+                source.un('clear', onChange);
+            });
+        });
+        return () => listeners.forEach(u => u());
+    }, [fields, layerManager]);
+
+    // 좌표(피처)가 없는 레이어는 목록에서 제외
+    const visibleFields = useMemo(() => {
+        if (!layerManager) return fields;
+        return fields.filter((field) => {
+            const layer = layerManager.getLayerByName(field.key);
+            const featureCount = layer?.getSource?.()?.getFeatures?.()?.length ?? 0;
+            return featureCount > 0;
+        });
+    }, [fields, layerManager]);
+
     const toggleExpand = (parentKey: string) => {
         setExpandedParents(prev => ({ ...prev, [parentKey]: !prev[parentKey] }));
     };
 
-    const defaultSelected = fields.find(field => field.basic)?.key || null;
+    const defaultSelected = visibleFields.find(field => field.basic)?.key || null;
 
-    fields.forEach((field) => {
+    visibleFields.forEach((field) => {
         if (layerManager) {
             const store = layerNameToStoreMap[field.key];
             const currentJsonData = store?.getState().currentJsonData;
@@ -66,24 +99,16 @@ const Facility = ({ fields }: FacilityProps) => {
         const children = nestedArrayFieldsMap[parentKey] || [];
         if (checked) {
             addActiveLayerName(parentKey);
-            if (children.length > 0) {
-                children.forEach(child => {
-                    addActiveLayerName(`${parentKey}.${child}`);
-                    layerManager?.toggleByFeatureType('facility', parentKey, child, true);
-                });
-            } else {
-                layerManager?.showLayer('facility', parentKey);
-            }
+            children.forEach(child => {
+                addActiveLayerName(`${parentKey}.${child}`);
+            });
+            layerManager?.showLayer('facility', parentKey);
         } else {
             removeActiveLayerName(parentKey);
-            if (children.length > 0) {
-                children.forEach(child => {
-                    removeActiveLayerName(`${parentKey}.${child}`);
-                    layerManager?.toggleByFeatureType('facility', parentKey, child, false);
-                });
-            } else {
-                layerManager?.hideLayer('facility', parentKey);
-            }
+            children.forEach(child => {
+                removeActiveLayerName(`${parentKey}.${child}`);
+            });
+            layerManager?.hideLayer('facility', parentKey);
         }
     };
 
@@ -104,7 +129,7 @@ const Facility = ({ fields }: FacilityProps) => {
 
     return (
         <div>
-            {fields.map((field) => {
+            {visibleFields.map((field) => {
                 const parentKey = field.key;
                 const nestedFields = nestedArrayFieldsMap[parentKey] || [];
                 const isExpanded = expandedParents[parentKey] ?? false;

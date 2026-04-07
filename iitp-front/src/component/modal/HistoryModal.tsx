@@ -23,7 +23,7 @@ interface HistoryStep {
     id: number;
     versionId: string;
     createdAt: string;
-    json: Record<string, any>;
+    data: Record<string, any>;
     message?: string;
     isCurrent?: boolean;
 }
@@ -34,17 +34,15 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
     const historyStore = menuCodeToHistoryStoreMap[menuCode];
     const featureStore = menuCodeToStoreMap[menuCode];
 
-    const selectedScenario = useScenarioStore.getState().selectedScenario;
-    const selectedScenarioVersion = useScenarioStore.getState().selectedScenarioVersion;
-    const originData = featureStore.getState().originData;
-    const firstKey = Object.keys(originData)[0] as keyof typeof originData;
-    const originHistoryLogData = historyStore.getState().originHistoryData;
+    const selectedScenario = useScenarioStore((s) => s.selectedScenario);
+    const selectedScenarioVersion = useScenarioStore((s) => s.selectedScenarioVersion);
+    const originHistoryLogData = (historyStore as any)((s: any) => s.originHistoryData);
     const setCurrentSnapshotIndex = historyStore.getState().setCurrentSnapshotIndex;
     const setMessage = useMessageStore.getState().setMessage;
 
     useEffect(() => {
         if (!originHistoryLogData) return;
-        const steps: HistoryStep[] = originHistoryLogData
+        const steps: HistoryStep[] = [...originHistoryLogData]
             .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
             .map((item) => ({
                 id: item.id,
@@ -102,9 +100,9 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
                     return;
                 }
                 const originHistoryData = featureStore.getState().originHistoryData;
+                const firstKey = Object.keys(originHistoryData)[0];
                 const mergeData = buildMergedDataFromLogs(originHistoryData[firstKey], logsToApply, /*isUndo=*/true);
                 featureStore.getState().setCurrentJsonData({
-                    //...currentData,
                     [firstKey]: mergeData,
                 });
                 featureReverseLogs(historyStore,historySteps.slice(0, idx + 1));

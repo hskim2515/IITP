@@ -7,69 +7,78 @@ import type { BufferGeometry } from "three";
  *
  * 핵심 구현:
  *  - RTC(Relative-to-Center): ECEF float32 정밀도 문제 해결
- *    · instanceOffset = position - referenceCenter  (작은 값, float32 OK)
- *    · u_rtcCenter    = referenceCenter - cameraEye (JS double 연산 후 float32)
- *    · shader: posEye = mat3(view) * (rtcCenter + offset + rotatedModel)
  *  - GPU instanced draw: 모든 인스턴스 1회 DrawCall
- *  - scratch 객체 재사용: 매 프레임 GC 방지
- *  - GLB 자동 스케일: 목표 크기(targetSizeM)에 맞게 자동 조정
+ *  - 차종별 텍스처: GLB 내장 PNG를 vehicleType에 따라 선택
  */
 export default class VehiclePrimitive {
     // ─── Cesium 렌더링 리소스 ──────────────────────────────────────────────
     context: any;
     viewer: any;
-    private vertexArray:       any = null;
-    private shaderProgram:     any = null;
-    private drawCommand:       any = null;
+    private vertexArray:          any = null;
+    private shaderProgram:        any = null;
+    private drawCommand:          any = null;
+    // LOD: 포인트 스프라이트 (원거리)
+    private pointDummyBuffer:     any = null;
+    private pointVertexArray:     any = null;
+    private pointShaderProgram:   any = null;
+    private drawCommandPoint:     any = null;
 
     destroyed = false;
     show      = false;
 
     // ─── 데이터 ───────────────────────────────────────────────────────────
-    /** paths[i] = [t,x,y,z, t,x,y,z, ...] flat ECEF 배열 (vehicle i) */
     private paths: number[][];
     instanceCount: number;
 
-    latestPositions?: number[][];   // [x, y, z] ECEF
-    latestHeadings?:  number[];     // ENU 기준 north=0, 시계방향
+    latestPositions?: number[][];
+    latestHeadings?:  number[];
 
     baseColor:   [number, number, number] = [1, 1, 1];
     vehicleType  = 'default';
     speed:       number;
     status:      string;
     correctionHpr: Cesium.HeadingPitchRoll;
-    /** 목표 차량 크기(m). GLB 모델이 이 크기로 자동 스케일됩니다. */
     targetSizeM: number;
-    /** ENU Up 방향 높이 보정(m). 양수=위로 올림 */
     zOffset: number;
 
     // ─── GPU 버퍼 ─────────────────────────────────────────────────────────
-    private offsetBuffer:      any = null;   // RTC offset (instance)
+    private offsetBuffer:      any = null;
     private modelVertexBuffer: any = null;
     private modelNormalBuffer: any = null;
+    private modelUvBuffer:     any = null;   // UV (per-vertex)
     private modelIndexBuffer:  any = null;
     private orientationBuffer: any = null;
-    private scaleBuffer:       any = null;   // per-instance scale (instance)
+    private scaleBuffer:       any = null;
 
-    // ─── RTC 기준점 (ECEF) ────────────────────────────────────────────────
+    // ─── 텍스처 ───────────────────────────────────────────────────────────
+    private cesiumTexture:  any = null;
+    private hasTexture      = false;
+
+    /** vehicleType → GLB material name 매핑 (조정 가능) */
+    static VEHICLE_TYPE_TO_MATERIAL: Record<string, string> = {
+        'CAR':     'CAR_01',
+        'TAXI':    'CAR_02',
+        'BUS':     'CAR_06',
+        'TRUCK':   'CAR_07',
+        'MOTO':    'CAR_09',
+        'default': 'CAR_03',
+    };
+
+    // ─── RTC 기준점 ───────────────────────────────────────────────────────
     private referenceCenter = new Cesium.Cartesian3();
 
-    // ─── CPU 재사용 배열 (GC 방지) ────────────────────────────────────────
+    // ─── CPU 재사용 배열 ──────────────────────────────────────────────────
     private _offsetArr: Float32Array | null = null;
     private _orientArr: Float32Array | null = null;
 
-    // ─── 프레임당 scratch 객체 (static, 인스턴스 공유) ──────────────────
-    private static readonly _sfrom = new Cesium.Cartesian3();
-    private static readonly _shpr  = new Cesium.HeadingPitchRoll(0, 0, 0);
+    // ─── static scratch ───────────────────────────────────────────────────
+    private static readonly _sfrom  = new Cesium.Cartesian3();
+    private static readonly _shpr   = new Cesium.HeadingPitchRoll(0, 0, 0);
     private static readonly _sqBase = new Cesium.Quaternion();
     private static readonly _sqRes  = new Cesium.Quaternion();
     private static readonly _srtc   = new Cesium.Cartesian3();
 
-    // correctionHpr → Quaternion (initialize() 에서 1회 계산)
     private correctionQ = new Cesium.Quaternion();
-
-    // ─── 생성자 ───────────────────────────────────────────────────────────
-    /** per-instance scale (targetSizeM 기준 상대값). 없으면 모두 1.0 */
     private instanceScales: Float32Array;
 
     constructor(
@@ -94,14 +103,11 @@ export default class VehiclePrimitive {
         this.targetSizeM   = targetSizeM;
         this.zOffset       = zOffset;
 
-        // per-instance scale: 제공된 length / targetSizeM, 0이거나 없으면 1.0
         this.instanceScales = new Float32Array(paths.length);
         for (let i = 0; i < paths.length; i++) {
             const len = scales?.[i];
             this.instanceScales[i] = (len && len > 0) ? len / targetSizeM : 1.0;
         }
-
-        console.log(`[VehiclePrimitive] correctionHpr H=${this.correctionHpr.heading.toFixed(3)} P=${this.correctionHpr.pitch.toFixed(3)} R=${this.correctionHpr.roll.toFixed(3)}`);
 
         this.initialize(glbUrl);
     }
@@ -110,15 +116,13 @@ export default class VehiclePrimitive {
     async initialize(glbUrl: string) {
         if (this.destroyed) return;
 
-        // RTC 기준점: 첫 번째 유효 waypoint
         const first = this.paths.find(p => p.length >= 4);
         if (first) {
-            this.referenceCenter.x = first[1];
-            this.referenceCenter.y = first[2];
-            this.referenceCenter.z = first[3];
+            this.referenceCenter.x = first[1]!;
+            this.referenceCenter.y = first[2]!;
+            this.referenceCenter.z = first[3]!;
         }
 
-        // correctionHpr → Quaternion (고정, 1회만 계산)
         const corrM = Cesium.Matrix3.fromHeadingPitchRoll(this.correctionHpr);
         Cesium.Quaternion.fromRotationMatrix(corrM, this.correctionQ);
 
@@ -134,7 +138,11 @@ export default class VehiclePrimitive {
         }
         if (this.destroyed) return;
 
-        // ── GLB 파싱 (three.js GLTFLoader) ──────────────────────────────
+        // ── GLB 바이너리 직접 파싱 (텍스처 추출용) ──────────────────────
+        const glbJson = this.parseGLBJson(arrayBuffer);
+        const binOffset = this.getGLBBinOffset(arrayBuffer);
+
+        // ── GLB 파싱 (three.js GLTFLoader — geometry + UV) ───────────────
         let gltf: any;
         try {
             gltf = await new Promise<any>((resolve, reject) =>
@@ -146,11 +154,12 @@ export default class VehiclePrimitive {
         }
         if (this.destroyed) return;
 
-        // ── Mesh 수집 (world transform 적용, 복수 mesh 병합) ─────────────
-        const allPos: number[]  = [];
+        // ── Mesh 수집 ─────────────────────────────────────────────────────
+        const allPos:  number[] = [];
         const allNorm: number[] = [];
-        const allIdx: number[]  = [];
-        let vOffset = 0, hasMesh = false;
+        const allUV:   number[] = [];
+        const allIdx:  number[] = [];
+        let vOffset = 0, hasMesh = false, hasUV = false;
 
         try {
             gltf.scene.updateWorldMatrix(true, true);
@@ -162,6 +171,7 @@ export default class VehiclePrimitive {
                 hasMesh = true;
 
                 const normA = geo.attributes.normal;
+                const uvA   = geo.attributes.uv;         // TEXCOORD_0
                 const idxA  = geo.index;
                 const m     = child.matrixWorld.elements;
 
@@ -181,6 +191,14 @@ export default class VehiclePrimitive {
                         );
                     } else {
                         allNorm.push(0, 1, 0);
+                    }
+
+                    // UV
+                    if (uvA) {
+                        allUV.push(uvA.getX(v), uvA.getY(v));
+                        hasUV = true;
+                    } else {
+                        allUV.push(0, 0);
                     }
                 }
 
@@ -202,7 +220,6 @@ export default class VehiclePrimitive {
         for (let i = 0; i < vCount; i++) { cx += allPos[i*3]; cy += allPos[i*3+1]; cz += allPos[i*3+2]; }
         cx /= vCount; cy /= vCount; cz /= vCount;
 
-        // bounding sphere 반지름 계산 → targetSizeM에 맞게 스케일
         let maxR = 0;
         for (let i = 0; i < vCount; i++) {
             const dx = allPos[i*3] - cx, dy = allPos[i*3+1] - cy, dz = allPos[i*3+2] - cz;
@@ -218,12 +235,32 @@ export default class VehiclePrimitive {
             verts[i*3+2] = (allPos[i*3+2] - cz) * sc;
         }
         const norms = new Float32Array(allNorm);
+        const uvs   = new Float32Array(allUV);
 
         const indicesTyped = vOffset > 65535
             ? new Uint32Array(allIdx)
             : new Uint16Array(allIdx);
 
-        // ── 초기 orientation 계산 ─────────────────────────────────────────
+        // ── 텍스처 로드 (GLB 바이너리에서 차종별 이미지 추출) ────────────
+        if (hasUV && glbJson && binOffset >= 0) {
+            try {
+                const img = await this.extractTextureImage(glbJson, arrayBuffer, binOffset);
+                if (img && !this.destroyed) {
+                    this.cesiumTexture = new (Cesium as any).Texture({
+                        context: this.context,
+                        source:  img,
+                        flipY:   false,  // three.js가 이미 V좌표를 반전하므로 이중 반전 방지
+                    });
+                    this.hasTexture = true;
+                }
+            } catch (e) {
+                console.warn('[VehiclePrimitive] 텍스처 추출 실패, baseColor 사용:', e);
+            }
+        }
+
+        if (this.destroyed) return;
+
+        // ── 초기 orientation / offset ─────────────────────────────────────
         const orientInit = new Float32Array(this.instanceCount * 4);
         for (let i = 0; i < this.instanceCount; i++) {
             const p = this.paths[i];
@@ -235,7 +272,6 @@ export default class VehiclePrimitive {
             orientInit[i*4]=q.x; orientInit[i*4+1]=q.y; orientInit[i*4+2]=q.z; orientInit[i*4+3]=q.w;
         }
 
-        // ── 초기 RTC offset 계산 ─────────────────────────────────────────
         const rc = this.referenceCenter;
         const offsetInit = new Float32Array(this.instanceCount * 3);
         for (let i = 0; i < this.instanceCount; i++) {
@@ -249,8 +285,9 @@ export default class VehiclePrimitive {
         const ctx = this.context;
         const BU  = Cesium.BufferUsage;
 
-        this.modelVertexBuffer = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: verts,       usage: BU.STATIC_DRAW });
-        this.modelNormalBuffer = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: norms,       usage: BU.STATIC_DRAW });
+        this.modelVertexBuffer = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: verts,              usage: BU.STATIC_DRAW });
+        this.modelNormalBuffer = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: norms,              usage: BU.STATIC_DRAW });
+        this.modelUvBuffer     = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: uvs,                usage: BU.STATIC_DRAW });
         this.modelIndexBuffer  = Cesium.Buffer.createIndexBuffer({
             context: ctx, typedArray: indicesTyped,
             indexDatatype: indicesTyped instanceof Uint32Array
@@ -258,11 +295,10 @@ export default class VehiclePrimitive {
                 : Cesium.IndexDatatype.UNSIGNED_SHORT,
             usage: BU.STATIC_DRAW,
         });
-        this.offsetBuffer      = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: offsetInit,        usage: BU.DYNAMIC_DRAW });
-        this.orientationBuffer = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: orientInit,        usage: BU.DYNAMIC_DRAW });
-        this.scaleBuffer       = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: this.instanceScales, usage: BU.STATIC_DRAW });
+        this.offsetBuffer      = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: offsetInit,         usage: BU.DYNAMIC_DRAW });
+        this.orientationBuffer = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: orientInit,         usage: BU.DYNAMIC_DRAW });
+        this.scaleBuffer       = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: this.instanceScales,usage: BU.STATIC_DRAW });
 
-        // CPU 재사용 배열
         this._offsetArr = new Float32Array(this.instanceCount * 3);
         this._orientArr = new Float32Array(this.instanceCount * 4);
 
@@ -270,26 +306,20 @@ export default class VehiclePrimitive {
         this.vertexArray = new Cesium.VertexArray({
             context: ctx,
             attributes: [
-                // 모델 geometry (per-vertex)
+                // per-vertex
                 { index: 0, vertexBuffer: this.modelVertexBuffer, componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT },
                 { index: 1, vertexBuffer: this.modelNormalBuffer, componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT },
-                // 인스턴스 데이터 (per-instance, instanceDivisor=1)
-                { index: 2, vertexBuffer: this.offsetBuffer,      componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
-                { index: 3, vertexBuffer: this.orientationBuffer, componentsPerAttribute: 4, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
-                { index: 4, vertexBuffer: this.scaleBuffer,       componentsPerAttribute: 1, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
+                { index: 2, vertexBuffer: this.modelUvBuffer,     componentsPerAttribute: 2, componentDatatype: Cesium.ComponentDatatype.FLOAT },
+                // per-instance
+                { index: 3, vertexBuffer: this.offsetBuffer,      componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
+                { index: 4, vertexBuffer: this.orientationBuffer, componentsPerAttribute: 4, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
+                { index: 5, vertexBuffer: this.scaleBuffer,       componentsPerAttribute: 1, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
             ],
             indexBuffer: this.modelIndexBuffer,
         });
 
         // ── ShaderProgram ────────────────────────────────────────────────
-        //
-        // RTC 렌더링 원리:
-        //   posRel  = u_rtcCenter + a_instanceOffset + rotatedModel
-        //           = (refCenter - cameraEye) + (position - refCenter) + model
-        //           = position - cameraEye + model   ← camera-relative (정밀)
-        //   posEye  = mat3(u_view) * posRel           ← view 회전만 적용 (translation 불필요)
-        //   clip    = u_projection * vec4(posEye, 1)
-        //
+        const self = this;
         this.shaderProgram = Cesium.ShaderProgram.fromCache({
             context: ctx,
             vertexShaderSource: `
@@ -297,62 +327,85 @@ export default class VehiclePrimitive {
 
                 layout(location=0) in vec3 a_modelPosition;
                 layout(location=1) in vec3 a_modelNormal;
-                layout(location=2) in vec3 a_instanceOffset;       // position - referenceCenter
-                layout(location=3) in vec4 a_instanceOrientation;  // WXYZ quaternion
-                layout(location=4) in float a_instanceScale;       // per-vehicle scale
+                layout(location=2) in vec2 a_uv;
+                layout(location=3) in vec3 a_instanceOffset;
+                layout(location=4) in vec4 a_instanceOrientation;
+                layout(location=5) in float a_instanceScale;
 
                 uniform mat4 u_view;
                 uniform mat4 u_projection;
-                uniform vec3 u_rtcCenter;   // referenceCenter - cameraEye (JS double → float32)
+                uniform vec3 u_rtcCenter;
 
-                // quaternion 회전
+                out vec2 v_uv;
+                out float v_eyeDist;
+
                 vec3 quatRotate(vec3 v, vec4 q) {
                     return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
                 }
 
                 void main() {
-                    // per-instance scale 적용 후 회전
+                    // 인스턴스 중심의 eye-space 거리로 LOD 판단
+                    vec3 instCenter = mat3(u_view) * (u_rtcCenter + a_instanceOffset);
+                    float instDist  = length(instCenter);
+
+                    // 800m 이상은 포인트 스프라이트가 담당 → 메쉬 숨김
+                    if (instDist > 800.0) {
+                        gl_Position = vec4(2.0, 2.0, 0.0, 1.0); // NDC 밖 → 클리핑
+                        v_uv      = vec2(0.0);
+                        v_eyeDist = instDist;
+                        return;
+                    }
+
                     vec3 rotated = quatRotate(a_modelPosition * a_instanceScale, a_instanceOrientation);
-
-                    // camera-relative 위치 (RTC: 정밀도 보존)
-                    vec3 posRel = u_rtcCenter + a_instanceOffset + rotated;
-
-                    // view 회전만 적용 (mat3 = upper-left 3x3, translation 없음)
-                    vec3 posEye = mat3(u_view) * posRel;
-
-                    gl_Position = u_projection * vec4(posEye, 1.0);
+                    vec3 posRel  = u_rtcCenter + a_instanceOffset + rotated;
+                    vec3 posEye  = mat3(u_view) * posRel;
+                    gl_Position  = u_projection * vec4(posEye, 1.0);
+                    v_uv      = a_uv;
+                    v_eyeDist = length(posEye);
                 }
             `,
             fragmentShaderSource: `
                 #version 300 es
                 precision highp float;
-                uniform vec3 u_baseColor;
+
+                in vec2 v_uv;
+                in float v_eyeDist;
+                uniform sampler2D u_texture;
+                uniform vec3      u_baseColor;
+                uniform bool      u_hasTexture;
+
                 out vec4 fragColor;
+
                 void main() {
-                    fragColor = vec4(u_baseColor, 0.9);
+                    vec4 colorOnly = vec4(u_baseColor, 0.9);
+                    if (u_hasTexture) {
+                        // 100m 이내: 텍스쳐, 300m 이상: 색상만, 사이: 블렌딩
+                        float texWeight = 1.0 - smoothstep(100.0, 300.0, v_eyeDist);
+                        fragColor = mix(colorOnly, texture(u_texture, v_uv), texWeight);
+                    } else {
+                        fragColor = colorOnly;
+                    }
                 }
             `,
             attributeLocations: {
                 a_modelPosition:       0,
                 a_modelNormal:         1,
-                a_instanceOffset:      2,
-                a_instanceOrientation: 3,
-                a_instanceScale:       4,
+                a_uv:                  2,
+                a_instanceOffset:      3,
+                a_instanceOrientation: 4,
+                a_instanceScale:       5,
             },
         });
 
         // ── DrawCommand ──────────────────────────────────────────────────
-        const self = this;
         const sRTC = VehiclePrimitive._srtc;
 
         this.drawCommand = new Cesium.DrawCommand({
             vertexArray:   this.vertexArray,
             shaderProgram: this.shaderProgram,
             uniformMap: {
-                // view 행렬 (회전+이동 포함, shader에서는 mat3으로 회전만 사용)
                 u_view:       () => ctx.uniformState.view,
                 u_projection: () => ctx.uniformState.projection,
-                // RTC center: referenceCenter - cameraEye (JS double precision)
                 u_rtcCenter: () => {
                     const cam = self.viewer.scene.camera.positionWC;
                     sRTC.x = self.referenceCenter.x - cam.x;
@@ -360,7 +413,9 @@ export default class VehiclePrimitive {
                     sRTC.z = self.referenceCenter.z - cam.z;
                     return sRTC;
                 },
-                u_baseColor: () => new Cesium.Cartesian3(self.baseColor[0], self.baseColor[1], self.baseColor[2]),
+                u_baseColor:   () => new Cesium.Cartesian3(self.baseColor[0], self.baseColor[1], self.baseColor[2]),
+                u_texture:     () => self.cesiumTexture,
+                u_hasTexture:  () => self.hasTexture,
             },
             primitiveType: Cesium.PrimitiveType.TRIANGLES,
             count:         indicesTyped.length,
@@ -373,13 +428,163 @@ export default class VehiclePrimitive {
             }),
         });
 
-        console.log(`[VehiclePrimitive] 초기화 완료: type=${this.vehicleType} count=${this.instanceCount} scale=${sc.toFixed(3)} glb=${glbUrl}`);
+        // ── 포인트 스프라이트 DrawCommand (원거리 LOD) ──────────────────
+        // 더미 버텍스 1개 + offsetBuffer(instance) 로 구성
+        this.pointDummyBuffer = Cesium.Buffer.createVertexBuffer({
+            context: ctx,
+            typedArray: new Float32Array([0, 0, 0]),
+            usage: BU.STATIC_DRAW,
+        });
+
+        this.pointVertexArray = new Cesium.VertexArray({
+            context: ctx,
+            attributes: [
+                { index: 0, vertexBuffer: this.pointDummyBuffer,  componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT },
+                { index: 1, vertexBuffer: this.offsetBuffer,      componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
+            ],
+        });
+
+        this.pointShaderProgram = Cesium.ShaderProgram.fromCache({
+            context: ctx,
+            vertexShaderSource: `
+                #version 300 es
+
+                layout(location=0) in vec3 a_dummy;
+                layout(location=1) in vec3 a_instanceOffset;
+
+                uniform mat4 u_view;
+                uniform mat4 u_projection;
+                uniform vec3 u_rtcCenter;
+
+                void main() {
+                    vec3 instEye  = mat3(u_view) * (u_rtcCenter + a_instanceOffset);
+                    float instDist = length(instEye);
+                    // 600m 이하는 메쉬가 담당 → 포인트 숨김
+                    if (instDist < 600.0) {
+                        gl_Position  = vec4(2.0, 2.0, 0.0, 1.0);
+                        gl_PointSize = 1.0;
+                        return;
+                    }
+                    gl_Position  = u_projection * vec4(instEye, 1.0);
+                    // 거리에 따라 점 크기 조정 (멀수록 작게, 최소 3px 보장)
+                    gl_PointSize = clamp(8000.0 / instDist, 3.0, 10.0);
+                }
+            `,
+            fragmentShaderSource: `
+                #version 300 es
+                precision mediump float;
+
+                uniform vec3 u_baseColor;
+                out vec4 fragColor;
+
+                void main() {
+                    // 원형 점
+                    if (length(gl_PointCoord - vec2(0.5)) > 0.5) discard;
+                    fragColor = vec4(u_baseColor, 1.0);
+                }
+            `,
+            attributeLocations: {
+                a_dummy:          0,
+                a_instanceOffset: 1,
+            },
+        });
+
+        this.drawCommandPoint = new Cesium.DrawCommand({
+            vertexArray:   this.pointVertexArray,
+            shaderProgram: this.pointShaderProgram,
+            uniformMap: {
+                u_view:      () => ctx.uniformState.view,
+                u_projection:() => ctx.uniformState.projection,
+                u_rtcCenter: () => {
+                    const cam = self.viewer.scene.camera.positionWC;
+                    sRTC.x = self.referenceCenter.x - cam.x;
+                    sRTC.y = self.referenceCenter.y - cam.y;
+                    sRTC.z = self.referenceCenter.z - cam.z;
+                    return sRTC;
+                },
+                u_baseColor: () => new Cesium.Cartesian3(self.baseColor[0], self.baseColor[1], self.baseColor[2]),
+            },
+            primitiveType: Cesium.PrimitiveType.POINTS,
+            count:         1,
+            instanceCount: this.instanceCount,
+            pass:          Cesium.Pass.OPAQUE,
+            renderState:   Cesium.RenderState.fromCache({
+                depthTest: { enabled: true },
+                cull:      { enabled: false },
+            }),
+        });
+
+        console.log(`[VehiclePrimitive] 초기화 완료: type=${this.vehicleType} texture=${this.hasTexture} count=${this.instanceCount}`);
+    }
+
+    // ─── GLB 파싱 유틸 ────────────────────────────────────────────────────
+
+    /** GLB JSON 청크 파싱 */
+    private parseGLBJson(arrayBuffer: ArrayBuffer): any | null {
+        try {
+            const dv = new DataView(arrayBuffer);
+            const chunk0Len = dv.getUint32(12, true);
+            const jsonBytes = new Uint8Array(arrayBuffer, 20, chunk0Len);
+            return JSON.parse(new TextDecoder().decode(jsonBytes));
+        } catch {
+            return null;
+        }
+    }
+
+    /** GLB 바이너리 청크 시작 오프셋 */
+    private getGLBBinOffset(arrayBuffer: ArrayBuffer): number {
+        const dv = new DataView(arrayBuffer);
+        const chunk0Len = dv.getUint32(12, true);
+        return 20 + chunk0Len + 8; // JSON chunk + bin chunk header(8)
+    }
+
+    /**
+     * vehicleType에 맞는 텍스처 이미지를 GLB 바이너리에서 추출.
+     * GLB에 해당 차종 material이 없으면 mesh 기본 material을 사용.
+     */
+    private async extractTextureImage(
+        gltfJson: any,
+        arrayBuffer: ArrayBuffer,
+        binOffset: number
+    ): Promise<HTMLImageElement | null> {
+        // 차종별 material name → 없으면 mesh 기본 material
+        const targetName = VehiclePrimitive.VEHICLE_TYPE_TO_MATERIAL[this.vehicleType]
+            ?? VehiclePrimitive.VEHICLE_TYPE_TO_MATERIAL['default'];
+
+        let matIndex = gltfJson.materials?.findIndex((m: any) => m.name === targetName) ?? -1;
+        if (matIndex < 0) {
+            // fallback: mesh 기본 material
+            matIndex = gltfJson.meshes?.[0]?.primitives?.[0]?.material ?? -1;
+        }
+        if (matIndex < 0) return null;
+
+        const texIndex = gltfJson.materials[matIndex]?.pbrMetallicRoughness?.baseColorTexture?.index;
+        if (texIndex === undefined) return null;
+
+        const imgIndex = gltfJson.textures?.[texIndex]?.source;
+        if (imgIndex === undefined) return null;
+
+        const imgDef = gltfJson.images?.[imgIndex];
+        if (imgDef?.bufferView === undefined) return null;
+
+        const bv = gltfJson.bufferViews[imgDef.bufferView];
+        const imgBytes = new Uint8Array(arrayBuffer, binOffset + (bv.byteOffset ?? 0), bv.byteLength);
+        const blob = new Blob([imgBytes], { type: imgDef.mimeType ?? 'image/png' });
+        const url  = URL.createObjectURL(blob);
+
+        return new Promise<HTMLImageElement | null>((resolve) => {
+            const img = new Image();
+            img.onload  = () => { URL.revokeObjectURL(url); resolve(img); };
+            img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+            img.src = url;
+        });
     }
 
     // ─── 매 프레임 호출 ───────────────────────────────────────────────────
     update(frameState: any) {
         if (this.destroyed || !this.show) return;
         if (!this.drawCommand || !this.offsetBuffer || !this.orientationBuffer) return;
+        if (!this.drawCommandPoint) return;
         if (!this._offsetArr || !this._orientArr) return;
 
         const positions = this.latestPositions;
@@ -390,7 +595,6 @@ export default class VehiclePrimitive {
         const corrQ    = this.correctionQ;
         const count    = positions.length;
 
-        // scratch 재사용
         const sfrom  = VehiclePrimitive._sfrom;
         const shpr   = VehiclePrimitive._shpr;
         const sqBase = VehiclePrimitive._sqBase;
@@ -400,7 +604,6 @@ export default class VehiclePrimitive {
         for (let i = 0; i < count; i++) {
             const p = positions[i];
 
-            // Z-offset: ECEF 위치를 ENU Up 방향(= ECEF 단위벡터)으로 zOffset(m) 이동
             let px = p[0], py = p[1], pz = p[2];
             if (zo !== 0) {
                 const r = Math.sqrt(px * px + py * py + pz * pz);
@@ -412,19 +615,15 @@ export default class VehiclePrimitive {
                 }
             }
 
-            // RTC offset 갱신
             this._offsetArr[i*3]   = px - rc.x;
             this._offsetArr[i*3+1] = py - rc.y;
             this._offsetArr[i*3+2] = pz - rc.z;
 
-            // orientation 갱신
-            sfrom.x = p[0]; sfrom.y = p[1]; sfrom.z = p[2];
+            sfrom.x = p[0]!; sfrom.y = p[1]!; sfrom.z = p[2]!;
             shpr.heading = headings?.[i] ?? 0;
             shpr.pitch   = 0;
             shpr.roll    = 0;
-            // ENU 기반 방향 quaternion (scratch 재사용)
             Cesium.Transforms.headingPitchRollQuaternion(sfrom, shpr, Cesium.Ellipsoid.WGS84, undefined, sqBase);
-            // 모델 좌표계 보정 적용
             Cesium.Quaternion.multiply(sqBase, corrQ, sqRes);
 
             this._orientArr[i*4]   = sqRes.x;
@@ -433,12 +632,13 @@ export default class VehiclePrimitive {
             this._orientArr[i*4+3] = sqRes.w;
         }
 
-        // GPU 버퍼 업데이트 (활성 차량 수만큼만)
         this.offsetBuffer.copyFromArrayView(this._offsetArr.subarray(0, count * 3));
         this.orientationBuffer.copyFromArrayView(this._orientArr.subarray(0, count * 4));
 
-        this.drawCommand.instanceCount = count;
+        this.drawCommand.instanceCount      = count;
+        this.drawCommandPoint.instanceCount = count;
         frameState.commandList.push(this.drawCommand);
+        frameState.commandList.push(this.drawCommandPoint);
     }
 
     // ─── 외부 인터페이스 ──────────────────────────────────────────────────
@@ -450,7 +650,6 @@ export default class VehiclePrimitive {
     setSpeed(speed: number)   { this.speed  = speed;  }
     setStatus(status: string) { this.status = status; }
 
-    /** 방향 보정값 실시간 변경 (UI에서 즉시 적용) */
     setCorrectionHpr(hpr: Cesium.HeadingPitchRoll) {
         this.correctionHpr = hpr;
         const corrM = Cesium.Matrix3.fromHeadingPitchRoll(hpr);
@@ -463,16 +662,21 @@ export default class VehiclePrimitive {
         this.destroyed = true;
 
         if (this.drawCommand) this.drawCommand.vertexArray = null;
-        // vertexArray.destroy()는 연결된 버퍼들을 암묵적으로 파괴하므로
-        // 먼저 버퍼 참조를 null로 초기화한 뒤 vertexArray를 파괴한다.
+        if (this.drawCommandPoint) this.drawCommandPoint.vertexArray = null;
         this.modelVertexBuffer = null;
         this.modelNormalBuffer = null;
-        this.modelIndexBuffer = null;
-        this.offsetBuffer = null;
+        this.modelUvBuffer     = null;
+        this.modelIndexBuffer  = null;
+        this.offsetBuffer      = null;
         this.orientationBuffer = null;
-        this.scaleBuffer = null;
+        this.scaleBuffer       = null;
         this.vertexArray?.destroy();
         this.shaderProgram?.destroy();
+        this.pointDummyBuffer?.destroy();
+        this.pointVertexArray?.destroy();
+        this.pointShaderProgram?.destroy();
+        this.cesiumTexture?.destroy();
+        this.cesiumTexture = null;
 
         this._offsetArr = null;
         this._orientArr = null;
@@ -481,10 +685,6 @@ export default class VehiclePrimitive {
 
 // ─── 헬퍼 함수 ────────────────────────────────────────────────────────────
 
-/**
- * 두 ECEF 좌표 사이의 geographic bearing (북=0, 시계방향) 계산.
- * Cesium HeadingPitchRoll.heading 규약과 동일.
- */
 function computeHeading(from: Cesium.Cartesian3, to: Cesium.Cartesian3): number {
     const fc = Cesium.Ellipsoid.WGS84.cartesianToCartographic(from);
     const tc = Cesium.Ellipsoid.WGS84.cartesianToCartographic(to);
@@ -495,9 +695,6 @@ function computeHeading(from: Cesium.Cartesian3, to: Cesium.Cartesian3): number 
     return Math.atan2(y, x);
 }
 
-/**
- * 초기화용 orientation quaternion 계산 (new 허용, initialize()에서만 호출).
- */
 function computeOrientationQuaternion(
     position:      Cesium.Cartesian3,
     heading:       number,

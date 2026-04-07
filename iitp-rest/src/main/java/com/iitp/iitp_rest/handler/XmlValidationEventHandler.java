@@ -26,6 +26,7 @@ public class XmlValidationEventHandler implements ValidationEventHandler {
                     event.getLocator().getLineNumber(),
                     event.getLocator().getColumnNumber());
         }
-        return false;
+        // WARNING/ERROR는 계속 진행, FATAL_ERROR만 중단
+        return event.getSeverity() != ValidationEvent.FATAL_ERROR;
     }
 }

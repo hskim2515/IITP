@@ -321,48 +321,52 @@ export class LayerManager {
         // 클래스명으로 매핑
         Object.values(cesiumModules).forEach((mod: any) => {
             const cls = Object.values(mod)[0];
-            classRegistry[cls.name] = cls;
+            if (cls && cls.name) classRegistry[cls.name] = cls;
         });
 
         Object.values(olModules).forEach((mod: any) => {
             const cls = Object.values(mod)[0];
-            classRegistry[cls.name] = cls;
+            if (cls && cls.name) classRegistry[cls.name] = cls;
         });
 
 
         for (const { key, basic } of facilityGroup.fields) {
-            const layerName = key;
-            const pascalKey = toPascalCase(key);
+            try {
+                const layerName = key;
+                const pascalKey = toPascalCase(key);
 
-            const CesiumLayerClass = classRegistry[`${ pascalKey }DataSourceLayer`];
-            const OLFeatureLayerClass = classRegistry[`${ pascalKey }FeatureLayer`];
+                const CesiumLayerClass = classRegistry[`${ pascalKey }DataSourceLayer`];
+                const OLFeatureLayerClass = classRegistry[`${ pascalKey }FeatureLayer`];
 
 
-            const layerGroup = this.layerGroups.get(groupName) || {};
-            if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+                const layerGroup = this.layerGroups.get(groupName) || {};
+                if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
 
-            if (OLFeatureLayerClass) {
-                // OpenLayers 처리
-                const olLayer = new OLFeatureLayerClass();
-                const layers = this.vectorLayerManager.add(olLayer, groupName, layerName, basic);
-                const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
-                layers.forEach((layer: BaseLayer) => {
-                    if (!vectorLayers.includes(layer)) {
-                        vectorLayers.push(layer);
-                    }
-                });
-                // 비동기 로딩 지원
-                await olLayer.load?.();
-            }
-
-            if (CesiumLayerClass) {
-                // Cesium 처리
-                const cesiumLayer = new CesiumLayerClass(this.cesiumViewer);
-                const dataSourceCollection = this.dataSourceLayerManager.add(cesiumLayer, groupName, layerName, basic);
-                const managedCollection = (layerGroup["dataSourceLayerManager"] ||= []);
-                if (!managedCollection.includes(dataSourceCollection)) {
-                    managedCollection.push(dataSourceCollection);
+                if (OLFeatureLayerClass) {
+                    // OpenLayers 처리
+                    const olLayer = new OLFeatureLayerClass();
+                    const layers = this.vectorLayerManager.add(olLayer, groupName, layerName, basic);
+                    const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+                    layers.forEach((layer: BaseLayer) => {
+                        if (!vectorLayers.includes(layer)) {
+                            vectorLayers.push(layer);
+                        }
+                    });
+                    // 비동기 로딩 지원
+                    await olLayer.load?.();
                 }
+
+                if (CesiumLayerClass) {
+                    // Cesium 처리
+                    const cesiumLayer = new CesiumLayerClass(this.cesiumViewer);
+                    const dataSourceCollection = this.dataSourceLayerManager.add(cesiumLayer, groupName, layerName, basic);
+                    const managedCollection = (layerGroup["dataSourceLayerManager"] ||= []);
+                    if (!managedCollection.includes(dataSourceCollection)) {
+                        managedCollection.push(dataSourceCollection);
+                    }
+                }
+            } catch (err) {
+                console.error(`[addFacilityLayers] 레이어 "${key}" 초기화 실패:`, err);
             }
         }
     }

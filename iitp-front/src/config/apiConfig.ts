@@ -67,6 +67,30 @@ export const apiConfig:ApiConfig = {
     MENU: {
         tree: {url: '/menu/tree', method: 'GET', useFormData: false},
     },
+    BUS_PT_LINE: {
+        list: { url: '/public-transit/line/bus', method: 'GET', useFormData: false },
+    },
+    BUS_PT_LINE_WEEKDAY: {
+        list: { url: '/public-transit/line/bus/weekday', method: 'GET', useFormData: false },
+    },
+    BUS_PT_LINE_WEEKEND: {
+        list: { url: '/public-transit/line/bus/weekend', method: 'GET', useFormData: false },
+    },
+    RAIL_PT_LINE: {
+        list: { url: '/public-transit/line/rail', method: 'GET', useFormData: false },
+    },
+    SIGNAL_TOD: {
+        list: { url: '/signal-tod', method: 'GET', useFormData: false },
+    },
+    SIMULATION_SCENARIO: {
+        list: { url: '/simulation-scenario', method: 'GET', useFormData: false },
+    },
+    ROUTE: {
+        list: { url: '/route', method: 'GET', useFormData: false },
+    },
+    PAX_ROUTE: {
+        list: { url: '/route/pax', method: 'GET', useFormData: false },
+    },
 
 } as const;
 

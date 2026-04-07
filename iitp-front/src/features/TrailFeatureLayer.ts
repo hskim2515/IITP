@@ -65,7 +65,7 @@ export default class TrailFeatureLayer extends WebGLVectorLayer {
             source,
             style,
             visible: isVisible,
-            zIndex: 130,
+            zIndex: 500,
             disableHitDetection: true,
         });
 

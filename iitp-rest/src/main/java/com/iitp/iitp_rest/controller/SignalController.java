@@ -32,7 +32,11 @@ public ResponseEntity<SignalNodeResponseData> getSignal(@PathVariable String ver
         Optional<SignalVersion> signalVersionOpt = signalVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST);
         List<SignalResponse> signalResponseList;
 
-        if (signalVersionOpt.isPresent()) {
+        boolean hasDbData = signalVersionOpt.isPresent()
+                && signalVersionOpt.get().getData() != null
+                && !signalVersionOpt.get().getData().isEmpty();
+
+        if (hasDbData) {
             SignalVersion signalVersion = signalService.getDataFromDatabase(versionId);
             result.setSignals(signalVersion.getData());
         } else {
@@ -79,9 +83,17 @@ public ResponseEntity<SignalNodeResponseData> getSignal(@PathVariable String ver
             SignalNodeResponseData result = new SignalNodeResponseData();
             Optional<SignalVersion> signalVersionOpt = signalVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.ORIGIN);
 
-            if (signalVersionOpt.isPresent()) {
+            boolean hasOriginData = signalVersionOpt.isPresent()
+                    && signalVersionOpt.get().getData() != null
+                    && !signalVersionOpt.get().getData().isEmpty();
+
+            if (hasOriginData) {
                 SignalVersion signalVersion = signalService.getOriginData(versionId);
                 result.setSignals(signalVersion.getData());
+            } else {
+                // ORIGIN이 없거나 비어있으면 XML에서 읽어 DB에 저장
+                List<SignalResponse> xmlData = signalService.getDataFromXml(versionId);
+                result.setSignals(xmlData);
             }
 
             return ResponseEntity.ok(result);

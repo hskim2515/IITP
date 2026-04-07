@@ -49,6 +49,9 @@ public class VehicleController {
     private final VehicleRouteService vehicleRouteService;
     private final SignalTimelineService signalTimelineService;
 
+    /** 현재 비동기 생성 중인 scenarioKey 집합 */
+    private final java.util.concurrent.ConcurrentHashMap<String, Boolean> generatingSet = new java.util.concurrent.ConcurrentHashMap<>();
+
     @Value("${database.vehicle_sim.remoteUrl}")
     private String remoteUrl;
 
@@ -162,11 +165,17 @@ public class VehicleController {
                     continue;
                 }
 
-                CoordinateConverter converter = converterCache.get(key);
-
-                double posY = vehicle.getPosY();
-
-                ProjCoordinate actualCoord = converter.toAbsolute(vehicle.getPosX(), posY);
+                ProjCoordinate actualCoord;
+                if (baseRoad.getLaneShape() != null) {
+                    // non-straight connection: bezier 곡선 위에서 posX 거리만큼 보간
+                    actualCoord = CoordinateConverter.interpolateAlongLane(
+                            baseRoad.getLaneShape(), vehicle.getPosX(),
+                            scenario.getLongitude(), scenario.getLatitude());
+                    if (actualCoord == null) actualCoord = converterCache.get(key).toAbsolute(vehicle.getPosX(), vehicle.getPosY());
+                } else {
+                    CoordinateConverter converter = converterCache.get(key);
+                    actualCoord = converter.toAbsolute(vehicle.getPosX(), vehicle.getPosY());
+                }
 
                 Cartesian3 pos = Cartesian3.fromDegrees(actualCoord.x, actualCoord.y, 0);
                 lastValidPos = pos;
@@ -339,6 +348,22 @@ public class VehicleController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/signal-timeline/{scenarioKey}")
+    public ResponseEntity<List<SignalTimelineResponse>> getSignalTimelineByPlan(
+            @PathVariable String scenarioKey,
+            @RequestParam long baseEpoch,
+            @RequestParam String planId,
+            @RequestParam int duration) {
+        logger.info("[getSignalTimelineByPlan] scenarioKey={}, planId={}, baseEpoch={}, duration={}", scenarioKey, planId, baseEpoch, duration);
+        try {
+            List<SignalTimelineResponse> result = signalTimelineService.generateSignalTimeline(baseEpoch, planId, scenarioKey, duration);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            logger.error("[getSignalTimelineByPlan] 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
     @PostMapping("/vehicle-route/{scenarioKey}")
     public ResponseEntity<Map<String, Object>> getVehicleRoute(
             @RequestBody VehicleRequest request,
@@ -347,8 +372,29 @@ public class VehicleController {
         Optional<VehicleRoute> optional = vehicleRouteService.getByVersionId(scenarioKey);
 
         if (optional.isEmpty()) {
-            // 캐시 없으면 바로 생성
-            return generateVehicleRoute(request, scenarioKey);
+            // 이미 생성 중이면 202 반환
+            if (generatingSet.containsKey(scenarioKey)) {
+                logger.info("[vehicle-route] {} 생성 중, 202 반환", scenarioKey);
+                return ResponseEntity.status(HttpStatus.ACCEPTED)
+                        .body(Map.of("status", "generating", "message", "경로 데이터 생성 중입니다. 잠시 후 다시 시도하세요."));
+            }
+            // 비동기 생성 시작 후 202 반환
+            generatingSet.put(scenarioKey, true);
+            logger.info("[vehicle-route] {} 비동기 생성 시작", scenarioKey);
+            final VehicleRequest req = request;
+            new Thread(() -> {
+                try {
+                    generateVehicleRoute(req, scenarioKey);
+                    logger.info("[vehicle-route] {} 생성 완료", scenarioKey);
+                } catch (Exception e) {
+                    logger.error("[vehicle-route] {} 생성 실패: {}", scenarioKey, e.getMessage());
+                } finally {
+                    generatingSet.remove(scenarioKey);
+                }
+            }, "vehicle-gen-" + scenarioKey).start();
+
+            return ResponseEntity.status(HttpStatus.ACCEPTED)
+                    .body(Map.of("status", "generating", "message", "경로 데이터 생성을 시작했습니다. 잠시 후 다시 시도하세요."));
         }
 
         VehicleRoute route = optional.get();

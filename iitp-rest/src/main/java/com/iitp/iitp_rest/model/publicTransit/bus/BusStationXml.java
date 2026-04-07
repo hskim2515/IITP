@@ -29,7 +29,6 @@ public class BusStationXml {
     private String parkingLots;
     @XmlAttribute
     private String center;
-//    @XmlElement(name = "line")
-    @XmlTransient
+    @XmlElement(name = "line")
     private BusLineXml line;
 }

@@ -7,14 +7,25 @@ import { fromLonLat } from "ol/proj";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { Coordinate } from "ol/coordinate";
 import { Network } from "@type/Network";
-import { getTriangleConnectionPoints } from "@utils/network";
 import { FeatureLike } from "ol/Feature";
-import { diff } from "deep-object-diff";
+import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 
 export default class NetworkFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
 
     private unsubscribe: (() => void) | undefined;
+    private unsubscribeDraw: (() => void) | undefined;
+    private showDetail: boolean = false;
+
+    // 증분 업데이트용 상태
+    private prevNetwork: Network | null = null;
+    private linkFeaturesMap: Map<string, Feature[]> = new Map(); // linkId → features
+    private nodeFeaturesMap: Map<string, Feature[]> = new Map(); // nodeId → features
+    private laneMap: Map<string, Feature> = new Map();           // `${linkId}_${laneIdx}` → lane feature
+    private lastImportEpoch = 0;  // 마지막으로 처리한 importEpoch
+    // 캐시 Map: fullBuild에서 생성, incrementalUpdate에서 증분 갱신
+    private cachedNodeMap: Map<string, any> = new Map();
+    private cachedLinkMap: Map<string, any> = new Map();
 
     private readonly LAYER_NAME = "network";
 
@@ -55,13 +66,22 @@ export default class NetworkFeatureLayer extends VectorLayer {
         if (store) {
             this.unsubscribe = store.subscribe(
                 (state: { currentJsonData: Network; }) => state.currentJsonData,
-                () => {
-                    console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
-                    this.load(); // 데이터가 변경되면 레이어를 다시 로드합니다.
-                },
-                { equalityFn: (a:Network, b:Network) => diff(a, b) === undefined}
+                () => { this.load(); },
+                { equalityFn: (a:Network, b:Network) => a === b }
             );
         }
+
+        // 도로 그리기 종료 시 fullBuild (draw 중 incremental 누적 후 정리)
+        this.unsubscribeDraw = useNetworkDrawStore.subscribe(
+            (state, prevState) => {
+                const wasDrawing = prevState.isActive || prevState.isConnectionActive;
+                const isDrawing  = state.isActive   || state.isConnectionActive;
+                if (wasDrawing && !isDrawing) {
+                    this.prevNetwork = null; // force fullBuild to clean up any inconsistency
+                    this.load();
+                }
+            }
+        );
     }
 
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
@@ -222,7 +242,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         controlPoint: Coordinate,
         to: Coordinate,
         numberOfPoints: number = 15,
-        pullScale: number = 0.9
+        pullScale: number = 0.4
     ): Coordinate[] {
         const basePoint: Coordinate = [
             (from[0] + to[0]) / 2,
@@ -323,239 +343,335 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
     public async load(): Promise<void> {
         const store = layerNameToStoreMap[this.LAYER_NAME];
-
         try {
             const network: Network | undefined = store.getState().currentJsonData;
             if (!network) return;
-            const nodes = network.nodes ?? [];
-            const links = network.links ?? [];
 
-            const featureBuffer: Feature[] = [];
-            const laneMap = new Map<string | number, Feature>();
-            const linkMap = new Map<string | number, any>();
-
-            for (const link of links) {
-                const source = nodes.find(n => n.id == link.fromNode);
-                const target = nodes.find(n => n.id == link.toNode);
-                if (!source || !target || !link.lanes) continue;
-
-                linkMap.set(link.id, link);
-
-                if(!link.coordinates || !link.coordinates[0] || !link.coordinates[1]) continue
-                const p1 = fromLonLat([link.coordinates[0].lng, link.coordinates[0].lat]);
-                const p2 = fromLonLat([link.coordinates[1].lng, link.coordinates[1].lat]);
-
-                if(!p1 || !p2 || !p1[0] || !p1[1] || !p2[0] || !p2[1]) continue
-                const dx = p2[0] - p1[0];
-                const dy = p2[1] - p1[1];
-                const len = Math.hypot(dx, dy);
-                const unitNormal: [number, number] = len > 0 ? [-dy / len, dx / len] : [0, 0];
-
-                const linkLine = new LineString([p1, p2]);
-                const linkLineFeature = new Feature(linkLine);
-                linkLineFeature.setProperties({ ...link, featureType: "link-edit", linkRef: link.id });
-                featureBuffer.push(linkLineFeature);
-
-                const half = (link.width ?? 0) / 2;
-                const left = [p1, p2].map(([x, y]) => {
-                    if(!x || !y) return;
-                    return [x - unitNormal[0] * half, y - unitNormal[1] * half]
-                });
-                const right = [p2, p1].map(([x, y]) => {
-                    if(!x || !y) return;
-                    return [x + unitNormal[0] * half, y + unitNormal[1] * half]
-                });
-
-                const linkPolygon = new Polygon([[...left, ...right, left[0]]]);
-                const linkPolygonFeature = new Feature(linkPolygon);
-                linkPolygonFeature.setProperties({ ...link, featureType: "links" });
-                featureBuffer.push(linkPolygonFeature);
-
-                const laneCount = link.lanes?.length;
-                const laneWidth = link.width / laneCount
-
-                for (let i = 0; i < laneCount; i++) {
-                    const lane = link.lanes[i];
-                    if(!lane) continue;
-                    const offsetCenter = ((laneCount - 1) / 2 - i) * laneWidth;
-
-
-                    const centerP1 = [p1[0] + unitNormal[0] * offsetCenter, p1[1] + unitNormal[1] * offsetCenter];
-                    const centerP2 = [p2[0] + unitNormal[0] * offsetCenter, p2[1] + unitNormal[1] * offsetCenter];
-
-                    const halfWidth = laneWidth / 2;
-                    const outerP1 = [centerP1[0] + unitNormal[0] * halfWidth, centerP1[1] + unitNormal[1] * halfWidth];
-                    const outerP2 = [centerP2[0] + unitNormal[0] * halfWidth, centerP2[1] + unitNormal[1] * halfWidth];
-                    const innerP1 = [centerP1[0] - unitNormal[0] * halfWidth, centerP1[1] - unitNormal[1] * halfWidth];
-                    const innerP2 = [centerP2[0] - unitNormal[0] * halfWidth, centerP2[1] - unitNormal[1] * halfWidth];
-
-                    const laneProps = {
-                        ...lane,
-                        linkRef: link.id,
-                        featureType: "lanes",
-                        length: link.length,
-                        laneRef: i,
-                        laneSource: centerP1,
-                        laneTarget: centerP2,
-                    };
-
-                    const laneFeature = new Feature(new Polygon([[innerP1, innerP2, outerP2, outerP1, innerP1]]));
-                    laneFeature.setProperties(laneProps);
-                    const laneKey = `${link.id}_${(lane.id ?? i)}`;
-                    laneMap.set(laneKey, laneFeature);
-                    featureBuffer.push(laneFeature);
-
-                    const laneLineFeature = new Feature(new LineString([centerP1, centerP2]));
-                    laneLineFeature.setProperties({ ...laneProps, featureType: "lane-edit" });
-                    featureBuffer.push(laneLineFeature);
-
-                    if (lane?.cells?.length > 0) {
-                        const cellWidth = laneWidth * NetworkFeatureLayer.CELL_WIDTH_RATIO;
-
-                        for (const cell of lane.cells) {
-                            const startOffset = cell.offset ?? 0;
-                            const unitLen = Math.max(0, cell.length ?? 5);
-
-                            const rings = this.createRectanglesTiledAlongLane(
-                                laneProps.laneSource,
-                                laneProps.laneTarget,
-                                startOffset,
-                                unitLen,
-                                cellWidth
-                            );
-
-                            rings.forEach((ring, idx) => {
-                                const chunkLen = this.measureChunkLength(laneProps.laneSource, laneProps.laneTarget, ring);
-                                const cellFeature = new Feature(new Polygon([ring]));
-                                cellFeature.setProperties({
-                                    ...cell,
-                                    featureType: "cells",
-                                    linkRef: link.id,
-                                    laneRef: i,
-                                    offset: startOffset + unitLen * idx,
-                                    length: chunkLen,
-                                    chunkIndex: idx,
-                                });
-                                featureBuffer.push(cellFeature);
-                            });
-                        }
-                    }
-
-                    if (lane?.segments?.length > 0) {
-                        const segWidth = laneWidth * NetworkFeatureLayer.SEGMENT_WIDTH_RATIO;
-                        for (const segment of lane.segments) {
-                            const init = segment.initPoint ?? 0;
-                            const end = segment.endPoint ?? init;
-                            const offset = Math.min(init, end);
-                            const length = Math.max(0, Math.abs(end - init));
-
-                            const ring = this.createRectangleAlongLane(
-                                laneProps.laneSource,
-                                laneProps.laneTarget,
-                                offset,
-                                length,
-                                segWidth
-                            );
-                            if (!ring) continue;
-
-                            const segmentFeature = new Feature(new Polygon([ring]));
-                            segmentFeature.setProperties({
-                                ...segment,
-                                featureType: "segments",
-                                linkRef: link.id,
-                                laneRef: i,
-                                offset,
-                                length,
-                            });
-                            featureBuffer.push(segmentFeature);
-                        }
-                    }
-                }
+            if (!this.prevNetwork || this.isFullReplace(this.prevNetwork, network)) {
+                this.fullBuild(network);
+            } else {
+                this.incrementalUpdate(this.prevNetwork, network);
             }
-
-            for (const node of nodes) {
-                const nodePt = fromLonLat([node.coordinates.lng, node.coordinates.lat]);
-
-                const point = new Point(nodePt);
-                const nodeFeature = new Feature(point);
-                nodeFeature.setProperties({ ...node, featureType: "nodes" });
-                featureBuffer.push(nodeFeature);
-
-                if (!node.connections) continue;
-
-                for (const conn of node.connections) {
-                    const fromKey = `${conn.fromLink}_${conn.fromLane}`;
-                    const toKey = `${conn.toLink}_${conn.toLane}`;
-
-                    const fromLaneFeat = laneMap.get(fromKey);
-                    const toLaneFeat = laneMap.get(toKey);
-
-                    if (!fromLaneFeat || !toLaneFeat) continue;
-
-                    const fromPt: Coordinate = fromLaneFeat.get("laneTarget");
-                    const toPt: Coordinate = toLaneFeat.get("laneSource");
-
-                    let coord: Coordinate[];
-                    if (conn.turning === "Straight") {
-                        coord = [fromPt, toPt];
-                    } else {
-                        const fromLink = linkMap.get(conn.fromLink);
-                        const toLink = linkMap.get(conn.toLink);
-
-                        if (!fromLink || !toLink) {
-                            coord = [fromPt, toPt];
-                        } else {
-                            const fromLinkP1 = fromLonLat([fromLink.coordinates[0].lng, fromLink.coordinates[0].lat]);
-                            const fromLinkP2 = fromLonLat([fromLink.coordinates[1].lng, fromLink.coordinates[1].lat]);
-                            const fromVector = [fromLinkP2[0] - fromLinkP1[0], fromLinkP2[1] - fromLinkP1[1]];
-
-                            const toLinkP1 = fromLonLat([toLink.coordinates[0].lng, toLink.coordinates[0].lat]);
-                            const toLinkP2 = fromLonLat([toLink.coordinates[1].lng, toLink.coordinates[1].lat]);
-                            const toVector = [toLinkP2[0] - toLinkP1[0], toLinkP2[1] - toLinkP1[1]];
-
-                            const triangleVertices = getTriangleConnectionPoints(fromPt, toPt, fromVector, toVector);
-                            if (triangleVertices) {
-                                const [p1, controlPoint, p2] = triangleVertices;
-                                coord = this.generateQuadraticBezierCurve(fromPt, controlPoint, toPt);
-                            } else {
-                                coord = [fromPt, toPt];
-                            }
-                        }
-                    }
-
-                    if (!coord || coord.length < 2) continue;
-
-                    const connLine = new LineString(coord);
-                    const connLineFeature = new Feature(connLine);
-                    connLineFeature.setProperties({
-                        ...conn,
-                        featureType: "connections",
-                        fromNodeType: node.type,
-                        nodeId: node.id,
-                    });
-                    featureBuffer.push(connLineFeature);
-                }
-
-                if (!node.ports) continue;
-                for (const port of node.ports) {
-                    const link = links.find((l) => l.id == port.linkId);
-                    if (!link) continue;
-
-                    const portFeature = new Feature({
-                        ...port,
-                        geometry: new Point(nodePt),
-                        featureType: "ports",
-                    });
-                    featureBuffer.push(portFeature);
-                }
-            }
-
-            this.source.clear();
-            this.source.addFeatures(featureBuffer);
-            console.log("NetworkLayer: 로드 완료");
+            this.prevNetwork = network;
         } catch (e) {
             console.error("NetworkLayer.load 에러:", e);
         }
+    }
+
+    private isFullReplace(prev: Network, next: Network): boolean {
+        // importEpoch 증가 → 파일 임포트 → 전체 재빌드
+        const store = layerNameToStoreMap[this.LAYER_NAME];
+        const currentEpoch = store.getState().importEpoch;
+        if (currentEpoch > this.lastImportEpoch) {
+            this.lastImportEpoch = currentEpoch;
+            return true;
+        }
+        if (!prev.links?.length || !next.links?.length) return true;
+
+        // Fast path: 첫 링크 참조 동일 → 기존 링크들이 유지된 증분 변경 (도로 그리기)
+        if (next.links.length >= prev.links.length && next.links[0] === prev.links[0]) {
+            return false;
+        }
+
+        // Slow path: 공통 ID 없으면 전체 교체 (다른 파일 로드)
+        const hasCommon = next.links.some(l => this.cachedLinkMap.has(String(l.id)));
+        return !hasCommon;
+    }
+
+    private fullBuild(network: Network): void {
+        this.linkFeaturesMap.clear();
+        this.nodeFeaturesMap.clear();
+        this.laneMap.clear();
+
+        const nodes = network.nodes ?? [];
+        const links = network.links ?? [];
+        // 캐시 Map 초기화 (이후 incrementalUpdate에서 증분 갱신)
+        this.cachedNodeMap = new Map(nodes.map(n => [String(n.id), n]));
+        this.cachedLinkMap = new Map(links.map(l => [String(l.id), l]));
+        const nodeMap = this.cachedNodeMap;
+        const linkMap = this.cachedLinkMap;
+        const featureBuffer: Feature[] = [];
+
+        for (const link of links) {
+            const features = this.buildLinkFeatures(link, nodeMap);
+            if (features.length > 0) {
+                this.linkFeaturesMap.set(String(link.id), features);
+                featureBuffer.push(...features);
+            }
+        }
+        for (const node of nodes) {
+            const features = this.buildNodeFeatures(node, linkMap);
+            this.nodeFeaturesMap.set(String(node.id), features);
+            featureBuffer.push(...features);
+        }
+
+        this.source.clear();
+        this.source.addFeatures(featureBuffer);
+    }
+
+    private incrementalUpdate(prev: Network, next: Network): void {
+        // ── 핵심 최적화: O(N) Map 5개 재생성 대신 참조 동등성 스캔 ──
+        // finishSegment()는 links/nodes 배열 끝에만 추가하고, 기존 원소는 같은 참조를 유지한다.
+
+        // 1. 순수 append 검증: 기존 마지막 링크 참조가 동일해야 한다
+        //    (split은 filter로 중간 제거 후 concat → 마지막 원소가 달라짐)
+        const prevLastLinkIdx = prev.links.length - 1;
+        const isPureAppend =
+            next.links.length >= prev.links.length &&
+            next.nodes.length >= prev.nodes.length &&
+            prevLastLinkIdx >= 0 &&
+            next.links[prevLastLinkIdx] === prev.links[prevLastLinkIdx];
+
+        if (!isPureAppend) {
+            this.fullBuild(next);
+            return;
+        }
+
+        // 2. 참조 스캔으로 변경된 기존 노드 인덱스 수집 (Map 생성 없이 O(N) 스캔)
+        const changedNodeIndices: number[] = [];
+        const minNodeLen = Math.min(prev.nodes.length, next.nodes.length);
+        for (let i = 0; i < minNodeLen; i++) {
+            if (prev.nodes[i] !== next.nodes[i]) changedNodeIndices.push(i);
+        }
+
+        // 3. 끝에 append된 신규 항목
+        const newLinks = next.links.length > prev.links.length
+            ? next.links.slice(prev.links.length) : [];
+        const newNodes = next.nodes.length > prev.nodes.length
+            ? next.nodes.slice(prev.nodes.length) : [];
+
+        if (changedNodeIndices.length === 0 && newLinks.length === 0 && newNodes.length === 0) return;
+
+        // 4. 캐시 Map 증분 갱신 (전체 재생성 없이 변경분만)
+        for (const i of changedNodeIndices) {
+            const node = next.nodes[i]!;
+            this.cachedNodeMap.set(String(node.id), node);
+        }
+        for (const node of newNodes) {
+            this.cachedNodeMap.set(String(node.id), node);
+        }
+        for (const link of newLinks) {
+            this.cachedLinkMap.set(String(link.id), link);
+        }
+
+        // 5. 신규 링크 피처 추가 (먼저: laneMap이 채워져야 노드 conn 빌드 가능)
+        const addBuffer: Feature[] = [];
+        for (const link of newLinks) {
+            const features = this.buildLinkFeatures(link, this.cachedNodeMap);
+            if (features.length > 0) {
+                this.linkFeaturesMap.set(String(link.id), features);
+                addBuffer.push(...features);
+            }
+        }
+
+        // 6. 변경된 노드: 기존 피처 제거 없이 delta port/conn만 append (O(1))
+        //    finishSegment는 ports/connections를 항상 끝에 추가(append)하므로
+        //    slice(prevLen)으로 신규 항목만 골라 피처를 추가한다.
+        for (const i of changedNodeIndices) {
+            const prevNode = prev.nodes[i]!;
+            const nextNode = next.nodes[i]!;
+            const id = String(nextNode.id);
+            const existingFeatures = this.nodeFeaturesMap.get(id) ?? [];
+
+            const newPorts = nextNode.ports.slice(prevNode.ports.length);
+            for (const port of newPorts) {
+                const link = this.cachedLinkMap.get(String(port.linkId));
+                if (!link) continue;
+                let portPos: number[];
+                if (port.type === 'out' && link.coordinates?.[0]) {
+                    portPos = fromLonLat([link.coordinates[0].lng, link.coordinates[0].lat]);
+                } else if (port.type === 'in' && link.coordinates?.length) {
+                    const last = link.coordinates[link.coordinates.length - 1];
+                    portPos = fromLonLat([last.lng, last.lat]);
+                } else {
+                    portPos = fromLonLat([nextNode.coordinates.lng, nextNode.coordinates.lat]);
+                }
+                const portFeature = new Feature({ ...port, geometry: new Point(portPos), featureType: 'ports' });
+                existingFeatures.push(portFeature);
+                addBuffer.push(portFeature);
+            }
+
+            const newConns = nextNode.connections.slice(prevNode.connections.length);
+            const nodePt = fromLonLat([nextNode.coordinates.lng, nextNode.coordinates.lat]);
+            for (const conn of newConns) {
+                let fromPt: number[], toPt: number[];
+                if (conn.coordinates?.length >= 2) {
+                    fromPt = fromLonLat([conn.coordinates[0].lng, conn.coordinates[0].lat]);
+                    toPt   = fromLonLat([conn.coordinates[conn.coordinates.length - 1].lng, conn.coordinates[conn.coordinates.length - 1].lat]);
+                } else {
+                    const fromLaneFeat = this.laneMap.get(`${conn.fromLink}_${conn.fromLane}`);
+                    const toLaneFeat   = this.laneMap.get(`${conn.toLink}_${conn.toLane}`);
+                    if (!fromLaneFeat || !toLaneFeat) continue;
+                    fromPt = fromLaneFeat.get('laneTarget');
+                    toPt   = toLaneFeat.get('laneSource');
+                }
+                if (!fromPt || !toPt) continue;
+                const coord = conn.turning === 'Straight'
+                    ? [fromPt, toPt]
+                    : this.generateQuadraticBezierCurve(fromPt, nodePt, toPt);
+                if (!coord || coord.length < 2) continue;
+                const connFeature = new Feature(new LineString(coord));
+                connFeature.setProperties({ ...conn, featureType: 'connections', fromNodeType: nextNode.type, nodeId: nextNode.id });
+                existingFeatures.push(connFeature);
+                addBuffer.push(connFeature);
+            }
+
+            this.nodeFeaturesMap.set(id, existingFeatures);
+        }
+
+        // 7. 신규 노드 피처 추가
+        for (const node of newNodes) {
+            const features = this.buildNodeFeatures(node, this.cachedLinkMap);
+            this.nodeFeaturesMap.set(String(node.id), features);
+            addBuffer.push(...features);
+        }
+
+        if (addBuffer.length > 0) {
+            this.source.addFeatures(addBuffer);
+        }
+    }
+
+    private buildLinkFeatures(link: any, nodeMap: Map<string, any>): Feature[] {
+        const sourceNode = nodeMap.get(String(link.fromNode));
+        const targetNode = nodeMap.get(String(link.toNode));
+        if (!sourceNode || !targetNode || !link.lanes) return [];
+        if (!link.coordinates || !link.coordinates[0] || !link.coordinates[1]) return [];
+
+        const p1 = fromLonLat([link.coordinates[0].lng, link.coordinates[0].lat]);
+        const lastCoord = link.coordinates[link.coordinates.length - 1];
+        const p2 = fromLonLat([lastCoord.lng, lastCoord.lat]);
+        const p1b = fromLonLat([link.coordinates[1].lng, link.coordinates[1].lat]);
+        if (!p1[0] || !p1[1] || !p2[0] || !p2[1]) return [];
+
+        const dx = p1b[0] - p1[0], dy = p1b[1] - p1[1];
+        const len = Math.hypot(dx, dy);
+        const unitNormal: [number, number] = len > 0 ? [-dy / len, dx / len] : [0, 0];
+
+        const features: Feature[] = [];
+
+        // link-edit (center line)
+        const linkLineFeature = new Feature(new LineString([p1, p2]));
+        linkLineFeature.setProperties({ ...link, featureType: "link-edit", linkRef: link.id });
+        features.push(linkLineFeature);
+
+        // link polygon
+        const half = (link.width ?? 0) / 2;
+        const left = [p1, p2].map(([x, y]) => x && y ? [x - unitNormal[0] * half, y - unitNormal[1] * half] : undefined);
+        const right = [p2, p1].map(([x, y]) => x && y ? [x + unitNormal[0] * half, y + unitNormal[1] * half] : undefined);
+        const linkPolygonFeature = new Feature(new Polygon([[...left, ...right, left[0]]]));
+        linkPolygonFeature.setProperties({ ...link, featureType: "links" });
+        features.push(linkPolygonFeature);
+
+        // lanes
+        const laneCount = link.lanes.length;
+        const laneWidth = link.width / laneCount;
+
+        for (let i = 0; i < laneCount; i++) {
+            const lane = link.lanes[i];
+            if (!lane) continue;
+            const offsetCenter = ((laneCount - 1) / 2 - i) * laneWidth;
+            const centerP1 = [p1[0] + unitNormal[0] * offsetCenter, p1[1] + unitNormal[1] * offsetCenter];
+            const centerP2 = [p2[0] + unitNormal[0] * offsetCenter, p2[1] + unitNormal[1] * offsetCenter];
+            const halfWidth = laneWidth / 2;
+            const outerP1 = [centerP1[0] + unitNormal[0] * halfWidth, centerP1[1] + unitNormal[1] * halfWidth];
+            const outerP2 = [centerP2[0] + unitNormal[0] * halfWidth, centerP2[1] + unitNormal[1] * halfWidth];
+            const innerP1 = [centerP1[0] - unitNormal[0] * halfWidth, centerP1[1] - unitNormal[1] * halfWidth];
+            const innerP2 = [centerP2[0] - unitNormal[0] * halfWidth, centerP2[1] - unitNormal[1] * halfWidth];
+
+            const laneProps = {
+                ...lane, linkRef: link.id, featureType: "lanes",
+                length: link.length, laneRef: i,
+                laneSource: centerP1, laneTarget: centerP2,
+            };
+            const laneFeature = new Feature(new Polygon([[innerP1, innerP2, outerP2, outerP1, innerP1]]));
+            laneFeature.setProperties(laneProps);
+            this.laneMap.set(`${link.id}_${i}`, laneFeature); // 클래스 laneMap 갱신
+            features.push(laneFeature);
+
+            const laneLineFeature = new Feature(new LineString([centerP1, centerP2]));
+            laneLineFeature.setProperties({ ...laneProps, featureType: "lane-edit" });
+            features.push(laneLineFeature);
+
+            if (this.showDetail && lane.cells?.length > 0) {
+                const cellWidth = laneWidth * NetworkFeatureLayer.CELL_WIDTH_RATIO;
+                for (const cell of lane.cells) {
+                    const startOffset = cell.offset ?? 0;
+                    const unitLen = Math.max(0, cell.length ?? 5);
+                    this.createRectanglesTiledAlongLane(centerP1, centerP2, startOffset, unitLen, cellWidth)
+                        .forEach((ring, idx) => {
+                            const cellFeature = new Feature(new Polygon([ring]));
+                            cellFeature.setProperties({ ...cell, featureType: "cells", linkRef: link.id, laneRef: i, offset: startOffset + unitLen * idx, chunkIndex: idx });
+                            features.push(cellFeature);
+                        });
+                }
+            }
+
+            if (this.showDetail && lane.segments?.length > 0) {
+                const segWidth = laneWidth * NetworkFeatureLayer.SEGMENT_WIDTH_RATIO;
+                for (const segment of lane.segments) {
+                    const init = segment.initPoint ?? 0;
+                    const end = segment.endPoint ?? init;
+                    const offset = Math.min(init, end);
+                    const length = Math.max(0, Math.abs(end - init));
+                    const ring = this.createRectangleAlongLane(centerP1, centerP2, offset, length, segWidth);
+                    if (!ring) continue;
+                    const segFeature = new Feature(new Polygon([ring]));
+                    segFeature.setProperties({ ...segment, featureType: "segments", linkRef: link.id, laneRef: i, offset, length });
+                    features.push(segFeature);
+                }
+            }
+        }
+        return features;
+    }
+
+    private buildNodeFeatures(node: any, linkMap: Map<string, any>): Feature[] {
+        const features: Feature[] = [];
+        const nodePt = fromLonLat([node.coordinates.lng, node.coordinates.lat]);
+
+        const nodeFeature = new Feature(new Point(nodePt));
+        nodeFeature.setProperties({ ...node, featureType: "nodes" });
+        features.push(nodeFeature);
+
+        for (const conn of (node.connections ?? [])) {
+            let fromPt: Coordinate, toPt: Coordinate;
+
+            if (conn.coordinates?.length >= 2) {
+                fromPt = fromLonLat([conn.coordinates[0].lng, conn.coordinates[0].lat]);
+                toPt = fromLonLat([conn.coordinates[conn.coordinates.length - 1].lng, conn.coordinates[conn.coordinates.length - 1].lat]);
+            } else {
+                const fromLaneFeat = this.laneMap.get(`${conn.fromLink}_${conn.fromLane}`);
+                const toLaneFeat = this.laneMap.get(`${conn.toLink}_${conn.toLane}`);
+                if (!fromLaneFeat || !toLaneFeat) continue;
+                fromPt = fromLaneFeat.get("laneTarget");
+                toPt = toLaneFeat.get("laneSource");
+            }
+            if (!fromPt || !toPt) continue;
+
+            const coord: Coordinate[] = conn.turning === "Straight"
+                ? [fromPt, toPt]
+                : this.generateQuadraticBezierCurve(fromPt, fromLonLat([node.coordinates.lng, node.coordinates.lat]), toPt);
+            if (!coord || coord.length < 2) continue;
+
+            const connFeature = new Feature(new LineString(coord));
+            connFeature.setProperties({ ...conn, featureType: "connections", fromNodeType: node.type, nodeId: node.id });
+            features.push(connFeature);
+        }
+
+        for (const port of (node.ports ?? [])) {
+            const link = linkMap.get(String(port.linkId));
+            if (!link) continue;
+            // out: link 시작(node에서 나감), in: link 끝(node로 들어옴)
+            let portPos: Coordinate = nodePt;
+            if (port.type === "out" && link.coordinates?.[0]) {
+                portPos = fromLonLat([link.coordinates[0].lng, link.coordinates[0].lat]);
+            } else if (port.type === "in" && link.coordinates?.length) {
+                const last = link.coordinates[link.coordinates.length - 1];
+                portPos = fromLonLat([last.lng, last.lat]);
+            }
+            const portFeature = new Feature({ ...port, geometry: new Point(portPos), featureType: "ports" });
+            features.push(portFeature);
+        }
+        return features;
     }
 
     private measureChunkLength(source: Coordinate, target: Coordinate, ring: Coordinate[]): number {
@@ -574,9 +690,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
     }
 
     public dispose(): void {
-        if (this.unsubscribe) {
-            this.unsubscribe();
-        }
+        this.unsubscribe?.();
+        this.unsubscribeDraw?.();
         super.dispose();
     }
 }

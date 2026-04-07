@@ -13,6 +13,8 @@ import { Icon, RegularShape, Style } from "ol/style";
 import CircleStyle from "ol/style/Circle";
 import {propertyFormSchema} from "@schema/propertyFormSchema";
 import {useMenuStore} from "@stores/useMenuStore";
+import {useNetworkDrawStore} from "@stores/useNetworkDrawStore";
+import { networkPrimitivePropertiesMap, highlightNetworkPrimitive } from "@datasource/NetworkDataSourceLayer";
 
 
 const selectedGuid = useSelectionStore.getState().selectedGuid;
@@ -36,38 +38,42 @@ export const defaultEventHandlers ={
 
 
     handleCesiumSelect : (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+        // 도로 그리기 / 커넥션 그리기 모드 중에는 선택 이벤트 무시
+        const drawStore = useNetworkDrawStore.getState();
+        if (drawStore.isActive || drawStore.isConnectionActive) return;
 
         const viewer = useCesiumStore.getState().viewer;
-
-        if (!viewer) return
+        if (!viewer) return;
 
         const picked = viewer.scene.pick(e.position);
 
-        if (Cesium.defined(picked) && picked.id?.properties) {
+        if (Cesium.defined(picked)) {
             const props: Record<string, any> = {};
             const cartesian = viewer.scene.camera.pickEllipsoid(e.position, viewer.scene.globe.ellipsoid);
             if (cartesian) {
                 const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-                const longitude = Cesium.Math.toDegrees(cartographic.longitude);
-                const latitude = Cesium.Math.toDegrees(cartographic.latitude);
-                const height = cartographic.height;
-
-                props.longitude = longitude;
-                props.latitude = latitude;
-                props.height = height; // 높이도 함께 포함
+                props.longitude = Cesium.Math.toDegrees(cartographic.longitude);
+                props.latitude = Cesium.Math.toDegrees(cartographic.latitude);
+                props.height = cartographic.height;
             }
-            const propBag = picked.id.properties;
-            const time = Cesium.JulianDate.now();
-            const flat = propBag.getValue(time) ?? {};
-            Object.assign(props, flat);
 
-            // propBag.propertyNames.forEach((key: string) => {
-            //     props[key] = propBag[key].getValue(Cesium.JulianDate.now());
-            // });
-            setSelectedProps(props);
-
-            setSelectedGuid([props.__guid])
-
+            if (picked.id instanceof Cesium.Entity && picked.id.properties) {
+                // Entity 피킹 (노드, 포트, 커넥션, 버스정류장 등)
+                const flat = picked.id.properties.getValue(Cesium.JulianDate.now()) ?? {};
+                Object.assign(props, flat);
+                setSelectedProps(props);
+                setSelectedGuid([props.__guid]);
+            } else if (typeof picked.id === 'string') {
+                // Primitive 피킹 (링크, 레인)
+                const primitiveProps = networkPrimitivePropertiesMap.get(picked.id);
+                if (primitiveProps) {
+                    Object.assign(props, primitiveProps);
+                    setSelectedProps(props);
+                    setSelectedGuid([primitiveProps.__guid]);
+                }
+            } else {
+                setSelectedProps(null);
+            }
         } else {
             setSelectedProps(null);
         }
@@ -127,7 +133,6 @@ export const defaultEventHandlers ={
 
     handleCesiumHover : (e: any) => {
         const viewer = useCesiumStore.getState().viewer;
-
         if (!viewer) return;
         const scene = viewer.scene;
         const position = e.endPosition ?? e.position;
@@ -137,18 +142,27 @@ export const defaultEventHandlers ={
         if (!cartesian) return;
 
         const pickedObject = scene.pick(position);
-        const entity = pickedObject?.id as Cesium.Entity;
-        if (!entity) {
+
+        if (!pickedObject) {
             clearCesiumHighlight();
+            highlightNetworkPrimitive?.(null);
             return;
         }
 
-        if (highlightedEntity !== entity) {
-
-            highlightEntity(entity);
-
+        if (pickedObject.id instanceof Cesium.Entity) {
+            // Entity 호버 (노드, 포트, 커넥션 등)
+            highlightNetworkPrimitive?.(null);
+            if (highlightedEntity !== pickedObject.id) {
+                highlightEntity(pickedObject.id);
+            }
+        } else if (typeof pickedObject.id === 'string' && networkPrimitivePropertiesMap.has(pickedObject.id)) {
+            // Primitive 호버 (링크, 레인)
+            clearCesiumHighlight();
+            highlightNetworkPrimitive?.(pickedObject.id);
+        } else {
+            clearCesiumHighlight();
+            highlightNetworkPrimitive?.(null);
         }
-
     },
 
     handleOlHover : (e: MapBrowserEvent<UIEvent>) => {

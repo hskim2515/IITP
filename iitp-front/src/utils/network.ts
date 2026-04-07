@@ -29,6 +29,11 @@ export function getTriangleConnectionPoints(
 
     const t = ((x2 - x1) * v2y - (y2 - y1) * v2x) / denominator;
 
+    // t가 너무 크면 교점이 너무 멀리 있어 Bezier 곡선이 지도 밖으로 벗어남 → 직선 처리
+    const connDist = Math.hypot(x2 - x1, y2 - y1);
+    const maxT = connDist * 3;
+    if (Math.abs(t) > maxT) return null;
+
     const p3: [number, number] = [
         x1 + t * v1x,
         y1 + t * v1y,

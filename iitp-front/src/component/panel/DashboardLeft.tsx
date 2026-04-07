@@ -1,10 +1,15 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { useSimulationStore } from '@stores/useSimulationStore';
 import { useVehicleStore } from '@stores/useVehicleStore';
 import { useNetworkStore, useNetworkHistoryStore } from '@stores/useNetworkStore';
+import { useScenarioStore } from '@stores/useScenarioStore';
+import { useSignalTimelineStore } from '@stores/useSignalTimelineStore';
 import { JulianDate } from 'cesium';
 import styles from '@css/Dashboard.module.css';
-import {useLayerStore} from "@stores/useLayerStore";
+import { useLayerStore } from '@stores/useLayerStore';
+import {
+    BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
+} from 'recharts';
 
 interface Props {
     onClose: () => void;
@@ -22,12 +27,31 @@ const LAYER_LABELS: Record<string, string> = {
     pavementMarking: '노면마킹',
 };
 
+const ChartTooltip = ({ active, payload, label }: any) => {
+    if (!active || !payload?.length) return null;
+    return (
+        <div className={styles.chartTooltip}>
+            <div className={styles.chartTooltipLabel}>{label}</div>
+            {payload.map((p: any, i: number) => (
+                <div key={i} className={styles.chartTooltipRow}>
+                    <span className={styles.chartTooltipDot} style={{ background: p.color }}/>
+                    <span className={styles.chartTooltipName}>{p.name}</span>
+                    <span className={styles.chartTooltipValue}>{p.value?.toLocaleString()}</span>
+                </div>
+            ))}
+        </div>
+    );
+};
+
 // ─── Component ────────────────────────────────────────────────
 const DashboardLeft: React.FC<Props> = ({ onClose }) => {
     const { isRunning, speed, startTime, endTime, currentTime } = useSimulationStore();
     const activeVehicleCount = useVehicleStore((s) => s.activeVehicleCount);
     const activeLayerName = useLayerStore((s) => s.activeLayerName);
     const updateLogs = useNetworkHistoryStore((s) => s.updateLogs);
+    const selectedScenario = useScenarioStore((s) => s.selectedScenario);
+    const selectedScenarioVersion = useScenarioStore((s) => s.selectedScenarioVersion);
+    const signalTimeline = useSignalTimelineStore((s) => s.signalTimeline);
     const historyChartData = useMemo(() =>
             updateLogs.slice(-10).map((log) => ({
                 time: new Date(log.timestamp).toLocaleTimeString('ko-KR', {
@@ -83,8 +107,53 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
     );
     const simulationLabel = isRunning ? '실행 중' : currentTime ? '일시정지' : '대기';
 
+    const signalCount = signalTimeline?.length ?? 0;
+    const greenCount = useMemo(() => {
+        if (!signalTimeline?.length || !currentTime) return 0;
+        const nowMs = JulianDate.toDate(currentTime).getTime();
+        return signalTimeline.filter(node =>
+            node.signalTimeline?.some(t =>
+                t.signalState === 'green' &&
+                new Date(t.startTime).getTime() <= nowMs &&
+                new Date(t.endTime).getTime() >= nowMs
+            )
+        ).length;
+    }, [signalTimeline, currentTime]);
+
+    const speedLimitStats = useMemo(() => {
+        if (!networkData?.links?.length) return [];
+        const buckets: Record<string, number> = {};
+        networkData.links.forEach((link: any) => {
+            const spd = link.speedLimit ?? link.speed_limit ?? link.maxspeed ?? '?';
+            const key = `${spd}`;
+            buckets[key] = (buckets[key] ?? 0) + 1;
+        });
+        return Object.entries(buckets)
+            .map(([speed, count]) => ({ speed, count }))
+            .sort((a, b) => Number(a.speed) - Number(b.speed))
+            .slice(0, 6);
+    }, [networkData]);
+
     return (
         <div className={styles.leftCol}>
+
+            {/* ── 시나리오 정보 ── */}
+            <div className={styles.sectionBox}>
+                <div className={styles.sectionHeader}>
+                    <div className={styles.sectionAccent} style={{ background: '#7aa2ff' }}/>
+                    <span className={styles.sectionTitle}>시나리오</span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 11, color: '#666' }}>시나리오</span>
+                        <span style={{ fontSize: 12, color: '#ddd', fontWeight: 500 }}>{selectedScenario?.label ?? '-'}</span>
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: 11, color: '#666' }}>버전</span>
+                        <span style={{ fontSize: 12, color: '#7aa2ff' }}>{selectedScenarioVersion?.label ?? '-'}</span>
+                    </div>
+                </div>
+            </div>
 
             {/* ── KPI Cards ── */}
             <div className={styles.kpiGrid}>
@@ -134,6 +203,72 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
                     <div className={styles.progressGlow} style={{ left: `${progress}%` }}/>
                 </div>
             </div>
+            {/* ── 신호 현황 ── */}
+            {signalCount > 0 && (
+                <div className={styles.sectionBox}>
+                    <div className={styles.sectionHeader}>
+                        <div className={styles.sectionAccent} style={{ background: '#10b981' }}/>
+                        <span className={styles.sectionTitle}>신호 현황</span>
+                        <span className={styles.sectionMeta}>교차로 {signalCount}개</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                        <div style={{ flex: 1, background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                            <div style={{ fontSize: 18, fontWeight: 700, color: '#10b981', fontVariantNumeric: 'tabular-nums' }}>{greenCount}</div>
+                            <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>녹색 진행</div>
+                        </div>
+                        <div style={{ flex: 1, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                            <div style={{ fontSize: 18, fontWeight: 700, color: '#ef4444', fontVariantNumeric: 'tabular-nums' }}>{signalCount - greenCount}</div>
+                            <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>적색 정지</div>
+                        </div>
+                        <div style={{ flex: 1, background: 'rgba(122,162,255,0.08)', border: '1px solid rgba(122,162,255,0.2)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                            <div style={{ fontSize: 18, fontWeight: 700, color: '#ccc', fontVariantNumeric: 'tabular-nums' }}>{signalCount}</div>
+                            <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>전체</div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── 활성 레이어 ── */}
+            <div className={styles.sectionBox}>
+                <div className={styles.sectionHeader}>
+                    <div className={styles.sectionAccent} style={{ background: '#4169E1' }}/>
+                    <span className={styles.sectionTitle}>활성 레이어</span>
+                    <span className={styles.sectionMeta}>{activeLayerName?.length ?? 0}개</span>
+                </div>
+                <div className={styles.layerList}>
+                    {(!activeLayerName || activeLayerName.length === 0) ? (
+                        <div className={styles.emptyText}>활성화된 레이어 없음</div>
+                    ) : (
+                        activeLayerName.map((name) => (
+                            <div key={name} className={styles.layerItem}>
+                                <span className={styles.layerDot}/>
+                                <span>{LAYER_LABELS[name] ?? name}</span>
+                            </div>
+                        ))
+                    )}
+                </div>
+            </div>
+
+            {/* ── 속도 제한별 링크 분포 ── */}
+            {speedLimitStats.length > 0 && (
+                <div className={styles.sectionBox}>
+                    <div className={styles.sectionHeader}>
+                        <div className={styles.sectionAccent} style={{ background: '#f59e0b' }}/>
+                        <span className={styles.sectionTitle}>속도 제한별 링크</span>
+                        <span className={styles.sectionMeta}>km/h</span>
+                    </div>
+                    <ResponsiveContainer width="100%" height={110}>
+                        <BarChart data={speedLimitStats} margin={{ top: 2, right: 8, left: -22, bottom: 0 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" vertical={false}/>
+                            <XAxis dataKey="speed" stroke="#333" tick={{ fontSize: 10, fill: '#555' }}/>
+                            <YAxis stroke="#333" tick={{ fontSize: 10, fill: '#555' }}/>
+                            <Tooltip content={<ChartTooltip/>}/>
+                            <Bar dataKey="count" name="링크 수" fill="#f59e0b" radius={[3, 3, 0, 0]}/>
+                        </BarChart>
+                    </ResponsiveContainer>
+                </div>
+            )}
+
             <div className={styles.mainGridSide}>
                 <div className={styles.chartSection}>
                     <div className={styles.sectionHeader}>
@@ -176,61 +311,41 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
                     </div>
                 </div>
 
-                <div className={styles.rightColumn}>
-                    <div className={styles.sectionBox}>
-                        <div className={styles.sectionHeader}>
-                            <div className={styles.sectionAccent} style={{ background: '#10b981' }}/>
-                            <span className={styles.sectionTitle}>활성 레이어</span>
-                            <span className={styles.sectionMeta}>{(activeLayerName?.length ?? 0)}개</span>
-                        </div>
-                        <div className={styles.layerList}>
-                            {(!activeLayerName || activeLayerName.length === 0) ? (
-                                <div className={styles.emptyText}>활성화된 레이어 없음</div>
-                            ) : (
-                                activeLayerName.map((name) => (
-                                    <div key={name} className={styles.layerItem}>
-                                        <span className={styles.layerDot}/>
-                                        <span>{LAYER_LABELS[name] ?? name}</span>
-                                    </div>
-                                ))
-                            )}
-                        </div>
-                    </div>
+            </div>
 
-                    <div className={styles.sectionBox}>
-                        <div className={styles.sectionHeader}>
-                            <div className={styles.sectionAccent} style={{ background: '#f59e0b' }}/>
-                            <span className={styles.sectionTitle}>최근 편집</span>
-                            <span className={styles.sectionMeta}>{updateLogs.length}건</span>
-                        </div>
-                        <div className={styles.historyList}>
-                            {updateLogs.length === 0 ? (
-                                <div className={styles.emptyText}>편집 내역 없음</div>
-                            ) : (
-                                [...updateLogs].reverse().slice(0, 5).map((log, i) => {
-                                    const parts: string[] = [];
-                                    if (log.json.added?.length) parts.push(`+${log.json.added.length}`);
-                                    if (log.json.modified?.length) parts.push(`~${log.json.modified.length}`);
-                                    if (log.json.deleted?.length) parts.push(`-${log.json.deleted.length}`);
-                                    return (
-                                        <div key={i} className={styles.historyItem}>
-                                            <div className={styles.historyItemLeft}>
-                                                <div className={styles.historyDot}/>
-                                            </div>
-                                            <div className={styles.historyItemRight}>
-                                                        <span className={styles.historyTime}>
-                                                            {new Date(log.timestamp).toLocaleTimeString('ko-KR')}
-                                                        </span>
-                                                <span className={styles.historyDesc}>
-                                                            {parts.join(' · ') || '변경 없음'}
-                                                        </span>
-                                            </div>
-                                        </div>
-                                    );
-                                })
-                            )}
-                        </div>
-                    </div>
+            {/* ── 최근 편집 이력 ── */}
+            <div className={styles.sectionBox}>
+                <div className={styles.sectionHeader}>
+                    <div className={styles.sectionAccent} style={{ background: '#f59e0b' }}/>
+                    <span className={styles.sectionTitle}>최근 편집</span>
+                    <span className={styles.sectionMeta}>{updateLogs.length}건</span>
+                </div>
+                <div className={styles.historyList}>
+                    {updateLogs.length === 0 ? (
+                        <div className={styles.emptyText}>편집 내역 없음</div>
+                    ) : (
+                        [...updateLogs].reverse().slice(0, 5).map((log, i) => {
+                            const parts: string[] = [];
+                            if (log.json.added?.length) parts.push(`+${log.json.added.length}`);
+                            if (log.json.modified?.length) parts.push(`~${log.json.modified.length}`);
+                            if (log.json.deleted?.length) parts.push(`-${log.json.deleted.length}`);
+                            return (
+                                <div key={i} className={styles.historyItem}>
+                                    <div className={styles.historyItemLeft}>
+                                        <div className={styles.historyDot}/>
+                                    </div>
+                                    <div className={styles.historyItemRight}>
+                                        <span className={styles.historyTime}>
+                                            {new Date(log.timestamp).toLocaleTimeString('ko-KR')}
+                                        </span>
+                                        <span className={styles.historyDesc}>
+                                            {parts.join(' · ') || '변경 없음'}
+                                        </span>
+                                    </div>
+                                </div>
+                            );
+                        })
+                    )}
                 </div>
             </div>
         </div>

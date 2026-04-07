@@ -9,12 +9,22 @@ import { fromLonLat, toLonLat } from 'ol/proj';
 import { Coordinate } from 'ol/coordinate';
 import { getDistance } from 'ol/sphere';
 import { useNetworkDrawStore } from '@stores/useNetworkDrawStore';
-import { useNetworkStore } from '@stores/useNetworkStore';
+import { useNetworkStore, useNetworkHistoryStore } from '@stores/useNetworkStore';
 import { useOpenLayersStore } from '@stores/useOpenLayersStore';
 import { useCesiumStore } from '@stores/useCesiumStore';
 import { useMessageStore } from '@stores/useMessageStore';
-import { generateGUID } from '@utils/guid';
-import { Network, Node, Link, Lane, Port, Connection, Coordinates } from '@type/Network';
+import { generateGUID, assignPropertyToResponseData } from '@utils/guid';
+import { Network, Node, Link, Lane, Cell, Segment, Port, Connection, Coordinates } from '@type/Network';
+import { UpdateLogEntry } from '@type/HistoryTypes';
+
+/** 신규 추가 객체의 모든 필드를 added 항목으로 수집 */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function collectAdded(item: any): NonNullable<UpdateLogEntry['added']> {
+    if (!item?.__guid) return [];
+    return Object.entries(item as Record<string, unknown>).map(([field, value]) => ({
+        guid: item.__guid as string, field, oldValue: null, newValue: value,
+    }));
+}
 
 const SNAP_RADIUS_M = 25;
 const SNAP_LINK_RADIUS_M = 15;   // 링크 위 스냅 임계값 (m)
@@ -213,22 +223,22 @@ function splitLinkInNetwork(
 
     // 기존 노드 A, B 포트/커넥션 업데이트
     const updatedNodes = network.nodes.map(n => {
-        if (n.id === link.fromNode) {
+        if (String(n.id) === String(link.fromNode)) {
             return {
                 ...n,
                 ports: n.ports.map(p =>
-                    p.linkId === link.id && p.type === 'out' ? { ...p, linkId: l1Id } : p),
+                    String(p.linkId) === String(link.id) && p.type === 'out' ? { ...p, linkId: l1Id } : p),
                 connections: n.connections.map(c =>
-                    c.toLink === link.id ? { ...c, toLink: l1Id } : c),
+                    String(c.toLink) === String(link.id) ? { ...c, toLink: l1Id } : c),
             };
         }
-        if (n.id === link.toNode) {
+        if (String(n.id) === String(link.toNode)) {
             return {
                 ...n,
                 ports: n.ports.map(p =>
-                    p.linkId === link.id && p.type === 'in' ? { ...p, linkId: l2Id } : p),
+                    String(p.linkId) === String(link.id) && p.type === 'in' ? { ...p, linkId: l2Id } : p),
                 connections: n.connections.map(c =>
-                    c.fromLink === link.id ? { ...c, fromLink: l2Id } : c),
+                    String(c.fromLink) === String(link.id) ? { ...c, fromLink: l2Id } : c),
             };
         }
         return n;
@@ -245,14 +255,14 @@ function splitLinkInNetwork(
 
 function makePort(linkId: number | string, type: 'in' | 'out'): Port {
     return {
-        __guid: generateGUID(), featureType: 'ports',
+        featureType: 'ports',
         linkId, direction: 0, type,
     } as Port;
 }
 
 function makeNode(id: number | string, coord: Coordinates, ports: Port[] = []): Node {
     return {
-        __guid: generateGUID(), featureType: 'nodes',
+        featureType: 'nodes',
         id, type: 'normal',
         numPort: ports.length, numConnection: 0,
         v2x: '', center: '', coordinates: coord,
@@ -320,7 +330,7 @@ function makeConnections(
     const toStart = toLink.coordinates[0]!;
 
     const conn = (fromLane: number, toLane: number, idx: number): Connection => ({
-        __guid: generateGUID(), featureType: 'connections' as any,
+        featureType: 'connections' as any,
         id: existingCount + idx,
         fromLink: fromLink.id, fromLane,
         fromLaneCoordinates: fromEnd,
@@ -354,6 +364,8 @@ function makeConnections(
     return [conn(fLanes - 1, tLanes - 1, 0)];
 }
 
+const DEFAULT_CELL_LENGTH = 5; // 셀 기본 길이 (m)
+
 function makeLink(
     id: number | string,
     fromNodeId: number | string,
@@ -365,17 +377,31 @@ function makeLink(
     maxSpd: number,
 ): Link {
     const length = getDistance([from.lng, from.lat], [to.lng, to.lat]);
-    const lanes: Lane[] = Array.from({ length: laneCount }, (_, i) => ({
-        __guid: generateGUID(), featureType: 'lanes' as any,
-        id: i, linkRef: id as number,
-        leftLaneId: i > 0 ? i - 1 : -1,
-        rightLaneId: i < laneCount - 1 ? i + 1 : -1,
-        numCell: 0, rightLC: true, leftLC: true, laneAccessType: null,
-        shape: '', coordinates: [from, to], segments: [], cells: [],
-        laneSource: null as any, laneTarget: null as any,
-    }));
+    const numCells = Math.max(1, Math.ceil(length / DEFAULT_CELL_LENGTH));
+
+    const lanes: Lane[] = Array.from({ length: laneCount }, (_, i) => {
+        // cells는 시뮬레이션 모델 데이터로 서버 저장 포맷에 필요하지만
+        // 렌더링 대상이 아니므로 빈 배열로 초기화 (서버 저장 후 서버에서 채워짐)
+        const cells: Cell[] = [];
+        const segments: Segment[] = [{
+            featureType: 'segments',
+            id: 0,
+            block: false,
+            initPoint: 0,
+            endPoint: length,
+        } as unknown as Segment];
+        return {
+            featureType: 'lanes' as any,
+            id: i, linkRef: id as number,
+            leftLaneId: i > 0 ? i - 1 : -1,
+            rightLaneId: i < laneCount - 1 ? i + 1 : -1,
+            numCell: numCells, rightLC: true, leftLC: true, laneAccessType: null,
+            shape: '', coordinates: [from, to], segments, cells,
+            laneSource: null as any, laneTarget: null as any,
+        };
+    });
     return {
-        __guid: generateGUID(), featureType: 'links',
+        featureType: 'links',
         id, fromNode: fromNodeId, toNode: toNodeId,
         numLane: laneCount, length, width: linkWidth,
         maxSpd, minSpd: 0, ffSpd: maxSpd, waveSpd: 20,
@@ -572,6 +598,11 @@ export const useNetworkDraw = () => {
             const network = useNetworkStore.getState().currentJsonData;
             if (!network) return;
 
+            // O(links) 1회 빌드 → 이후 모든 find()를 O(1) Map 룩업으로 대체
+            const linkMap = new Map<string, Link>(
+                network.links.map(l => [String(l.id), l])
+            );
+
             const ts = Date.now();
             const startWgs84 = startWgs84Ref.current!;
             const linkId = ts + 2;
@@ -611,12 +642,12 @@ export const useNetworkDraw = () => {
 
             // 기존 노드 배열을 복사하면서 스냅된 노드에 포트 추가
             const updatedNodes = network.nodes.map((n) => {
-                if (!isNewFromNode && n.id === fromNodeId) {
+                if (!isNewFromNode && String(n.id) === String(fromNodeId)) {
                     // fromNode: 기존 "in" 링크 → 새 "out" 링크 커넥션
                     // 진입 방위각(inLink) → 출발 방위각(newLink) 로 S/L/R 판별
                     const inLinks = n.ports
                         .filter(p => p.type === 'in')
-                        .map(p => network.links.find(l => l.id === p.linkId))
+                        .map(p => linkMap.get(String(p.linkId)))
                         .filter((l): l is Link => !!l);
 
                     const newConns: Connection[] = [];
@@ -638,12 +669,12 @@ export const useNetworkDraw = () => {
                         numConnection: n.numConnection + newConns.length,
                     };
                 }
-                if (!isNewToNode && n.id === toNodeId) {
+                if (!isNewToNode && String(n.id) === String(toNodeId)) {
                     // toNode: 새 "in" 링크 → 기존 "out" 링크 커넥션
                     // 진입 방위각(newLink) → 출발 방위각(outLink) 로 S/L/R 판별
                     const outLinks = n.ports
                         .filter(p => p.type === 'out')
-                        .map(p => network.links.find(l => l.id === p.linkId))
+                        .map(p => linkMap.get(String(p.linkId)))
                         .filter((l): l is Link => !!l);
 
                     const newConns: Connection[] = [];
@@ -678,6 +709,8 @@ export const useNetworkDraw = () => {
 
             // ── 양방향 처리: 역방향 링크 자동 생성 ─────────────────
             const finalLinks = [...network.links, newLink];
+            // newLink가 추가된 Map (양방향 섹션의 find를 O(1)로)
+            linkMap.set(String(newLink.id), newLink);
 
             if (isBidirectionalRef.current) {
                 const reverseId = ts + 3;
@@ -696,7 +729,7 @@ export const useNetworkDraw = () => {
                         // toNodeId: add revOutPort + in-links → reverseLink connections
                         const inLinks = n.ports
                             .filter(p => p.type === 'in')
-                            .map(p => finalLinks.find(l => String(l.id) === String(p.linkId)))
+                            .map(p => linkMap.get(String(p.linkId)))
                             .filter((l): l is Link => !!l);
                         const revConns: Connection[] = [];
                         for (const inLink of inLinks) {
@@ -715,7 +748,7 @@ export const useNetworkDraw = () => {
                         // fromNodeId: add revInPort + reverseLink → out-links connections
                         const outLinks = n.ports
                             .filter(p => p.type === 'out')
-                            .map(p => finalLinks.find(l => String(l.id) === String(p.linkId)))
+                            .map(p => linkMap.get(String(p.linkId)))
                             .filter((l): l is Link => !!l);
                         const revConns: Connection[] = [];
                         for (const outLink of outLinks) {
@@ -735,12 +768,64 @@ export const useNetworkDraw = () => {
                 finalLinks.push(reverseLink);
             }
 
-            useNetworkStore.getState().setCurrentJsonData({
-                ...network,
-                nodes: updatedNodes,
-                links: finalLinks,
-            });
+            const newNetwork: Network = { ...network, nodes: updatedNodes, links: finalLinks };
+
+            // 신규 객체에 경로 기반 GUID 부여 (기존 객체는 __guid 있으므로 skip)
+            assignPropertyToResponseData(newNetwork as any);
+
+            useNetworkStore.getState().setCurrentJsonData(newNetwork);
             useNetworkStore.getState().setChange(true);
+
+            // ── history 로그 ─────────────────────────────────────────────
+            const historyEntry: UpdateLogEntry = { added: [], modified: [] };
+
+            // 신규 링크
+            const addedLink = newNetwork.links.find(l => String(l.id) === String(linkId));
+            if (addedLink) historyEntry.added!.push(...collectAdded(addedLink));
+
+            // 역방향 링크 (양방향)
+            if (isBidirectionalRef.current) {
+                const reverseId = ts + 3;
+                const addedRev = newNetwork.links.find(l => String(l.id) === String(reverseId));
+                if (addedRev) historyEntry.added!.push(...collectAdded(addedRev));
+            }
+
+            // 신규 노드
+            if (isNewFromNode) {
+                const addedNode = newNetwork.nodes.find(n => String(n.id) === String(fromNodeId));
+                if (addedNode) historyEntry.added!.push(...collectAdded(addedNode));
+            } else {
+                // 기존 fromNode: 추가된 포트·커넥션 개별 logged
+                const oldFN = network.nodes.find(n => String(n.id) === String(fromNodeId));
+                const newFN = newNetwork.nodes.find(n => String(n.id) === String(fromNodeId));
+                if (oldFN && newFN) {
+                    newFN.ports.slice(oldFN.ports.length).forEach(p => historyEntry.added!.push(...collectAdded(p)));
+                    newFN.connections.slice(oldFN.connections.length).forEach(c => historyEntry.added!.push(...collectAdded(c)));
+                    if (newFN.numPort !== oldFN.numPort)
+                        historyEntry.modified!.push({ guid: newFN.__guid!, field: 'numPort', oldValue: oldFN.numPort, newValue: newFN.numPort });
+                    if (newFN.numConnection !== oldFN.numConnection)
+                        historyEntry.modified!.push({ guid: newFN.__guid!, field: 'numConnection', oldValue: oldFN.numConnection, newValue: newFN.numConnection });
+                }
+            }
+            if (isNewToNode) {
+                const addedNode = newNetwork.nodes.find(n => String(n.id) === String(toNodeId));
+                if (addedNode) historyEntry.added!.push(...collectAdded(addedNode));
+            } else {
+                const oldTN = network.nodes.find(n => String(n.id) === String(toNodeId));
+                const newTN = newNetwork.nodes.find(n => String(n.id) === String(toNodeId));
+                if (oldTN && newTN) {
+                    newTN.ports.slice(oldTN.ports.length).forEach(p => historyEntry.added!.push(...collectAdded(p)));
+                    newTN.connections.slice(oldTN.connections.length).forEach(c => historyEntry.added!.push(...collectAdded(c)));
+                    if (newTN.numPort !== oldTN.numPort)
+                        historyEntry.modified!.push({ guid: newTN.__guid!, field: 'numPort', oldValue: oldTN.numPort, newValue: newTN.numPort });
+                    if (newTN.numConnection !== oldTN.numConnection)
+                        historyEntry.modified!.push({ guid: newTN.__guid!, field: 'numConnection', oldValue: oldTN.numConnection, newValue: newTN.numConnection });
+                }
+            }
+
+            if (historyEntry.added!.length > 0 || historyEntry.modified!.length > 0) {
+                useNetworkHistoryStore.getState().setUpdateLogs(historyEntry);
+            }
 
             useMessageStore.getState().setMessage({
                 type: 'info',
@@ -755,11 +840,17 @@ export const useNetworkDraw = () => {
         finishSegmentRef.current = finishSegment;
 
         // ── OL 이벤트 핸들러 (capture phase → 다른 핸들러 차단) ──
+        let olMoveRafId: number | null = null;
         const onPointerMove = (e: PointerEvent) => {
             e.stopPropagation();
             const coord = olMap.getEventCoordinate(e);
             lastOlCursorRef.current = coord;
-            renderOlPreview(coord);
+            // RAF 스로틀: 프레임당 1회만 snap 계산 + 렌더링
+            if (olMoveRafId !== null) return;
+            olMoveRafId = requestAnimationFrame(() => {
+                olMoveRafId = null;
+                if (lastOlCursorRef.current) renderOlPreview(lastOlCursorRef.current);
+            });
         };
 
         const onClick = (e: MouseEvent) => {
@@ -866,6 +957,7 @@ export const useNetworkDraw = () => {
         document.addEventListener('keydown', onKeyDown);
 
         return () => {
+            if (olMoveRafId !== null) cancelAnimationFrame(olMoveRafId);
             vp.removeEventListener('pointermove', onPointerMove, true);
             vp.removeEventListener('pointerdown', blockPointerDown, true);
             vp.removeEventListener('pointerup',   blockPointerDown, true);
@@ -892,36 +984,45 @@ export const useNetworkDraw = () => {
 
         const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
 
-        // MOUSE_MOVE
+        // MOUSE_MOVE — pickEllipsoid(수학적 ray-sphere): GPU readback 없음, 즉각 반응
+        let cesiumMoveRafId: number | null = null;
+        let lastMovePosition: Cesium.Cartesian2 | null = null;
         handler.setInputAction((mv: Cesium.ScreenSpaceEventHandler.MotionEvent) => {
-            const cartesian = viewer.scene.pickPosition(mv.endPosition);
-            if (!cartesian) return;
+            lastMovePosition = mv.endPosition;
+            if (cesiumMoveRafId !== null) return;
+            cesiumMoveRafId = requestAnimationFrame(() => {
+                cesiumMoveRafId = null;
+                if (!lastMovePosition) return;
 
-            const carto = Cesium.Cartographic.fromCartesian(cartesian);
-            const lng = Cesium.Math.toDegrees(carto.longitude);
-            const lat = Cesium.Math.toDegrees(carto.latitude);
-            const data  = useNetworkStore.getState().currentJsonData;
-            const nodes = data?.nodes ?? [];
-            const links = data?.links ?? [];
+                // pickEllipsoid: GPU readback 없이 타원체 교점 계산 (빠름)
+                const cartesian = viewer.camera.pickEllipsoid(lastMovePosition);
+                if (!cartesian) return;
 
-            const snapNode = findSnapNode(nodes, [lng, lat]);
-            snapNodeRef.current = snapNode;
+                const carto = Cesium.Cartographic.fromCartesian(cartesian);
+                const lng = Cesium.Math.toDegrees(carto.longitude);
+                const lat = Cesium.Math.toDegrees(carto.latitude);
+                const data  = useNetworkStore.getState().currentJsonData;
+                const nodes = data?.nodes ?? [];
+                const links = data?.links ?? [];
 
-            // 링크 스냅: OL 좌표계로 변환 후 계산
-            const cursorOl = fromLonLat([lng, lat]);
-            const snapLink = findSnapLink(links, cursorOl, !!snapNode);
-            linkSnapRef.current = snapLink;
+                const snapNode = findSnapNode(nodes, [lng, lat]);
+                snapNodeRef.current = snapNode;
 
-            const endWgs84 = snapNode ? snapNode.coordinates
-                           : snapLink  ? snapLink.wgs84
-                           : { lng, lat };
-            lastCesiumWgs84Ref.current = endWgs84;
-            updateCesiumPreview(ds, endWgs84, snapNode, snapLink, startWgs84Ref.current, linkWidthRef.current);
+                const cursorOl = fromLonLat([lng, lat]);
+                const snapLink = findSnapLink(links, cursorOl, !!snapNode);
+                linkSnapRef.current = snapLink;
+
+                const endWgs84 = snapNode ? snapNode.coordinates
+                               : snapLink  ? snapLink.wgs84
+                               : { lng, lat };
+                lastCesiumWgs84Ref.current = endWgs84;
+                updateCesiumPreview(ds, endWgs84, snapNode, snapLink, startWgs84Ref.current, linkWidthRef.current);
+            });
         }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
         // LEFT_CLICK
         handler.setInputAction((click: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
-            const cartesian = viewer.scene.pickPosition(click.position);
+            const cartesian = viewer.camera.pickEllipsoid(click.position);
             if (!cartesian) return;
 
             const carto = Cesium.Cartographic.fromCartesian(cartesian);
@@ -990,6 +1091,7 @@ export const useNetworkDraw = () => {
         }, Cesium.ScreenSpaceEventType.RIGHT_CLICK);
 
         return () => {
+            if (cesiumMoveRafId !== null) cancelAnimationFrame(cesiumMoveRafId);
             handler.destroy();
             viewer.dataSources.remove(ds, true);
             cesiumDsRef.current = null;
@@ -1130,8 +1232,8 @@ export const useNetworkDraw = () => {
                 }
 
                 // 같은 노드: 차선 단위 수동 connection 생성
-                const fromLink = network.links.find(l => l.id === fromSel!.linkId);
-                const toLink   = network.links.find(l => l.id === feat.get('linkId'));
+                const fromLink = network.links.find(l => String(l.id) === String(fromSel!.linkId));
+                const toLink   = network.links.find(l => String(l.id) === String(feat.get('linkId')));
                 const node     = network.nodes.find(n => String(n.id) === String(resolvedNodeId));
                 if (!fromLink || !toLink || !node) return;
 
@@ -1147,7 +1249,7 @@ export const useNetworkDraw = () => {
                 const toLane    = feat.get('laneIdx') as number;
                 const laneWidth = toLink.width / toLink.numLane;
                 const newConn: Connection = {
-                    __guid: generateGUID(), featureType: 'connections' as any,
+                    featureType: 'connections' as any,
                     id: node.connections.length,
                     fromLink: fromLink.id, fromLane,
                     fromLaneCoordinates: fromLink.coordinates[fromLink.coordinates.length - 1]!,
@@ -1158,13 +1260,31 @@ export const useNetworkDraw = () => {
                     shape: '', coordinates: [],
                 } as Connection;
 
-                const updatedNodes = network.nodes.map(n =>
+                const updatedNodesOL = network.nodes.map(n =>
                     String(n.id) === String(resolvedNodeId)
                         ? { ...n, connections: [...n.connections, newConn], numConnection: n.numConnection + 1 }
                         : n
                 );
-                useNetworkStore.getState().setCurrentJsonData({ ...network, nodes: updatedNodes });
+                const connNetworkOL: Network = { ...network, nodes: updatedNodesOL };
+                assignPropertyToResponseData(connNetworkOL as any);
+
+                useNetworkStore.getState().setCurrentJsonData(connNetworkOL);
                 useNetworkStore.getState().setChange(true);
+
+                // history
+                const addedNodeOL = connNetworkOL.nodes.find(n => String(n.id) === String(resolvedNodeId));
+                const addedConnOL = addedNodeOL?.connections[addedNodeOL.connections.length - 1];
+                if (addedConnOL && addedNodeOL) {
+                    useNetworkHistoryStore.getState().setUpdateLogs({
+                        added: collectAdded(addedConnOL),
+                        modified: [{
+                            guid: addedNodeOL.__guid!, field: 'numConnection',
+                            oldValue: node.connections.length,
+                            newValue: node.connections.length + 1,
+                        }],
+                    });
+                }
+
                 useMessageStore.getState().setMessage({
                     type: 'info',
                     text: `Connection 생성: Link ${fromLink.id} Lane ${fromLane} → Link ${toLink.id} Lane ${toLane} (${turning})`,
@@ -1243,7 +1363,7 @@ export const useNetworkDraw = () => {
                     }
                 }
             } else {
-                const fromLink = network.links.find(l => l.id === fromSel!.linkId);
+                const fromLink = network.links.find(l => String(l.id) === String(fromSel!.linkId));
                 if (fromLink) {
                     const wgs84 = getLaneEndpointWgs84(fromLink, fromSel.laneIdx, 'target');
                     ds.entities.add({
@@ -1328,8 +1448,8 @@ export const useNetworkDraw = () => {
                 }
 
                 // 같은 노드: 차선 단위 수동 connection 생성
-                const fromLink = network.links.find(l => l.id === fromSel!.linkId);
-                const toLink   = network.links.find(l => l.id === meta.linkId);
+                const fromLink = network.links.find(l => String(l.id) === String(fromSel!.linkId));
+                const toLink   = network.links.find(l => String(l.id) === String(meta.linkId));
                 const node     = network.nodes.find(n => String(n.id) === String(resolvedNodeId));
                 if (!fromLink || !toLink || !node) return;
 
@@ -1345,7 +1465,7 @@ export const useNetworkDraw = () => {
                 const toLane    = meta.laneIdx as number;
                 const laneWidth = toLink.width / toLink.numLane;
                 const newConn: Connection = {
-                    __guid: generateGUID(), featureType: 'connections' as any,
+                    featureType: 'connections' as any,
                     id: node.connections.length,
                     fromLink: fromLink.id, fromLane,
                     fromLaneCoordinates: fromLink.coordinates[fromLink.coordinates.length - 1]!,
@@ -1356,13 +1476,31 @@ export const useNetworkDraw = () => {
                     shape: '', coordinates: [],
                 } as Connection;
 
-                const updatedNodes = network.nodes.map(n =>
+                const updatedNodes2 = network.nodes.map(n =>
                     String(n.id) === String(resolvedNodeId)
                         ? { ...n, connections: [...n.connections, newConn], numConnection: n.numConnection + 1 }
                         : n
                 );
-                useNetworkStore.getState().setCurrentJsonData({ ...network, nodes: updatedNodes });
+                const connNetwork2: Network = { ...network, nodes: updatedNodes2 };
+                assignPropertyToResponseData(connNetwork2 as any);
+
+                useNetworkStore.getState().setCurrentJsonData(connNetwork2);
                 useNetworkStore.getState().setChange(true);
+
+                // history
+                const addedNode2 = connNetwork2.nodes.find(n => String(n.id) === String(resolvedNodeId));
+                const addedConn2 = addedNode2?.connections[addedNode2.connections.length - 1];
+                if (addedConn2 && addedNode2) {
+                    useNetworkHistoryStore.getState().setUpdateLogs({
+                        added: collectAdded(addedConn2),
+                        modified: [{
+                            guid: addedNode2.__guid!, field: 'numConnection',
+                            oldValue: node.connections.length,
+                            newValue: node.connections.length + 1,
+                        }],
+                    });
+                }
+
                 useMessageStore.getState().setMessage({
                     type: 'info',
                     text: `Connection 생성: Link ${fromLink.id} Lane ${fromLane} → Link ${toLink.id} Lane ${toLane} (${turning})`,

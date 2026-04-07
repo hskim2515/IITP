@@ -35,6 +35,19 @@ public class NetworkService {
         return transformNetworkCoordinates(versionId, dto);
     }
 
+    public NetworkXml parseAndTransform(String versionId, java.io.InputStream is) {
+        NetworkXml networkXml = networkJaxbParser.parse(is);
+        return transformNetworkCoordinates(versionId, networkXml);
+    }
+
+    public byte[] getRawXmlBytes(String versionId) throws IOException {
+        // versionId → 실제 경로 조회 (getNetworkXmlByVersionId와 동일 경로 사용)
+        try (InputStream is = new URL(remoteUrl + versionId + "/network.xml").openStream()) {
+            return is.readAllBytes();
+        }
+    }
+
+
     public NetworkXml streamToDto(InputStream is) {
         final long totalStart = System.nanoTime();
         NetworkXml networkDto = networkJaxbParser.parse(is);
@@ -65,6 +78,17 @@ public class NetworkService {
                     link.getShape(), baseLongitude, baseLatitude
             ));
         });
+
+        // 커넥션 shape도 동일한 좌표 변환 적용
+        dto.getNodes().forEach(node -> {
+            if (node.getConnections() == null) return;
+            node.getConnections().forEach(conn ->
+                conn.setCoordinates(CoordinateUtils.parseAndTransform(
+                        conn.getShape(), baseLongitude, baseLatitude
+                ))
+            );
+        });
+
         return dto;
     }
 }

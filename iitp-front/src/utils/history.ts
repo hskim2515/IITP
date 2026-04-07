@@ -1,4 +1,3 @@
-import Feature from 'ol/Feature'
 import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
 import {UpdateLogEntry, UpdateLogItem, UpdateType} from "@type/HistoryTypes";
 import { Feature as OLFeature } from "ol";
@@ -168,36 +167,23 @@ export function mergeJsonWithLogRecursive(
 }
 
 export function buildMergedDataFromLogs(
-    baseData: Record<string,any>,
-    logs: UpdateLogEntry[],
-    isUndo : boolean
-): Record<string,any> {
+    baseData: any[],
+    logs: Array<{ createdAt: string; data: UpdateLogEntry }>,
+    isUndo: boolean
+): any[] {
     const sortedLogs = [...logs].sort((a, b) => {
-        const aTime = getLogMinTimestamp(a);
-        const bTime = getLogMinTimestamp(b);
-        return isUndo
-            ? bTime - aTime
-            : aTime - bTime;
+        const aTime = new Date(a.createdAt).getTime();
+        const bTime = new Date(b.createdAt).getTime();
+        return isUndo ? bTime - aTime : aTime - bTime;
     });
 
-    const featuresMap = new Map<string | number, Feature>();
-    baseData.forEach((item) => {
-        const id = item.__guid;
-        if (id != null) {
-            featuresMap.set(id, item);
+    let result: any = baseData;
+    sortedLogs.forEach(log => {
+        if (log.data) {
+            result = mergeJsonWithLogRecursive(result, log.data, isUndo);
         }
     });
-
-    sortedLogs.forEach(log => {
-        mergeJsonWithLogRecursive(featuresMap, log.data, isUndo);
-    });
-    return Array.from(featuresMap.values());
-}
-
-function getLogMinTimestamp(log: UpdateLogEntry): number {
-    const allTimestamps = ['added', 'modified', 'deleted']
-        .flatMap(type => log[type]?.map(item => new Date(item.timestamp).getTime()) || []);
-    return allTimestamps.length > 0 ? Math.min(...allTimestamps) : Infinity;
+    return result;
 }
 
 //변경이력 쌓기
@@ -252,11 +238,11 @@ export const featureReverseLogs = (
     if(store.getState().updateLogs){
         store.getState().resetUpdateLogs();
     }
-    const sortLogs = logs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    const sortLogs = [...logs].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     const reversedLogs = sortLogs.map((log) => {
         const timestamp = new Date().toISOString();
         return {
-            added: log.data.deleted.map((item) => ({
+            added: (log.data?.deleted ?? []).map((item) => ({
                 ...item,
                 guid: item.guid,
                 field: item.field,
@@ -264,7 +250,7 @@ export const featureReverseLogs = (
                 newValue: item.oldValue,
                 timestamp: timestamp,
             })),
-            deleted: log.data.added.map((item) => ({
+            deleted: (log.data?.added ?? []).map((item) => ({
                 ...item,
                 guid: item.guid,
                 field: item.field,
@@ -272,7 +258,7 @@ export const featureReverseLogs = (
                 newValue: null,
                 timestamp: timestamp,
             })),
-            modified: log.data.modified.map((item) => ({
+            modified: (log.data?.modified ?? []).map((item) => ({
                 ...item,
                 guid: item.guid,
                 field: item.field,

@@ -1,3 +1,4 @@
+import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
@@ -36,9 +37,17 @@ export default class RailStationFeatureLayer extends VectorLayer {
                 (state: {currentJsonData: RailPublicStationResponse;}) => state.currentJsonData,
                 () => {
                     console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
-                    this.load(); // 데이터가 변경되면 레이어를 다시 로드합니다.
+                    this.load();
                 },
-                { equalityFn: (a: RailPublicStationResponse, b: RailPublicStationResponse) => diff(a, b) === undefined}
+                { equalityFn: (a: any, b: any) => a === b }
+            );
+        }
+        const networkStore = layerNameToStoreMap["network"];
+        if (networkStore) {
+            (networkStore as any).subscribe(
+                (state: any) => state.currentJsonData,
+                () => { const _d = useNetworkDrawStore.getState(); if (!_d.isActive && !_d.isConnectionActive) this.load(); },
+                { equalityFn: (a: any, b: any) => a === b }
             );
         }
     }

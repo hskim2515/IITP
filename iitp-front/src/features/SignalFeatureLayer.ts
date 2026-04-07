@@ -1,240 +1,291 @@
 import VectorSource from "ol/source/Vector";
 import VectorLayer from "ol/layer/Vector";
-import {layerNameToStoreMap} from "@hooks/useLayerInit";
+import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { Feature } from "ol";
-import {
-    FEATURE_TYPE,
-    SNAP_FEATURE_TYPE,
-    SNAP_LAYER
-} from "@type/Signal";
-import { useLayerStore } from "@stores/useLayerStore";
-import {
-    findFeatureByProperties,
-    getCoordinateByOffset,
-} from "@utils/feature";
-import { fromLonLat, toLonLat } from "ol/proj";
+import { FEATURE_TYPE } from "@type/Signal";
+import { fromLonLat } from "ol/proj";
 import { Point } from "ol/geom";
 import { generateGUIDWithType } from "@utils/guid";
-import deepEqual from "deep-equal";
-import {SignalData} from "@type/Signal";
+import { SignalData } from "@type/Signal";
 import { useNetworkStore } from "@stores/useNetworkStore";
+import { useSignalTimelineStore, SignalTimelineResponse } from "@stores/useSignalTimelineStore";
+import { useSimulationStore } from "@stores/useSimulationStore";
+import { JulianDate } from "cesium";
+import { Coordinate } from "ol/coordinate";
+import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
+import { Style, Icon, Circle as CircleStyle, Fill, Text, Stroke } from "ol/style";
+import { FeatureLike } from "ol/Feature";
+import { signalRenderState } from "@stores/signalRenderState";
+
+/* ── 신호등 캔버스 아이콘 (정적) ── */
+function createTrafficLightIcon(): HTMLCanvasElement {
+    const W = 14, H = 34, R = 5, PAD = 2;
+    const canvas = document.createElement("canvas");
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext("2d")!;
+
+    ctx.fillStyle = "#212121";
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = "#5a0000";
+    ctx.beginPath();
+    ctx.arc(W / 2, PAD + R, R, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#5a5a00";
+    ctx.beginPath();
+    ctx.arc(W / 2, H / 2, R, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#005a00";
+    ctx.beginPath();
+    ctx.arc(W / 2, H - PAD - R, R, 0, Math.PI * 2);
+    ctx.fill();
+
+    return canvas;
+}
+
+const TRAFFIC_LIGHT_ICON = createTrafficLightIcon();
+
+// "2026-04-06T06:34:07Z" → "06:34:07"
+function isoToTime(iso: string): string {
+    return iso.substring(11, 19);
+}
+
+function utcHHMMSS(jd: JulianDate): string {
+    const d = JulianDate.toDate(jd);
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
+function signalStyle(feature: FeatureLike): Style[] {
+    const nodeId    = String(feature.get("nodeId") ?? "");
+    const connGuids = (feature.get("connGuids") as string[]) ?? [];
+    const connIds   = (feature.get("connIds")   as string[]) ?? [];
+    const turnings  = (feature.get("turnings")  as string[]) ?? [];
+
+    const state   = signalRenderState.nodeState.get(nodeId) ?? "";
+    const actives = signalRenderState.activeConns.get(nodeId);
+
+    let dotColor = "#5a0000"; // 기본: 빨강 off
+    if (state === "yellow") {
+        dotColor = "#ffff00";
+    } else if (actives && (connGuids.some(g => actives.has(g)) || connIds.some(id => actives.has(id)))) {
+        dotColor = "#00ff00";
+    } else if (state !== "") {
+        dotColor = "#ff0000";
+    }
+
+    // anchor [0.5, 1.0] → feature 좌표가 아이콘 하단 중앙
+    // 초록 램프: 아이콘 H=34 기준 top에서 27px → 하단에서 7px 위
+    // 화살표는 초록 램프 위치에 오버레이 (offsetY = -7)
+    const arrowParts: string[] = [];
+    if (turnings.includes("U_Turn") || turnings.includes("UTurn"))       arrowParts.push("↩");
+    if (turnings.includes("Left_Turn") || turnings.includes("Left"))     arrowParts.push("←");
+    if (turnings.includes("Straight"))                                    arrowParts.push("↑");
+    if (turnings.includes("Right_Turn") || turnings.includes("Right"))   arrowParts.push("→");
+    const arrowText = arrowParts.join("");
+
+    const styles: Style[] = [
+        new Style({
+            image: new Icon({ img: TRAFFIC_LIGHT_ICON, scale: 1.0, anchor: [0.5, 1.0] }),
+        }),
+        new Style({
+            image: new CircleStyle({ radius: 5, fill: new Fill({ color: dotColor }) }),
+        }),
+    ];
+
+    if (arrowText) {
+        styles.push(new Style({
+            text: new Text({
+                text: arrowText,
+                font: "bold 10px sans-serif",
+                fill: new Fill({ color: "#ffffff" }),
+                stroke: new Stroke({ color: "#000000", width: 2 }),
+                offsetY: -7,
+            }),
+        }));
+    }
+
+    return styles;
+}
 
 export class SignalFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "signal";
-    private unsubscribe: () => void;
+    private unsubscribes: Array<() => void> = [];
+    private colorInterval: ReturnType<typeof setInterval> | null = null;
+    private lastWallClock = "";
 
     constructor() {
         const source = new VectorSource();
-        const layerManager = useLayerStore.getState().layerManager
         super({
             source,
             visible: true,
             zIndex: 400,
             updateWhileAnimating: true,
             updateWhileInteracting: true,
+            style: (feature: FeatureLike) => signalStyle(feature),
         });
 
         this.source = source;
 
-        const store = layerNameToStoreMap[this.LAYER_NAME];
+        const signalStore = layerNameToStoreMap[this.LAYER_NAME];
+        if (signalStore) {
+            this.unsubscribes.push(signalStore.subscribe(
+                (s: any) => s.currentJsonData,
+                () => this.load(),
+                { equalityFn: (a: any, b: any) => a === b }
+            ));
+        }
+        this.unsubscribes.push(useNetworkStore.subscribe(
+            (s: any) => s.currentJsonData,
+            () => this.load(),
+            { equalityFn: (a: any, b: any) => a === b }
+        ));
 
-        const buildNodeCoordMap = () => {
-            const networkData = useNetworkStore.getState().currentJsonData;
-            const nodeCoordMap = new Map<string, { lat: number; lng: number }>();
-            networkData?.nodes?.forEach((node: any) => {
-                if (node.id != null && node.coordinates) {
-                    nodeCoordMap.set(String(node.id), node.coordinates);
-                }
-            });
-            return nodeCoordMap;
-        };
+        this.load();
 
-        const listener = (
-            updated: Record<string, Array<Record<string, unknown>>>,
-            origin: Record<string, Array<Record<string, unknown>>>
-        ) => {
-            if (!updated) return;
-            const nodeCoordMap = buildNodeCoordMap();
-            Object.keys(updated).forEach((objectName) => {
-                const updatedList = updated[objectName] ?? [];
-                const originList = origin?.[objectName] ?? [];
+        // useSimulationStore.currentTime 기반 독립 시간 계산 (Cesium 렌더 루프 불필요)
+        this.colorInterval = setInterval(() => {
+            this.updateSignalColors();
+            if (signalRenderState.nodeState.size > 0) {
+                this.source.changed();
+            }
+        }, 500);
+    }
 
-                const updatedMap = new Map<string, Record<string, unknown>>();
-                const originMap = new Map<string, Record<string, unknown>>();
+    private updateSignalColors(): void {
+        const currentTime = useSimulationStore.getState().currentTime;
+        if (!currentTime) return;
 
-                updatedList.forEach((item) => {
-                    const guid = item?.__guid as string;
-                    if (guid) updatedMap.set(guid, item);
-                });
+        const wallClock = utcHHMMSS(currentTime);
+        if (wallClock === this.lastWallClock) return;
+        this.lastWallClock = wallClock;
 
-                originList.forEach((item) => {
-                    const guid = item?.__guid as string;
-                    if (guid) originMap.set(guid, item);
-                });
+        const timeline: SignalTimelineResponse[] | undefined =
+            useSignalTimelineStore.getState().signalTimeline;
+        if (!timeline?.length) return;
 
-                const added: Record<string, unknown>[] = [];
-                const removed: Record<string, unknown>[] = [];
-                const changed: Record<string, unknown>[] = [];
+        const activeConns = new Map<string, Set<string>>();
+        const nodeState   = new Map<string, string>();
 
-                originMap.forEach((originItem, guid) => {
-                    const updatedItem = updatedMap.get(guid);
-                    if (!updatedItem) {
-                        removed.push(originItem);
-                    } else if (!deepEqual(originItem, updatedItem)) {
-                        changed.push(updatedItem);
-                    }
-                });
+        for (const entry of timeline) {
+            const nodeId = String(entry.nodeId);
+            const current = entry.signalTimeline.find(
+                s => wallClock >= isoToTime(s.startTime) && wallClock < isoToTime(s.endTime)
+            );
+            if (!current) continue;
+            nodeState.set(nodeId, current.signalState);
 
-                updatedMap.forEach((updatedItem, guid) => {
-                    if (!originMap.has(guid)) {
-                        added.push(updatedItem);
-                    }
-                });
+            const activeGuids = new Set<string>();
+            for (const turnId of current.activeTurns) {
+                const turn = entry.turnInfo.find(t => t.id === turnId);
+                if (turn) turn.connList.forEach(g => activeGuids.add(g));
+            }
+            activeConns.set(nodeId, activeGuids);
+        }
 
-                const src = this.source;
-                const existing = src.getFeatures();
-
-                removed.forEach((item) => {
-                    const guid = item.__guid;
-                    const feature = existing.find(f => f.get("__guid") === guid);
-                    if (feature) {
-                        src.removeFeature(feature);
-                    }
-                });
-
-                changed.forEach((item) => {
-                    const dto = this.recordToDto(item);
-
-                    const feature = existing.find(f => f.get("__guid") === dto.__guid);
-                    if (feature) {
-                        const baseLayer = layerManager?.getLayerByName(this.getSnapLayerKey())
-                        const baseFeature = findFeatureByProperties(baseLayer, {
-                            featureType: this.getSnapFeatureType(),
-                            linkRef: item.linkRef,
-                            laneRef: item.laneRef ?? 0,
-                        })
-
-                        const offset = item.offset ?? 0
-                        const coord = getCoordinateByOffset(baseFeature, offset)
-                        if (coord) {
-                            const [ lng, lat ] = toLonLat(coord)
-
-                            feature.setGeometry(new Point(fromLonLat([ lng, lat ])));
-                        }
-
-                        feature.setProperties(dto);
-                    }
-                });
-
-                added.forEach((item) => {
-                    const dto = this.recordToDto(item);
-                    const feature = this.createFeature(dto, nodeCoordMap);
-                    if (feature) src.addFeature(feature);
-                });
-            });
-        };
-
-        this.unsubscribe = store.subscribe(
-            // 구독할 값: currentJsonData 배열
-            state => state.currentJsonData,
-            listener,
-            { fireImmediately: true }
-        );
+        signalRenderState.nodeState   = nodeState;
+        signalRenderState.activeConns = activeConns;
     }
 
     public async load(): Promise<void> {
+        const drawStore = useNetworkDrawStore.getState();
+        if (drawStore.isActive || drawStore.isConnectionActive) return;
+
         const store = layerNameToStoreMap[this.LAYER_NAME];
+        if (!store) return;
         const currentJsonData = store.getState().currentJsonData;
+        this.source.clear();
         if (!currentJsonData) return;
+
         const { signals } = currentJsonData;
         if (!signals?.length) return;
 
-        // nodeId → coordinates 맵 (network store에서 조회)
         const networkData = useNetworkStore.getState().currentJsonData;
-        const nodeCoordMap = new Map<string, { lat: number; lng: number }>();
-        networkData?.nodes?.forEach((node: any) => {
-            if (node.id != null && node.coordinates) {
-                nodeCoordMap.set(String(node.id), node.coordinates);
+        if (!networkData?.nodes || !networkData?.links) return;
+
+        const signalNodeIds = new Set(signals.map((s: any) => String(s.nodeId)));
+        // nodeId → connections 맵
+        const nodeConnectionMap = new Map<string, any[]>();
+        for (const node of networkData.nodes) {
+            nodeConnectionMap.set(String(node.id), node.connections ?? []);
+        }
+        // nodeId → signal 데이터
+        const signalMap = new Map(signals.map((s: any) => [String(s.nodeId), s]));
+
+        const features: Feature[] = [];
+
+        // toNode 기준으로 신호 노드로 진입하는 모든 링크 → 신호등 1개씩
+        for (const link of networkData.links) {
+            const toNodeId = String(link.toNode);
+            if (!signalNodeIds.has(toNodeId)) continue;
+            if (!link.coordinates?.length) continue;
+
+            const lastCoord = link.coordinates[link.coordinates.length - 1] as
+                { lng: number; lat: number } | undefined;
+            if (!lastCoord) continue;
+
+            const fromLinkId = String(link.id);
+            const conns = nodeConnectionMap.get(toNodeId) ?? [];
+            const connGuids: string[] = [];
+            const connIds:   string[] = [];
+            const turningSet = new Set<string>();
+            for (const conn of conns) {
+                if (String(conn.fromLink) === fromLinkId) {
+                    connGuids.push(conn.__guid ?? String(conn.id));
+                    connIds.push(String(conn.id));
+                    if (conn.turning) turningSet.add(String(conn.turning));
+                }
             }
-        });
+            const turnings = [...turningSet];
 
-        const source = this.source;
-        source.clear();
-
-        const features = signals
-            .map((data) => this.createFeature(data, nodeCoordMap))
-            .filter((f): f is Feature => !!f);
-
-        source.addFeatures(features);
-    }
-
-    /**
-     * DTO로부터 Point Feature와 속성을 생성
-     */
-    public createFeature(data: SignalData, nodeCoordMap?: Map<string, { lat: number; lng: number }>): Feature | undefined {
-
-        const props: SignalData = {
-            ...data,
-            featureType: data.featureType ?? FEATURE_TYPE.SIGNAL,
-        };
-        const feature = new Feature();
-        feature.setProperties(props);
-
-        // nodeId로 좌표 설정
-        if (data.nodeId && nodeCoordMap) {
-            const coord = nodeCoordMap.get(String(data.nodeId));
-            if (coord) {
-                feature.setGeometry(new Point(fromLonLat([coord.lng, coord.lat])));
-            }
+            const signal = signalMap.get(toNodeId) ?? {};
+            const pt = fromLonLat([lastCoord.lng, lastCoord.lat]) as [number, number];
+            const feature = new Feature(new Point(pt));
+            feature.setProperties({
+                ...signal,
+                featureType: FEATURE_TYPE.SIGNAL,
+                nodeId: toNodeId,
+                fromLinkId,
+                connGuids,
+                connIds,
+                turnings,
+            });
+            features.push(feature);
         }
 
+        this.source.addFeatures(features);
+    }
+
+    public createFeature(data: SignalData): Feature {
+        const feature = new Feature();
+        feature.setProperties({ ...data, featureType: data.featureType ?? FEATURE_TYPE.SIGNAL });
         return feature;
     }
 
-
     public createDto(): SignalData {
-        const guid = generateGUIDWithType(this.getFeatureType());
-
-        const dto: SignalData = {
+        return {
             id: undefined,
-            __guid: guid,
+            __guid: generateGUIDWithType(this.getFeatureType()),
             featureType: FEATURE_TYPE.SIGNAL,
             nodeId: undefined,
             turning: null,
             type: null,
             connectionId: undefined,
         };
-
-        return dto;
     }
 
-    /**
-     * 일반 객체를 DTO 로 변환
-     */
     public recordToDto(record: Record<string, unknown>): SignalData {
         const { geometry, ...cleaned } = record;
-        const guid = cleaned.__guid ?? generateGUIDWithType(this.getFeatureType())
-        const dto = {
+        const guid = cleaned.__guid ?? generateGUIDWithType(this.getFeatureType());
+        return {
             ...(cleaned as Omit<SignalData, "featureType" | "__guid">),
             featureType: FEATURE_TYPE.SIGNAL,
-            __guid: guid
+            __guid: guid,
         } as SignalData;
-        return dto
-    }
-
-    /**
-     * Snap 대상 레이어 키
-     */
-    public getSnapLayerKey(): string {
-        return SNAP_LAYER;
-    }
-
-    /**
-     * Snap 대상 featureType
-     */
-    public getSnapFeatureType(): string {
-        return SNAP_FEATURE_TYPE;
     }
 
     public getFeatureType(): string {
@@ -242,6 +293,11 @@ export class SignalFeatureLayer extends VectorLayer {
     }
 
     public destroy() {
-        this.unsubscribe();
+        if (this.colorInterval !== null) {
+            clearInterval(this.colorInterval);
+            this.colorInterval = null;
+        }
+        this.unsubscribes.forEach(u => u());
+        this.unsubscribes = [];
     }
 }

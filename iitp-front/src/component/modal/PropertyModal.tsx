@@ -73,8 +73,8 @@ const PropertyModal = () => {
                 <tr>
                     <th colSpan={2}>
                         <h2 style={{display: "contents"}}>{selectedProps?.featureType}</h2>
-                        <FontAwesomeIcon className="close-btn" icon={faClose} onClick={onClickClose}/>
-                        <FontAwesomeIcon className="edit-btn" icon={faEdit} onClick={onClickEdit}/>
+                        <FontAwesomeIcon className="close-btn" style={{float:"right", marginRight: "10px", fontSize:"20px"}} icon={faClose} onClick={onClickClose}/>
+                        <FontAwesomeIcon className="edit-btn" style={{float:"right", marginRight: "10px", fontSize:"16px"}} icon={faEdit} onClick={onClickEdit}/>
                     </th>
                 </tr>
                 <tr>

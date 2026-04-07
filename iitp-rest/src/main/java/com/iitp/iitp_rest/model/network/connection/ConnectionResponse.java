@@ -1,6 +1,10 @@
 package com.iitp.iitp_rest.model.network.connection;
 
+import com.iitp.iitp_rest.model.geometry.Coordinates;
 import lombok.Data;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Data
 public class ConnectionResponse {
@@ -14,4 +18,5 @@ public class ConnectionResponse {
     private double width;
     private double ffSpd;
     private String shape;
+    private List<Coordinates> coordinates = new ArrayList<>();
 }

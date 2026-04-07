@@ -5,8 +5,8 @@ import { LayerManager } from "@managers/LayerManager";
 interface State {
     activeLayerName: Array<string> | null; // heatmap, trip
     activeLayerGroupName: Array<string> | null; // 배경지도, 분석, 시설물
-
     layerManager: LayerManager | null;
+    isInitialized: boolean;
 }
 
 interface Actions {
@@ -21,12 +21,14 @@ interface Actions {
     toggleActiveLayerGroupName: (groupName: string) => void;
 
     setLayerManager: (state: LayerManager | null) => void;
+    setInitialized: (v: boolean) => void;
 }
 
 const initialState: State = {
     activeLayerName: [],
     activeLayerGroupName: null,
     layerManager: null,
+    isInitialized: false,
 }
 
 export const useLayerStore = createSelectors(
@@ -74,6 +76,7 @@ export const useLayerStore = createSelectors(
             },
 
             setLayerManager: (state) => set({layerManager: state}),
+            setInitialized: (v) => set({isInitialized: v}),
         })
     )
 );

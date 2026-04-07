@@ -18,7 +18,7 @@ interface Actions {
 const initialState: State = {
     isCesiumSyncingState: false,
     isOLSyncingState: false,
-    currentBaseMap: 'osm',
+    currentBaseMap: undefined,
 }
 
 export const useMapStore = createSelectors(

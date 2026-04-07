@@ -28,6 +28,12 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         inputFields: [],
         rowFields: []
     },
+    OSM_IMPORT: {
+        type:"",
+        fields: [],
+        inputFields: [],
+        rowFields: []
+    },
     DEMAND_IMPORT: {
         type:"",
         fields: [
@@ -269,25 +275,51 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         rowFields: []
     },
     BUS_PT_LINE: {
-        type:"",
+        type: "table",
+        layer: "busRoute",
         fields: [
-            { name: "linkseq", label: "Link Sequence", type: "text" },
-            { name: "nodeseq", label: "Node Sequence", type: "text" },
-            { name: "stationseq", label: "Station Sequence", type: "text" },
-            { name: "mode", label: "Mode", type: "text" },
-            { name: "time", label: "Time", type: "number" },
+            { name: "id", label: "노선 ID", type: "text" },
+            { name: "interval", label: "배차간격 (분)", type: "number" },
+            { name: "linkSeq", label: "링크 시퀀스", type: "text" },
+            { name: "nodeSeq", label: "노드 시퀀스", type: "text" },
+            { name: "stationSeq", label: "정류장 시퀀스", type: "text" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    BUS_PT_LINE_WEEKDAY: {
+        type: "table",
+        layer: "busRouteWeekday",
+        fields: [
+            { name: "id", label: "노선 ID", type: "text" },
+            { name: "interval", label: "배차간격 (분)", type: "number" },
+            { name: "linkSeq", label: "링크 시퀀스", type: "text" },
+            { name: "nodeSeq", label: "노드 시퀀스", type: "text" },
+            { name: "stationSeq", label: "정류장 시퀀스", type: "text" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    BUS_PT_LINE_WEEKEND: {
+        type: "table",
+        layer: "busRouteWeekend",
+        fields: [
+            { name: "id", label: "노선 ID", type: "text" },
+            { name: "interval", label: "배차간격 (분)", type: "number" },
+            { name: "linkSeq", label: "링크 시퀀스", type: "text" },
+            { name: "nodeSeq", label: "노드 시퀀스", type: "text" },
+            { name: "stationSeq", label: "정류장 시퀀스", type: "text" },
         ],
         inputFields: [],
         rowFields: []
     },
     RAIL_PT_LINE: {
-        type:"",
+        type: "table",
+        layer: "railRoute",
         fields: [
-            { name: "linkseq", label: "Link Sequence", type: "text" },
-            { name: "nodeseq", label: "Node Sequence", type: "text" },
-            { name: "stationseq", label: "Station Sequence", type: "text" },
-            { name: "mode", label: "Mode", type: "text" },
-            { name: "time", label: "Time", type: "number" },
+            { name: "id", label: "노선 ID", type: "number" },
+            { name: "name", label: "노선명", type: "text" },
+            { name: "railStationSeq", label: "역 시퀀스", type: "text" },
         ],
         inputFields: [],
         rowFields: []
@@ -300,6 +332,53 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
             { name: "stationseq", label: "Station Sequence", type: "text" },
             { name: "mode", label: "Mode", type: "text" },
             { name: "time", label: "Time", type: "number" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    SIGNAL_TOD: {
+        type: "table",
+        layer: "signalTod",
+        fields: [
+            { name: "nodeId", label: "교차로 ID", type: "text" },
+            { name: "planId", label: "Plan ID", type: "number" },
+            { name: "startTime", label: "시작 시간", type: "text" },
+            { name: "endTime", label: "종료 시간", type: "text" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    SIMULATION_SCENARIO: {
+        type: "table",
+        fields: [
+            { name: "id", label: "시나리오 ID", type: "number" },
+            { name: "startTime", label: "시작 시간", type: "text" },
+            { name: "duration", label: "시뮬레이션 시간 (분)", type: "number" },
+            { name: "bgtDuration", label: "워밍업 시간 (분)", type: "number" },
+            { name: "odMatrixID", label: "OD Matrix ID", type: "number" },
+            { name: "todID", label: "TOD ID", type: "number" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    ROUTE: {
+        type: "table",
+        layer: "route",
+        fields: [
+            { name: "OriginID", label: "출발 노드 ID", type: "number" },
+            { name: "DestinationID", label: "도착 노드 ID", type: "number" },
+            { name: "Route", label: "경로", type: "text" },
+        ],
+        inputFields: [],
+        rowFields: []
+    },
+    PAX_ROUTE: {
+        type: "table",
+        layer: "paxRoute",
+        fields: [
+            { name: "OriginID", label: "출발 링크 ID", type: "number" },
+            { name: "DestinationID", label: "도착 링크 ID", type: "number" },
+            { name: "Route", label: "경로", type: "text" },
         ],
         inputFields: [],
         rowFields: []

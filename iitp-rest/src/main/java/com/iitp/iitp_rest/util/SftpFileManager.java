@@ -1,6 +1,7 @@
 package com.iitp.iitp_rest.util;
 
 import com.jcraft.jsch.*;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -8,6 +9,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
 
+@Slf4j
 @Component
 public class SftpFileManager {
 
@@ -34,6 +36,32 @@ public class SftpFileManager {
             channelSftp.put(inputStream, remoteFileName);
         } catch (SftpException e) {
             throw new IOException("SFTP 파일 업로드 실패", e);
+        } finally {
+            disconnect(channelSftp);
+        }
+    }
+
+    public void uploadFile(InputStream inputStream, String subDir, String fileName) throws IOException, JSchException {
+        ChannelSftp channelSftp = getSftpChannel();
+
+        try {
+            String absolutePath = basePath + subDir + "/" + fileName;
+            log.info("SFTP put 시도: basePath={}, subDir={}, absolutePath={}", basePath, subDir, absolutePath);
+            channelSftp.put(inputStream, absolutePath);
+        } catch (SftpException e) {
+            throw new IOException("SFTP 파일 업로드 실패", e);
+        } finally {
+            disconnect(channelSftp);
+        }
+    }
+
+    public void createDirectory(String dirName) throws IOException, JSchException {
+        ChannelSftp channelSftp = getSftpChannel();
+        try {
+            channelSftp.cd(basePath);
+            channelSftp.mkdir(dirName);
+        } catch (SftpException e) {
+            throw new IOException("SFTP 디렉토리 생성 실패: " + dirName, e);
         } finally {
             disconnect(channelSftp);
         }

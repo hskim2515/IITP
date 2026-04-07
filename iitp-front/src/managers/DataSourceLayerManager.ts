@@ -31,10 +31,34 @@ class DataSourceLayerManager {
 
     add(ds, groupName, layerName, basic): void {
         const group = this._getOrCreateGroup(groupName);
-        ds.dataSource.show = basic
-        group.set(layerName, ds);
 
-        //await this.viewer.dataSources.add(ds);
+        // 맵에 추적된 기존 DataSource 제거
+        const existing = group.get(layerName);
+        if (existing) {
+            if ((existing as any).destroy) {
+                // destroy()가 있으면 모든 정리(dataSource, primitives, unsubscribes)를 위임
+                (existing as any).destroy();
+            } else {
+                const existingDs = (existing as any).dataSource ?? existing;
+                this.viewer.dataSources.remove(existingDs, true);
+                if ((existing as any).unsubscribe) (existing as any).unsubscribe();
+            }
+        }
+
+        // viewer에 남아 있는 동일 name의 모든 DataSource도 제거 (중복 누적 방지)
+        const newDs = (ds as any).dataSource ?? ds;
+        const toRemove: Cesium.DataSource[] = [];
+        for (let i = 0; i < this.viewer.dataSources.length; i++) {
+            const d = this.viewer.dataSources.get(i);
+            if (d !== newDs && (d as any).name === layerName) {
+                toRemove.push(d);
+            }
+        }
+        toRemove.forEach(d => this.viewer.dataSources.remove(d, true));
+
+        ds.dataSource.show = basic;
+        ds?.setVisible?.(basic);
+        group.set(layerName, ds);
 
         this.layerStore.getState().activeLayerName?.forEach((activeLayerName: string) => {
             if (activeLayerName === layerName) {
@@ -49,7 +73,8 @@ class DataSourceLayerManager {
 
     get(groupName: string, layerName: string): Cesium.DataSource | undefined {
         const group = this.layerGroups[groupName];
-        return group?.get(layerName)?.dataSource;
+        const stored = group?.get(layerName) as any;
+        return stored?.dataSource ?? stored;
     }
 
     getAllByGroup(groupName: string): Cesium.DataSource[] {
@@ -63,28 +88,49 @@ class DataSourceLayerManager {
     }
 
     show(groupName: string, layerName: string): void {
-        const ds = this.get(groupName, layerName);
+        const group = this.layerGroups[groupName];
+        const stored = group?.get(layerName) as any;
+        const ds = stored?.dataSource ?? stored;
         if (ds) ds.show = true;
+        stored?.setVisible?.(true);
     }
 
     hide(groupName: string, layerName: string): void {
-        const ds = this.get(groupName, layerName);
+        const group = this.layerGroups[groupName];
+        const stored = group?.get(layerName) as any;
+        const ds = stored?.dataSource ?? stored;
         if (ds) ds.show = false;
+        stored?.setVisible?.(false);
     }
 
     hideAll(groupName: string): void {
         const group = this.layerGroups[groupName];
         if (!group) return;
-        group.forEach(ds => (ds.show = false));
+        group.forEach((stored: any) => {
+            const ds = stored?.dataSource ?? stored;
+            if (ds) ds.show = false;
+            stored?.setVisible?.(false);
+        });
     }
 
     toggle(groupName: string, layerName: string): void {
-        const ds = this.get(groupName, layerName);
+        const group = this.layerGroups[groupName];
+        const stored = group?.get(layerName) as any;
+        const ds = stored?.dataSource ?? stored;
         if (!ds) return;
-        ds.show = !ds.show;
+        const next = !ds.show;
+        ds.show = next;
+        stored?.setVisible?.(next);
     }
 
     toggleByFeatureType(groupName: string, layerName: string, featureType: string, visible: boolean): void {
+        const group = this.layerGroups[groupName];
+        const stored = group?.get(layerName) as any;
+        // Primitive 기반 featureType (links, lanes)은 레이어 인스턴스에 위임
+        if (stored?.toggleFeatureTypeVisible) {
+            stored.toggleFeatureTypeVisible(featureType, visible);
+        }
+
         const ds = this.get(groupName, layerName);
         if (!ds) return;
 
@@ -95,7 +141,10 @@ class DataSourceLayerManager {
         }
 
         ds.entities.values.forEach(entity => {
-            const entityFeatureType = entity?.properties?.featureType?.getValue?.();
+            // __guid 패턴 "links-0.lanes-0" 에서 마지막 세그먼트의 타입 추출
+            const entityId = String(entity.id ?? "");
+            const lastSegment = entityId.split(".").pop() ?? "";
+            const entityFeatureType = lastSegment.split("-")[0];
             if (entityFeatureType === featureType) {
                 entity.show = visible;
             }
@@ -111,23 +160,33 @@ class DataSourceLayerManager {
 
     remove(groupName: string, layerName: string): void {
         const group = this.layerGroups[groupName];
-        const ds = group?.get(layerName);
-        if (!group || !ds) return;
+        const stored = group?.get(layerName);
+        if (!group || !stored) return;
 
-        // ds는 DataSourceLayer 래퍼 인스턴스이므로 .dataSource로 실제 DataSource를 제거
-        const actualDs = (ds as any).dataSource ?? ds;
-        this.viewer.dataSources.remove(actualDs, true);
+        if ((stored as any).destroy) {
+            (stored as any).destroy();
+        } else {
+            const actualDs = (stored as any).dataSource ?? stored;
+            this.viewer.dataSources.remove(actualDs, true);
+        }
         group.delete(layerName);
 
         if (this.onRemove) {
-            this.onRemove(ds, groupName, layerName);
+            this.onRemove(stored, groupName, layerName);
         }
     }
 
     removeGroup(groupName: string): void {
         const group = this.layerGroups[groupName];
         if (!group) return;
-        group.forEach(ds => this.viewer.dataSources.remove(ds, true));
+        group.forEach((stored: any) => {
+            if (stored?.destroy) {
+                stored.destroy();
+            } else {
+                const ds = stored?.dataSource ?? stored;
+                if (ds) this.viewer.dataSources.remove(ds, true);
+            }
+        });
         delete this.layerGroups[groupName];
     }
 

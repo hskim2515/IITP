@@ -9,6 +9,11 @@ import {useNetworkHistoryStore} from "@stores/useNetworkStore";
 import {useBusStationHistoryStore} from "@stores/useBusStationStore";
 import { useRailStationHistoryStore } from "@stores/useRailStationStore";
 import {useSignalHistoryStore} from "@stores/useSignalStore";
+import { useSignalTodHistoryStore } from "@stores/useSignalTodStore";
+import { useSimulationScenarioHistoryStore } from "@stores/useSimulationScenarioStore";
+import { useBusPtLineHistoryStore, useBusPtLineWeekdayHistoryStore, useBusPtLineWeekendHistoryStore } from "@stores/useBusPtLineStore";
+import { useRailPtLineHistoryStore } from "@stores/useRailPtLineStore";
+import { useRouteHistoryStore, usePaxRouteHistoryStore } from "@stores/useRouteStore";
 
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToHistoryStoreMap: Record<string, HistoryStoreFactoryType> = {
@@ -17,7 +22,15 @@ export const menuCodeToHistoryStoreMap: Record<string, HistoryStoreFactoryType> 
     BUS_STATION: useBusStationHistoryStore,
     RAIL_STATION: useRailStationHistoryStore,
     PAVEMENT_MARKING: usePavementMarkingHistoryStore,
-    SIGNAL: useSignalHistoryStore
+    SIGNAL: useSignalHistoryStore,
+    SIGNAL_TOD: useSignalTodHistoryStore,
+    SIMULATION_SCENARIO: useSimulationScenarioHistoryStore,
+    BUS_PT_LINE: useBusPtLineHistoryStore,
+    BUS_PT_LINE_WEEKDAY: useBusPtLineWeekdayHistoryStore,
+    BUS_PT_LINE_WEEKEND: useBusPtLineWeekendHistoryStore,
+    RAIL_PT_LINE: useRailPtLineHistoryStore,
+    ROUTE: useRouteHistoryStore,
+    PAX_ROUTE: usePaxRouteHistoryStore,
 }
 export const layerNameToHistoryStoreMap: Record<string, HistoryStoreFactoryType> = {
     // layerName: store
@@ -25,7 +38,14 @@ export const layerNameToHistoryStoreMap: Record<string, HistoryStoreFactoryType>
     busStation: useBusStationHistoryStore,
     railStation: useRailStationHistoryStore,
     pavementMarking: usePavementMarkingHistoryStore,
-    signal: useSignalHistoryStore
+    signal: useSignalHistoryStore,
+    signalTod: useSignalTodHistoryStore,
+    busRoute: useBusPtLineHistoryStore,
+    busRouteWeekday: useBusPtLineWeekdayHistoryStore,
+    busRouteWeekend: useBusPtLineWeekendHistoryStore,
+    railRoute: useRailPtLineHistoryStore,
+    route: useRouteHistoryStore,
+    paxRoute: usePaxRouteHistoryStore,
 }
 
 const useHistoryInit = (reloadFlag:boolean) => {

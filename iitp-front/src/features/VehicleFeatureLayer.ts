@@ -87,7 +87,7 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
                 "icon-rotation": ["get", "heading"],
                 "icon-rotation-alignment": "map",
             },
-            zIndex: 350,
+            zIndex: 550,
             disableHitDetection: true,
         });
 

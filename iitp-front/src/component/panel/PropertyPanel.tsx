@@ -27,6 +27,7 @@ import { MenuTreeResponse } from "@type/openapi.gen";
 import styles from "@css/PropertyPanel.module.css";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
 import DrilldownGrid from "@component/util/DrilldownGrid";
+import SignalTodTimelineEditor from "@component/util/SignalTodTimelineEditor";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTreeResponse
@@ -245,26 +246,17 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                         />
                     )}
                     {submenu.item?.layer && (
-                        // <div className={styles.gridWrap}>
-                        //     {Object.entries(currentJsonData ?? []).map(([key, value]) => (
-                        //         <div key={key} className="grid-container">
-                        //             {/*<JsonGrid*/}
-                        //             {/*    layerName={submenu.item.layer}*/}
-                        //             {/*    layerGroupName={"facility"}*/}
-                        //             {/*    rowData={value}*/}
-                        //             {/*    levelName={key}*/}
-                        //             {/*    containerHeight={height}*/}
-                        //             {/*/>*/}
-                        //         </div>
-                        //     ))}
-                        // </div>
                         <div className={styles.gridWrap}>
-                            <DrilldownGrid
-                                layerName={submenu.item.layer}
-                                layerGroupName={"facility"}
-                                currentJsonData={currentJsonData}
-                                containerHeight={height}
-                            />
+                            {activeSubmenu.menuCode === "SIGNAL_TOD" ? (
+                                <SignalTodTimelineEditor containerHeight={height} />
+                            ) : (
+                                <DrilldownGrid
+                                    layerName={submenu.item.layer}
+                                    layerGroupName={"facility"}
+                                    currentJsonData={currentJsonData}
+                                    containerHeight={height}
+                                />
+                            )}
                         </div>
                     )}
                 </div>

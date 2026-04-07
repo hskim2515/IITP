@@ -1,8 +1,10 @@
+import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import { Feature } from "ol";
 import { LineString, Point } from "ol/geom";
 import { Circle as CircleStyle, Fill, Stroke, Style } from "ol/style";
+import { fromLonLat } from "ol/proj";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 
 import { BusPublicStationResponse } from "@type/Station";
@@ -11,18 +13,15 @@ import { useSchemaStore } from "@stores/useSchemaStore";
 import { PublicTransitResponse } from "@type/openapi.gen";
 import { diff } from "deep-object-diff";
 import { computePositionAtOffsetOl } from "@utils/offset";
-import { useLayerStore } from "@stores/useLayerStore";
-import { findFeatureByProperties } from "@utils/feature";
+import { Coordinate } from "ol/coordinate";
 import { getDistance } from "ol/sphere";
 import { toLonLat } from "ol/proj";
-import { Coordinate } from "ol/coordinate";
 
 const PARKING_LOT_LENGTH_M = 14;
 
 export default class BusStationFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "busStation";
-    // private readonly LOTS_SIZE = 15;
     private unsubscribe: (() => void) | undefined;
 
     constructor() {
@@ -36,19 +35,26 @@ export default class BusStationFeatureLayer extends VectorLayer {
 
         this.source = source;
 
-        this.load(); // 초기 로드
+        this.load();
         const store = layerNameToStoreMap[this.LAYER_NAME];
         if (store) {
             this.unsubscribe = store.subscribe(
                 (state: {currentJsonData: BusPublicStationResponse;}) => state.currentJsonData,
                 () => {
                     console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
-                    this.load(); // 데이터가 변경되면 레이어를 다시 로드합니다.
+                    this.load();
                 },
-                {equalityFn: (a: BusPublicStationResponse, b: BusPublicStationResponse) => diff(a, b) === undefined}
+                { equalityFn: (a: any, b: any) => a === b }
             );
         }
-
+        const networkStore = layerNameToStoreMap["network"];
+        if (networkStore) {
+            (networkStore as any).subscribe(
+                (state: any) => state.currentJsonData,
+                () => { const _d = useNetworkDrawStore.getState(); if (!_d.isActive && !_d.isConnectionActive) this.load(); },
+                { equalityFn: (a: any, b: any) => a === b }
+            );
+        }
     }
 
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
@@ -56,7 +62,6 @@ export default class BusStationFeatureLayer extends VectorLayer {
         const styles: Style[] = [];
         if (!(geom instanceof Point)) return styles;
 
-        // 중심 점
         styles.push(
             new Style({
                 image: new CircleStyle({
@@ -67,7 +72,6 @@ export default class BusStationFeatureLayer extends VectorLayer {
             })
         );
 
-        // 정류장 라인: modify 중에는 기존 위치 고정(stored coords), modifyend 후 load()로 갱신
         const lineStart = feature.get('__lineStart') as Coordinate | undefined;
         const lineEnd = feature.get('__lineEnd') as Coordinate | undefined;
 
@@ -83,56 +87,77 @@ export default class BusStationFeatureLayer extends VectorLayer {
         return styles;
     }
 
-    /**
-     * 스토어의 DTO 배열로부터 피처 생성 후 source에 추가
-     */
     public async load(): Promise<void> {
         const store = layerNameToStoreMap[this.LAYER_NAME];
         const networkStore = layerNameToStoreMap["network"];
-        const generateTemplateWithLayerNameAndFeatureType = useSchemaStore.getState().generateTemplateWithLayerNameAndFeatureType
-        const template = generateTemplateWithLayerNameAndFeatureType('busStation', 'busStations')
-        if (!store || !networkStore) return; // 스토어가 없으면 중단
-        const busPublicStationResponse: PublicTransitResponse = store.getState().currentJsonData;
+        const generateTemplateWithLayerNameAndFeatureType = useSchemaStore.getState().generateTemplateWithLayerNameAndFeatureType;
+        const template = generateTemplateWithLayerNameAndFeatureType('busStation', 'busStations');
+        if (!store || !networkStore) return;
 
-        // 데이터가 없는 경우를 대비한 방어 코드
+        const busPublicStationResponse: PublicTransitResponse = store.getState().currentJsonData;
         if (!busPublicStationResponse || !busPublicStationResponse.busStations) {
             this.source.clear();
             return;
         }
 
-        const networkLayer = useLayerStore.getState().layerManager?.getLayerByName("network")
-        if (!networkLayer) {
+        const networkData: any = networkStore.getState().currentJsonData;
+        if (!networkData?.links) {
+            this.source.clear();
             return;
         }
-        const networkSource = networkLayer.getSource();
+
+        // linkId → link 매핑 및 lane 중심선 좌표 사전 계산
+        const linkLaneMap = new Map<string, { source: Coordinate; target: Coordinate }[]>();
+        for (const link of networkData.links) {
+            if (!link.coordinates || link.coordinates.length < 2) continue;
+            const p1 = fromLonLat([link.coordinates[0].lng, link.coordinates[0].lat]);
+            const p1b = fromLonLat([link.coordinates[1].lng, link.coordinates[1].lat]);
+            const lastCoord = link.coordinates[link.coordinates.length - 1];
+            const p2 = fromLonLat([lastCoord.lng, lastCoord.lat]);
+
+            const dx = p1b[0] - p1[0];
+            const dy = p1b[1] - p1[1];
+            const len = Math.hypot(dx, dy);
+            const unitNormal: [number, number] = len > 0 ? [-dy / len, dx / len] : [0, 0];
+
+            const laneCount = link.lanes?.length ?? 0;
+            if (laneCount === 0) continue;
+            const laneWidth = (link.width ?? 0) / laneCount;
+
+            const lanes: { source: Coordinate; target: Coordinate }[] = [];
+            for (let i = 0; i < laneCount; i++) {
+                const offsetCenter = ((laneCount - 1) / 2 - i) * laneWidth;
+                const centerP1: Coordinate = [p1[0] + unitNormal[0] * offsetCenter, p1[1] + unitNormal[1] * offsetCenter];
+                const centerP2: Coordinate = [p2[0] + unitNormal[0] * offsetCenter, p2[1] + unitNormal[1] * offsetCenter];
+                lanes.push({ source: centerP1, target: centerP2 });
+            }
+            linkLaneMap.set(String(link.id), lanes);
+        }
+
         const busStations = busPublicStationResponse.busStations;
         const featureBuffer: Feature[] = [];
 
         for (const busStation of busStations) {
-            const linkRef = busStation.linkRef
-            const laneRef = busStation.laneRef
+            const linkRef = String(busStation.linkRef);
+            const laneRef = Number(busStation.laneRef);
 
-            const lane = findFeatureByProperties(networkSource?.getFeatures(), {
-                featureType: "lane-edit",
-                linkRef,
-                laneRef
-            });
-
-            const laneGeom = lane?.getGeometry()
-            if (!(laneGeom instanceof LineString)) continue;
-            const laneCoord = laneGeom.getCoordinates();
-            if (!laneCoord || !laneCoord[0] || !laneCoord[1]) continue;
-
-            const laneStart = laneCoord[0] as Coordinate;
-            const laneEnd = laneCoord[1] as Coordinate;
-            const offset = busStation.offset
-            if (!offset) {
-                console.warn(`${busStation.id} 의 offset 이 존재하지 않습니다`)
-                return;
+            const lanes = linkLaneMap.get(linkRef);
+            if (!lanes || laneRef < 0 || laneRef >= lanes.length) {
+                console.warn(`[busStation] ${busStation.id}: link ${linkRef} lane ${laneRef} 를 찾을 수 없음`);
+                continue;
             }
-            const {offsetPosition} = computePositionAtOffsetOl(laneStart, laneEnd, offset)
 
-            // lane 방향 단위벡터 및 미터→EPSG:3857 변환 계수
+            const { source: laneStart, target: laneEnd } = lanes[laneRef];
+
+            const offset = busStation.offset;
+            if (!offset) {
+                console.warn(`[busStation] ${busStation.id}: offset 없음`);
+                continue;
+            }
+
+            const { offsetPosition } = computePositionAtOffsetOl(laneStart, laneEnd, offset);
+
+            // 방향 벡터 및 m→EPSG:3857 변환 계수
             const dx = laneEnd[0] - laneStart[0];
             const dy = laneEnd[1] - laneStart[1];
             const epsg3857Len = Math.sqrt(dx * dx + dy * dy);
@@ -141,7 +166,6 @@ export default class BusStationFeatureLayer extends VectorLayer {
             const laneUy = epsg3857Len > 0 ? dy / epsg3857Len : 0;
             const unitsPerMeter = (epsg3857Len > 0 && realLenM > 0) ? epsg3857Len / realLenM : 1;
 
-            // 라인 끝점: 우측 통행이므로 진행 방향 역방향으로 연장
             const parkingLots = busStation.parkingLots ?? 0;
             const totalLen = parkingLots * PARKING_LOT_LENGTH_M * unitsPerMeter;
             const lineEnd2: Coordinate = [
@@ -149,8 +173,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
                 offsetPosition[1] - laneUy * totalLen,
             ];
 
-            const busStationPoint = new Point(offsetPosition)
-            const busStationPointFeature = new Feature(busStationPoint);
+            const busStationPointFeature = new Feature(new Point(offsetPosition));
             busStationPointFeature.setProperties({
                 ...template,
                 ...busStation,
@@ -160,7 +183,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
                 __lineStart: offsetPosition as Coordinate,
                 __lineEnd: lineEnd2,
             });
-            if (busStationPointFeature) featureBuffer.push(busStationPointFeature);
+            featureBuffer.push(busStationPointFeature);
         }
 
         this.source.clear();

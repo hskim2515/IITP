@@ -17,12 +17,17 @@ export interface State<T> {
     originHistoryData: T | undefined
     // 변경 확인
     isChanged: boolean
+    // 파일 가져오기, OSM 가져오기 등 전체 교체 시마다 증가하는 카운터
+    // 각 레이어 인스턴스가 자신이 마지막으로 본 값과 비교해 전체 재빌드 여부를 독립 판단
+    importEpoch: number
 }
 
 export interface Actions<T> {
     setOriginData: (data: T) => void;
     setOriginHistoryData: (data: T) => void;
     setCurrentJsonData: (data: T) => void;
+    // 파일 가져오기 전용: importEpoch 증가 + currentJsonData 변경을 단일 set()으로 원자 처리
+    setCurrentJsonDataWithFullBuild: (data: T) => void;
     updateCurrentJsonData: (data: T, historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
     removeRecordsByGuid: (guids: (string | number)[], historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
     setChange: (changed: boolean) => void;
@@ -36,7 +41,8 @@ const createFeatureStore = <T>() => {
         originData: undefined,
         originHistoryData: undefined,
         currentJsonData: undefined,
-        isChanged: false
+        isChanged: false,
+        importEpoch: 0,
     };
     return createSelectors(
         create(
@@ -44,10 +50,10 @@ const createFeatureStore = <T>() => {
                 combine(initialState, (set, get) => ({
                         setOriginData: (data: T) => set({originData: data}),
                         setOriginHistoryData: (data: T) => set({originHistoryData: data}),
-                        setCurrentJsonData: (data: T) => {
-                            set({
-                                currentJsonData: structuredClone(data)
-                            });
+                        setCurrentJsonData: (data: T) => set({ currentJsonData: data }),
+                        setCurrentJsonDataWithFullBuild: (data: T) => {
+                            const currentEpoch = (get() as unknown as State<T>).importEpoch;
+                            set({ currentJsonData: data, importEpoch: currentEpoch + 1 });
                         },
                         updateCurrentJsonData: (record, historyStore) => {
 
@@ -234,8 +240,9 @@ const createFeatureStore = <T>() => {
                     },
                         setChange: (changed: boolean) => set({isChanged: changed}),
                         initCurrentData: () => {
-                            if (origin) set({
-                                currentJsonData: get().originData,
+                            const originData = get().originData;
+                            if (originData) set({
+                                currentJsonData: originData,
                             });
                         }
                     })

@@ -82,6 +82,27 @@ public class GeoJsonUtils {
 
             NodeList linkList = doc.getElementsByTagName("link");
 
+            // 1st pass: from_link halfWidth 맵 + shape 맵 구성 (connection 파싱에서 사용)
+            Map<String, Double> linkHalfWidthMap = new HashMap<>();
+            Map<String, List<double[]>> linkShapeMap = new HashMap<>();
+            for (int i = 0; i < linkList.getLength(); i++) {
+                Element el = (Element) linkList.item(i);
+                String lid = el.getAttribute("id");
+                double w = 0;
+                try { w = Double.parseDouble(el.getAttribute("width")); } catch (NumberFormatException ignored) {}
+                linkHalfWidthMap.put(lid, w / 2.0);
+
+                String shStr = el.getAttribute("shape");
+                if (shStr != null && !shStr.isEmpty()) {
+                    List<double[]> pts = new ArrayList<>();
+                    for (String cp : shStr.trim().split(" ")) {
+                        String[] xy = cp.split(",");
+                        if (xy.length >= 2) pts.add(new double[]{Double.parseDouble(xy[0]), Double.parseDouble(xy[1])});
+                    }
+                    if (!pts.isEmpty()) linkShapeMap.put(lid, pts);
+                }
+            }
+
             for (int i = 0; i < linkList.getLength(); i++) {
                 Element linkElement = (Element) linkList.item(i);
                 String linkId = linkElement.getAttribute("id");
@@ -124,7 +145,7 @@ public class GeoJsonUtils {
 
                 if (!positions.isEmpty()) {
                     Polyline polyline = new Polyline(positions);
-                    RoadResponse.Road road = new RoadResponse.Road(linkId, null, polyline, baseEasting, baseNorthing, targetEasting, targetNorthing, halfWidth, numLane);
+                    RoadResponse.Road road = new RoadResponse.Road(linkId, null, polyline, baseEasting, baseNorthing, targetEasting, targetNorthing, halfWidth, numLane, null);
                     roads.add(road);
                 }
             }
@@ -139,11 +160,11 @@ public class GeoJsonUtils {
                 NodeList connList = nodeElement.getElementsByTagName("connection");
                 for (int j = 0; j < connList.getLength(); j++) {
                     Element connElement = (Element) connList.item(j);
-                    String connId = connElement.getAttribute("id");
-                    String connShape = connElement.getAttribute("shape");
-                    double connWidth = 0;
-                    try { connWidth = Double.parseDouble(connElement.getAttribute("width")); } catch (NumberFormatException ignored) {}
-                    double connHalfWidth = connWidth / 2.0;
+                    String connId      = connElement.getAttribute("id");
+                    String connShape   = connElement.getAttribute("shape");
+                    String fromLinkId  = connElement.getAttribute("from_link");
+                    String toLinkId    = connElement.getAttribute("to_link");
+                    String turning     = connElement.getAttribute("turning"); // "S", "R", "L"
 
                     if (connShape == null || connShape.isEmpty()) continue;
                     String[] coords = connShape.trim().split(" ");
@@ -158,16 +179,46 @@ public class GeoJsonUtils {
                     double tx = Double.parseDouble(last[0]);
                     double ty = Double.parseDouble(last[1]);
 
+                    double fromLinkHalfWidth = linkHalfWidthMap.getOrDefault(fromLinkId, 0.0);
+
                     List<Cartesian3> connPositions = new ArrayList<>();
                     for (String cp : coords) {
                         String[] xy = cp.split(",");
                         if (xy.length >= 2)
                             connPositions.add(new Cartesian3(Double.parseDouble(xy[0]), Double.parseDouble(xy[1]), 0));
                     }
-
-                    // roadMap key: "nodeId_connId" → VehicleController에서 (link_id=nodeId, lane_id=connId) 매핑
                     Polyline polyline = new Polyline(connPositions);
-                    roads.add(new RoadResponse.Road(nodeId + "_" + connId, null, polyline, bx, by, tx, ty, connHalfWidth, 1));
+
+                    // non-straight connection: 노드 center를 Bezier 제어점으로 사용 (항상 안정적)
+                    List<double[]> bezierShape = null;
+                    if (!"S".equals(turning)) {
+                        String centerAttr = nodeElement.getAttribute("center");
+                        if (centerAttr != null && !centerAttr.isBlank()) {
+                            String[] centerParts = centerAttr.trim().split("\\s+");
+                            if (centerParts.length >= 2) {
+                                double cpx = Double.parseDouble(centerParts[0]);
+                                double cpy = Double.parseDouble(centerParts[1]);
+
+                                // effectiveControl = mid + (control - mid) * 0.9
+                                double midx = (bx + tx) / 2, midy = (by + ty) / 2;
+                                double ecpx = midx + (cpx - midx) * 0.4;
+                                double ecpy = midy + (cpy - midy) * 0.4;
+
+                                int N = 20;
+                                bezierShape = new ArrayList<>(N + 1);
+                                for (int k = 0; k <= N; k++) {
+                                    double t2 = (double) k / N;
+                                    double mt = 1 - t2;
+                                    double px = mt * mt * bx + 2 * t2 * mt * ecpx + t2 * t2 * tx;
+                                    double py = mt * mt * by + 2 * t2 * mt * ecpy + t2 * t2 * ty;
+                                    bezierShape.add(new double[]{px, py});
+                                }
+                            }
+                        }
+                    }
+
+                    // roadMap key: "nodeId_connId"
+                    roads.add(new RoadResponse.Road(nodeId + "_" + connId, null, polyline, bx, by, tx, ty, fromLinkHalfWidth, 1, bezierShape));
                 }
             }
 

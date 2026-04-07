@@ -40,9 +40,14 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
     };
 
     useEffect(() => {
-        setActiveLayerGroupName(['baseMap'])
-        setActiveLayerName(['osm'])
-    }, [setActiveLayerGroupName, setActiveLayerName])
+        if (layerGroups.length === 0) return;
+        setActiveLayerGroupName(['baseMap']);
+        const baseMapGroup = layerGroups.find(g => g.key === 'baseMap');
+        const defaultLayer = baseMapGroup?.layers?.find(l => l.basic);
+        if (defaultLayer) {
+            setActiveLayerName([defaultLayer.key]);
+        }
+    }, [layerGroups])
 
     const openLayersMapInit = () => {
         if (!openlayersMapRef.current) return;

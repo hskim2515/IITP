@@ -130,7 +130,7 @@ public class RoadXmlParser implements XmlParser<RoadResponse> {
         }
 
         Polyline polyline = new Polyline(positions);
-        return new RoadResponse.Road(linkId, laneId, polyline, baseEasting, baseNorthing, targetEasting, targetNorthing, null, 1);
+        return new RoadResponse.Road(linkId, laneId, polyline, baseEasting, baseNorthing, targetEasting, targetNorthing, null, 1, null);
     }
 
     /**

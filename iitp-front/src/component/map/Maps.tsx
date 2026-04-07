@@ -7,6 +7,7 @@ import useSimulation from "@hooks/useSimulation";
 import useMapSync from "@hooks/sync/useMapSync";
 import useLayer from "@hooks/useLayer";
 import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
+import { useLayerStore } from "@stores/useLayerStore";
 import useLayerInit from "@hooks/useLayerInit";
 import useDefaultSelect from "@hooks/sync/select/useDefaultSelect";
 import '../../App.css'
@@ -15,6 +16,7 @@ import styles from "@css/Maps.module.css"
 import Divider from "@component/map/Divider";
 import ToolsPanel from "@component/tool/ToolsPanel";
 import { useNetworkDraw } from "@hooks/useNetworkDraw";
+import { useOsmBboxDraw } from "@hooks/useOsmBboxDraw";
 
 interface MapsProps {
     singleMapMode?: boolean;
@@ -31,10 +33,11 @@ const Maps = ({ singleMapMode = false, mapMode = '2D', onMapModeChange }: MapsPr
 
     const [dividerX, setDividerX] = useState<number | null>(null);
 
-    const {fetchLayerSchema, loading} = useLayerSchemaStore();
+    const {fetchLayerSchema, loading: schemaLoading} = useLayerSchemaStore();
+    const isInitialized = useLayerStore((s) => s.isInitialized);
 
     useEffect(() => {
-        if (!loading) fetchLayerSchema()
+        if (!schemaLoading) fetchLayerSchema()
     }, [fetchLayerSchema]);
 
     useLayerInit();
@@ -45,6 +48,7 @@ const Maps = ({ singleMapMode = false, mapMode = '2D', onMapModeChange }: MapsPr
     useDefaultSelect();
     useDefaultMoveMouse();
     useNetworkDraw();
+    useOsmBboxDraw();
 
     const getContainerWidth = useCallback(() => {
         return containerRef.current?.clientWidth ?? 0;
@@ -96,19 +100,55 @@ const Maps = ({ singleMapMode = false, mapMode = '2D', onMapModeChange }: MapsPr
     const leftWidth = `${dividerX}px`;
     const rightWidth = `${Math.max(containerWidth - (dividerX ?? 0), 0)}px`;
 
+    // singleMapMode: 두 지도를 absolute로 겹쳐두고 visibility로 전환.
+    // width:0 으로 숨기면 WebGL 컨텍스트가 중단되어 preRender 이벤트가 멈추고
+    // 시뮬레이션 업데이트 루프가 끊기기 때문에 이 방식을 사용.
     const olStyle = singleMapMode
-        ? { flex: mapMode === '2D' ? '1 1 auto' : '0 0 0px', width: mapMode === '2D' ? undefined : 0, overflow: 'hidden' as const }
+        ? {
+            position: 'absolute' as const, inset: 0,
+            visibility: mapMode === '2D' ? 'visible' as const : 'hidden' as const,
+            pointerEvents: mapMode === '2D' ? 'auto' as const : 'none' as const,
+            zIndex: mapMode === '2D' ? 1 : 0,
+          }
         : { width: leftWidth, transition: isResizing.current ? "none" : "width 0.3s ease" };
 
     const cesiumStyle = singleMapMode
-        ? { flex: mapMode === '3D' ? '1 1 auto' : '0 0 0px', width: mapMode === '3D' ? undefined : 0, overflow: 'hidden' as const }
+        ? {
+            position: 'absolute' as const, inset: 0,
+            visibility: mapMode === '3D' ? 'visible' as const : 'hidden' as const,
+            pointerEvents: mapMode === '3D' ? 'auto' as const : 'none' as const,
+            zIndex: mapMode === '3D' ? 1 : 0,
+          }
         : { width: rightWidth, transition: isResizing.current ? "none" : "width 0.3s ease" };
+
+    const isLoading = schemaLoading || !isInitialized;
 
     return (
         <div
             ref={containerRef}
-            className={styles['container']}
+            className={`${styles['container']} ${singleMapMode ? styles['containerSingle'] : ''}`}
         >
+            {isLoading && (
+                <div style={{
+                    position: 'absolute', inset: 0,
+                    background: 'rgba(8,10,20,0.85)',
+                    display: 'flex', flexDirection: 'column',
+                    alignItems: 'center', justifyContent: 'center',
+                    zIndex: 9999,
+                    gap: 16,
+                }}>
+                    <div style={{
+                        width: 40, height: 40,
+                        border: '3px solid rgba(255,255,255,0.15)',
+                        borderTop: '3px solid rgba(100,160,255,0.9)',
+                        borderRadius: '50%',
+                        animation: 'spin 0.8s linear infinite',
+                    }}/>
+                    <span style={{ fontSize: 13, color: 'rgba(200,210,230,0.8)', letterSpacing: 1 }}>
+                        데이터 로딩 중...
+                    </span>
+                </div>
+            )}
             <ToolsPanel/>
 
             {singleMapMode && (

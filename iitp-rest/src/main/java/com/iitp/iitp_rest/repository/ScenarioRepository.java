@@ -6,4 +6,5 @@ import java.util.Optional;
 
 public interface ScenarioRepository extends JpaRepository<Scenario, Long> {
     Optional<Scenario> findByKey(String key);
+    boolean existsByKey(String key);
 }

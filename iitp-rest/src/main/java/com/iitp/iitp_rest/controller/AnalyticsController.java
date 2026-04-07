@@ -1,6 +1,7 @@
 package com.iitp.iitp_rest.controller;
 
 import com.iitp.iitp_rest.model.analytics.LinkStatsResponse;
+import com.iitp.iitp_rest.model.analytics.OverallSummaryResponse;
 import com.iitp.iitp_rest.util.VehicleDataReader;
 import lombok.AllArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -28,5 +29,16 @@ public class AnalyticsController {
 
         LinkStatsResponse stats = vehicleDataReader.readLinkStats(versionId, interval, topN);
         return ResponseEntity.ok(stats);
+    }
+
+    /**
+     * 시뮬레이션 전체 요약 통계 API
+     *
+     * @param versionId 시나리오 버전 ID
+     */
+    @GetMapping("/summary/{versionId}")
+    public ResponseEntity<OverallSummaryResponse> getSummary(@PathVariable String versionId) {
+        OverallSummaryResponse summary = vehicleDataReader.readOverallSummary(versionId);
+        return ResponseEntity.ok(summary);
     }
 }

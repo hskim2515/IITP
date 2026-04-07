@@ -78,6 +78,7 @@ body {
 }
 
 .scenario-card {
+  position: relative;
   background: #2c2c3e;
   border: 1px solid #444;
   border-radius: 12px;
@@ -86,6 +87,50 @@ body {
   cursor: pointer;
   transition: all 0.3s ease;
   box-shadow: 0 4px 15px rgba(0, 255, 255, 0.1);
+}
+
+/* 수정·삭제 버튼 그룹 */
+.scenario-card-actions {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.scenario-card:hover .scenario-card-actions {
+  opacity: 1;
+}
+
+.scenario-card-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 1px solid rgba(255,255,255,0.15);
+  background: rgba(255,255,255,0.07);
+  color: #aaa;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.scenario-card-btn--edit:hover {
+  background: rgba(0, 188, 212, 0.2);
+  color: #00eaff;
+  border-color: rgba(0, 188, 212, 0.5);
+}
+
+.scenario-card-btn--delete:hover {
+  background: rgba(220, 60, 60, 0.2);
+  color: #f07070;
+  border-color: rgba(220, 60, 60, 0.5);
 }
 
 .scenario-card:hover {
@@ -101,6 +146,297 @@ body {
 
 .scenario-card p {
   color: #bbbbbb;
+}
+
+/* 시나리오 추가 카드 */
+.scenario-card--add {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #00eaff;
+  background: linear-gradient(135deg, rgba(0, 188, 212, 0.15), rgba(0, 234, 255, 0.08));
+  color: #00eaff;
+  box-shadow: 0 0 16px rgba(0, 234, 255, 0.2), inset 0 0 12px rgba(0, 234, 255, 0.05);
+}
+
+.scenario-card--add:hover {
+  background: linear-gradient(135deg, rgba(0, 188, 212, 0.28), rgba(0, 234, 255, 0.16));
+  box-shadow: 0 6px 24px rgba(0, 234, 255, 0.4), inset 0 0 16px rgba(0, 234, 255, 0.1);
+  transform: translateY(-5px);
+  border-color: #00ffff;
+}
+
+.scenario-card--add-icon {
+  font-size: 3rem;
+  line-height: 1;
+  margin-bottom: 12px;
+  color: #00eaff;
+  text-shadow: 0 0 12px rgba(0, 234, 255, 0.8);
+}
+
+.scenario-card--add p {
+  color: #00eaff;
+  font-weight: 700;
+  font-size: 1rem;
+  letter-spacing: 0.03em;
+  text-shadow: 0 0 8px rgba(0, 234, 255, 0.5);
+}
+
+/* 시나리오 생성 모달 */
+.scenario-create-modal {
+  width: 480px;
+  max-width: 90vw;
+  text-align: left;
+}
+
+.scenario-create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 1.2rem;
+}
+
+.scenario-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.scenario-form-row label {
+  font-size: 0.85rem;
+  color: #aaaaaa;
+}
+
+.scenario-form-row input,
+.scenario-form-row textarea {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  color: #ffffff;
+  font-size: 0.95rem;
+  padding: 0.55rem 0.8rem;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.scenario-form-row input:focus,
+.scenario-form-row textarea:focus {
+  border-color: #00eaff;
+}
+
+.scenario-form-row--half {
+  flex-direction: row;
+  gap: 12px;
+}
+
+.scenario-form-row--half > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.scenario-form-error {
+  color: #ff6b6b;
+  font-size: 0.88rem;
+  margin: 0;
+}
+
+.scenario-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.scenario-form-actions .btn-cancel {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #cccccc;
+}
+
+.scenario-form-actions .btn-cancel:hover {
+  background-color: rgba(255, 255, 255, 0.18);
+}
+
+/* 중심점 헤더: 라벨 + 지도 선택 버튼 나란히 */
+.scenario-form-coord-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.scenario-form-coord-header label {
+  margin-bottom: 0;
+}
+
+/* "지도에서 선택" 버튼 - version-popup-content button 상속 덮어쓰기 */
+.version-popup-content .btn-map-pick {
+  background: linear-gradient(135deg, rgba(0, 188, 212, 0.2), rgba(0, 234, 255, 0.08));
+  border: 1px solid #00eaff;
+  border-radius: 7px;
+  color: #00eaff;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.3rem 0.75rem;
+  margin: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+.version-popup-content .btn-map-pick:hover {
+  background: linear-gradient(135deg, rgba(0, 188, 212, 0.35), rgba(0, 234, 255, 0.18));
+  box-shadow: 0 0 8px rgba(0, 234, 255, 0.4);
+}
+
+.scenario-form-coord-preview {
+  font-size: 0.8rem;
+  color: #00eaff;
+  margin: 4px 0 0;
+  opacity: 0.85;
+}
+
+/* 키 입력 라벨 + 배지 행 */
+.scenario-form-label-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.scenario-form-label-row label {
+  margin-bottom: 0;
+}
+
+/* 키 상태 배지 */
+.key-badge {
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.key-badge--checking {
+  background: rgba(255, 200, 0, 0.15);
+  color: #ffc800;
+  border: 1px solid rgba(255, 200, 0, 0.4);
+}
+
+.key-badge--ok {
+  background: rgba(0, 234, 100, 0.15);
+  color: #00ea64;
+  border: 1px solid rgba(0, 234, 100, 0.4);
+}
+
+.key-badge--dup {
+  background: rgba(255, 107, 107, 0.15);
+  color: #ff6b6b;
+  border: 1px solid rgba(255, 107, 107, 0.4);
+}
+
+/* 키 입력 필드 상태별 테두리 */
+.scenario-form-row input.input--ok {
+  border-color: #00ea64;
+}
+
+.scenario-form-row input.input--err {
+  border-color: #ff6b6b;
+}
+
+/* 입력 형식 힌트 */
+.scenario-form-hint {
+  font-size: 0.75rem;
+  color: #666;
+  margin-top: 3px;
+}
+
+/* 지도 범위 선택 오버레이 */
+.map-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+}
+
+.map-picker-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: rgba(13, 15, 25, 0.96);
+  border-bottom: 1px solid rgba(0, 234, 255, 0.3);
+  flex-shrink: 0;
+  gap: 12px;
+}
+
+.map-picker-guide {
+  color: #00eaff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  flex: 1;
+}
+
+.map-picker-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* 지도 피커 내부 버튼 - 공통 베이스 */
+.map-picker-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 7px;
+  color: #cccccc;
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+.map-picker-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* 활성화된 범위 선택 버튼 */
+.map-picker-btn--active {
+  background: rgba(255, 80, 80, 0.15);
+  border-color: #ff6b6b;
+  color: #ff6b6b;
+}
+
+.map-picker-btn--active:hover {
+  background: rgba(255, 80, 80, 0.25);
+}
+
+/* 적용 버튼 */
+.map-picker-btn--confirm {
+  background: rgba(0, 188, 212, 0.2);
+  border-color: #00eaff;
+  color: #00eaff;
+}
+
+.map-picker-btn--confirm:hover {
+  background: rgba(0, 188, 212, 0.35);
+  box-shadow: 0 0 8px rgba(0, 234, 255, 0.4);
+}
+
+/* 닫기 버튼 */
+.map-picker-btn--close {
+  color: #888;
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.map-picker-map {
+  flex: 1;
 }
 
 
@@ -206,6 +542,11 @@ body {
 .loading-spinner {
   font-size: 20px;
   color: #333;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
 /*timeline*/

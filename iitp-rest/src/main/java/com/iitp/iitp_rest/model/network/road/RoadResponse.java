@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.model.network.road;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.iitp.iitp_rest.model.geometry.Polyline;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -31,6 +32,10 @@ public class RoadResponse {
 
         private Double halfWidth;
         private int numLane;
+
+        /** non-straight connection의 bezier 곡선 좌표 (로컬 좌표, double[]{x,y}). null이면 toAbsolute 사용 */
+        @JsonIgnore
+        private List<double[]> laneShape;
 
     }
 
