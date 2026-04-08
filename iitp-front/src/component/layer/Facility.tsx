@@ -28,33 +28,40 @@ const Facility = ({ fields }: FacilityProps) => {
     const nestedArrayFieldsMap: Record<string, string[]> = {};
     const [expandedParents, setExpandedParents] = useState<Record<string, boolean>>({});
 
-    // 레이어 source 피처 수 변화를 감지해 visibleFields 재계산
-    const [, setSourceTick] = useState(0);
+    // store의 currentJsonData 변화를 감지해 visibleFields 재계산
+    const [, setDataTick] = useState(0);
 
     useEffect(() => {
-        if (!layerManager) return;
-        const listeners: Array<() => void> = [];
+        const unsubs: Array<() => void> = [];
         fields.forEach(field => {
-            const layer = layerManager.getLayerByName(field.key);
-            const source = layer?.getSource?.();
-            if (!source) return;
-            const onChange = () => setSourceTick(t => t + 1);
-            source.on('addfeature', onChange);
-            source.on('removefeature', onChange);
-            source.on('clear', onChange);
-            listeners.push(() => {
-                source.un('addfeature', onChange);
-                source.un('removefeature', onChange);
-                source.un('clear', onChange);
-            });
+            const store = layerNameToStoreMap[field.key];
+            if (store) {
+                unsubs.push((store as any).subscribe(
+                    (state: any) => state.currentJsonData,
+                    () => setDataTick(t => t + 1),
+                    { equalityFn: (a: any, b: any) => a === b }
+                ));
+            }
         });
-        return () => listeners.forEach(u => u());
-    }, [fields, layerManager]);
+        return () => unsubs.forEach(u => u());
+    }, [fields]);
 
-    // 좌표(피처)가 없는 레이어는 목록에서 제외
+    // 스토어에 데이터가 있는 레이어만 목록에 표시
+    // (OL source 피처 수 기준은 꺼진 레이어를 잘못 제외하므로 store 기준으로 판단)
     const visibleFields = useMemo(() => {
         if (!layerManager) return fields;
         return fields.filter((field) => {
+            const store = layerNameToStoreMap[field.key];
+            if (store) {
+                const data = store.getState().currentJsonData;
+                if (data == null) return false;
+                // 객체인 경우 배열 프로퍼티가 하나라도 있으면 표시
+                if (typeof data === 'object' && !Array.isArray(data)) {
+                    return Object.values(data).some(v => Array.isArray(v) ? v.length > 0 : v != null);
+                }
+                return Array.isArray(data) ? data.length > 0 : true;
+            }
+            // store 없는 레이어는 OL source 피처 수로 판단
             const layer = layerManager.getLayerByName(field.key);
             const featureCount = layer?.getSource?.()?.getFeatures?.()?.length ?? 0;
             return featureCount > 0;

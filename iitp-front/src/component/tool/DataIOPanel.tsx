@@ -19,18 +19,20 @@ import { mergeUpdateLogs } from '@utils/history';
 import SaveVersionModal from '@component/modal/SaveVersionModal';
 
 // ── 전체 레이어 (저장 + 내보내기/가져오기) ───────────────────
+// fullData: true  → { data: currentJsonData 전체, logs } 전송  (XML 범용 레이어)
+// fullData: false → { data: Object.values(currentJson)[0], logs } 전송 (기존 typed 레이어)
 const LAYER_CONFIG = [
-    { key: 'network',            menuCode: 'NETWORK',             label: '네트워크',           store: useNetworkStore,            historyStore: useNetworkHistoryStore            },
-    { key: 'busStation',         menuCode: 'BUS_STATION',         label: '버스 정류장',         store: useBusStationStore,         historyStore: useBusStationHistoryStore         },
-    { key: 'railStation',        menuCode: 'RAIL_STATION',        label: '철도 정류장',         store: useRailStationStore,        historyStore: useRailStationHistoryStore        },
-    { key: 'pavementMarking',    menuCode: 'PAVEMENT_MARKING',    label: '노면 표시',           store: usePavementMarkingStore,    historyStore: usePavementMarkingHistoryStore    },
-    { key: 'signal',             menuCode: 'SIGNAL',              label: '신호',                store: useSignalStore,             historyStore: useSignalHistoryStore             },
-    { key: 'signalTod',          menuCode: 'SIGNAL_TOD',          label: '신호 TOD',            store: useSignalTodStore,          historyStore: useSignalTodHistoryStore          },
-    { key: 'busRoute',           menuCode: 'BUS_PT_LINE',         label: '버스 노선',           store: useBusPtLineStore,          historyStore: useBusPtLineHistoryStore          },
-    { key: 'busRouteWeekday',    menuCode: 'BUS_PT_LINE_WEEKDAY', label: '버스 노선 (평일)',     store: useBusPtLineWeekdayStore,   historyStore: useBusPtLineWeekdayHistoryStore   },
-    { key: 'busRouteWeekend',    menuCode: 'BUS_PT_LINE_WEEKEND', label: '버스 노선 (주말)',     store: useBusPtLineWeekendStore,   historyStore: useBusPtLineWeekendHistoryStore   },
-    { key: 'railRoute',          menuCode: 'RAIL_PT_LINE',        label: '철도 노선',           store: useRailPtLineStore,         historyStore: useRailPtLineHistoryStore         },
-    { key: 'simulationScenario', menuCode: 'SIMULATION_SCENARIO', label: '시뮬레이션 시나리오',  store: useSimulationScenarioStore, historyStore: useSimulationScenarioHistoryStore },
+    { key: 'network',            menuCode: 'NETWORK',             label: '네트워크',           store: useNetworkStore,            historyStore: useNetworkHistoryStore,            fullData: true  },
+    { key: 'busStation',         menuCode: 'BUS_STATION',         label: '버스 정류장',         store: useBusStationStore,         historyStore: useBusStationHistoryStore,         fullData: false },
+    { key: 'railStation',        menuCode: 'RAIL_STATION',        label: '철도 정류장',         store: useRailStationStore,        historyStore: useRailStationHistoryStore,        fullData: false },
+    { key: 'pavementMarking',    menuCode: 'PAVEMENT_MARKING',    label: '노면 표시',           store: usePavementMarkingStore,    historyStore: usePavementMarkingHistoryStore,    fullData: false },
+    { key: 'signal',             menuCode: 'SIGNAL',              label: '신호',                store: useSignalStore,             historyStore: useSignalHistoryStore,             fullData: false },
+    { key: 'signalTod',          menuCode: 'SIGNAL_TOD',          label: '신호 TOD',            store: useSignalTodStore,          historyStore: useSignalTodHistoryStore,          fullData: true  },
+    { key: 'busRoute',           menuCode: 'BUS_PT_LINE',         label: '버스 노선',           store: useBusPtLineStore,          historyStore: useBusPtLineHistoryStore,          fullData: true  },
+    { key: 'busRouteWeekday',    menuCode: 'BUS_PT_LINE_WEEKDAY', label: '버스 노선 (평일)',     store: useBusPtLineWeekdayStore,   historyStore: useBusPtLineWeekdayHistoryStore,   fullData: true  },
+    { key: 'busRouteWeekend',    menuCode: 'BUS_PT_LINE_WEEKEND', label: '버스 노선 (주말)',     store: useBusPtLineWeekendStore,   historyStore: useBusPtLineWeekendHistoryStore,   fullData: true  },
+    { key: 'railRoute',          menuCode: 'RAIL_PT_LINE',        label: '철도 노선',           store: useRailPtLineStore,         historyStore: useRailPtLineHistoryStore,         fullData: true  },
+    { key: 'simulationScenario', menuCode: 'SIMULATION_SCENARIO', label: '시뮬레이션 시나리오',  store: useSimulationScenarioStore, historyStore: useSimulationScenarioHistoryStore, fullData: true  },
 ] as const;
 
 type LayerKey = (typeof LAYER_CONFIG)[number]['key'];
@@ -66,8 +68,12 @@ const DataIOPanel: React.FC = () => {
         const logJson = cfg.historyStore.getState().updateLogs;
         const snapshotLogJson = cfg.historyStore.getState().snapshotUpdateLogs;
         const mergedLog = mergeUpdateLogs(logJson, snapshotLogJson);
-        const extractedArray = Object.values(currentJson as Record<string, unknown>)[0];
-        const payload = { data: extractedArray, logs: mergedLog };
+        // fullData: 전체 JSON 그대로 전송 (network, XML 범용 레이어)
+        // !fullData: 첫 번째 배열만 추출 (signal, pavementMarking 등 typed 레이어)
+        const data = cfg.fullData
+            ? currentJson
+            : Object.values(currentJson as Record<string, unknown>)[0];
+        const payload = { data, logs: mergedLog };
 
         setSavingKeys(prev => new Set(prev).add(cfg.key));
         try {
