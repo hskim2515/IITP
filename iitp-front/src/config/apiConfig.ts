@@ -31,13 +31,15 @@ export const apiConfig:ApiConfig = {
         list: {url: '/public-transit/station/bus', method: 'GET', useFormData: false },
         update: {url: '/public-transit/station/bus', method: 'POST', useFormData: false },
         create: {url: '/public-transit/station/bus', method: 'POST', useFormData: false },
-        historyList: {url: '/public-transit/station/bus/history', method: 'GET', useFormData: false },
+        historyList: {url: '/public-transit/station/bus/histories', method: 'GET', useFormData: false },
+        origin: {url: '/public-transit/station/bus/origin', method: 'GET', useFormData: false },
     },
     RAIL_STATION: {
         list: {url: '/public-transit/station/rail', method: 'GET', useFormData: false },
         update: {url: '/public-transit/station/rail', method: 'POST', useFormData: false },
         create: {url: '/public-transit/station/rail', method: 'POST', useFormData: false },
-        historyList: {url: '/public-transit/station/rail/history', method: 'GET', useFormData: false },
+        historyList: {url: '/public-transit/station/rail/histories', method: 'GET', useFormData: false },
+        origin: {url: '/public-transit/station/rail/origin', method: 'GET', useFormData: false },
     },
     NETWORK: {
         list: {url: '/network', method: 'GET', useFormData: false },
@@ -68,28 +70,35 @@ export const apiConfig:ApiConfig = {
         tree: {url: '/menu/tree', method: 'GET', useFormData: false},
     },
     BUS_PT_LINE: {
-        list: { url: '/public-transit/line/bus', method: 'GET', useFormData: false },
+        list:   { url: '/public-transit/line/bus',         method: 'GET',  useFormData: false },
+        update: { url: '/public-transit/line/bus',         method: 'POST', useFormData: false },
     },
     BUS_PT_LINE_WEEKDAY: {
-        list: { url: '/public-transit/line/bus/weekday', method: 'GET', useFormData: false },
+        list:   { url: '/public-transit/line/bus/weekday', method: 'GET',  useFormData: false },
+        update: { url: '/public-transit/line/bus/weekday', method: 'POST', useFormData: false },
     },
     BUS_PT_LINE_WEEKEND: {
-        list: { url: '/public-transit/line/bus/weekend', method: 'GET', useFormData: false },
+        list:   { url: '/public-transit/line/bus/weekend', method: 'GET',  useFormData: false },
+        update: { url: '/public-transit/line/bus/weekend', method: 'POST', useFormData: false },
     },
     RAIL_PT_LINE: {
-        list: { url: '/public-transit/line/rail', method: 'GET', useFormData: false },
+        list:   { url: '/public-transit/line/rail',        method: 'GET',  useFormData: false },
+        update: { url: '/public-transit/line/rail',        method: 'POST', useFormData: false },
     },
     SIGNAL_TOD: {
-        list: { url: '/signal-tod', method: 'GET', useFormData: false },
+        list:   { url: '/signal-tod',          method: 'GET',  useFormData: false },
+        update: { url: '/signal-tod',          method: 'POST', useFormData: false },
     },
     SIMULATION_SCENARIO: {
-        list: { url: '/simulation-scenario', method: 'GET', useFormData: false },
+        list:   { url: '/simulation-scenario', method: 'GET',  useFormData: false },
+        update: { url: '/simulation-scenario', method: 'POST', useFormData: false },
     },
-    ROUTE: {
-        list: { url: '/route', method: 'GET', useFormData: false },
+    SCENARIO_VERSION: {
+        create: { url: '/scenario', method: 'POST', useFormData: false },
     },
-    PAX_ROUTE: {
-        list: { url: '/route/pax', method: 'GET', useFormData: false },
+    OD_MATRIX: {
+        list:   { url: '/od-matrix/{versionId}', method: 'GET',  useFormData: false },
+        update: { url: '/od-matrix/{versionId}', method: 'POST', useFormData: false },
     },
 
 } as const;

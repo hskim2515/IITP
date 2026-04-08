@@ -361,28 +361,6 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
         inputFields: [],
         rowFields: []
     },
-    ROUTE: {
-        type: "table",
-        layer: "route",
-        fields: [
-            { name: "OriginID", label: "출발 노드 ID", type: "number" },
-            { name: "DestinationID", label: "도착 노드 ID", type: "number" },
-            { name: "Route", label: "경로", type: "text" },
-        ],
-        inputFields: [],
-        rowFields: []
-    },
-    PAX_ROUTE: {
-        type: "table",
-        layer: "paxRoute",
-        fields: [
-            { name: "OriginID", label: "출발 링크 ID", type: "number" },
-            { name: "DestinationID", label: "도착 링크 ID", type: "number" },
-            { name: "Route", label: "경로", type: "text" },
-        ],
-        inputFields: [],
-        rowFields: []
-    },
     SIMULATION_LEVEL: {
         type:"",
         fields: [

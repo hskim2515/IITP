@@ -225,6 +225,10 @@ export default class SpeedHeatmapOlLayer extends ImageLayer<ImageCanvasSource> {
     public setSpeed(_s: number) {}
     public setStatus(_s: any) {}
 
+    public setOpacity(opacity: number): void {
+        super.setOpacity(Math.max(0, Math.min(1, opacity)));
+    }
+
     public destroy() {
         this._destroyed = true;
         cancelAnimationFrame(this._animId);

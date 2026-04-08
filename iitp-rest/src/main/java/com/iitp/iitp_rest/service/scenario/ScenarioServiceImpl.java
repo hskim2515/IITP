@@ -73,6 +73,25 @@ public class ScenarioServiceImpl implements ScenarioService {
     }
 
     @Override
+    public ScenarioVersion createVersion(Long scenarioId, String key, String label) {
+        if (!key.matches("[A-Za-z0-9_]+")) {
+            throw new IllegalArgumentException("버전 키는 영문자, 숫자, 밑줄(_)만 허용됩니다.");
+        }
+        if (versionRepository.findByKey(key).isPresent()) {
+            throw new IllegalArgumentException("이미 사용 중인 버전 키입니다: " + key);
+        }
+        Scenario scenario = scenarioRepository.findById(scenarioId)
+                .orElseThrow(() -> new IllegalArgumentException("Scenario not found: " + scenarioId));
+        ScenarioVersion version = ScenarioVersion.builder()
+                .scenario(scenario)
+                .key(key)
+                .label(label)
+                .insertDate(java.time.LocalDateTime.now())
+                .build();
+        return versionRepository.save(version);
+    }
+
+    @Override
     public Scenario createScenario(Scenario scenario) {
         if (!scenario.getKey().matches("[A-Za-z0-9_]+")) {
             throw new IllegalArgumentException("시나리오 키는 영문자, 숫자, 밑줄(_)만 허용됩니다.");

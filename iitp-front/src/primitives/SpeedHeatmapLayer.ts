@@ -63,6 +63,7 @@ export default class SpeedHeatmapLayer {
     show = false;
     private destroyed = false;
     private _viewer: Cesium.Viewer;
+    private _opacity = 1.0;
 
     // Cesium 내부 API (HeatBarLayer와 동일 패턴)
     private speedTexture: any = null;
@@ -124,6 +125,10 @@ export default class SpeedHeatmapLayer {
 
     setSpeed(_s: number):  void {}
     setStatus(_s: string): void {}
+
+    setOpacity(opacity: number): void {
+        this._opacity = Math.max(0, Math.min(1, opacity));
+    }
 
     // ──────────────────────────────────────────
     // 초기화 (lazy)
@@ -271,6 +276,7 @@ export default class SpeedHeatmapLayer {
             in float v_topFace;
 
             uniform float u_time;
+            uniform float u_opacity;
 
             out vec4 fragColor;
 
@@ -301,7 +307,7 @@ export default class SpeedHeatmapLayer {
                                 + vec3(0.80, 0.92, 1.00) * specular * 0.45;
 
                 // 알파: 정체=불투명, 자유주행=반투명
-                float alpha = mix(0.88, 0.38, s);
+                float alpha = mix(0.88, 0.38, s) * u_opacity;
                 fragColor = vec4(finalColor, alpha);
             }
         `;
@@ -380,6 +386,7 @@ export default class SpeedHeatmapLayer {
                         },
                         u_cellUv: () => cellUv,
                         u_time:   () => performance.now() / 1000.0,
+                        u_opacity: () => this._opacity,
                     },
                     renderState: (Cesium as any).RenderState.fromCache({
                         depthTest: { enabled: true },

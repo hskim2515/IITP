@@ -18,7 +18,7 @@ public class SimulationScenarioController {
 
     @GetMapping("/{scenarioKey}")
     public ResponseEntity<SimulationRunXml> getSimulationScenario(@PathVariable String scenarioKey) {
-        log.info("[SimulationScenarioController] scenarioKey={}", scenarioKey);
+        log.info("[SimulationScenarioController] GET scenarioKey={}", scenarioKey);
         try {
             SimulationRunXml result = simulationRunService.getByScenarioKey(scenarioKey);
             return ResponseEntity.ok(result);
@@ -27,6 +27,20 @@ public class SimulationScenarioController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (Exception e) {
             log.error("[SimulationScenarioController] 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @PostMapping("/{scenarioKey}")
+    public ResponseEntity<Void> saveSimulationScenario(
+            @PathVariable String scenarioKey,
+            @RequestBody SimulationRunXml data) {
+        log.info("[SimulationScenarioController] POST scenarioKey={}", scenarioKey);
+        try {
+            simulationRunService.saveByScenarioKey(scenarioKey, data);
+            return ResponseEntity.ok().build();
+        } catch (Exception e) {
+            log.error("[SimulationScenarioController] 저장 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

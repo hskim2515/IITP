@@ -27,7 +27,6 @@ import { useSignalTodStore } from "@stores/useSignalTodStore";
 import { useSimulationScenarioStore } from "@stores/useSimulationScenarioStore";
 import { useBusPtLineStore, useBusPtLineWeekdayStore, useBusPtLineWeekendStore } from "@stores/useBusPtLineStore";
 import { useRailPtLineStore } from "@stores/useRailPtLineStore";
-import { useRouteStore, usePaxRouteStore } from "@stores/useRouteStore";
 
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToStoreMap: Record<string, FeatureStoreFactoryType<any>> = {
@@ -43,8 +42,6 @@ export const menuCodeToStoreMap: Record<string, FeatureStoreFactoryType<any>> = 
     BUS_PT_LINE_WEEKDAY: useBusPtLineWeekdayStore,
     BUS_PT_LINE_WEEKEND: useBusPtLineWeekendStore,
     RAIL_PT_LINE: useRailPtLineStore,
-    ROUTE: useRouteStore,
-    PAX_ROUTE: usePaxRouteStore,
 }
 
 export const layerNameToStoreMap: Record<string, FeatureStoreFactoryType<any>> = {
@@ -59,8 +56,6 @@ export const layerNameToStoreMap: Record<string, FeatureStoreFactoryType<any>> =
     busRouteWeekday: useBusPtLineWeekdayStore,
     busRouteWeekend: useBusPtLineWeekendStore,
     railRoute: useRailPtLineStore,
-    route: useRouteStore,
-    paxRoute: usePaxRouteStore,
 }
 
 const useLayerInit = (): void => {

@@ -167,7 +167,8 @@ export class LayerManager {
         const types = typeGroups && typeGroups.size > 0 ? [...typeGroups.keys()] : ['default'];
         types.forEach((vType) => {
             const tripLayer = new TrailFeatureLayer(vehicleRoute, speedFactor, isRunning, vType);
-            const layers = this.vectorLayerManager.add(tripLayer, groupName, "trip", false);
+            // 차종별 고유 레이어 이름 사용 — 같은 "trip"으로 add하면 이전 차종 레이어가 제거됨
+            const layers = this.vectorLayerManager.add(tripLayer, groupName, `trip_${vType}`, false);
             layers.forEach((layer: BaseLayer) => {
                 if (!vectorLayers.includes(layer)) vectorLayers.push(layer);
             });
@@ -252,8 +253,9 @@ export class LayerManager {
         // Each vehicle type gets its own VectorSource to prevent color/position conflicts
         const vehicleVectorSource = new VectorSource();
         const vehicleLayer = new VehicleFeatureLayer(vehicleRoute, vehicleVectorSource, speedFactor, isRunning, vehicleType);
-        console.log(`[LayerManager] addVehicleLayer type=${vehicleType} color=${vehicleLayer.getStyle?.()}`);
-        const layers = this.vectorLayerManager.add(vehicleLayer, groupName, "vehicle", true);
+        // 차종별 고유 레이어 이름 사용 — 같은 "vehicle"로 add하면 이전 차종 레이어가 제거됨
+        const olLayerName = `vehicle_${vehicleType}`;
+        const layers = this.vectorLayerManager.add(vehicleLayer, groupName, olLayerName, true);
 
         const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
 
@@ -266,6 +268,9 @@ export class LayerManager {
     }
 
     removeVehicleLayer(): void {
+        // 차종별 OL 레이어 (vehicle_CAR, vehicle_TAXI 등) + Cesium primitive 모두 제거
+        const vehicleTypes = ['default', 'CAR', 'TAXI', 'BUS', 'TRUCK', 'MOTO'];
+        vehicleTypes.forEach(t => this._removeLayers("analyze", `vehicle_${t}`));
         this._removeLayers("analyze", "vehicle");
     }
 

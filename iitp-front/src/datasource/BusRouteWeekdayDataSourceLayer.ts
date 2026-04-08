@@ -8,6 +8,7 @@ export default class BusRouteWeekdayDataSourceLayer {
     private readonly LAYER_NAME = "busRouteWeekday";
     private dataSource: GeoJsonDataSource;
     private unsubscribe: (() => void) | undefined;
+    private needsReload = false;
 
     constructor(private viewer: Viewer) {
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
@@ -31,8 +32,15 @@ export default class BusRouteWeekdayDataSourceLayer {
         }
     }
 
+    public setVisible(visible: boolean): void {
+        this.dataSource.show = visible;
+        if (visible && this.needsReload) this.load();
+    }
+
     public load(): void {
         if (!this.dataSource) return;
+        if (!this.dataSource.show) { this.needsReload = true; return; }
+        this.needsReload = false;
         this.dataSource.entities.suspendEvents();
         try {
             this.dataSource.entities.removeAll();

@@ -88,13 +88,14 @@ export default class ParabolicArrowPrimitive {
                 #version 300 es
                 precision highp float;
                 uniform float u_density;
+                uniform float u_alpha;
                 out vec4 fragColor;
-                
+
                 void main() {
                     vec3 lowColor = vec3(1.0, 1.0, 0.5); // 연노랑
                     vec3 highColor = vec3(1.0, 0.0, 0.0); // 빨강
                     vec3 color = mix(lowColor, highColor, clamp(u_density, 0.0, 0.8));
-                    fragColor = vec4(color, 1.0);
+                    fragColor = vec4(color, u_alpha);
                 }
             `,
             attributeLocations: {
@@ -108,10 +109,12 @@ export default class ParabolicArrowPrimitive {
             uniformMap: {
                 u_modelViewProjectionMatrix: () => this.context.uniformState.modelViewProjection,
                 u_density: () => density,
+                u_alpha:   () => this._alpha,
             },
             primitiveType: Cesium.PrimitiveType.TRIANGLE_STRIP,
             renderState: Cesium.RenderState.fromCache({
                 depthTest: { enabled: true },
+                blending:  Cesium.BlendingState.ALPHA_BLEND,
             }),
             pass: Cesium.Pass.OPAQUE,
         });
@@ -125,6 +128,7 @@ export default class ParabolicArrowPrimitive {
         };
     }
 
+    private _alpha = 1.0;
     destroyed = false;
 
     update(frameState: Cesium.FrameState) {
@@ -160,6 +164,10 @@ export default class ParabolicArrowPrimitive {
 
     setVisible(visible: boolean) {
         this.show = visible;
+    }
+
+    setOpacity(opacity: number) {
+        this._alpha = Math.max(0, Math.min(1, opacity));
     }
 
     setLatestPositions(latestPositions) {

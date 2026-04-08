@@ -78,10 +78,17 @@ class VectorLayerManager {
     }
 
 
+    /** exact match OR prefix match (layerName + '_') */
+    private _matchName(layer: BaseLayer, layerName: string): boolean {
+        const stored = (layer as any)['layer'] as string | undefined;
+        if (!stored) return false;
+        return stored === layerName || stored.startsWith(layerName + '_');
+    }
+
     public get(groupName: string, layerName: string) {
         const group = this.layerGroups[groupName];
         if (!group) return [];
-        return group.filter(layer => matchesCustomKeyValue(layer, 'layer', layerName));
+        return group.filter(layer => this._matchName(layer, layerName));
     }
 
     public getAllByGroup(groupName: string) {
@@ -98,17 +105,17 @@ class VectorLayerManager {
     show(groupName: string, layerName: string): void {
         const group = this.layerGroups[groupName];
         if (!group) return;
-
         group.forEach(layer => {
-            if (matchesCustomKeyValue(layer, 'layer', layerName)) {
-                console.log(" show layerName", layerName)
-                layer.setVisible(true);
-            }
+            if (this._matchName(layer, layerName)) layer.setVisible(true);
         });
     }
 
     hide(groupName: string, layerName: string) {
-        this.get(groupName, layerName).forEach(layer => layer.setVisible(false));
+        const group = this.layerGroups[groupName];
+        if (!group) return;
+        group.forEach(layer => {
+            if (this._matchName(layer, layerName)) layer.setVisible(false);
+        });
     }
 
     toggle(groupName: string, layerName: string) {
@@ -145,7 +152,7 @@ class VectorLayerManager {
         const group: BaseLayer[] = this.layerGroups[groupName];
         if (!group) return;
 
-        const layersToRemove = group.filter(layer => matchesCustomKeyValue(layer, 'layer', layerName));
+        const layersToRemove = group.filter(layer => this._matchName(layer, layerName));
         layersToRemove.forEach(layer => {
             // 소스를 가진 모든 레이어 타입 (VectorLayer, WebGLVectorLayer, Heatmap 등) 소스 클리어
             const source = (layer as any).getSource?.();

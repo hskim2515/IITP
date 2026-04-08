@@ -28,6 +28,7 @@ import styles from "@css/PropertyPanel.module.css";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
 import DrilldownGrid from "@component/util/DrilldownGrid";
 import SignalTodTimelineEditor from "@component/util/SignalTodTimelineEditor";
+import SaveVersionModal from "@component/modal/SaveVersionModal";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTreeResponse
@@ -133,24 +134,20 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     }, [handleMouseMove, stopResizing]);
 
     const [reloadFlag, setReloadFlag] = useState(false);
+    const [versionModalOpen, setVersionModalOpen] = useState(false);
     useHistoryInit(reloadFlag);
 
-    const handleSaveBtn = async () => {
+    const doSave = async (versionKey: string) => {
         const api = apiConfig[activeSubmenu.menuCode as ApiMenuKey]?.update;
         if (!api) return;
         const currentJson = store.getState().currentJsonData;
         const logJson = historyStore.getState().updateLogs;
         const snapshotLogJson = historyStore.getState().snapshotUpdateLogs;
-        if (!logJson) {
-            setMessage({ type: 'warn', text: '변경사항이 없습니다.' });
-            return;
-        }
         const mergedLog = mergeUpdateLogs(logJson, snapshotLogJson);
         const extractedArray = Object.values(currentJson)[0];
         const payload = { data: extractedArray, logs: mergedLog };
         try {
-            if (!selectedScenario) return;
-            await axiosInstance({ method: api.method, url: api.url + '/' + (selectedScenarioVersion?.key ?? selectedScenario.key), data: payload });
+            await axiosInstance({ method: api.method, url: api.url + '/' + versionKey, data: payload });
             historyStore.getState().resetUpdateLogs();
             setReloadFlag(prev => !prev);
             setMessage({ type: 'info', text: '저장 완료' });
@@ -159,8 +156,20 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         }
     };
 
+    const handleSaveBtn = () => {
+        const logJson = historyStore.getState().updateLogs;
+        if (!logJson || logJson.length === 0) {
+            setMessage({ type: 'warn', text: '변경사항이 없습니다.' });
+            return;
+        }
+        if (!selectedScenario) return;
+        setVersionModalOpen(true);
+    };
+
     const handleInitBtn = () => {
         store.getState().initCurrentData();
+        store.getState().setChange(false);
+        historyStore.getState().resetAllHistoryStack();
         historyStore.getState().setCurrentSnapshotIndex(null);
     };
 
@@ -175,6 +184,12 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         const currentJsonData = store.getState().currentJsonData;
         const mergeJsonData = mergeJsonWithLogRecursive(currentJsonData, updateHistory, isUndo);
         store.getState().setCurrentJsonData(mergeJsonData);
+
+        // updateLogs가 비었으면(모두 되돌림) isChanged 해제
+        const remainingLogs = historyStore.getState().updateLogs;
+        const remainingSnapshot = historyStore.getState().snapshotUpdateLogs;
+        store.getState().setChange(remainingLogs.length > 0 || remainingSnapshot.length > 0);
+
         setMessage({ type: 'info', text: isUndo ? "Undo 성공" : "Redo 성공" });
     };
 
@@ -184,6 +199,15 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                 : styles.body;
 
     return (
+        <>
+        <SaveVersionModal
+            open={versionModalOpen}
+            onConfirm={async (versionKey) => {
+                setVersionModalOpen(false);
+                await doSave(versionKey);
+            }}
+            onCancel={() => setVersionModalOpen(false)}
+        />
         <div ref={overlayRef} className={styles.overlay} style={{ height: `${height}px` }}>
             <div className={styles.panel}>
                 {/* Resize handle */}
@@ -262,6 +286,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                 </div>
             </div>
         </div>
+        </>
     );
 };
 

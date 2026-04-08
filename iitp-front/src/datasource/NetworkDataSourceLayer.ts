@@ -34,6 +34,46 @@ export default class NetworkDataSourceLayer {
     private static readonly EPSILON = 1e-9;
     private selectedScenario = useScenarioStore.getState().selectedScenario;
 
+    // 지형 고도 캐시 (lng,lat 소수점5자리 키 → 미터 고도)
+    private terrainHeightMap = new Map<string, number>();
+    private terrainKey(lng: number, lat: number) {
+        return `${lng.toFixed(5)},${lat.toFixed(5)}`;
+    }
+
+    private hasRealTerrain(): boolean {
+        return !(this.viewer.terrainProvider instanceof Cesium.EllipsoidTerrainProvider);
+    }
+
+    /** 링크 좌표 전체에 대해 지형 고도를 일괄 샘플링해 terrainHeightMap에 저장 */
+    private async sampleTerrainHeights(network: Network): Promise<void> {
+        if (!this.hasRealTerrain()) {
+            this.terrainHeightMap.clear();
+            return;
+        }
+        const coordMap = new Map<string, Cesium.Cartographic>();
+        for (const link of network.links) {
+            if (!link.coordinates) continue;
+            for (const c of link.coordinates) {
+                const key = this.terrainKey(c.lng, c.lat);
+                if (!coordMap.has(key)) {
+                    coordMap.set(key, Cesium.Cartographic.fromDegrees(c.lng, c.lat));
+                }
+            }
+        }
+        const keys = Array.from(coordMap.keys());
+        const cartos = Array.from(coordMap.values());
+        try {
+            await Cesium.sampleTerrainMostDetailed(this.viewer.terrainProvider, cartos);
+            this.terrainHeightMap.clear();
+            for (let i = 0; i < keys.length; i++) {
+                this.terrainHeightMap.set(keys[i]!, cartos[i]!.height ?? 0);
+            }
+        } catch (e) {
+            console.warn("NetworkDataSourceLayer: 지형 고도 샘플링 실패", e);
+            this.terrainHeightMap.clear();
+        }
+    }
+
     // 증분 업데이트 상태
     private prevNetwork: Network | null = null;
     private lastImportEpoch = 0;
@@ -41,6 +81,8 @@ export default class NetworkDataSourceLayer {
     private cachedLinkMap: Map<string, any> = new Map();
     private lanePositionMap: Map<string, { source: Cesium.Cartesian3; target: Cesium.Cartesian3 }> = new Map();
     private nodeEntityIds: Map<string, string[]> = new Map();
+
+
 
     // 하이라이트 상태
     private highlightedGuid: string | null = null;
@@ -119,7 +161,7 @@ export default class NetworkDataSourceLayer {
         if (!network || !network.nodes || !network.links) return;
 
         if (!this.prevNetwork || this.isFullReplace(this.prevNetwork, network)) {
-            this.fullBuild(network);
+            this.fullBuild(network).catch(e => console.error("NetworkDataSourceLayer.fullBuild 에러:", e));
         } else {
             this.incrementalUpdate(this.prevNetwork, network);
         }
@@ -148,7 +190,10 @@ export default class NetworkDataSourceLayer {
     // ─────────────────────────────────────────────
     // 전체 재빌드
     // ─────────────────────────────────────────────
-    private fullBuild(network: Network): void {
+    private async fullBuild(network: Network): Promise<void> {
+        // 지형 고도 샘플링 (지형 없으면 즉시 반환)
+        await this.sampleTerrainHeights(network);
+
         this.nodeEntityIds.clear();
         this.lanePositionMap.clear();
         networkPrimitivePropertiesMap.clear();
@@ -175,9 +220,8 @@ export default class NetworkDataSourceLayer {
             for (const node of network.nodes) {
                 this.buildNodeEntities(node, this.cachedLinkMap, this.cachedNodeMap);
             }
-            if (this.dataSource.entities.values.length > 0) {
-                this.dataSource.show = true;
-            }
+            // 네트워크 로드 시 지형 depth test 비활성화
+            this.viewer.scene.globe.depthTestAgainstTerrain = false;
         } finally {
             this.dataSource.entities.resumeEvents();
             try { this.viewer.scene.requestRender(); } catch (_) {}
@@ -211,10 +255,12 @@ export default class NetworkDataSourceLayer {
         const linkVisible  = layerVisible && (this.featureTypeVisible['links']  ?? true);
         const laneVisible  = layerVisible && (this.featureTypeVisible['lanes']  ?? true);
 
+        const appearance = () => new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true });
+
         if (linkInstances.length > 0) {
             this.linkPrimitive = new Cesium.Primitive({
                 geometryInstances: linkInstances,
-                appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
+                appearance: appearance(),
                 asynchronous: true,
                 show: linkVisible,
             });
@@ -224,7 +270,7 @@ export default class NetworkDataSourceLayer {
         if (laneInstances.length > 0) {
             this.lanePrimitive = new Cesium.Primitive({
                 geometryInstances: laneInstances,
-                appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
+                appearance: appearance(),
                 asynchronous: true,
                 show: laneVisible,
             });
@@ -234,7 +280,7 @@ export default class NetworkDataSourceLayer {
         if (dividerInstances.length > 0) {
             this.laneDividerPrimitive = new Cesium.Primitive({
                 geometryInstances: dividerInstances,
-                appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
+                appearance: appearance(),
                 asynchronous: true,
                 show: laneVisible,
             });
@@ -245,9 +291,11 @@ export default class NetworkDataSourceLayer {
     /** 레이어 전체 on/off (DataSourceLayerManager에서 호출) */
     public setVisible(visible: boolean): void {
         this.dataSource.show = visible;
-        if (this.linkPrimitive)       this.linkPrimitive.show       = visible && (this.featureTypeVisible['links'] ?? true);
-        if (this.lanePrimitive)       this.lanePrimitive.show       = visible && (this.featureTypeVisible['lanes'] ?? true);
+        if (this.linkPrimitive)        this.linkPrimitive.show        = visible && (this.featureTypeVisible['links'] ?? true);
+        if (this.lanePrimitive)        this.lanePrimitive.show        = visible && (this.featureTypeVisible['lanes'] ?? true);
         if (this.laneDividerPrimitive) this.laneDividerPrimitive.show = visible && (this.featureTypeVisible['lanes'] ?? true);
+        // 네트워크 레이어 표시 중에는 지형 depth test 비활성화 → 도로가 지형에 묻히지 않음
+        this.viewer.scene.globe.depthTestAgainstTerrain = !visible;
         try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
@@ -396,6 +444,15 @@ export default class NetworkDataSourceLayer {
         if (!sourceNode || !targetNode || !link.lanes) return;
         if (!link.coordinates || link.coordinates.length < 2) return;
 
+        // 링크 좌표의 평균 지형 고도 계산
+        let terrainSum = 0;
+        let terrainCount = 0;
+        for (const c of link.coordinates) {
+            const h = this.terrainHeightMap.get(this.terrainKey(c.lng, c.lat));
+            if (h !== undefined) { terrainSum += h; terrainCount++; }
+        }
+        const avgTerrainH = terrainCount > 0 ? terrainSum / terrainCount : 0;
+
         // 중간 좌표 모두 반영
         const linkPositions = link.coordinates.map((c: any) =>
             Cesium.Cartesian3.fromDegrees(c.lng, c.lat)
@@ -407,7 +464,7 @@ export default class NetworkDataSourceLayer {
             geometry: new Cesium.CorridorGeometry({
                 positions: linkPositions,
                 width: link.width,
-                height: 0.02,
+                height: avgTerrainH + 0.02,
                 cornerType: Cesium.CornerType.MITERED,
                 vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
             }),
@@ -437,7 +494,7 @@ export default class NetworkDataSourceLayer {
                 geometry: new Cesium.CorridorGeometry({
                     positions: lanePositions,
                     width: laneWidth * 0.92,
-                    height: 0.04,
+                    height: avgTerrainH + 0.04,
                     cornerType: Cesium.CornerType.MITERED,
                     vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
                 }),
@@ -456,14 +513,12 @@ export default class NetworkDataSourceLayer {
                     geometry: new Cesium.CorridorGeometry({
                         positions: boundaryPositions,
                         width: laneWidth * 0.06,
-                        height: 0.06,
+                        height: avgTerrainH + 0.06,
                         cornerType: Cesium.CornerType.MITERED,
                         vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
                     }),
                     attributes: {
-                        color: Cesium.ColorGeometryInstanceAttribute.fromColor(
-                            Cesium.Color.WHITE.withAlpha(0.75)
-                        ),
+                        color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.WHITE.withAlpha(0.75)),
                     },
                 }));
             }
@@ -543,7 +598,7 @@ export default class NetworkDataSourceLayer {
                     length: 2,
                     topRadius: port.type === 'in' ? 1.5 : 0.1,
                     bottomRadius: port.type === 'in' ? 0.1 : 1.5,
-                    material: port.type === 'in'
+                    material: port.type === 'out'
                         ? Cesium.Color.CYAN.withAlpha(0.8)
                         : Cesium.Color.MAGENTA.withAlpha(0.8),
                     heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
@@ -667,6 +722,8 @@ export default class NetworkDataSourceLayer {
     // 정리
     // ─────────────────────────────────────────────
     public destroy(): void {
+        // 레이어 제거 시 지형 depth test 복원
+        try { this.viewer.scene.globe.depthTestAgainstTerrain = true; } catch (_) {}
         this.unsubscribe?.();
         this.unsubscribeDraw?.();
         for (const p of [this.linkPrimitive, this.lanePrimitive, this.laneDividerPrimitive]) {

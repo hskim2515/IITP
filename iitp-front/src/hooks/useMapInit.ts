@@ -60,10 +60,6 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
             pixelRatio: 1,
             target: openlayersMapRef.current,
             view,
-            // 기본 DragPan 제거 → SmoothDragPan으로 교체
-            // (DragPan은 드래그 중 ViewHint.INTERACTING을 켜서 WebGL 레이어 업데이트를 막음)
-            // 기본 DragPan → SmoothDragPan으로 교체
-            // (DragPan은 드래그 중 ViewHint.INTERACTING를 설정 → WebGL 레이어 업데이트 차단)
             interactions: defaultInteractions({ dragPan: false }).extend([new SmoothDragPan()]),
         });
         setMap(olMap);
@@ -76,7 +72,7 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
         if (!cesiumMapRef.current) return;
         Cesium.Ion.defaultAccessToken = '';  // Set your Cesium Ion access token here
         const cesiumViewer = new Viewer(cesiumMapRef.current, {
-            //terrain: new Cesium.Terrain(Cesium.CesiumTerrainProvider.fromUrl('http://175.197.92.213:10201/terrain-tile/dem05_ellipsoid')),
+            terrain: new Cesium.Terrain(Cesium.CesiumTerrainProvider.fromUrl('https://175.197.92.213:10210/terrain-tile/dem05_ellipsoid', { requestVertexNormals: true })),
             shouldAnimate: true,
             selectionIndicator: false,
             timeline: false,

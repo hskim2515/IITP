@@ -15,5 +15,6 @@ public interface ScenarioService {
     Scenario updateScenario(Long id, Scenario scenario);
     void deleteScenario(Long id);
     boolean existsByKey(String key);
+    ScenarioVersion createVersion(Long scenarioId, String key, String label);
 }
 

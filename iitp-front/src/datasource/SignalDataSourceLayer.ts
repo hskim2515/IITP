@@ -19,6 +19,8 @@ const ARROW_PX     = 14;   // 화살표 인디케이터 크기
 
 /* ── 거리 기반 LOD ── */
 const ENTITY_DIST_COND   = new Cesium.DistanceDisplayCondition(0.0, 300.0);
+// near=50m에서 최대 → 멀어질수록 자연스럽게 축소
+const LAMP_SCALE_BY_DIST = new Cesium.NearFarScalar(10, 3, 100, 0.3);
 const LAMP_ALPHA_BY_DIST = new Cesium.NearFarScalar(2000, 1.0, 4000, 0.0);
 
 /* ── 색상 ── */
@@ -90,6 +92,7 @@ export default class SignalDataSourceLayer {
     private renderInterval: ReturnType<typeof setInterval> | null = null;
     private visible  = true;
     private destroyed = false;
+    private needsReload = false;
 
     constructor(private viewer: Viewer) {
         this.dataSource = new CustomDataSource(this.LAYER_NAME);
@@ -213,76 +216,119 @@ export default class SignalDataSourceLayer {
         this.dataSource.show      = visible;
         this.lampCollection.show  = visible;
         this.labelCollection.show = visible;
+        if (visible && this.needsReload) this.load();
     }
 
     public load(): void {
         const drawStore = useNetworkDrawStore.getState();
         if (drawStore.isActive || drawStore.isConnectionActive) return;
+        this.loadAsync().catch(e => console.error("SignalDataSourceLayer.load() 에러:", e));
+    }
+
+    private async loadAsync(): Promise<void> {
+        if (!this.visible) { this.needsReload = true; return; }
+        this.needsReload = false;
 
         this.lampCollection.removeAll();
         this.labelCollection.removeAll();
         this.signalLamps = [];
         this.lastWallClock = "";
 
+        const signalStore = layerNameToStoreMap[this.LAYER_NAME];
+        if (!signalStore) return;
+
+        const signals: any[] = signalStore.getState().currentJsonData?.signals ?? [];
+        if (!signals.length) return;
+
+        const networkData = useNetworkStore.getState().currentJsonData;
+        if (!networkData?.nodes || !networkData?.links) return;
+
+        const signalNodeIds = new Set(signals.map((s: any) => String(s.nodeId)));
+        const nodeConnectionMap = new Map<string, any[]>();
+        for (const node of networkData.nodes) {
+            nodeConnectionMap.set(String(node.id), node.connections ?? []);
+        }
+
+        // 신호등 위치 수집
+        interface LightEntry {
+            lng: number; lat: number;
+            toNodeId: string; fromLinkId: string;
+            mainConnGuids: string[]; mainConnIds: string[];
+            leftConnGuids: string[]; leftConnIds: string[];
+            rightConnGuids: string[]; rightConnIds: string[];
+        }
+        const entries: LightEntry[] = [];
+
+        for (const link of networkData.links) {
+            const toNodeId = String(link.toNode);
+            if (!signalNodeIds.has(toNodeId)) continue;
+            if (!link.coordinates?.length) continue;
+            const lastCoord = link.coordinates[link.coordinates.length - 1];
+            if (!lastCoord) continue;
+
+            const fromLinkId = String(link.id);
+            const conns = nodeConnectionMap.get(toNodeId) ?? [];
+
+            const mainConnGuids: string[] = [], mainConnIds: string[] = [];
+            const leftConnGuids: string[] = [], leftConnIds: string[] = [];
+            const rightConnGuids: string[] = [], rightConnIds: string[] = [];
+
+            for (const conn of conns) {
+                if (String(conn.fromLink) !== fromLinkId) continue;
+                const t = conn.turning ? String(conn.turning) : "Straight";
+                const guid = conn.__guid ?? String(conn.id);
+                const id   = String(conn.id);
+                if (t === "Left_Turn" || t === "Left") {
+                    leftConnGuids.push(guid); leftConnIds.push(id);
+                } else if (t === "Right_Turn" || t === "Right") {
+                    rightConnGuids.push(guid); rightConnIds.push(id);
+                } else {
+                    mainConnGuids.push(guid); mainConnIds.push(id);
+                }
+            }
+            entries.push({ lng: lastCoord.lng, lat: lastCoord.lat, toNodeId, fromLinkId,
+                mainConnGuids, mainConnIds, leftConnGuids, leftConnIds, rightConnGuids, rightConnIds });
+        }
+
+        if (!entries.length) return;
+
+        // 지형 고도 일괄 샘플링
+        const terrainHeightMap = new Map<string, number>();
+        const hasRealTerrain = !(this.viewer.terrainProvider instanceof Cesium.EllipsoidTerrainProvider);
+        if (hasRealTerrain) {
+            const key = (lng: number, lat: number) => `${lng.toFixed(5)},${lat.toFixed(5)}`;
+            const uniqueKeys: string[] = [];
+            const uniqueCartos: Cesium.Cartographic[] = [];
+            for (const e of entries) {
+                const k = key(e.lng, e.lat);
+                if (!terrainHeightMap.has(k)) {
+                    terrainHeightMap.set(k, 0); // placeholder
+                    uniqueKeys.push(k);
+                    uniqueCartos.push(Cesium.Cartographic.fromDegrees(e.lng, e.lat));
+                }
+            }
+            try {
+                await Cesium.sampleTerrainMostDetailed(this.viewer.terrainProvider, uniqueCartos);
+                for (let i = 0; i < uniqueKeys.length; i++) {
+                    terrainHeightMap.set(uniqueKeys[i]!, uniqueCartos[i]!.height ?? 0);
+                }
+            } catch (e) {
+                console.warn("SignalDataSourceLayer: 지형 고도 샘플링 실패", e);
+            }
+        }
+
+        // 엔티티 생성
         this.dataSource.entities.suspendEvents();
         try {
             this.dataSource.entities.removeAll();
+            const key = (lng: number, lat: number) => `${lng.toFixed(5)},${lat.toFixed(5)}`;
 
-            const signalStore = layerNameToStoreMap[this.LAYER_NAME];
-            if (!signalStore) return;
-
-            const signals: any[] = signalStore.getState().currentJsonData?.signals ?? [];
-            if (!signals.length) return;
-
-            const networkData = useNetworkStore.getState().currentJsonData;
-            if (!networkData?.nodes || !networkData?.links) return;
-
-            const signalNodeIds = new Set(signals.map((s: any) => String(s.nodeId)));
-            const nodeConnectionMap = new Map<string, any[]>();
-            for (const node of networkData.nodes) {
-                nodeConnectionMap.set(String(node.id), node.connections ?? []);
-            }
-
-            for (const link of networkData.links) {
-                const toNodeId = String(link.toNode);
-                if (!signalNodeIds.has(toNodeId)) continue;
-                if (!link.coordinates?.length) continue;
-
-                const lastCoord = link.coordinates[link.coordinates.length - 1];
-                if (!lastCoord) continue;
-
-                const fromLinkId = String(link.id);
-                const conns = nodeConnectionMap.get(toNodeId) ?? [];
-
-                // 방향별 conn 분류
-                const mainConnGuids:  string[] = [];
-                const mainConnIds:    string[] = [];
-                const leftConnGuids:  string[] = [];
-                const leftConnIds:    string[] = [];
-                const rightConnGuids: string[] = [];
-                const rightConnIds:   string[] = [];
-
-                for (const conn of conns) {
-                    if (String(conn.fromLink) !== fromLinkId) continue;
-                    const t = conn.turning ? String(conn.turning) : "Straight";
-                    const guid = conn.__guid ?? String(conn.id);
-                    const id   = String(conn.id);
-                    if (t === "Left_Turn" || t === "Left") {
-                        leftConnGuids.push(guid); leftConnIds.push(id);
-                    } else if (t === "Right_Turn" || t === "Right") {
-                        rightConnGuids.push(guid); rightConnIds.push(id);
-                    } else {
-                        // Straight, UTurn, 기타 → 메인 신호
-                        mainConnGuids.push(guid); mainConnIds.push(id);
-                    }
-                }
-
-                this.addTrafficLight(
-                    lastCoord.lng, lastCoord.lat, toNodeId, fromLinkId,
-                    mainConnGuids, mainConnIds,
-                    leftConnGuids, leftConnIds,
-                    rightConnGuids, rightConnIds
-                );
+            for (const e of entries) {
+                const baseH = terrainHeightMap.get(key(e.lng, e.lat)) ?? 0;
+                this.addTrafficLight(e.lng, e.lat, baseH, e.toNodeId, e.fromLinkId,
+                    e.mainConnGuids, e.mainConnIds,
+                    e.leftConnGuids, e.leftConnIds,
+                    e.rightConnGuids, e.rightConnIds);
             }
 
             this.lampCollection.show  = this.visible;
@@ -291,8 +337,6 @@ export default class SignalDataSourceLayer {
                 this.dataSource.show = this.visible;
             }
             console.log(`SignalDataSourceLayer: ${this.signalLamps.length}개 신호등 로드`);
-        } catch (err) {
-            console.error("SignalDataSourceLayer.load() 에러:", err);
         } finally {
             this.dataSource.entities.resumeEvents();
             try { this.viewer.scene.requestRender(); } catch (_) {}
@@ -300,22 +344,22 @@ export default class SignalDataSourceLayer {
     }
 
     private addTrafficLight(
-        lng: number, lat: number,
+        lng: number, lat: number, baseH: number,
         nodeId: string, fromLinkId: string,
         mainConnGuids: string[], mainConnIds: string[],
         leftConnGuids: string[], leftConnIds: string[],
         rightConnGuids: string[], rightConnIds: string[]
     ): void {
-        const housingCenter = POLE_HEIGHT + HEAD_H / 2;
-        const redH    = housingCenter + LAMP_SPACING;
-        const yellowH = housingCenter;
-        const greenH  = housingCenter - LAMP_SPACING;
-        // 화살표 인디케이터 높이: 메인 신호 바로 아래
+        // 절대 높이 (sampleTerrainMostDetailed로 미리 샘플링한 baseH 사용)
+        // HeightReference.NONE → 타일 로드 여부와 무관하게 즉시 표시
+        const redH    = baseH + POLE_HEIGHT + HEAD_H / 2 + LAMP_SPACING;
+        const yellowH = baseH + POLE_HEIGHT + HEAD_H / 2;
+        const greenH  = baseH + POLE_HEIGHT + HEAD_H / 2 - LAMP_SPACING;
         const arrowH  = greenH - LAMP_SPACING;
 
         /* ① 폴 */
         const poleEntity = new Cesium.Entity({
-            position: pos(lng, lat, POLE_HEIGHT / 2),
+            position: pos(lng, lat, baseH + POLE_HEIGHT / 2),
             cylinder: {
                 length: POLE_HEIGHT, topRadius: POLE_RADIUS,
                 bottomRadius: POLE_RADIUS, material: C_POLE, outline: false,
@@ -326,7 +370,7 @@ export default class SignalDataSourceLayer {
 
         /* ② 하우징 */
         const housingEntity = new Cesium.Entity({
-            position: pos(lng, lat, housingCenter),
+            position: pos(lng, lat, baseH + POLE_HEIGHT + HEAD_H / 2),
             box: {
                 dimensions: new Cesium.Cartesian3(HEAD_W, HEAD_D, HEAD_H),
                 material: C_HOUSING, outline: false,
@@ -337,15 +381,19 @@ export default class SignalDataSourceLayer {
 
         /* ③ 메인 3색 램프 + 글로우 */
         const lampOpts = (h: number, color: Cesium.Color) => ({
-            position: pos(lng, lat, h), color: color.clone(),
-            pixelSize: LAMP_PX,
-            translucencyByDistance: LAMP_ALPHA_BY_DIST,
+            position:                 pos(lng, lat, h),
+            color:                    color.clone(),
+            pixelSize:                LAMP_PX,
+            scaleByDistance:          LAMP_SCALE_BY_DIST,
+            translucencyByDistance:   LAMP_ALPHA_BY_DIST,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
         });
         const glowOpts = (h: number, color: Cesium.Color) => ({
-            position: pos(lng, lat, h), color: withAlpha(color, 0.0),
-            pixelSize: LAMP_GLOW_PX,
-            translucencyByDistance: LAMP_ALPHA_BY_DIST,
+            position:                 pos(lng, lat, h),
+            color:                    withAlpha(color, 0.0),
+            pixelSize:                LAMP_GLOW_PX,
+            scaleByDistance:          LAMP_SCALE_BY_DIST,
+            translucencyByDistance:   LAMP_ALPHA_BY_DIST,
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
         });
 
@@ -355,19 +403,20 @@ export default class SignalDataSourceLayer {
         const glowRed  = this.lampCollection.add(glowOpts(redH,    C_RED_OFF));
         const glowGreen= this.lampCollection.add(glowOpts(greenH,  C_GRN_OFF));
 
-        /* ④ 화살표 인디케이터 (좌/우회전이 있는 경우만) */
+        /* ④ 화살표 인디케이터 */
         const arrowLabelOpts = (text: string, offsetX: number): Cesium.Label => {
             return this.labelCollection.add({
                 position:                 pos(lng, lat, arrowH),
                 text,
                 font:                     `bold ${ARROW_PX}px sans-serif`,
-                fillColor:                C_GRN_OFF.clone(),  // 초기: 꺼진 상태
+                fillColor:                C_GRN_OFF.clone(),
                 outlineColor:             Cesium.Color.BLACK,
                 outlineWidth:             2,
                 style:                    Cesium.LabelStyle.FILL_AND_OUTLINE,
                 horizontalOrigin:         Cesium.HorizontalOrigin.CENTER,
                 verticalOrigin:           Cesium.VerticalOrigin.CENTER,
                 disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                scaleByDistance:          LAMP_SCALE_BY_DIST,
                 translucencyByDistance:   LAMP_ALPHA_BY_DIST,
                 pixelOffset:              new Cesium.Cartesian2(offsetX, 0),
             }) as unknown as Cesium.Label;

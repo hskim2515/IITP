@@ -22,6 +22,91 @@ import { useSimulationScenarioStore } from "@stores/useSimulationScenarioStore";
 import { useSignalTodStore } from "@stores/useSignalTodStore";
 import { computeTodPeriods, mergeSignalTimelines } from "@utils/tod";
 
+/**
+ * vehicleRoute 내 모든 ECEF 웨이포인트에 지형 고도를 적용합니다.
+ * 지형 없음(EllipsoidTerrainProvider)이면 원본 그대로 반환합니다.
+ *
+ * 흐름:
+ *   ECEF → Cartographic → sampleTerrainMostDetailed → 고도 주입 → ECEF 재변환
+ *
+ * 중복 최소화: lat/lng를 ~10m 격자로 반올림해 동일 격자 내 위치는 한 번만 샘플링합니다.
+ */
+async function applyTerrainHeightsToRoute(
+    vehicleRoute: any[],
+    terrainProvider: Cesium.TerrainProvider
+): Promise<any[]> {
+    if (terrainProvider instanceof Cesium.EllipsoidTerrainProvider) {
+        return vehicleRoute;
+    }
+
+    // 1. 모든 웨이포인트 수집 (flat array: [t, x, y, z, ...])
+    type PosRef = { trackIdx: number; offset: number };
+    const GRID = 4; // 소수점 자릿수 (~11m 격자)
+    const uniqueCartoMap = new Map<string, Cesium.Cartographic>();
+    const refs: { key: string; ref: PosRef }[] = [];
+
+    vehicleRoute.forEach((track: any, trackIdx: number) => {
+        const path: number[] = Array.isArray(track) ? track : track.path;
+        for (let i = 0; i + 3 < path.length; i += 4) {
+            const x = path[i + 1], y = path[i + 2], z = path[i + 3];
+            const carto = Cesium.Cartographic.fromCartesian(
+                new Cesium.Cartesian3(x, y, z)
+            );
+            const key = `${carto.longitude.toFixed(GRID)},${carto.latitude.toFixed(GRID)}`;
+            if (!uniqueCartoMap.has(key)) {
+                uniqueCartoMap.set(key, Cesium.Cartographic.clone(carto));
+            }
+            refs.push({ key, ref: { trackIdx, offset: i } });
+        }
+    });
+
+    const uniqueKeys   = Array.from(uniqueCartoMap.keys());
+    const uniqueCartos = uniqueKeys.map(k => uniqueCartoMap.get(k)!);
+
+    // 2. 지형 고도 일괄 샘플링
+    try {
+        await Cesium.sampleTerrainMostDetailed(terrainProvider, uniqueCartos);
+    } catch (e) {
+        console.warn('[applyTerrainHeightsToRoute] 지형 샘플링 실패, 원본 사용:', e);
+        return vehicleRoute;
+    }
+
+    // key → 샘플된 고도 맵
+    const heightMap = new Map<string, number>();
+    uniqueKeys.forEach((k, i) => heightMap.set(k, uniqueCartos[i]!.height ?? 0));
+
+    // 3. 새 배열 생성 (원본 불변)
+    const adjusted = vehicleRoute.map((track: any) =>
+        Array.isArray(track) ? [...track] : { ...track, path: [...track.path] }
+    );
+
+    // 4. 각 웨이포인트 ECEF에 지형 고도 적용
+    const scratch = new Cesium.Cartesian3();
+    refs.forEach(({ key, ref }) => {
+        const terrainH = heightMap.get(key) ?? 0;
+        const track = adjusted[ref.trackIdx];
+        const path: number[] = Array.isArray(track) ? track : track.path;
+
+        const x = path[ref.offset + 1];
+        const y = path[ref.offset + 2];
+        const z = path[ref.offset + 3];
+
+        scratch.x = x; scratch.y = y; scratch.z = z;
+        const carto = Cesium.Cartographic.fromCartesian(scratch);
+        carto.height = terrainH+1;
+        const newPos = Cesium.Cartesian3.fromRadians(
+            carto.longitude, carto.latitude, terrainH+1
+        );
+
+        path[ref.offset + 1] = newPos.x;
+        path[ref.offset + 2] = newPos.y;
+        path[ref.offset + 3] = newPos.z;
+    });
+
+    console.log(`[applyTerrainHeightsToRoute] ${uniqueCartos.length}개 격자점 샘플링 완료`);
+    return adjusted;
+}
+
 const useSimulation = () => {
     const { isRunning, isStop, speed } = useSimulationStore();
 
@@ -570,10 +655,13 @@ const useSimulation = () => {
                     viewer.clock.multiplier = viewerClockMultiplier.current;
                 }
 
-                czmlPositionWorkerRef.current.postMessage({
-                    type: 'init',
-                    czmlPackets: vehicleRoute,
-                    currentTime: Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime()
+                // 지형이 있으면 모든 웨이포인트에 지형 고도를 주입한 뒤 워커 초기화
+                applyTerrainHeightsToRoute(vehicleRoute, viewer.terrainProvider).then(adjustedRoute => {
+                    czmlPositionWorkerRef.current?.postMessage({
+                        type: 'init',
+                        czmlPackets: adjustedRoute,
+                        currentTime: Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime()
+                    });
                 });
 
                 viewer.scene.preRender.addEventListener(updateFrameFunc);

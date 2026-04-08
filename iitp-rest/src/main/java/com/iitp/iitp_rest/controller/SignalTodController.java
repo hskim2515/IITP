@@ -18,7 +18,7 @@ public class SignalTodController {
 
     @GetMapping("/{scenarioKey}")
     public ResponseEntity<SignalTodXml> getSignalTod(@PathVariable String scenarioKey) {
-        log.info("[SignalTodController] scenarioKey={}", scenarioKey);
+        log.info("[SignalTodController] GET scenarioKey={}", scenarioKey);
         try {
             SignalTodXml result = signalTodService.getByScenarioKey(scenarioKey);
             return ResponseEntity.ok(result);
@@ -27,6 +27,20 @@ public class SignalTodController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (Exception e) {
             log.error("[SignalTodController] 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @PostMapping("/{scenarioKey}")
+    public ResponseEntity<Void> saveSignalTod(
+            @PathVariable String scenarioKey,
+            @RequestBody SignalTodXml data) {
+        log.info("[SignalTodController] POST scenarioKey={}", scenarioKey);
+        try {
+            signalTodService.saveByScenarioKey(scenarioKey, data);
+            return ResponseEntity.ok().build();
+        } catch (Exception e) {
+            log.error("[SignalTodController] 저장 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

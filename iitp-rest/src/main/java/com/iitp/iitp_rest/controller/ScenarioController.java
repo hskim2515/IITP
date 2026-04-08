@@ -31,6 +31,19 @@ public class ScenarioController {
         return scenarioService.getVersionsByScenarioId(id);
     }
 
+    @PostMapping("/{id}/versions")
+    public ResponseEntity<ScenarioVersion> createVersion(
+            @PathVariable Long id,
+            @RequestBody ScenarioVersionRequest request) {
+        try {
+            return ResponseEntity.ok(scenarioService.createVersion(id, request.key(), request.label()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    record ScenarioVersionRequest(String key, String label) {}
+
     @GetMapping("/check-key")
     public ResponseEntity<Boolean> checkKey(@RequestParam String key) {
         return ResponseEntity.ok(scenarioService.existsByKey(key));

@@ -13,7 +13,6 @@ import { useSignalTodHistoryStore } from "@stores/useSignalTodStore";
 import { useSimulationScenarioHistoryStore } from "@stores/useSimulationScenarioStore";
 import { useBusPtLineHistoryStore, useBusPtLineWeekdayHistoryStore, useBusPtLineWeekendHistoryStore } from "@stores/useBusPtLineStore";
 import { useRailPtLineHistoryStore } from "@stores/useRailPtLineStore";
-import { useRouteHistoryStore, usePaxRouteHistoryStore } from "@stores/useRouteStore";
 
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToHistoryStoreMap: Record<string, HistoryStoreFactoryType> = {
@@ -29,8 +28,6 @@ export const menuCodeToHistoryStoreMap: Record<string, HistoryStoreFactoryType> 
     BUS_PT_LINE_WEEKDAY: useBusPtLineWeekdayHistoryStore,
     BUS_PT_LINE_WEEKEND: useBusPtLineWeekendHistoryStore,
     RAIL_PT_LINE: useRailPtLineHistoryStore,
-    ROUTE: useRouteHistoryStore,
-    PAX_ROUTE: usePaxRouteHistoryStore,
 }
 export const layerNameToHistoryStoreMap: Record<string, HistoryStoreFactoryType> = {
     // layerName: store
@@ -44,8 +41,6 @@ export const layerNameToHistoryStoreMap: Record<string, HistoryStoreFactoryType>
     busRouteWeekday: useBusPtLineWeekdayHistoryStore,
     busRouteWeekend: useBusPtLineWeekendHistoryStore,
     railRoute: useRailPtLineHistoryStore,
-    route: useRouteHistoryStore,
-    paxRoute: usePaxRouteHistoryStore,
 }
 
 const useHistoryInit = (reloadFlag:boolean) => {
@@ -60,7 +55,8 @@ const useHistoryInit = (reloadFlag:boolean) => {
                 if (!store) continue;
 
                 try {
-                    const api = apiConfig[menuCode as ApiMenuKey].historyList;
+                    const api = (apiConfig[menuCode as ApiMenuKey] as any)?.historyList;
+                    if (!api) continue;
                     const response = await axiosInstance({
                         method: api.method,
                         url: api.url + '/' + (selectedScenarioVersion?.key ?? selectedScenario.key),

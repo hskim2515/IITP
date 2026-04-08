@@ -6,48 +6,14 @@ import { fromLonLat } from "ol/proj";
 import { Cartographic, Ellipsoid } from "cesium";
 import * as Cesium from "cesium";
 
-const TYPE_COLORS: Record<string, [number, number, number, number]> = {
-    'CAR':     [100, 160, 255, 0.92],
-    'TAXI':    [255, 220,   0, 0.92],
-    'BUS':     [255,  90,  90, 0.92],
-    'TRUCK':   [180, 120,  60, 0.92],
-    'MOTO':    [ 80, 220, 130, 0.92],
-    'default': [251, 188,  96, 0.92],
+const TYPE_COLORS: Record<string, [number, number, number]> = {
+    'CAR':     [100, 160, 255],
+    'TAXI':    [255, 220,   0],
+    'BUS':     [255,  90,  90],
+    'TRUCK':   [180, 120,  60],
+    'MOTO':    [ 80, 220, 130],
+    'default': [251, 188,  96],
 };
-
-// 차종별 크기: [길이, 폭]
-const TYPE_REAL: Record<string, [number, number]> = {
-    'CAR':   [4.5, 1.8],
-    'TAXI':  [4.5, 1.8],
-    'BUS':   [12,  2.5],
-    'TRUCK': [8,   2.5],
-    'MOTO':  [2.2, 0.8],
-};
-
-// canvas roundRect 아이콘 기본 해상도(px) — 길이 방향
-const BASE_LEN = 32;
-
-/** 차종별 둥근 직사각형 아이콘을 canvas로 생성하여 data URL 반환 */
-function buildVehicleIcon(vehicleType: string): string {
-    const [r, g, b, a] = TYPE_COLORS[vehicleType] ?? TYPE_COLORS['default']!;
-    const [realLen, realW] = TYPE_REAL[vehicleType] ?? TYPE_REAL['CAR']!;
-    const aspect = realW / realLen;
-
-    const w = Math.round(BASE_LEN * aspect);
-    const h = BASE_LEN;
-    const canvas = document.createElement('canvas');
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d')!;
-
-    const radius = Math.min(w, h) * 0.25;
-    ctx.fillStyle = `rgba(${r},${g},${b},${a})`;
-    ctx.beginPath();
-    ctx.roundRect(0, 0, w, h, radius);
-    ctx.fill();
-
-    return canvas.toDataURL();
-}
 
 export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private source: VectorSource;
@@ -62,31 +28,18 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
     public readonly vehicleType: string;
 
     constructor(vehicleRoute: any[], vectorSource: VectorSource, speed: number, running: boolean, vehicleType: string = 'default') {
-        const iconSrc = buildVehicleIcon(vehicleType);
-        const [realLen] = TYPE_REAL[vehicleType] ?? TYPE_REAL['CAR']!;
+        const [r, g, b] = TYPE_COLORS[vehicleType] ?? TYPE_COLORS['default']!;
 
         super({
             source: vectorSource,
             visible: false,
             style: {
-                "icon-src": iconSrc,
-                // 실세계 크기 유지: resolution(m/px) 기준 스케일
-                "icon-scale": [
-                    "clamp",
-                    ["/", realLen / 2, ["*", BASE_LEN / 2, ["resolution"]]],
-                    0.25,
-                    5.0,
-                ],
-                // zoom 15 이하(resolution > 5 m/px)에서 페이드아웃
-                "icon-opacity": [
-                    "interpolate", ["linear"], ["resolution"],
-                    3, 1,
-                    5, 0,
-                ],
-                // heading 회전 (North=0, CW 라디안)
-                "icon-rotation": ["get", "heading"],
-                "icon-rotation-alignment": "map",
+                "circle-radius": ["var", "pointRadius"],
+                "circle-fill-color": ["color", r, g, b, ["var", "pointOpacity"]],
+                "circle-stroke-color": "rgba(0,0,0,0.5)",
+                "circle-stroke-width": 1,
             },
+            variables: { pointRadius: 4, pointOpacity: 0.9 },
             zIndex: 550,
             disableHitDetection: true,
         });
@@ -129,9 +82,6 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
             const coord = this.convertToEPSG3857(initialPosition);
             const feature = new Feature<Point>({ geometry: new Point(coord) });
             feature.setId(`vehicle${idx}`);
-            feature.set("vehicleType", this.vehicleType);
-            feature.set("heading", 0);
-
             this.source.addFeature(feature);
             return feature;
         });
@@ -150,15 +100,6 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
         this.prevPositions = this.positions.length > 0 ? this.positions : converted;
         this.positions = converted;
         this.lerpStartTime = performance.now();
-
-        // heading 업데이트
-        if (latestPositions.headings) {
-            latestPositions.headings.forEach((h, idx) => {
-                if (h != null && this.features[idx]) {
-                    this.features[idx]!.set("heading", h);
-                }
-            });
-        }
 
         if (!this.running) {
             this._syncFeatures();
@@ -204,6 +145,10 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
             this.animationId = null;
         }
     };
+
+    setPointStyle(radius: number, opacity: number) {
+        this.updateStyleVariables({ pointRadius: radius, pointOpacity: opacity });
+    }
 
     setSpeed(speed: number) { this.speed = speed; }
     setStatus(isRunning: boolean) {

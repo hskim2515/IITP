@@ -18,7 +18,7 @@ public class RailPtLineController {
 
     @GetMapping("/{scenarioKey}")
     public ResponseEntity<RailPtLineXml> getRailPtLine(@PathVariable String scenarioKey) {
-        log.info("[RailPtLineController] scenarioKey={}", scenarioKey);
+        log.info("[RailPtLineController] GET scenarioKey={}", scenarioKey);
         try {
             RailPtLineXml result = railPtLineService.getByScenarioKey(scenarioKey);
             return ResponseEntity.ok(result);
@@ -27,6 +27,20 @@ public class RailPtLineController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (Exception e) {
             log.error("[RailPtLineController] 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @PostMapping("/{scenarioKey}")
+    public ResponseEntity<Void> saveRailPtLine(
+            @PathVariable String scenarioKey,
+            @RequestBody RailPtLineXml data) {
+        log.info("[RailPtLineController] POST scenarioKey={}", scenarioKey);
+        try {
+            railPtLineService.saveByScenarioKey(scenarioKey, data);
+            return ResponseEntity.ok().build();
+        } catch (Exception e) {
+            log.error("[RailPtLineController] 저장 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

@@ -23,6 +23,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "busStation";
     private unsubscribe: (() => void) | undefined;
+    private needsReload = false;
 
     constructor() {
         const source = new VectorSource();
@@ -57,6 +58,11 @@ export default class BusStationFeatureLayer extends VectorLayer {
         }
     }
 
+    override setVisible(visible: boolean): void {
+        super.setVisible(visible);
+        if (visible && this.needsReload) this.load();
+    }
+
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
         const geom = feature.getGeometry();
         const styles: Style[] = [];
@@ -88,6 +94,9 @@ export default class BusStationFeatureLayer extends VectorLayer {
     }
 
     public async load(): Promise<void> {
+        if (!this.getVisible()) { this.needsReload = true; return; }
+        this.needsReload = false;
+
         const store = layerNameToStoreMap[this.LAYER_NAME];
         const networkStore = layerNameToStoreMap["network"];
         const generateTemplateWithLayerNameAndFeatureType = useSchemaStore.getState().generateTemplateWithLayerNameAndFeatureType;

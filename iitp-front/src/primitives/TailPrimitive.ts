@@ -54,17 +54,12 @@ const TYPE_COLORS: Record<string, [number, number, number, number]> = {
 export default class TailPrimitive {
 
     private positions:    number[][];
-    private speed:        number;
-    private currentIndex: number;
-    private ready:        boolean;
-    private context:      any;   // Cesium scene.context (internal)
-    private previousTime: number;
+    private context:      any;
     private destroyed:    boolean;
-    private progress:     number;
     private status:       string;
     show:                 boolean;
 
-    private MAX_TRAIL_LENGTH: number;
+    private MAX_TRAIL_LENGTH = 50;
     private trails: TrailResources[];
     private latestPositions: (number[] | undefined)[] | null;
     private _stopped: boolean;
@@ -79,21 +74,14 @@ export default class TailPrimitive {
         vehicleTypes: string[] = []
     ) {
         this.positions    = positions;
-        this.speed        = speed;
-        this.currentIndex = 0;
-        this.ready        = false;
         this.context      = context;
-        this.previousTime = performance.now();
         this.destroyed    = false;
-        this.progress     = 0;
         this.status       = status;
         this.show         = false;
         this.latestPositions = null;
         this._stopped = false;
         this._drainingSet = new Set();
         this._lastDrainTime = 0;
-
-        this.MAX_TRAIL_LENGTH = 50;
         this.trails = [];
 
         this.positions.forEach((position, i) => {
@@ -288,14 +276,25 @@ export default class TailPrimitive {
 
         if (this._hasNewPositions && this.latestPositions && !this._stopped) {
             this._hasNewPositions = false;
+            const nextNullSet = new Set<number>();
             this.trails.forEach((trail, index) => {
                 if (this.latestPositions![index]) {
+                    // null → 활성 전환: 기존 버퍼 초기화 (이전 trail이 새 시작 위치와 연결되는 것 방지)
+                    if (this._prevNullSet.has(index) && trail.buffer.count > 0) {
+                        trail.buffer.head = 0;
+                        trail.buffer.count = 0;
+                        trail.drawCommand.vertexCount = 0;
+                    }
                     this._drainingSet.delete(index);
                     this.updateTrail(trail, index);
-                } else if (trail.buffer.count > 0) {
-                    this._drainingSet.add(index);
+                } else {
+                    nextNullSet.add(index);
+                    if (trail.buffer.count > 0) {
+                        this._drainingSet.add(index);
+                    }
                 }
             });
+            this._prevNullSet = nextNullSet;
         }
 
         if (this._drainingSet.size > 0) {
@@ -320,10 +319,30 @@ export default class TailPrimitive {
         }
     }
 
+    /**
+     * 허용 ECEF 이동 거리² — 이 이상이면 순간이동(시뮬 재시작 등)으로 간주해 trail 초기화.
+     * 100 km/h × speed=50 × 0.05s ≈ 70m → 10 000m 이면 충분히 안전.
+     */
+    private static readonly MAX_JUMP_SQ = 10_000 * 10_000;
+
     private updateTrail(trail: TrailResources, index: number): void {
         const N   = this.MAX_TRAIL_LENGTH;
         const pos = this.latestPositions![index]!;
         const buf = trail.buffer;
+
+        // 순간이동 감지 → 버퍼 초기화
+        if (buf.count > 0) {
+            const prevIdx = (buf.head - 1 + N) % N;
+            const prev = buf.positions[prevIdx]!;
+            const dx = pos[0]! - prev.x;
+            const dy = pos[1]! - prev.y;
+            const dz = pos[2]! - prev.z;
+            if (dx * dx + dy * dy + dz * dz > TailPrimitive.MAX_JUMP_SQ) {
+                buf.head = 0;
+                buf.count = 0;
+                trail.drawCommand.vertexCount = 0;
+            }
+        }
 
         const slot = buf.positions[buf.head]!;
         slot.x = pos[0]!;
@@ -408,10 +427,103 @@ export default class TailPrimitive {
     // ──────────────────────────────────────────
     // setters
     // ──────────────────────────────────────────
-    setSpeed(speed: number): void   { this.speed  = speed; }
+    setSpeed(_speed: number): void  { /* trail 길이 고정 */ }
     setStatus(status: string): void { this.status = status; }
 
+    setTrailLength(length: number): void {
+        const N = Math.max(2, Math.round(length));
+        if (N === this.MAX_TRAIL_LENGTH) return;
+        this.MAX_TRAIL_LENGTH = N;
+        this._rebuildBuffers();
+    }
+
+    private _rebuildBuffers(): void {
+        const N = this.MAX_TRAIL_LENGTH;
+        for (let t = 0; t < this.trails.length; t++) {
+            const trail = this.trails[t]!;
+
+            // 이전 GPU 리소스 해제 (shaderProgram은 fromCache 공유이므로 건드리지 않음)
+            try { trail.positionBuffer?.destroy?.(); } catch (_) {}
+            try { trail.fadeBuffer?.destroy?.(); } catch (_) {}
+            try { trail.offsetBuffer?.destroy?.(); } catch (_) {}
+            try { trail.vertexArray?.destroy(); } catch (_) {}
+
+            // 초기 위치: 기존 circular buffer의 첫 위치 재활용
+            const initPos = trail.buffer.positions[0] ?? new Cesium.Cartesian3();
+            const ix = initPos.x, iy = initPos.y, iz = initPos.z;
+
+            // 새 circular buffer
+            trail.buffer = {
+                positions: Array.from({ length: N }, () =>
+                    new Cesium.Cartesian3(ix, iy, iz)
+                ),
+                head:  0,
+                count: 0,
+            };
+
+            // 새 CPU 배열
+            trail.flatPositions = new Float32Array(N * 2 * 3);
+            trail.flatFade      = new Float32Array(N * 2);
+            trail.flatOffsets   = new Float32Array(N * 2);
+            for (let i = 0; i < N; i++) {
+                trail.flatPositions[i * 6]     = ix;
+                trail.flatPositions[i * 6 + 1] = iy;
+                trail.flatPositions[i * 6 + 2] = iz;
+                trail.flatPositions[i * 6 + 3] = ix;
+                trail.flatPositions[i * 6 + 4] = iy;
+                trail.flatPositions[i * 6 + 5] = iz;
+            }
+
+            // 새 GPU 버퍼
+            trail.positionBuffer = (Cesium as any).Buffer.createVertexBuffer({
+                context: this.context,
+                typedArray: trail.flatPositions,
+                usage: (Cesium as any).BufferUsage.STREAM_DRAW,
+            });
+            trail.fadeBuffer = (Cesium as any).Buffer.createVertexBuffer({
+                context: this.context,
+                typedArray: trail.flatFade,
+                usage: (Cesium as any).BufferUsage.STREAM_DRAW,
+            });
+            trail.offsetBuffer = (Cesium as any).Buffer.createVertexBuffer({
+                context: this.context,
+                typedArray: trail.flatOffsets,
+                usage: (Cesium as any).BufferUsage.STREAM_DRAW,
+            });
+
+            // 새 VertexArray
+            trail.vertexArray = new (Cesium as any).VertexArray({
+                context: this.context,
+                attributes: [
+                    {
+                        index: 0,
+                        vertexBuffer: trail.positionBuffer,
+                        componentsPerAttribute: 3,
+                        componentDatatype: Cesium.ComponentDatatype.FLOAT,
+                    },
+                    {
+                        index: 1,
+                        vertexBuffer: trail.fadeBuffer,
+                        componentsPerAttribute: 1,
+                        componentDatatype: Cesium.ComponentDatatype.FLOAT,
+                    },
+                    {
+                        index: 2,
+                        vertexBuffer: trail.offsetBuffer,
+                        componentsPerAttribute: 1,
+                        componentDatatype: Cesium.ComponentDatatype.FLOAT,
+                    },
+                ],
+            });
+
+            // drawCommand에 새 VertexArray 할당
+            trail.drawCommand.vertexArray  = trail.vertexArray;
+            trail.drawCommand.vertexCount  = 0;
+        }
+    }
+
     private _hasNewPositions = false;
+    private _prevNullSet = new Set<number>();
 
     setLatestPositions(latestPositions: { positions: (number[] | undefined)[] }): void {
         if (this._stopped) return;
@@ -422,12 +534,14 @@ export default class TailPrimitive {
     start(): void {
         this._stopped = false;
         this._drainingSet.clear();
+        this._prevNullSet.clear();
     }
 
     stop(): void {
         this._stopped = true;
         this.latestPositions = null;
         this._drainingSet.clear();
+        this._prevNullSet.clear();
         this._resetBuffers();
     }
 

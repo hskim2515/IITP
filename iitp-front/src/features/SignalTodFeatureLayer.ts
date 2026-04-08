@@ -13,6 +13,7 @@ export default class SignalTodFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "signalTod";
     private unsubscribe: (() => void) | undefined;
+    private needsReload = false;
 
     constructor() {
         const source = new VectorSource();
@@ -43,7 +44,13 @@ export default class SignalTodFeatureLayer extends VectorLayer {
         }
     }
 
-    public styleFunction(feature: FeatureLike, resolution: number): Style[] {
+
+    override setVisible(visible: boolean): void {
+        super.setVisible(visible);
+        if (visible && this.needsReload) this.load();
+    }
+
+        public styleFunction(feature: FeatureLike, resolution: number): Style[] {
         const planCount = feature.get("planCount") ?? 0;
         return [
             new Style({
@@ -62,6 +69,9 @@ export default class SignalTodFeatureLayer extends VectorLayer {
     }
 
     public async load(): Promise<void> {
+        if (!this.getVisible()) { this.needsReload = true; return; }
+        this.needsReload = false;
+
         const store = layerNameToStoreMap[this.LAYER_NAME];
         if (!store) return;
         const data = store.getState().currentJsonData;

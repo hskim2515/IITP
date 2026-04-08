@@ -1,6 +1,7 @@
 package com.iitp.iitp_rest.model.publicTransit;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonValue;
 import com.iitp.iitp_rest.mapper.DbMappedEnum;
 
 public enum StationType implements DbMappedEnum<String> {
@@ -17,6 +18,7 @@ public enum StationType implements DbMappedEnum<String> {
     }
 
     @Override
+    @JsonValue
     public String getValue() {
         return this.value;
     }

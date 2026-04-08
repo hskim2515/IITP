@@ -1,24 +1,22 @@
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
-import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { Feature } from "ol";
 import { Fill, Stroke, Style } from "ol/style";
-import { LineString, Point } from "ol/geom";
-import { RailPublicStationResponse } from "@type/Station";
-import { fromLonLat } from "ol/proj";
+import { Point } from "ol/geom";
 import CircleStyle from "ol/style/Circle";
 import { FeatureLike } from "ol/Feature";
-import { diff } from "deep-object-diff";
+import { layerNameToStoreMap } from "@hooks/useLayerInit";
+import { RailPublicStationResponse } from "@type/Station";
 import { useSchemaStore } from "@stores/useSchemaStore";
-import { useLayerStore } from "@stores/useLayerStore";
-import { findFeatureByProperties } from "@utils/feature";
-import { computePositionAtOffsetOl } from "@utils/offset";
+import { buildLinkMapOl, computeExitPositionOl } from "@utils/railStationPosition";
+import { Coordinate } from "ol/coordinate";
 
 export default class RailStationFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
-    private readonly LAYER_NAME = "railStation"
+    private readonly LAYER_NAME = "railStation";
     private unsubscribe: (() => void) | undefined;
+    private needsReload = false;
 
     constructor() {
         const source = new VectorSource();
@@ -28,17 +26,14 @@ export default class RailStationFeatureLayer extends VectorLayer {
             zIndex: 400,
             style: (feature, resolution) => this.styleFunction(feature, resolution),
         });
-
         this.source = source;
-        this.load(); // 초기 로드
+        this.load();
+
         const store = layerNameToStoreMap[this.LAYER_NAME];
         if (store) {
-            this.unsubscribe = store.subscribe(
-                (state: {currentJsonData: RailPublicStationResponse;}) => state.currentJsonData,
-                () => {
-                    console.log(`[${this.LAYER_NAME}] Store data changed, reloading layer.`);
-                    this.load();
-                },
+            this.unsubscribe = (store as any).subscribe(
+                (state: any) => state.currentJsonData,
+                () => this.load(),
                 { equalityFn: (a: any, b: any) => a === b }
             );
         }
@@ -52,130 +47,99 @@ export default class RailStationFeatureLayer extends VectorLayer {
         }
     }
 
-    public styleFunction(feature: FeatureLike, resolution: number): Style[] {
+    override setVisible(visible: boolean): void {
+        super.setVisible(visible);
+        if (visible && this.needsReload) this.load();
+    }
+
+    public styleFunction(feature: FeatureLike, _resolution: number): Style[] {
         const props = feature.getProperties() ?? {};
         const geom = feature.getGeometry();
         const styles: Style[] = [];
 
         if (geom instanceof Point && props.featureType === "railStations") {
-            styles.push(
-                new Style({
-                    image: new CircleStyle({
-                        radius: 6,
-                        fill: new Fill({color: "rgb(0,102,255)"}), // 빨간색
-                        stroke: new Stroke({color: "rgba(0,0,0,0)", width: 1}),
-                    }),
-                })
-            );
+            styles.push(new Style({
+                image: new CircleStyle({
+                    radius: 7,
+                    fill: new Fill({ color: "rgb(0,102,255)" }),
+                    stroke: new Stroke({ color: "#ffffff", width: 2 }),
+                }),
+            }));
         }
 
         if (geom instanceof Point && props.featureType === "exits") {
-            styles.push(
-                new Style({
-                    image: new CircleStyle({
-                        radius: 6,
-                        fill: new Fill({color: "rgb(153,0,255)"}), // 빨간색
-                        stroke: new Stroke({color: "rgba(0,0,0,0)", width: 1}),
-                    }),
-                })
-            );
+            styles.push(new Style({
+                image: new CircleStyle({
+                    radius: 4,
+                    fill: new Fill({ color: "rgb(153,0,255)" }),
+                    stroke: new Stroke({ color: "rgba(0,0,0,0)", width: 0 }),
+                }),
+            }));
         }
 
-        if (geom instanceof LineString && props.featureType === "railStationCorridors") {
-            styles.push(
-                new Style({
-                    stroke: new Stroke({color: '#56bf26', width: Math.min(6, 0.5 / resolution)}),
-                })
-            );
-        }
         return styles;
     }
 
-
     public async load(): Promise<void> {
+        if (!this.getVisible()) {
+            this.needsReload = true;
+            return;
+        }
+        this.needsReload = false;
 
-        const store = layerNameToStoreMap[this.LAYER_NAME]
-        const generateTemplateWithLayerNameAndFeatureType = useSchemaStore.getState().generateTemplateWithLayerNameAndFeatureType
-        const railTemplate = generateTemplateWithLayerNameAndFeatureType('busStation', 'busStations')
-        const exitTemplate = generateTemplateWithLayerNameAndFeatureType('railStation', 'railStations')
+        const store        = layerNameToStoreMap[this.LAYER_NAME];
+        const networkStore = layerNameToStoreMap["network"];
 
         try {
-            const railPublicStationResponse: RailPublicStationResponse | undefined = store.getState().currentJsonData
-            if (!railPublicStationResponse) return;
-            const railStations = railPublicStationResponse.railStations
+            const response: RailPublicStationResponse | undefined = store?.getState().currentJsonData;
+            if (!response?.railStations?.length) { this.source.clear(); return; }
+
+            const networkData: any = networkStore?.getState().currentJsonData;
+            if (!networkData?.links) { this.source.clear(); return; }
+
+            const linkMap = buildLinkMapOl(networkData);
+
+            const stationTemplate = useSchemaStore.getState().generateTemplateWithLayerNameAndFeatureType('railStation', 'railStations');
+            const exitTemplate    = useSchemaStore.getState().generateTemplateWithLayerNameAndFeatureType('railStation', 'exits');
+
             const featureBuffer: Feature[] = [];
 
-            const networkLayer = useLayerStore.getState().layerManager?.getLayerByName("network")
-            if (!networkLayer) {
-                return;
-            }
-            const networkSource = networkLayer.getSource();
+            for (const station of response.railStations) {
+                const exits = station.exits ?? [];
+                const exitPositions: Coordinate[] = [];
 
-            for (const railStation of railStations) {
-
-                if (!railStation.coordinates || !railStation.coordinates.lng || !railStation.coordinates.lat) continue
-                const railStationPoint = new Point(fromLonLat([railStation.coordinates.lng, railStation.coordinates.lat]))
-                const railStationPointFeature = new Feature(railStationPoint);
-                railStationPointFeature.setProperties({...railTemplate, ...railStation})
-                if (railStationPointFeature) featureBuffer.push(railStationPointFeature);
-
-                const exits = railStation.exits;
-                if (!exits) continue;
                 for (const exit of exits) {
-                    const linkRef = exit.linkRef
-                    const link = findFeatureByProperties(networkSource?.getFeatures(), {
-                        featureType: "link-edit",
-                        linkRef,
-                    });
-                    const linkGeom = link?.getGeometry()
-                    if (!(linkGeom instanceof LineString)) continue;
-                    const linkCoord = linkGeom.getCoordinates();
-                    if (!linkCoord || !linkCoord[0] || !linkCoord[1]) continue;
-                    const linkStart = linkCoord[0]
-                    const linkEnd = linkCoord[1]
-                    const offset = exit.offset
-                    if (!offset) {
-                        console.warn(`${exit.id} 의 offset 이 존재하지 않습니다`)
-                        continue;
-                    }
-                    const {offsetPosition} = computePositionAtOffsetOl(linkStart, linkEnd, offset)
-                    const exitPoint = new Point(offsetPosition)
-                    const exitPointFeature = new Feature(exitPoint);
-                    exitPointFeature.setProperties({...exitTemplate, ...exit})
-                    if (exitPointFeature) {
-                        featureBuffer.push(exitPointFeature);
-                        // 연결 라인 추가
-                        // const stationCoord = station.coordinates?.[0];
-                        // const exitCoord = exitFeature.getGeometry()?.getCoordinates();
-                        // if (stationCoord && exitCoord) {
-                        //     const line = new LineString([
-                        //         fromLonLat([stationCoord.lng!, stationCoord.lat!]),
-                        //         exitCoord,
-                        //     ]);
-                        //     const lineFeature = new Feature<LineString>(line);
-                        //     lineFeature.setProperties({
-                        //         featureType: "railStationCorridors",
-                        //         stationRef: station.id,
-                        //         stationGuidRef: station.__guid,
-                        //         exitRef: exit.id,
-                        //         menuCode: MENU_CODE.RAIL_STATION
-                        //     });
-                        //     featureBuffer.push(lineFeature);
-                        // }
-                    }
+                    const link = linkMap.get(String(exit.linkRef));
+                    if (!link || exit.offset == null) continue;
+
+                    const pos = computeExitPositionOl(link, exit.offset);
+                    exitPositions.push(pos);
+
+                    const exitFeature = new Feature(new Point(pos));
+                    exitFeature.setProperties({ ...exitTemplate, ...exit, featureType: "exits" });
+                    featureBuffer.push(exitFeature);
                 }
+
+                if (exitPositions.length === 0) continue;
+
+                const cx = exitPositions.reduce((s, p) => s + (p[0] as number), 0) / exitPositions.length;
+                const cy = exitPositions.reduce((s, p) => s + (p[1] as number), 0) / exitPositions.length;
+
+                const stationFeature = new Feature(new Point([cx, cy]));
+                stationFeature.setProperties({ ...stationTemplate, ...station, featureType: "railStations" });
+                featureBuffer.push(stationFeature);
             }
+
             this.source.clear();
             this.source.addFeatures(featureBuffer);
+            console.log(`[RailStationFeatureLayer] 로드 완료: ${featureBuffer.length}개 피처`);
         } catch (e) {
-            console.error("RailStationLayer.load 에러:", e);
+            console.error("[RailStationFeatureLayer] load 에러:", e);
         }
     }
 
     public dispose(): void {
-        if (this.unsubscribe) {
-            this.unsubscribe();
-        }
+        this.unsubscribe?.();
         super.dispose();
     }
 }

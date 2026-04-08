@@ -3,24 +3,55 @@ import * as Cesium from "cesium";
 import { Color, Entity, CustomDataSource, Viewer } from "cesium";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { BusPublicStationResponse } from "@type/Station";
-import { diff } from "deep-object-diff";
 import { computePositionAtOffsetCesium } from "@utils/offset";
 import { PublicTransitResponse } from "@type/openapi.gen";
 
-const PARKING_LOT_LENGTH_M = 14;
-const POLE_HEIGHT = 3.5;       // 정류장 폴 높이 (m)
-const POLE_RADIUS = 0.08;      // 폴 반지름 (m)
-const PLATFORM_HEIGHT = 0.25;  // 승강장 높이 (m)
-const PLATFORM_WIDTH = 3.0;    // 승강장 폭 (m)
+/* ── 치수 ── */
+const PARKING_LOT_LEN_M = 14;
+const POLE_HEIGHT        = 4.0;
+const POLE_RADIUS        = 0.07;
+const SIGN_W             = 0.8;
+const SIGN_H             = 0.5;
+const SIGN_D             = 0.12;
+const PLATFORM_H         = 0.3;
+const PLATFORM_W         = 3.2;
+const SHELTER_H          = 2.6;    // 쉘터 지붕 하단 높이
+const SHELTER_THICK      = 0.12;   // 지붕 두께
+
+/* ── 색상 ── */
+const C_POLE      = Color.fromCssColorString("#607d8b");
+const C_SIGN      = Color.fromCssColorString("#00838f");   // 청록 (한국 버스 색상)
+const C_SIGN_TOP  = Color.fromCssColorString("#ffe082");   // 황색 상단 밴드
+const C_PLATFORM  = Color.fromCssColorString("#e0e0e0").withAlpha(0.9);
+const C_SHELTER   = Color.fromCssColorString("#b3e5fc").withAlpha(0.55);
+const C_MARKER    = Color.fromCssColorString("#00acc1");   // 원거리 마커 색상
+
+/* ── LOD 거리 조건 ── */
+// 3D 디테일: 400m 이내에서만 표시
+const DETAIL_DIST = new Cesium.DistanceDisplayCondition(0.0, 400.0);
+// 라벨: 120m 이내
+const LABEL_DIST  = new Cesium.DistanceDisplayCondition(0.0, 120.0);
+// 마커 포인트: 항상 표시 (LOD 없음), scaleByDistance로 크기 조절
+const MARKER_SCALE = new Cesium.NearFarScalar(50, 2.0, 3000, 0.4);
+const MARKER_ALPHA = new Cesium.NearFarScalar(2500, 1.0, 5000, 0.0);
 
 export default class BusStationDataSourceLayer {
     private readonly LAYER_NAME = "busStation";
     public readonly dataSource: CustomDataSource;
+    private markerCollection:  Cesium.PointPrimitiveCollection;
+    private labelCollection:   Cesium.LabelCollection;
     private unsubscribes: Array<() => void> = [];
+    private destroyed = false;
+    private needsReload = false;
 
     constructor(private viewer: Viewer) {
-        this.dataSource = new CustomDataSource(this.LAYER_NAME);
+        this.dataSource     = new CustomDataSource(this.LAYER_NAME);
+        this.markerCollection = new Cesium.PointPrimitiveCollection();
+        this.labelCollection  = new Cesium.LabelCollection();
+
         this.viewer.dataSources.add(this.dataSource);
+        this.viewer.scene.primitives.add(this.markerCollection);
+        this.viewer.scene.primitives.add(this.labelCollection);
 
         this.load();
 
@@ -43,137 +74,243 @@ export default class BusStationDataSourceLayer {
         }
     }
 
+    public setVisible(visible: boolean): void {
+        this.dataSource.show       = visible;
+        this.markerCollection.show = visible;
+        this.labelCollection.show  = visible;
+        if (visible && this.needsReload) this.load();
+    }
+
     public load(): void {
+        this.loadAsync().catch(e => console.error("BusStationDataSourceLayer.load() 에러:", e));
+    }
+
+    private async loadAsync(): Promise<void> {
+        if (!this.dataSource.show) { this.needsReload = true; return; }
+        this.needsReload = false;
+
+        this.markerCollection.removeAll();
+        this.labelCollection.removeAll();
+
+        const store        = layerNameToStoreMap[this.LAYER_NAME];
+        const networkStore = layerNameToStoreMap["network"];
+        if (!store || !networkStore) return;
+
+        const busData: PublicTransitResponse = store.getState().currentJsonData;
+        if (!busData?.busStations) return;
+
+        const networkData: any = networkStore.getState().currentJsonData;
+        if (!networkData?.links) return;
+
+        /* ── 링크별 레인 중심선 사전 계산 ── */
+        const linkLaneMap = new Map<string, { source: Cesium.Cartesian3; target: Cesium.Cartesian3 }[]>();
+        for (const link of networkData.links) {
+            if (!link.coordinates || link.coordinates.length < 2) continue;
+            const p1   = Cesium.Cartesian3.fromDegrees(link.coordinates[0].lng, link.coordinates[0].lat);
+            const last = link.coordinates[link.coordinates.length - 1];
+            const p2   = Cesium.Cartesian3.fromDegrees(last.lng, last.lat);
+
+            const dir   = Cesium.Cartesian3.subtract(p1, p2, new Cesium.Cartesian3());
+            Cesium.Cartesian3.normalize(dir, dir);
+            const right = Cesium.Cartesian3.cross(dir, Cesium.Cartesian3.UNIT_Z, new Cesium.Cartesian3());
+            Cesium.Cartesian3.normalize(right, right);
+
+            const laneCount = link.lanes?.length ?? 0;
+            if (laneCount === 0) continue;
+            const laneWidth = (link.width ?? 0) / laneCount;
+
+            const lanes: { source: Cesium.Cartesian3; target: Cesium.Cartesian3 }[] = [];
+            for (let i = 0; i < laneCount; i++) {
+                const offsetCenter = ((laneCount - 1) / 2 - i) * laneWidth;
+                const offsetVec    = Cesium.Cartesian3.multiplyByScalar(right, offsetCenter, new Cesium.Cartesian3());
+                lanes.push({
+                    source: Cesium.Cartesian3.add(p1, offsetVec, new Cesium.Cartesian3()),
+                    target: Cesium.Cartesian3.add(p2, offsetVec, new Cesium.Cartesian3()),
+                });
+            }
+            linkLaneMap.set(String(link.id), lanes);
+        }
+
+        /* ── 정류장 위치 계산 ── */
+        interface StationEntry {
+            lng: number; lat: number;
+            offsetPosition: Cesium.Cartesian3;
+            parkingEnd: Cesium.Cartesian3;
+            platformLength: number;
+            stationName: string;
+        }
+        const entries: StationEntry[] = [];
+
+        for (const station of busData.busStations) {
+            const linkRef = String(station.linkRef);
+            const laneRef = Number(station.laneRef);
+            const lanes   = linkLaneMap.get(linkRef);
+            if (!lanes || laneRef < 0 || laneRef >= lanes.length) continue;
+
+            const lane = lanes[laneRef];
+            if (!lane) continue;
+            const { source: laneSource, target: laneTarget } = lane;
+            if (!station.offset) continue;
+
+            const { offsetPosition } = computePositionAtOffsetCesium(laneSource, laneTarget, station.offset);
+
+            const dir    = Cesium.Cartesian3.subtract(laneTarget, laneSource, new Cesium.Cartesian3());
+            const segLen = Cesium.Cartesian3.magnitude(dir);
+            if (segLen === 0) continue;
+            Cesium.Cartesian3.normalize(dir, dir);
+
+            const parkingLots    = station.parkingLots ?? 0;
+            const platformLength = parkingLots * PARKING_LOT_LEN_M;
+            const parkingEnd     = Cesium.Cartesian3.add(
+                offsetPosition,
+                Cesium.Cartesian3.multiplyByScalar(dir, -platformLength, new Cesium.Cartesian3()),
+                new Cesium.Cartesian3()
+            );
+
+            const carto = Cesium.Cartographic.fromCartesian(offsetPosition);
+            const lng   = Cesium.Math.toDegrees(carto.longitude);
+            const lat   = Cesium.Math.toDegrees(carto.latitude);
+            const stationName = (station as any).name ?? (station as any).stationName ?? "";
+            entries.push({ lng, lat, offsetPosition, parkingEnd, platformLength, stationName });
+        }
+
+        if (!entries.length) return;
+
+        /* ── 지형 고도 일괄 샘플링 ── */
+        const terrainHeightMap = new Map<string, number>();
+        const hasRealTerrain = !(this.viewer.terrainProvider instanceof Cesium.EllipsoidTerrainProvider);
+        const key = (lng: number, lat: number) => `${lng.toFixed(5)},${lat.toFixed(5)}`;
+
+        if (hasRealTerrain) {
+            const uniqueKeys: string[] = [];
+            const uniqueCartos: Cesium.Cartographic[] = [];
+            for (const e of entries) {
+                const k = key(e.lng, e.lat);
+                if (!terrainHeightMap.has(k)) {
+                    terrainHeightMap.set(k, 0);
+                    uniqueKeys.push(k);
+                    uniqueCartos.push(Cesium.Cartographic.fromDegrees(e.lng, e.lat));
+                }
+            }
+            try {
+                await Cesium.sampleTerrainMostDetailed(this.viewer.terrainProvider, uniqueCartos);
+                for (let i = 0; i < uniqueKeys.length; i++) {
+                    terrainHeightMap.set(uniqueKeys[i]!, uniqueCartos[i]!.height ?? 0);
+                }
+            } catch (e) {
+                console.warn("BusStationDataSourceLayer: 지형 고도 샘플링 실패", e);
+            }
+        }
+
+        /* ── 엔티티 생성 ── */
         this.dataSource.entities.suspendEvents();
         try {
             this.dataSource.entities.removeAll();
 
-            const store = layerNameToStoreMap[this.LAYER_NAME];
-            const networkStore = layerNameToStoreMap["network"];
-            if (!store || !networkStore) return;
+            for (const e of entries) {
+                const { lng, lat, offsetPosition, parkingEnd, platformLength, stationName } = e;
+                const baseH = terrainHeightMap.get(key(lng, lat)) ?? 0;
 
-            const busPublicStationResponse: PublicTransitResponse = store.getState().currentJsonData;
-            if (!busPublicStationResponse?.busStations) return;
+                /* ① 원거리 포인트 마커 */
+                this.markerCollection.add({
+                    position:                 Cesium.Cartesian3.fromDegrees(lng, lat, baseH + 0.5),
+                    color:                    C_MARKER.clone(),
+                    pixelSize:               10,
+                    outlineColor:             Cesium.Color.WHITE,
+                    outlineWidth:             1.5,
+                    scaleByDistance:          MARKER_SCALE,
+                    translucencyByDistance:   MARKER_ALPHA,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                });
 
-            const networkData: any = networkStore.getState().currentJsonData;
-            if (!networkData?.links) return;
-
-            /* ── 네트워크 스토어에서 lane 중심선(Cartesian3) 사전 계산 ── */
-            const linkLaneMap = new Map<string, { source: Cesium.Cartesian3; target: Cesium.Cartesian3 }[]>();
-
-            for (const link of networkData.links) {
-                if (!link.coordinates || link.coordinates.length < 2) continue;
-
-                const p1 = Cesium.Cartesian3.fromDegrees(link.coordinates[0].lng, link.coordinates[0].lat);
-                const lastCoord = link.coordinates[link.coordinates.length - 1];
-                const p2 = Cesium.Cartesian3.fromDegrees(lastCoord.lng, lastCoord.lat);
-
-                const direction = Cesium.Cartesian3.subtract(p1, p2, new Cesium.Cartesian3());
-                Cesium.Cartesian3.normalize(direction, direction);
-                const up = Cesium.Cartesian3.UNIT_Z;
-                const right = Cesium.Cartesian3.cross(direction, up, new Cesium.Cartesian3());
-                Cesium.Cartesian3.normalize(right, right);
-
-                const laneCount = link.lanes?.length ?? 0;
-                if (laneCount === 0) continue;
-                const laneWidth = (link.width ?? 0) / laneCount;
-
-                const lanes: { source: Cesium.Cartesian3; target: Cesium.Cartesian3 }[] = [];
-                for (let i = 0; i < laneCount; i++) {
-                    const offsetCenter = ((laneCount - 1) / 2 - i) * laneWidth;
-                    const offsetVec = Cesium.Cartesian3.multiplyByScalar(right, offsetCenter, new Cesium.Cartesian3());
-                    lanes.push({
-                        source: Cesium.Cartesian3.add(p1, offsetVec, new Cesium.Cartesian3()),
-                        target: Cesium.Cartesian3.add(p2, offsetVec, new Cesium.Cartesian3()),
+                /* ② 정류장 이름 라벨 (120m 이내) */
+                if (stationName) {
+                    this.labelCollection.add({
+                        position:                 Cesium.Cartesian3.fromDegrees(lng, lat, baseH + POLE_HEIGHT + SIGN_H + 0.5),
+                        text:                     stationName,
+                        font:                     "bold 13px sans-serif",
+                        fillColor:                Cesium.Color.WHITE,
+                        outlineColor:             Cesium.Color.BLACK,
+                        outlineWidth:             2,
+                        style:                    Cesium.LabelStyle.FILL_AND_OUTLINE,
+                        horizontalOrigin:         Cesium.HorizontalOrigin.CENTER,
+                        verticalOrigin:           Cesium.VerticalOrigin.BOTTOM,
+                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                        distanceDisplayCondition: LABEL_DIST,
+                        pixelOffset:              new Cesium.Cartesian2(0, -4),
                     });
                 }
-                linkLaneMap.set(String(link.id), lanes);
-            }
 
-            /* ── 정류장 엔티티 생성 ── */
-            for (const busStation of busPublicStationResponse.busStations) {
-                const linkRef = String(busStation.linkRef);
-                const laneRef = Number(busStation.laneRef);
-
-                const lanes = linkLaneMap.get(linkRef);
-                if (!lanes || laneRef < 0 || laneRef >= lanes.length) {
-                    console.warn(`[BusStationDataSourceLayer] ${busStation.id}: link ${linkRef} lane ${laneRef} 없음`);
-                    continue;
-                }
-
-                const { source: laneSource, target: laneTarget } = lanes[laneRef];
-                const offset = busStation.offset;
-                if (!offset) continue;
-
-                const { offsetPosition } = computePositionAtOffsetCesium(laneSource, laneTarget, offset);
-
-                /* 진행 방향 단위벡터 */
-                const dir = Cesium.Cartesian3.subtract(laneTarget, laneSource, new Cesium.Cartesian3());
-                const segLen = Cesium.Cartesian3.magnitude(dir);
-                if (segLen === 0) continue;
-                Cesium.Cartesian3.normalize(dir, dir);
-
-                /* 승강장 끝점 (역방향) */
-                const parkingLots = busStation.parkingLots ?? 0;
-                const platformLength = parkingLots * PARKING_LOT_LENGTH_M;
-
-                const parkingEnd = Cesium.Cartesian3.add(
-                    offsetPosition,
-                    Cesium.Cartesian3.multiplyByScalar(dir, -platformLength, new Cesium.Cartesian3()),
-                    new Cesium.Cartesian3()
-                );
-
-                /* 폴 위치: 정류장 시작점 위 (폴 중심 = 지면 + 절반 높이) */
-                const carto = Cesium.Cartographic.fromCartesian(offsetPosition);
-                const poleCenter = Cesium.Cartesian3.fromRadians(
-                    carto.longitude, carto.latitude,
-                    (carto.height || 0) + POLE_HEIGHT / 2
-                );
-
-                /* ① 폴 (cylinder) */
-                this.dataSource.entities.add(new Entity({
-                    position: poleCenter,
+                /* ③ 폴 (400m 이내) */
+                const poleE = new Entity({
+                    position: Cesium.Cartesian3.fromDegrees(lng, lat, baseH + POLE_HEIGHT / 2),
                     cylinder: {
                         length: POLE_HEIGHT,
                         topRadius: POLE_RADIUS,
                         bottomRadius: POLE_RADIUS,
-                        material: Color.fromCssColorString("#9e9e9e"),
+                        material: C_POLE,
                         outline: false,
                     },
-                    properties: { ...busStation },
-                }));
+                });
+                (poleE as any).distanceDisplayCondition = DETAIL_DIST;
+                this.dataSource.entities.add(poleE);
 
-                /* ② 상단 표지판 (납작한 box) */
-                const signPos = Cesium.Cartesian3.fromRadians(
-                    carto.longitude, carto.latitude,
-                    (carto.height || 0) + POLE_HEIGHT + 0.2
-                );
-                this.dataSource.entities.add(new Entity({
-                    position: signPos,
+                /* ④ 표지판 본체 — 청록색 (400m 이내) */
+                const signE = new Entity({
+                    position: Cesium.Cartesian3.fromDegrees(lng, lat, baseH + POLE_HEIGHT + SIGN_H / 2),
                     box: {
-                        dimensions: new Cesium.Cartesian3(0.6, 0.1, 0.4),
-                        material: Color.fromCssColorString("#1565c0"),
+                        dimensions: new Cesium.Cartesian3(SIGN_W, SIGN_D, SIGN_H),
+                        material: C_SIGN,
+                        outline: false,
                     },
-                }));
+                });
+                (signE as any).distanceDisplayCondition = DETAIL_DIST;
+                this.dataSource.entities.add(signE);
 
-                /* ③ 승강장 플랫폼 (corridor extruded) */
+                /* ⑤ 표지판 상단 황색 밴드 (400m 이내) */
+                const bandH = 0.08;
+                const bandE = new Entity({
+                    position: Cesium.Cartesian3.fromDegrees(lng, lat, baseH + POLE_HEIGHT + SIGN_H - bandH / 2),
+                    box: {
+                        dimensions: new Cesium.Cartesian3(SIGN_W + 0.02, SIGN_D + 0.02, bandH),
+                        material: C_SIGN_TOP,
+                        outline: false,
+                    },
+                });
+                (bandE as any).distanceDisplayCondition = DETAIL_DIST;
+                this.dataSource.entities.add(bandE);
+
+                /* ⑥ 승강장 플랫폼 + 지붕 (400m 이내, parkingLots > 0) */
                 if (platformLength > 0) {
-                    this.dataSource.entities.add(new Entity({
+                    const platformE = new Entity({
                         corridor: {
                             positions: [offsetPosition, parkingEnd],
-                            width: PLATFORM_WIDTH,
-                            height: 0.0,
-                            extrudedHeight: PLATFORM_HEIGHT,
-                            material: Color.fromCssColorString("#bdbdbd").withAlpha(0.9),
+                            width: PLATFORM_W,
+                            height: baseH,
+                            extrudedHeight: baseH + PLATFORM_H,
+                            material: C_PLATFORM,
                             cornerType: Cesium.CornerType.MITERED,
                         },
-                    }));
+                    });
+                    (platformE as any).distanceDisplayCondition = DETAIL_DIST;
+                    this.dataSource.entities.add(platformE);
+
+                    const shelterE = new Entity({
+                        corridor: {
+                            positions: [offsetPosition, parkingEnd],
+                            width: PLATFORM_W + 0.6,
+                            height: baseH + SHELTER_H,
+                            extrudedHeight: baseH + SHELTER_H + SHELTER_THICK,
+                            material: C_SHELTER,
+                            cornerType: Cesium.CornerType.MITERED,
+                        },
+                    });
+                    (shelterE as any).distanceDisplayCondition = DETAIL_DIST;
+                    this.dataSource.entities.add(shelterE);
                 }
             }
 
-            console.log(`BusStationDataSourceLayer: 로드 완료 (${this.dataSource.entities.values.length} entities)`);
-        } catch (error) {
-            console.error("BusStationDataSourceLayer.load() 에러:", error);
+            console.log(`BusStationDataSourceLayer: ${busData.busStations.length}개 정류장 로드`);
         } finally {
             this.dataSource.entities.resumeEvents();
             try { this.viewer.scene.requestRender(); } catch (_) {}
@@ -181,8 +318,12 @@ export default class BusStationDataSourceLayer {
     }
 
     public destroy(): void {
+        if (this.destroyed) return;
+        this.destroyed = true;
         this.unsubscribes.forEach(u => u());
         this.unsubscribes = [];
         this.viewer.dataSources.remove(this.dataSource, true);
+        this.viewer.scene.primitives.remove(this.markerCollection);
+        this.viewer.scene.primitives.remove(this.labelCollection);
     }
 }

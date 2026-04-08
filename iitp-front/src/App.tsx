@@ -17,6 +17,7 @@ import Maps from "@component/map/Maps";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
 import OsmImportModal from "@component/modal/OsmImportModal";
 import NetworkImportModal from "@component/modal/NetworkImportModal";
+import OdMatrixModal from "@component/modal/OdMatrixModal";
 import Taskbar from "@component/panel/Taskbar";
 import DashboardLeft from "@component/panel/DashboardLeft";
 import DashboardRight from "@component/panel/DashboardRight";
@@ -231,6 +232,10 @@ function App() {
 
                         {!showDashboard && activeSession && activeSession.menuCode === 'NETWORK_IMPORT' && (
                             <NetworkImportModal/>
+                        )}
+
+                        {!showDashboard && activeSession && activeSession.menuCode === 'OD_MATRIX' && (
+                            <OdMatrixModal/>
                         )}
 
                         {!showDashboard && activeSession && activeSession.menuCode !== 'OSM_IMPORT' && activeSession.menuCode !== 'NETWORK_IMPORT' && (

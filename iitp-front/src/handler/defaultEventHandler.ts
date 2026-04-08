@@ -64,12 +64,15 @@ export const defaultEventHandlers ={
                 setSelectedProps(props);
                 setSelectedGuid([props.__guid]);
             } else if (typeof picked.id === 'string') {
-                // Primitive 피킹 (링크, 레인)
-                const primitiveProps = networkPrimitivePropertiesMap.get(picked.id);
+                // Primitive/GroundPrimitive 피킹 (링크, 레인, 경계선)
+                const resolvedId = resolveNetworkId(picked.id);
+                const primitiveProps = resolvedId ? networkPrimitivePropertiesMap.get(resolvedId) : null;
                 if (primitiveProps) {
                     Object.assign(props, primitiveProps);
                     setSelectedProps(props);
                     setSelectedGuid([primitiveProps.__guid]);
+                } else {
+                    setSelectedProps(null);
                 }
             } else {
                 setSelectedProps(null);
@@ -138,9 +141,6 @@ export const defaultEventHandlers ={
         const position = e.endPosition ?? e.position;
         if (!position) return;
 
-        const cartesian = scene.camera.pickEllipsoid(position, scene.globe.ellipsoid);
-        if (!cartesian) return;
-
         const pickedObject = scene.pick(position);
 
         if (!pickedObject) {
@@ -155,10 +155,16 @@ export const defaultEventHandlers ={
             if (highlightedEntity !== pickedObject.id) {
                 highlightEntity(pickedObject.id);
             }
-        } else if (typeof pickedObject.id === 'string' && networkPrimitivePropertiesMap.has(pickedObject.id)) {
-            // Primitive 호버 (링크, 레인)
-            clearCesiumHighlight();
-            highlightNetworkPrimitive?.(pickedObject.id);
+        } else if (typeof pickedObject.id === 'string') {
+            // GroundPrimitive 호버 (링크, 레인, 경계선) — _divider suffix 정규화
+            const resolvedId = resolveNetworkId(pickedObject.id);
+            if (resolvedId) {
+                clearCesiumHighlight();
+                highlightNetworkPrimitive?.(resolvedId);
+            } else {
+                clearCesiumHighlight();
+                highlightNetworkPrimitive?.(null);
+            }
         } else {
             clearCesiumHighlight();
             highlightNetworkPrimitive?.(null);
@@ -412,6 +418,20 @@ const highlightFeature = (feature: FeatureLike | Feature, styleFunction: StyleFu
     });
 
     highlightedFeature = feature;
+};
+
+/**
+ * GroundPrimitive pick id 정규화.
+ * - 경계선 id: "{guid}_divider" → 부모 lane guid 반환
+ * - networkPrimitivePropertiesMap에 있는 id → 그대로 반환
+ * - 없으면 null
+ */
+const resolveNetworkId = (id: string): string | null => {
+    if (networkPrimitivePropertiesMap.has(id)) return id;
+    // _divider suffix 제거 후 재시도
+    const withoutSuffix = id.replace(/_divider$/, '');
+    if (networkPrimitivePropertiesMap.has(withoutSuffix)) return withoutSuffix;
+    return null;
 };
 
 const getHighlightedOlStyle = (baseStyle: Style | Style[] | null | undefined, scale: number) => {

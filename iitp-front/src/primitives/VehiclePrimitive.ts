@@ -349,7 +349,7 @@ export default class VehiclePrimitive {
                     float instDist  = length(instCenter);
 
                     // 800m 이상은 포인트 스프라이트가 담당 → 메쉬 숨김
-                    if (instDist > 800.0) {
+                    if (instDist > 2000.0) {
                         gl_Position = vec4(2.0, 2.0, 0.0, 1.0); // NDC 밖 → 클리핑
                         v_uv      = vec2(0.0);
                         v_eyeDist = instDist;

@@ -18,8 +18,9 @@ const Analysis = ({fields}: Props) => {
         removeActiveLayerName,
         layerManager,
     } = useLayerStore();
+
     const handleSettingClick = (type: string) => {
-        setSelectedLayerType(type);
+        setSelectedLayerType(prev => prev === type ? undefined : type);
     };
 
     const defaultSelected = fields.find(field => field.basic)?.key || null;
@@ -43,28 +44,30 @@ const Analysis = ({fields}: Props) => {
     return (
         <div>
             {activeLayerName && fields.map(field => (
-                <label key={field.key} className={styles.layerItem}>
-                    <input
-                        type={field.formType}
-                        value={field.key}
-                        checked={activeLayerName.includes(field.key)}
-                        onChange={e => handleToggle(field.key, e.target.checked)}
-                    />
-                    {field.label}
-                    <button
-                        onClick={() => handleSettingClick(field.key)}
-                        className={styles.layerItemSettingBtn}
-                        title="설정"
-                    >
-                        <FontAwesomeIcon icon={faCog} size="sm"/>
-                    </button>
-                </label>
+                <React.Fragment key={field.key}>
+                    <label className={styles.layerItem}>
+                        <input
+                            type={field.formType}
+                            value={field.key}
+                            checked={activeLayerName.includes(field.key)}
+                            onChange={e => handleToggle(field.key, e.target.checked)}
+                        />
+                        {field.label}
+                        <button
+                            onClick={(e) => { e.preventDefault(); handleSettingClick(field.key); }}
+                            className={`${styles.layerItemSettingBtn} ${selectedLayerType === field.key ? styles.layerItemSettingBtnActive : ''}`}
+                            title="설정"
+                        >
+                            <FontAwesomeIcon icon={faCog} size="sm"/>
+                        </button>
+                    </label>
+                    {selectedLayerType === field.key && (
+                        <div className={styles.settingInlinePanel}>
+                            <LayerSettingPopup layerType={field.key} />
+                        </div>
+                    )}
+                </React.Fragment>
             ))}
-                <div style={{position: 'relative'}}>
-            <LayerSettingPopup
-                layerType={selectedLayerType}
-            />
-                </div>
         </div>
     );
 };

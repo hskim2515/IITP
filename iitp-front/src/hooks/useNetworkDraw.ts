@@ -171,8 +171,8 @@ function mergeNodes(
     // removeNode를 참조하는 모든 링크를 keepNode로 교체
     const updatedLinks = network.links.map(l => ({
         ...l,
-        fromNode: String(l.fromNode) === String(removeNodeId) ? keepNodeId : l.fromNode,
-        toNode:   String(l.toNode)   === String(removeNodeId) ? keepNodeId : l.toNode,
+        fromNode: (String(l.fromNode) === String(removeNodeId) ? keepNodeId : l.fromNode) as number,
+        toNode:   (String(l.toNode)   === String(removeNodeId) ? keepNodeId : l.toNode)   as number,
     }));
 
     // removeNode의 포트/커넥션을 keepNode로 이전

@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.model.publicTransit.rail;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.iitp.iitp_rest.model.geometry.Coordinates;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -13,6 +14,7 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class RailStationData {
     private String id;
     private String transitMode;

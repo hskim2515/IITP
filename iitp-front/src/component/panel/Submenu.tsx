@@ -22,9 +22,12 @@ const Submenu = () => {
 
   const submenuData: MenuTreeResponse[] | undefined = activeDropdownMenu.children;
 
+  // propertyFormSchema 없이도 전용 세션을 여는 메뉴 코드 목록
+  const MODAL_MENU_CODES = new Set(['OSM_IMPORT', 'NETWORK_IMPORT', 'OD_MATRIX']);
+
   const handleClickSubmenu = (item: MenuTreeResponse) => {
     if(!item.menuCode) return
-    if (propertyFormSchema[item.menuCode]) {
+    if (propertyFormSchema[item.menuCode] || MODAL_MENU_CODES.has(item.menuCode)) {
       setActiveSubmenu(item);
       openSession(item);
     } else {

@@ -14,6 +14,7 @@ export default class BusRouteWeekdayFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "busRouteWeekday";
     private unsubscribe: (() => void) | undefined;
+    private needsReload = false;
 
     constructor() {
         const source = new VectorSource();
@@ -43,11 +44,20 @@ export default class BusRouteWeekdayFeatureLayer extends VectorLayer {
         }
     }
 
-    public styleFunction(_feature: FeatureLike, _resolution: number): Style[] {
+
+    override setVisible(visible: boolean): void {
+        super.setVisible(visible);
+        if (visible && this.needsReload) this.load();
+    }
+
+        public styleFunction(_feature: FeatureLike, _resolution: number): Style[] {
         return [new Style({ stroke: new Stroke({ color: '#ff6600', width: 2, lineDash: [6, 3] }) })];
     }
 
     public async load(): Promise<void> {
+        if (!this.getVisible()) { this.needsReload = true; return; }
+        this.needsReload = false;
+
         const store = layerNameToStoreMap[this.LAYER_NAME];
         if (!store) return;
         const data = store.getState().currentJsonData;

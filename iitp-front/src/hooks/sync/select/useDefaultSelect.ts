@@ -55,6 +55,7 @@ const useDefaultSelect = () => {
     useEffect(() => {
         console.log('selectedGuid', selectedGuid)
             if (!activeSubmenu) return;
+            if (!propertyFormSchema[activeSubmenu.menuCode]) return;
             const layerName = propertyFormSchema[activeSubmenu.menuCode].layer
 
             if (!layerName || !viewer || !olMap) return
