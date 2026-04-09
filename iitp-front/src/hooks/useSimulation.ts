@@ -13,6 +13,7 @@ import HeatBarLayer from "@primitives/HeatBarLayer";
 import {JulianDate} from "cesium";
 import {useScenarioStore} from "@stores/useScenarioStore";
 import {useSignalTimelineStore} from "@stores/useSignalTimelineStore";
+import { useMessageStore } from "@stores/useMessageStore";
 import {getFeaturesByProperties} from "@utils/feature";
 import {Fill, Stroke, Style} from "ol/style";
 import {Feature} from "ol";
@@ -361,6 +362,14 @@ const useSimulation = () => {
                         console.warn(`[useSimulation] 경로 생성 대기 초과: ${scenarioKey}`);
                     }
                     return null;
+                }
+                if (r.status === 422) {
+                    return r.json().then((body: any) => {
+                        const msg = body?.message ?? '시뮬레이션 결과 데이터가 없습니다.';
+                        console.warn(`[useSimulation] 경로 생성 실패: ${msg}`);
+                        useMessageStore.getState().setMessage({ type: 'error', text: msg });
+                        return null;
+                    });
                 }
                 if (!r.ok) {
                     console.warn(`[useSimulation] 차량 경로 로드 실패 (${r.status}):`, scenarioKey);

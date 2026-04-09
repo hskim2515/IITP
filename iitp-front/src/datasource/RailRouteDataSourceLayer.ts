@@ -1,22 +1,20 @@
-import { ColorMaterialProperty, Entity, CustomDataSource, Viewer } from "cesium";
+import { Viewer } from "cesium";
 import * as Cesium from "cesium";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { computeStationCentroidsOl } from "@utils/railStationPosition";
-import { Color } from "cesium";
 
-const RAIL_COLOR = Color.fromCssColorString("#0052a5");
+const RAIL_COLOR = Cesium.Color.fromCssColorString("#0052a5");
 
 export default class RailRouteDataSourceLayer {
     private readonly LAYER_NAME = "railRoute";
-    public readonly dataSource: CustomDataSource;
+    private primitive: Cesium.GroundPolylinePrimitive | null = null;
     private unsubscribes: Array<() => void> = [];
     private destroyed = false;
+    private visible = true;
     private needsReload = false;
 
     constructor(private viewer: Viewer) {
-        this.dataSource = new CustomDataSource(this.LAYER_NAME);
-        this.viewer.dataSources.add(this.dataSource);
-        this.load(); // 초기 로드 (show=false 상태이면 needsReload=true 처리됨)
+        this.load();
 
         const subscribe = (storeName: string) => {
             const store = layerNameToStoreMap[storeName];
@@ -33,7 +31,8 @@ export default class RailRouteDataSourceLayer {
     }
 
     public setVisible(visible: boolean): void {
-        this.dataSource.show = visible;
+        this.visible = visible;
+        if (this.primitive) this.primitive.show = visible;
         if (visible && this.needsReload) this.load();
     }
 
@@ -42,12 +41,15 @@ export default class RailRouteDataSourceLayer {
     }
 
     private async loadAsync(): Promise<void> {
-        // 레이어가 꺼진 상태면 스킵, 켜질 때 재로드
-        if (!this.dataSource.show) {
-            this.needsReload = true;
-            return;
-        }
+        if (!this.visible) { this.needsReload = true; return; }
         this.needsReload = false;
+
+        /* 기존 primitive 제거 */
+        if (this.primitive) {
+            this.viewer.scene.primitives.remove(this.primitive);
+            this.primitive = null;
+        }
+        if (this.destroyed) return;
 
         const store            = layerNameToStoreMap[this.LAYER_NAME];
         const railStationStore = layerNameToStoreMap["railStation"];
@@ -57,52 +59,50 @@ export default class RailRouteDataSourceLayer {
         const ptLineData  = store.getState().currentJsonData;
         const stationData = railStationStore.getState().currentJsonData;
         const networkData = networkStore.getState().currentJsonData;
+        if (!ptLineData?.routes || !stationData?.railStations || !networkData?.links) return;
 
-        this.dataSource.entities.suspendEvents();
-        try {
-            this.dataSource.entities.removeAll();
+        /* exit centroid 기반 역 위치 */
+        const centroidMap = computeStationCentroidsOl(stationData.railStations, networkData);
 
-            if (!ptLineData?.routes || !stationData?.railStations || !networkData?.links) return;
-
-            // exit centroid 기반 역 위치 (lane 수 반영)
-            const centroidMap = computeStationCentroidsOl(stationData.railStations, networkData);
-
-            // centroid 없는 역은 station.coordinates fallback
-            const stationPosMap = new Map<string, Cesium.Cartesian3>();
-            for (const station of stationData.railStations) {
-                const id = String(station.id ?? "");
-                if (centroidMap.has(id)) {
-                    const { lng, lat } = centroidMap.get(id)!;
-                    stationPosMap.set(id, Cesium.Cartesian3.fromDegrees(lng, lat));
-                } else if (station.coordinates?.lng && station.coordinates?.lat) {
-                    stationPosMap.set(id, Cesium.Cartesian3.fromDegrees(station.coordinates.lng, station.coordinates.lat));
-                }
+        const stationPosMap = new Map<string, Cesium.Cartesian3>();
+        for (const station of stationData.railStations) {
+            const id = String(station.id ?? "");
+            if (centroidMap.has(id)) {
+                const { lng, lat } = centroidMap.get(id)!;
+                stationPosMap.set(id, Cesium.Cartesian3.fromDegrees(lng, lat));
+            } else if (station.coordinates?.lng && station.coordinates?.lat) {
+                stationPosMap.set(id, Cesium.Cartesian3.fromDegrees(station.coordinates.lng, station.coordinates.lat));
             }
-
-            for (const route of ptLineData.routes) {
-                const stationIds: string[] = (route.railStationSeq ?? "").trim().split(/\s+/).filter(Boolean);
-                const positions: Cesium.Cartesian3[] = stationIds
-                    .map((sid) => stationPosMap.get(sid))
-                    .filter((p): p is Cesium.Cartesian3 => p !== undefined);
-
-                if (positions.length >= 2) {
-                    this.dataSource.entities.add(new Entity({
-                        polyline: {
-                            positions,
-                            width: 3,
-                            material: new ColorMaterialProperty(RAIL_COLOR),
-                            clampToGround: true,
-                        },
-                        properties: { id: route.id, name: route.name, featureType: "railRoute" },
-                    }));
-                }
-            }
-
-            console.log(`[RailRouteDataSourceLayer] 완료: ${this.dataSource.entities.values.length}개 노선`);
-        } finally {
-            this.dataSource.entities.resumeEvents();
-            try { this.viewer.scene.requestRender(); } catch (_) {}
         }
+
+        /* GeometryInstance 생성 */
+        const instances: Cesium.GeometryInstance[] = [];
+        for (const route of ptLineData.routes) {
+            const stationIds: string[] = (route.railStationSeq ?? "").trim().split(/\s+/).filter(Boolean);
+            const positions: Cesium.Cartesian3[] = stationIds
+                .map((sid) => stationPosMap.get(sid))
+                .filter((p): p is Cesium.Cartesian3 => p !== undefined);
+
+            if (positions.length >= 2) {
+                instances.push(new Cesium.GeometryInstance({
+                    id: { id: route.id, name: route.name, featureType: "railRoute" },
+                    geometry: new Cesium.GroundPolylineGeometry({ positions, width: 6 }),
+                }));
+            }
+        }
+        if (!instances.length) return;
+        if (this.destroyed) return;
+
+        this.primitive = new Cesium.GroundPolylinePrimitive({
+            geometryInstances: instances,
+            appearance: new Cesium.PolylineMaterialAppearance({
+                material: Cesium.Material.fromType("Color", { color: RAIL_COLOR }),
+            }),
+            show: this.visible,
+        });
+        this.viewer.scene.primitives.add(this.primitive);
+        console.log(`[RailRouteDataSourceLayer] 완료: ${instances.length}개 노선`);
+        try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
     public destroy(): void {
@@ -110,6 +110,9 @@ export default class RailRouteDataSourceLayer {
         this.destroyed = true;
         this.unsubscribes.forEach(u => u());
         this.unsubscribes = [];
-        this.viewer.dataSources.remove(this.dataSource, true);
+        if (this.primitive) {
+            this.viewer.scene.primitives.remove(this.primitive);
+            this.primitive = null;
+        }
     }
 }

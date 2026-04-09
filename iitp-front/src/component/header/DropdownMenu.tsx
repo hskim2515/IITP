@@ -7,15 +7,24 @@ import styles from "@css/Header.module.css";
 interface Props {
     title: string;
     items: MenuTreeResponse[];
+    onItemClick?: (item: MenuTreeResponse) => void;
 }
 
-const DropdownMenu = ({title, items}: Props) => {
+const DropdownMenu = ({title, items, onItemClick}: Props) => {
 
     const [isOpen, setIsOpen] = useState(false);
 
     const {setActiveDropdownMenu} = useMenuStore(useShallow((state) => ({
         setActiveDropdownMenu: state.setActiveDropdownMenu,
     })));
+
+    const handleClick = (item: MenuTreeResponse) => {
+        if (onItemClick) {
+            onItemClick(item);
+        } else {
+            setActiveDropdownMenu(item);
+        }
+    };
 
     return (
         <div
@@ -30,9 +39,7 @@ const DropdownMenu = ({title, items}: Props) => {
                         <div
                             key={item.menuId}
                             className={styles['item']}
-                            onClick={() => {
-                                setActiveDropdownMenu(item);
-                            }}
+                            onClick={() => handleClick(item)}
                         >
                             {item.nameKor}
                         </div>

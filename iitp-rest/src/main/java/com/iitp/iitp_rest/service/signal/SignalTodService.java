@@ -36,7 +36,7 @@ public class SignalTodService {
     }
 
     public void saveByScenarioKey(String scenarioKey, SignalTodXml data) throws Exception {
-        byte[] xmlBytes = marshal(data, SignalTodXml.class);
+        byte[] xmlBytes = marshalToXml(data, SignalTodXml.class);
         sftpFileManager.uploadFile(new ByteArrayInputStream(xmlBytes), scenarioKey, "signalTOD.xml");
         log.info("[SignalTodService] SFTP 저장 완료: {}/signalTOD.xml", scenarioKey);
     }
@@ -51,7 +51,7 @@ public class SignalTodService {
         }
     }
 
-    private <T> byte[] marshal(T obj, Class<T> clazz) throws JAXBException {
+    public <T> byte[] marshalToXml(T obj, Class<T> clazz) throws JAXBException {
         JAXBContext ctx = JAXBContext.newInstance(clazz);
         Marshaller m = ctx.createMarshaller();
         m.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);

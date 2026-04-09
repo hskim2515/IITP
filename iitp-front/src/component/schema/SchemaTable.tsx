@@ -1,10 +1,23 @@
-import React, { useState, useMemo, useCallback } from "react";
-import { Table, Space } from "antd";
-import type { ColumnsType } from "antd/es/table";
+import React, { useState, useMemo, useCallback, useRef } from "react";
+import { AgGridReact } from "ag-grid-react";
+import {
+    AllCommunityModule,
+    ColDef,
+    ModuleRegistry,
+    RowSelectionOptions,
+    ICellRendererParams,
+} from "ag-grid-community";
+import "ag-grid-community/styles/ag-grid.css";
+import "ag-grid-community/styles/ag-theme-alpine.css";
+
 import { EditableCell } from './EditableCell';
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faChevronDown, faChevronUp } from "@fortawesome/free-solid-svg-icons";
+import { faChevronDown } from "@fortawesome/free-solid-svg-icons";
 import { LayerSchemaFieldResponse, SchemaDefinition, SchemaColumn, ColumnOption } from "@type/openapi.gen";
+import gridStyle from "@css/GridTable.module.css";
+import styles from "@css/SchemaSetting.module.css";
+
+ModuleRegistry.registerModules([AllCommunityModule]);
 
 interface Props {
     schema: SchemaDefinition;
@@ -32,24 +45,20 @@ function setDefaultFieldValue(inputType: string | undefined, options: ColumnOpti
     }
 }
 
-// 스키마 테이블 컴포넌트
-export const SchemaTable = ({
-                                schema,
-                                schemaColumns,
-                                onChange,
-                            }: Props) => {
-    const [expandedSchema, setExpandedSchema] = useState<boolean>(false);
-    const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+export const SchemaTable = ({ schema, schemaColumns, onChange }: Props) => {
+    const gridRef = useRef<AgGridReact>(null);
+    const [expanded, setExpanded] = useState<boolean>(false);
+    const [selectedKeys, setSelectedKeys] = useState<number[]>([]);
 
     const handleFieldUpdate = useCallback((fieldId: number, updates: Partial<LayerSchemaFieldResponse>) => {
         const updatedFields = (schema.fields ?? []).map(field =>
-            field.id === fieldId ? {...field, ...updates} : field
+            field.id === fieldId ? { ...field, ...updates } : field
         );
-        onChange({...schema, fields: updatedFields});
+        onChange({ ...schema, fields: updatedFields });
     }, [schema, onChange]);
 
-    const handleAddField = useCallback(() => {
-
+    const handleAddField = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
         const defaultFields = schemaColumns?.reduce<Record<string, string | number | boolean | string[]>>(
             (acc, column) => {
                 if (column.configKey) {
@@ -58,77 +67,122 @@ export const SchemaTable = ({
                 return acc;
             }, {}) ?? {};
 
-
         const newField: LayerSchemaFieldResponse = {
             id: Date.now(),
             ...defaultFields as Omit<LayerSchemaFieldResponse, 'id'>,
         };
-
-        const updatedFields = [...(schema.fields ?? []), newField];
-        onChange({...schema, fields: updatedFields});
+        onChange({ ...schema, fields: [...(schema.fields ?? []), newField] });
+        setExpanded(true);
     }, [schema, schemaColumns, onChange]);
 
-    const handleDeleteFields = useCallback(() => {
-        if (selectedRowKeys.length === 0) return;
+    const handleDeleteFields = useCallback((e: React.MouseEvent) => {
+        e.stopPropagation();
+        if (selectedKeys.length === 0) return;
         const updatedFields = (schema.fields ?? []).filter(
-            field => field.id !== undefined && !selectedRowKeys.includes(field.id)
+            field => field.id !== undefined && !selectedKeys.includes(field.id as number)
         );
-        onChange({...schema, fields: updatedFields});
-        setSelectedRowKeys([]);
-    }, [schema, onChange, selectedRowKeys]);
+        onChange({ ...schema, fields: updatedFields });
+        setSelectedKeys([]);
+    }, [schema, onChange, selectedKeys]);
 
-    const columns = useMemo((): ColumnsType<LayerSchemaFieldResponse> => {
+    const columnDefs = useMemo((): ColDef[] => {
         return (schemaColumns ?? []).map(column => ({
-            title: column.configKey ? column.configKey.charAt(0).toUpperCase() + column.configKey.slice(1) : '',
-            dataIndex: column.configKey,
-            key: column.configKey,
+            headerName: column.configKey
+                ? column.configKey.charAt(0).toUpperCase() + column.configKey.slice(1)
+                : '',
+            field: column.configKey as string,
             width: DEFAULT_CELL_WIDTH,
-            render: (value, field) => (
-                <EditableCell
-                    field={field}
-                    column={column}
-                    value={value}
-                    onUpdate={(updates) => {
-                        if (field.id !== undefined) {
-                            handleFieldUpdate(field.id, updates)
-                        }
-                    }}
-                />
-            ),
+            resizable: true,
+            sortable: false,
+            cellRenderer: (params: ICellRendererParams) => {
+                const field = params.data as LayerSchemaFieldResponse;
+                return (
+                    <EditableCell
+                        field={field}
+                        column={column}
+                        value={params.value}
+                        onUpdate={(updates) => {
+                            if (field.id !== undefined) {
+                                handleFieldUpdate(field.id as number, updates);
+                            }
+                        }}
+                    />
+                );
+            },
         }));
     }, [schemaColumns, handleFieldUpdate]);
 
-    const rowSelection = useMemo(() => ({
-        type: "checkbox" as const,
-        selectedRowKeys,
-        onChange: (keys: React.Key[]) => setSelectedRowKeys(keys),
-    }), [selectedRowKeys]);
+    const rowSelection = useMemo<RowSelectionOptions>(() => ({
+        mode: "multiRow",
+        checkboxes: true,
+        headerCheckbox: true,
+        enableClickSelection: true,
+    }), []);
+
+    const onSelectionChanged = useCallback(() => {
+        const selected = gridRef.current?.api?.getSelectedRows() ?? [];
+        setSelectedKeys(selected.map((r: any) => r.id).filter(Boolean));
+    }, []);
+
+    const fieldCount = schema.fields?.length ?? 0;
+    const rowHeight = 32;
+    const headerHeight = 34;
+    const gridHeight = headerHeight + fieldCount * rowHeight + 2;
 
     return (
-        <div style={{paddingLeft: 24, marginBottom: 24}}>
-            <Space style={{marginBottom: 16}}>
-                <h3 style={{margin: 0}}>{schema.name}</h3>
-                <button onClick={handleAddField} className="grid-btn add-btn">+</button>
-                <button onClick={handleDeleteFields} className="grid-btn delete-btn"
-                        disabled={selectedRowKeys.length === 0}>-
-                </button>
-                <div className="grid-header">
-                    <FontAwesomeIcon onClick={() => setExpandedSchema(!expandedSchema)}
-                                     icon={expandedSchema ? faChevronDown : faChevronUp}/>
+        <div className={styles.schemaCard}>
+            {/* 카드 헤더 — 클릭으로 접기/펼치기 */}
+            <div
+                className={styles.schemaCardHeader}
+                onClick={() => setExpanded(v => !v)}
+            >
+                <div className={styles.schemaCardTitleGroup}>
+                    <span className={styles.schemaCardName}>{schema.name}</span>
+                    <span className={styles.schemaCardCount}>{fieldCount}개 필드</span>
                 </div>
-            </Space>
-            {expandedSchema &&
-                <Table<LayerSchemaFieldResponse>
-                    tableLayout="fixed"
-                    className="transparent-table"
-                    columns={columns}
-                    dataSource={schema.fields}
-                    rowKey="id"
-                    pagination={false}
-                    size="small"
-                    rowSelection={rowSelection}
-                />
-            }
+                <div className={styles.schemaCardActions}>
+                    <button className={styles.addBtn} onClick={handleAddField} title="필드 추가">
+                        +
+                    </button>
+                    <button
+                        className={styles.deleteBtn}
+                        onClick={handleDeleteFields}
+                        disabled={selectedKeys.length === 0}
+                        title="선택 필드 삭제"
+                    >
+                        −
+                    </button>
+                    <FontAwesomeIcon
+                        icon={faChevronDown}
+                        className={`${styles.schemaCardChevron} ${expanded ? styles.schemaCardChevronOpen : ''}`}
+                    />
+                </div>
+            </div>
+
+            {/* 카드 바디 — AG Grid */}
+            {expanded && (
+                <div className={styles.schemaCardBody}>
+                    <div
+                        className={`ag-theme-alpine ag-dark-custom ${gridStyle.gridWrap}`}
+                        style={{ height: gridHeight, width: "100%" }}
+                    >
+                        <AgGridReact
+                            theme="legacy"
+                            ref={gridRef}
+                            rowData={schema.fields ?? []}
+                            columnDefs={columnDefs}
+                            rowSelection={rowSelection}
+                            onSelectionChanged={onSelectionChanged}
+                            getRowId={(params) => String(params.data.id)}
+                            defaultColDef={{ resizable: true, sortable: false, filter: false }}
+                            suppressMovableColumns
+                            suppressCellFocus
+                            rowHeight={rowHeight}
+                            headerHeight={headerHeight}
+                        />
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

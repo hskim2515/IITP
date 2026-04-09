@@ -6,22 +6,21 @@ import { Stroke, Style } from "ol/style";
 import { fromLonLat } from "ol/proj";
 import { Cartographic, Ellipsoid, Math as CesiumMath } from "cesium";
 import { useNetworkStore } from "@stores/useNetworkStore";
+import { useHeatmapSettingStore } from "@stores/useHeatmapSettingStore";
 import { Link } from "@type/Network";
 
-// ── 공통 상수 (CesiumTrafficHeatmapLayer와 동일하게 유지) ──
-export const TRAFFIC_EMA_DECAY    = 0.85;
-export const TRAFFIC_MAX_TRAFFIC  = 8;
-export const TRAFFIC_SNAP_DIST_M  = 150; // EPSG:3857 ≈ m
+// ── 공통 상수 (TrafficHeatmapCesiumLayer와 동일하게 유지) ──
+export const TRAFFIC_EMA_DECAY       = 0.75;  // 0.85 → 0.75 (더 빠른 반응)
+export const TRAFFIC_MAX_TRAFFIC     = 6;     // 8 → 6 (중간 교통량 민감도 ↑)
+export const TRAFFIC_SNAP_DIST_M     = 200;   // 150 → 200 (매칭 커버리지 ↑)
 export const TRAFFIC_UPDATE_INTERVAL = 3;
 
-/** 교통량 0~MAX_TRAFFIC → 색상 문자열 (green→yellow→red, 0이면 반투명 회색) */
-export function trafficColor(ema: number): string {
-    if (ema < 0.3) return "rgba(128,128,128,0.25)"; // 차량 없음: 흐린 회색
-    const t = Math.min(ema / TRAFFIC_MAX_TRAFFIC, 1);
-    let r: number, g: number;
-    if (t < 0.5) { r = Math.round(255 * t * 2); g = 200; }
-    else         { r = 255; g = Math.round(200 * (1 - (t - 0.5) * 2)); }
-    return `rgba(${r},${g},0,0.85)`;
+/* 버킷: 0=미감지, 1=낮음, 2=중간, 3=높음, 4=혼잡 */
+export const NUM_TRAFFIC_BUCKETS = 5;
+
+export function emaToBucket(ema: number): number {
+    if (ema < 0.3) return 0;
+    return 1 + Math.min(Math.floor(Math.min(ema / TRAFFIC_MAX_TRAFFIC, 1) * 4), 3);
 }
 
 /** 도로 링크 중심 좌표(WGS84) → EPSG:3857 쌍 캐시 */
@@ -30,7 +29,6 @@ export interface LinkSegment {
     coords: number[][];
 }
 
-/** 네트워크 스토어에서 링크 세그먼트 목록 빌드 */
 export function buildLinkSegments(links: Link[]): LinkSegment[] {
     const out: LinkSegment[] = [];
     for (const link of links) {
@@ -43,11 +41,10 @@ export function buildLinkSegments(links: Link[]): LinkSegment[] {
     return out;
 }
 
-/** 점(px,py)에서 선분 A→B 까지 최단거리² */
 export function pointToSegDist2(
     px: number, py: number,
     ax: number, ay: number,
-    bx: number, by: number
+    bx: number, by: number,
 ): number {
     const dx = bx - ax, dy = by - ay;
     const lenSq = dx * dx + dy * dy;
@@ -57,11 +54,10 @@ export function pointToSegDist2(
     return cx * cx + cy * cy;
 }
 
-/** 차량 OL 좌표 → 가장 가까운 link id (-1: 매칭 없음) */
 export function findNearestLink(
     x: number, y: number,
     segments: LinkSegment[],
-    snapDist2: number
+    snapDist2: number,
 ): number {
     let bestId = -1, bestD2 = Infinity;
     for (const { linkId, coords } of segments) {
@@ -74,21 +70,60 @@ export function findNearestLink(
     return bestD2 <= snapDist2 ? bestId : -1;
 }
 
+/* 버킷 인덱스 기준 선 두께 (exaggeration 1.0 기준) */
+const BUCKET_BASE_WIDTHS = [1.5, 3, 5, 7, 10];
+
+function buildBucketStyles(colors: string[], exaggeration: number): Style[] {
+    return Array.from({ length: NUM_TRAFFIC_BUCKETS }, (_, b) => {
+        if (b === 0) return new Style({ stroke: new Stroke({ color: "rgba(160,160,160,0.25)", width: 1.5 }) });
+        const color = colors[b - 1] ?? "#ff2200";
+        const width = (BUCKET_BASE_WIDTHS[b] ?? 3) * exaggeration;
+        return new Style({ stroke: new Stroke({ color, width }) });
+    });
+}
+
 // ──────────────────────────────────────────────────────────────
 // OL VectorLayer (2D)
 // ──────────────────────────────────────────────────────────────
-export default class TrafficHeatmapFeatureLayer extends VectorLayer {
+export default class TrafficHeatmapFeatureLayer extends VectorLayer<VectorSource> {
     private trafficSource: VectorSource;
     private linkSegments: LinkSegment[] = [];
-    private emaByLink   = new Map<number, number>();
+    private emaByLink    = new Map<number, number>();
     private featureByLink = new Map<number, Feature<LineString>>();
-    private frameCount  = 0;
+    private frameCount   = 0;
+
+    /* 버킷별 캐시된 스타일 (settings 변경 시 재생성) */
+    private _styleCache: Style[] = [];
+    private _settingsUnsubscribe: (() => void) | null = null;
 
     constructor() {
         const source = new VectorSource();
-        super({ source, visible: false, zIndex: 120 });
+        super({
+            source,
+            visible: false,
+            zIndex: 120,
+            style: (feature) => this._styleForFeature(feature as Feature<LineString>),
+        });
         this.trafficSource = source;
+        this._rebuildStyleCache();
         this._buildFromStore();
+
+        this._settingsUnsubscribe = (useHeatmapSettingStore as any).subscribe(
+            (s: any) => [s.colors, s.exaggeration],
+            () => this._rebuildStyleCache(),
+        );
+    }
+
+    private _rebuildStyleCache(): void {
+        const { colors, exaggeration } = useHeatmapSettingStore.getState();
+        this._styleCache = buildBucketStyles(colors, exaggeration);
+    }
+
+    private _styleForFeature(feature: Feature<LineString>): Style {
+        const linkId = feature.get("linkId") as number;
+        const ema    = this.emaByLink.get(linkId) ?? 0;
+        const bucket = emaToBucket(ema);
+        return this._styleCache[bucket] ?? this._styleCache[0]!;
     }
 
     private _buildFromStore() {
@@ -104,17 +139,18 @@ export default class TrafficHeatmapFeatureLayer extends VectorLayer {
         this.featureByLink.clear();
         this.emaByLink.clear();
 
+        const features: Feature<LineString>[] = [];
         for (const seg of this.linkSegments) {
             this.emaByLink.set(seg.linkId, 0);
-            const feature = new Feature(new LineString(seg.coords));
+            const feature = new Feature<LineString>(new LineString(seg.coords));
             feature.setId(`traf-${seg.linkId}`);
-            feature.setStyle(new Style({ stroke: new Stroke({ color: trafficColor(0), width: 3 }) }));
+            feature.set("linkId", seg.linkId);
             this.featureByLink.set(seg.linkId, feature);
+            features.push(feature);
         }
-        this.trafficSource.addFeatures([...this.featureByLink.values()]);
+        this.trafficSource.addFeatures(features);
     }
 
-    // ECEF → EPSG:3857
     private _ecefToOl(pos: number[]): number[] | null {
         try {
             const c = Cartographic.fromCartesian(
@@ -124,7 +160,6 @@ export default class TrafficHeatmapFeatureLayer extends VectorLayer {
     }
 
     public setLatestPositions(data: { positions: (number[] | null)[] }) {
-        // 네트워크 데이터가 아직 없으면 재시도
         if (this.linkSegments.length === 0) { this._buildFromStore(); return; }
         this.frameCount++;
         if (!data?.positions) return;
@@ -142,20 +177,21 @@ export default class TrafficHeatmapFeatureLayer extends VectorLayer {
             countByLink.set(id, (countByLink.get(id) ?? 0) + 1);
         }
 
-        for (const [linkId, feature] of this.featureByLink) {
+        for (const [linkId] of this.emaByLink) {
             const count = countByLink.get(linkId) ?? 0;
             const prev  = this.emaByLink.get(linkId) ?? 0;
-            const ema   = prev * TRAFFIC_EMA_DECAY + count * (1 - TRAFFIC_EMA_DECAY);
-            this.emaByLink.set(linkId, ema);
-            const width = ema < 0.3 ? 3 : 3 + Math.min(ema / TRAFFIC_MAX_TRAFFIC, 1) * 6;
-            feature.setStyle(new Style({ stroke: new Stroke({ color: trafficColor(ema), width }) }));
+            this.emaByLink.set(linkId, prev * TRAFFIC_EMA_DECAY + count * (1 - TRAFFIC_EMA_DECAY));
         }
+
+        /* 전체 레이어 1번 재렌더 (feature별 setStyle 대신) */
+        this.trafficSource.changed();
     }
 
     public setSpeed(_s: number) {}
     public setStatus(_s: any) {}
 
     public destroy() {
+        this._settingsUnsubscribe?.();
         this.featureByLink.clear();
         this.emaByLink.clear();
         this.linkSegments = [];

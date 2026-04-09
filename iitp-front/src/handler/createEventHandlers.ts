@@ -4,7 +4,7 @@ import { useMessageStore } from "@stores/useMessageStore";
 import { useCesiumStore } from "@stores/useCesiumStore";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import { BusStationData, RailStationData, RailStationExitData } from "@type/Station";
-import { useNetworkStore } from "@stores/useNetworkStore";
+import { useNetworkStore, useNetworkHistoryStore } from "@stores/useNetworkStore";
 import { useBusStationHistoryStore, useBusStationStore } from "@stores/useBusStationStore";
 import { fromLonLat } from "ol/proj";
 import { useRailStationHistoryStore, useRailStationStore } from "@stores/useRailStationStore";
@@ -22,101 +22,168 @@ import Point from "ol/geom/Point";
 import GeometryType from "@type/FeatureOptions";
 import {PavementMarkingData} from "@type/PavementMarking";
 import {usePavementMarkingHistoryStore, usePavementMarkingStore} from "@stores/usePavementMarkingStore";
+import { layerNameToStoreMap } from "@hooks/useLayerInit";
+import { layerNameToHistoryStoreMap } from "@hooks/useHistoryInit";
+import { useSignalStore, useSignalHistoryStore } from "@stores/useSignalStore";
+import { useSelectionStore } from "@stores/useSelectionStore";
 
 const setMessage = useMessageStore.getState().setMessage;
 
+/** 공간 정보 없이 테이블에 직접 레코드를 추가하는 공통 헬퍼 */
+function addTabularRecord(record: Record<string, any>): void {
+    const layerName: string = record.layerName;
+    if (!layerName) {
+        setMessage({ type: "error", text: "레이어 정보가 없습니다." });
+        return;
+    }
+    const store = layerNameToStoreMap[layerName];
+    const historyStore = layerNameToHistoryStoreMap[layerName];
+    if (!store) {
+        setMessage({ type: "error", text: `스토어를 찾을 수 없습니다: ${layerName}` });
+        return;
+    }
+    store.getState().updateCurrentJsonData(record, historyStore as any);
+    // 추가 후 해당 행으로 포커스 이동 (GridTable의 selectedGuid 기반 스크롤)
+    if (record.__guid) {
+        setTimeout(() => useSelectionStore.getState().setSelectedGuid([record.__guid]), 50);
+    }
+    setMessage({ type: "info", text: "항목이 추가되었습니다. 테이블에서 값을 편집하세요." });
+}
+
 const featureTypeHandlersInternal = {
-    nodes: (record) => {
+    nodes: (record: Record<string, any>) => {
+        // network 이외의 레이어(e.g. signalTod)는 테이블에 직접 추가
+        if (record.layerName && record.layerName !== 'network') {
+            addTabularRecord(record);
+            return;
+        }
         setMessage({
             type: "info",
             text: "지도 위에 node 위치를 클릭하여 점을 찍어주세요.",
         });
 
-        const eventStore = useEventStore.getState();
-        const viewer = useCesiumStore.getState().viewer;
-        if (!viewer) return;
-        const dataSource = viewer.dataSources.getByName("network")[0];
-        if (!dataSource) return;
+        const { olEventManager, cesiumEventManager } = useEventStore.getState();
 
-        const onClick = (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+        const processAndStoreNode = (lng: number, lat: number) => {
+            const newNode: Record<string, any> = { ...record, coordinates: { lng, lat } };
+            useNetworkStore.getState().updateCurrentJsonData(newNode, useNetworkHistoryStore);
+            if (newNode.__guid) {
+                setTimeout(() => useSelectionStore.getState().setSelectedGuid([newNode.__guid as string]), 50);
+            }
+            setMessage({ type: "info", text: `노드가 추가되었습니다. (${lng.toFixed(6)}, ${lat.toFixed(6)})` });
+        };
+
+        const olDrawend = (e: DrawEvent) => {
+            const geom = e.feature.getGeometry();
+            if (!(geom instanceof Point)) return;
+            const coord = geom.getCoordinates();
+            const coordinates = createCoordinatesFromOl(coord);
+            if (!coordinates || coordinates.lng == null || coordinates.lat == null) return;
+            processAndStoreNode(coordinates.lng, coordinates.lat);
+            e.target.abortDrawing();
+        };
+
+        const cesiumClick = (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+            const viewer = useCesiumStore.getState().viewer;
+            if (!viewer) return;
             const cartesian = viewer.scene.pickPosition(e.position);
             if (!cartesian) return;
-
             const carto = Cesium.Cartographic.fromCartesian(cartesian);
-            const lon = Cesium.Math.toDegrees(carto.longitude);
+            const lng = Cesium.Math.toDegrees(carto.longitude);
             const lat = Cesium.Math.toDegrees(carto.latitude);
-            const height = carto.height;
-
-            record.geometry = {type: "Point", coordinates: [lon, lat, height]};
-
-            const nodeEntity = new Cesium.Entity({
-                id: record.__guid,
-                position: cartesian,
-                cylinder: {
-                    length: 5.0,
-                    topRadius: 0.5,
-                    bottomRadius: 0.5,
-                    material: Cesium.Color.YELLOW,
-                    heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
-                },
-                properties: record,
-            });
-
-            dataSource.entities.add(nodeEntity);
-            eventStore.unbind("click", onClick);
-
+            processAndStoreNode(lng, lat);
         };
 
-        eventStore.bind("click", onClick);
+        const olDrawHandler = (e: DrawEvent) => {
+            try { olDrawend(e); } finally { cleanup(); }
+        };
+        const cesiumClickHandler = (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+            try { cesiumClick(e); } finally { cleanup(); }
+        };
+
+        const cleanup = () => {
+            try { olEventManager?.unbind(`draw:${record.featureType}:end`, olDrawHandler); } catch {}
+            try { cesiumEventManager?.unbind("singleclick", cesiumClickHandler); } catch {}
+        };
+
+        olEventManager?.bind(`draw:${record.featureType}:end`, olDrawHandler, { drawGeometryType: GeometryType.POINT });
+        cesiumEventManager?.bind("singleclick", cesiumClickHandler);
+
+        return cleanup;
     },
-    links: (record) => {
+    links: (record: Record<string, any>) => {
         setMessage({
             type: "info",
-            text: "지도 위에 링크를 클릭하여 선을 그리세요. 우클릭으로 완료합니다.",
+            text: "지도 위에 링크 경로를 클릭하여 선을 그리세요. 우클릭으로 완료합니다.",
         });
 
-        const eventStore = useEventStore.getState();
-        const viewer = useCesiumStore.getState().viewer;
-        if (!viewer) return;
-        const dataSource = viewer.dataSources.getByName("network")[0];
-        if (!dataSource) return;
+        const { olEventManager, cesiumEventManager } = useEventStore.getState();
+        const cesiumPositions: Cesium.Cartesian3[] = [];
 
-        const positions: Cesium.Cartesian3[] = [];
+        const processAndStoreLink = (coords: { lng: number; lat: number }[]) => {
+            if (coords.length < 2) {
+                setMessage({ type: "warn", text: "링크는 최소 2개 이상의 점이 필요합니다." });
+                return;
+            }
+            const newLink: Record<string, any> = { ...record, coordinates: coords };
+            useNetworkStore.getState().updateCurrentJsonData(newLink, useNetworkHistoryStore);
+            if (newLink.__guid) {
+                setTimeout(() => useSelectionStore.getState().setSelectedGuid([newLink.__guid as string]), 50);
+            }
+            setMessage({ type: "info", text: `링크가 추가되었습니다. (${coords.length}개 점)` });
+        };
 
-        const onClick = (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+        const olDrawend = (e: DrawEvent) => {
+            const geom = e.feature.getGeometry();
+            if (!geom) return;
+            // LineString geometry의 좌표를 {lng, lat} 배열로 변환
+            const olCoords = (geom as any).getCoordinates?.() as [number, number][] | undefined;
+            if (!olCoords || olCoords.length < 2) return;
+            const coords = olCoords.map(([x, y]) => {
+                const c = createCoordinatesFromOl([x, y]);
+                return c ? { lng: c.lng, lat: c.lat } : null;
+            }).filter(Boolean) as { lng: number; lat: number }[];
+            processAndStoreLink(coords);
+        };
+
+        const cesiumLeftClick = (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+            const viewer = useCesiumStore.getState().viewer;
+            if (!viewer) return;
             const cartesian = viewer.scene.pickPosition(e.position);
-            if (cartesian) positions.push(cartesian);
+            if (cartesian) cesiumPositions.push(cartesian);
         };
 
-        const onRightClick = () => {
-            if (positions.length < 2) return;
-
-            const coords = positions.map((c) => {
+        const cesiumRightClick = () => {
+            if (cesiumPositions.length < 2) {
+                setMessage({ type: "warn", text: "링크는 최소 2개 이상의 점이 필요합니다." });
+                return;
+            }
+            const coords = cesiumPositions.map((c) => {
                 const carto = Cesium.Cartographic.fromCartesian(c);
-                return [
-                    Cesium.Math.toDegrees(carto.longitude),
-                    Cesium.Math.toDegrees(carto.latitude),
-                    carto.height,
-                ];
+                return {
+                    lng: Cesium.Math.toDegrees(carto.longitude),
+                    lat: Cesium.Math.toDegrees(carto.latitude),
+                };
             });
-
-            record.geometry = {type: "LineString", coordinates: coords};
-
-            const polylineEntity = new Cesium.Entity({
-                id: record.__guid,
-                polyline: {positions, width: 3, material: Cesium.Color.BLUE},
-                properties: record,
-            });
-
-            dataSource.entities.add(polylineEntity);
-
-            eventStore.unbind("LEFT_CLICK", onClick);
-            eventStore.unbind("RIGHT_CLICK", onRightClick);
-
+            processAndStoreLink(coords);
+            cleanup();
         };
 
-        eventStore.bind("LEFT_CLICK", onClick);
-        eventStore.bind("RIGHT_CLICK", onRightClick);
+        const olDrawHandler = (e: DrawEvent) => {
+            try { olDrawend(e); } finally { cleanup(); }
+        };
+
+        const cleanup = () => {
+            try { olEventManager?.unbind(`draw:${record.featureType}:end`, olDrawHandler); } catch {}
+            try { cesiumEventManager?.unbind("singleclick", cesiumLeftClick); } catch {}
+            try { cesiumEventManager?.unbind("rightClick", cesiumRightClick); } catch {}
+        };
+
+        olEventManager?.bind(`draw:${record.featureType}:end`, olDrawHandler, { drawGeometryType: GeometryType.LINE_STRING });
+        cesiumEventManager?.bind("singleclick", cesiumLeftClick);
+        cesiumEventManager?.bind("rightClick", cesiumRightClick);
+
+        return cleanup;
     },
     busStations: (record: BusStationData) => {
         const network = useNetworkStore.getState().currentJsonData;
@@ -616,10 +683,100 @@ const featureTypeHandlersInternal = {
         cesiumEventManager?.bind("singleclick", cesiumSingleClickHandler);
 
         return cleanup;
-    }
+    },
+
+    /** 신호 추가: 교차로 노드를 클릭하여 신호 배치 */
+    signals: (record: Record<string, any>) => {
+        setMessage({ type: "info", text: "신호를 배치할 교차로 노드를 클릭하세요." });
+
+        const { olEventManager, cesiumEventManager } = useEventStore.getState();
+
+        const processAndStoreSignal = (nodeId: string | number) => {
+            const newSignal: Record<string, any> = { ...record, nodeId: String(nodeId) };
+            useSignalStore.getState().updateCurrentJsonData(newSignal, useSignalHistoryStore);
+            if (newSignal.__guid) {
+                setTimeout(() => useSelectionStore.getState().setSelectedGuid([newSignal.__guid as string]), 50);
+            }
+            setMessage({ type: "info", text: `신호가 추가되었습니다. (노드 ID: ${nodeId})` });
+        };
+
+        const olDrawend = (e: DrawEvent) => {
+            const olMap = useOpenLayersStore.getState().map;
+            if (!olMap) return;
+            const geom = e.feature.getGeometry();
+            if (!(geom instanceof Point)) return;
+            const coord = geom.getCoordinates();
+            const pixel = olMap.getPixelFromCoordinate(coord);
+            const nodeFeature = pickFromOpenLayers(olMap, pixel, (f) => f.get('featureType') === 'nodes');
+            if (!nodeFeature) {
+                setMessage({ type: "warn", text: "네트워크 노드 위를 클릭해주세요." });
+                return;
+            }
+            processAndStoreSignal(nodeFeature.get('id'));
+            e.target.abortDrawing();
+        };
+
+        const cesiumClick = (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+            const viewer = useCesiumStore.getState().viewer;
+            if (!viewer) return;
+            const picked = pickFromCesium(
+                viewer, e.position,
+                (p) => p.id instanceof Cesium.Entity && p.id.properties?.getValue()?.featureType === 'nodes'
+            );
+            if (!picked) {
+                setMessage({ type: "warn", text: "네트워크 노드를 클릭해주세요." });
+                return;
+            }
+            const nodeData = picked.id.properties.getValue(viewer.clock.currentTime);
+            processAndStoreSignal(nodeData.id);
+        };
+
+        const olDrawHandler = (e: DrawEvent) => {
+            try { olDrawend(e); } finally { cleanup(); }
+        };
+        const cesiumClickHandler = (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+            try { cesiumClick(e); } finally { cleanup(); }
+        };
+        const olSnap = () => {};
+
+        const cleanup = () => {
+            try { olEventManager?.unbind(`draw:${record.featureType}:end`, olDrawHandler); } catch {}
+            try { olEventManager?.unbind(`snap:${record.featureType}`, olSnap); } catch {}
+            try { cesiumEventManager?.unbind("singleclick", cesiumClickHandler); } catch {}
+        };
+
+        const snapLayerName = "network";
+        olEventManager?.bind(`draw:${record.featureType}:end`, olDrawHandler, { drawGeometryType: GeometryType.POINT });
+        const snapLayer = useLayerStore.getState().layerManager?.getLayerByName(snapLayerName);
+        const snapFeatures = getFeaturesByProperties(snapLayer ?? undefined, { featureType: "nodes" });
+        olEventManager?.bind(`snap:${record.featureType}`, olSnap, { features: snapFeatures ?? new Collection<Feature<Geometry>>() });
+        cesiumEventManager?.bind("singleclick", cesiumClickHandler);
+
+        return cleanup;
+    },
+
+    /** 버스 노선 추가: 테이블에 직접 추가 후 링크/노드 시퀀스 편집 */
+    lines: (record: Record<string, any>) => {
+        addTabularRecord(record);
+    },
+
+    /** 철도 노선 추가: 테이블에 직접 추가 후 역 시퀀스 편집 */
+    routes: (record: Record<string, any>) => {
+        addTabularRecord(record);
+    },
+
+    /** 시뮬레이션 시나리오 추가: 테이블에 직접 추가 후 편집 */
+    scenarios: (record: Record<string, any>) => {
+        addTabularRecord(record);
+    },
+
+    /** SignalTod plans 추가: 테이블에 직접 추가 */
+    plans: (record: Record<string, any>) => {
+        addTabularRecord(record);
+    },
 };
 
-export const createEventHandlers = (record) => {
+export const createEventHandlers = (record: Record<string, any>) => {
     const featureType: keyof typeof featureTypeHandlersInternal = record.featureType;
     if (!record.featureType) {
         console.warn("featureType 인자:", record.featureType)
@@ -631,5 +788,5 @@ export const createEventHandlers = (record) => {
         return;
     }
 
-    return handler(record);
+    return handler(record as any);
 };

@@ -42,7 +42,7 @@ const useDefaultSelect = () => {
         return () => {
             cesiumEventManager.unbind('select', defaultEventHandlers.handleCesiumSelect);
         };
-    }, [viewer, cesiumEventManager, activeSubmenu]);
+    }, [viewer, cesiumEventManager]);
 
     useEffect(() => {
         if (!olEventManager || !olMap) return
@@ -50,7 +50,7 @@ const useDefaultSelect = () => {
         return () => {
             olEventManager.unbind('click', defaultEventHandlers.handleOLSelect);
         };
-    }, [olEventManager, olMap, activeSubmenu]);
+    }, [olEventManager, olMap]);
 
     useEffect(() => {
         console.log('selectedGuid', selectedGuid)

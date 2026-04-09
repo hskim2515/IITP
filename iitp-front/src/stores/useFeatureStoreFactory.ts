@@ -157,9 +157,7 @@ const createFeatureStore = <T>() => {
                                 console.warn("이미 같은 guid가 존재함. 삽입 생략:", record.__guid);
                                 return;
                             }
-                            //const newItems = [...items, record];
-                            const newItems = [...items];
-                            //const interpolatedRecords = interpolateAndConvertToRecords(newItems);
+                            const newItems = [...items, record];
 
                             set({
                                 currentJsonData: {

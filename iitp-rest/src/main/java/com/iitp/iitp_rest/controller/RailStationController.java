@@ -8,7 +8,9 @@ import com.iitp.iitp_rest.model.publicTransit.rail.RailStationSaveRequest;
 import com.iitp.iitp_rest.service.publicTransit.station.RailStationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -55,6 +57,22 @@ public class RailStationController {
             return ResponseEntity.ok(logs);
         } catch (Exception e) {
             log.error("[getLogsByVersion] 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @GetMapping("/{versionId}/export")
+    public ResponseEntity<byte[]> exportAsXml(@PathVariable String versionId) {
+        log.info("[exportAsXml] versionId: {}", versionId);
+        try {
+            byte[] bytes = railStationService.exportAsXml(versionId);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_XML);
+            headers.setContentDispositionFormData("attachment", "railStation_" + versionId + ".xml");
+            headers.setContentLength(bytes.length);
+            return ResponseEntity.ok().headers(headers).body(bytes);
+        } catch (Exception e) {
+            log.error("[exportAsXml] 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

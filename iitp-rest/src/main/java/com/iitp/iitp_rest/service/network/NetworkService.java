@@ -37,7 +37,12 @@ public class NetworkService {
 
     public NetworkXml parseAndTransform(String versionId, java.io.InputStream is) {
         NetworkXml networkXml = networkJaxbParser.parse(is);
-        return transformNetworkCoordinates(versionId, networkXml);
+        return transformNetworkCoordinates(versionId, networkXml, null, null);
+    }
+
+    public NetworkXml parseAndTransform(String versionId, java.io.InputStream is, Double latitude, Double longitude) {
+        NetworkXml networkXml = networkJaxbParser.parse(is);
+        return transformNetworkCoordinates(versionId, networkXml, latitude, longitude);
     }
 
     public byte[] getRawXmlBytes(String versionId) throws IOException {
@@ -56,13 +61,37 @@ public class NetworkService {
         return networkDto;
     }
 
-    public NetworkXml transformNetworkCoordinates(String versionKey, NetworkXml dto) {
-        // version key로 scenario 조회, 없으면 scenario key로 fallback
+    /** 좌표 없을 경우 null 반환 (호출부에서 처리) */
+    public boolean hasMissingCoordinates(String versionKey) {
         Scenario scenario = scenarioVersionRepository.findByKey(versionKey)
                 .map(ScenarioVersion::getScenario)
-                .orElseGet(() -> scenarioRepository.findByKey(versionKey).orElse(new Scenario()));
-        double baseLatitude = scenario.getLatitude();
-        double baseLongitude = scenario.getLongitude();
+                .orElseGet(() -> scenarioRepository.findByKey(versionKey).orElse(null));
+        return scenario == null || scenario.getLatitude() == null || scenario.getLongitude() == null;
+    }
+
+    public NetworkXml transformNetworkCoordinates(String versionKey, NetworkXml dto) {
+        return transformNetworkCoordinates(versionKey, dto, null, null);
+    }
+
+    public NetworkXml transformNetworkCoordinates(String versionKey, NetworkXml dto, Double overrideLatitude, Double overrideLongitude) {
+        double baseLatitude;
+        double baseLongitude;
+
+        if (overrideLatitude != null && overrideLongitude != null) {
+            baseLatitude = overrideLatitude;
+            baseLongitude = overrideLongitude;
+        } else {
+            Scenario scenario = scenarioVersionRepository.findByKey(versionKey)
+                    .map(ScenarioVersion::getScenario)
+                    .orElseGet(() -> scenarioRepository.findByKey(versionKey).orElse(null));
+
+            if (scenario == null || scenario.getLatitude() == null || scenario.getLongitude() == null) {
+                log.warn("[NetworkService] versionKey={}에 대한 시나리오 좌표를 찾을 수 없습니다.", versionKey);
+                return dto;
+            }
+            baseLatitude = scenario.getLatitude();
+            baseLongitude = scenario.getLongitude();
+        }
 
         dto.getNodes().forEach(node -> {
             List<Coordinates> transformedNodeCoords = CoordinateUtils.parseAndTransform(

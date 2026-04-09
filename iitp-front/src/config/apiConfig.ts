@@ -32,6 +32,7 @@ export const apiConfig:ApiConfig = {
         create:      { url: '/public-transit/station/bus',           method: 'POST', useFormData: false },
         historyList: { url: '/public-transit/station/bus/histories', method: 'GET',  useFormData: false },
         origin:      { url: '/public-transit/station/bus/origin',    method: 'GET',  useFormData: false },
+        export:      { url: '/public-transit/station/bus',           method: 'GET',  useFormData: false },
     },
     RAIL_STATION: {
         list:        { url: '/public-transit/station/rail',           method: 'GET',  useFormData: false },
@@ -39,12 +40,14 @@ export const apiConfig:ApiConfig = {
         create:      { url: '/public-transit/station/rail',           method: 'POST', useFormData: false },
         historyList: { url: '/public-transit/station/rail/histories', method: 'GET',  useFormData: false },
         origin:      { url: '/public-transit/station/rail/origin',    method: 'GET',  useFormData: false },
+        export:      { url: '/public-transit/station/rail',           method: 'GET',  useFormData: false },
     },
     NETWORK: {
         list:        { url: '/network',           method: 'GET',  useFormData: false },
         update:      { url: '/network',           method: 'POST', useFormData: false },
         historyList: { url: '/network/histories', method: 'GET',  useFormData: false },
         origin:      { url: '/network/origin',    method: 'GET',  useFormData: false },
+        export:      { url: '/network',           method: 'GET',  useFormData: false },
     },
     PAVEMENT_MARKING: {
         list:        { url: '/pavement-marking',            method: 'GET',  useFormData: false },
@@ -63,6 +66,7 @@ export const apiConfig:ApiConfig = {
         create:      { url: '/signal',            method: 'POST', useFormData: false },
         historyList: { url: '/signal/histories',  method: 'GET',  useFormData: false },
         origin:      { url: '/signal/origin',     method: 'GET',  useFormData: false },
+        export:      { url: '/signal',            method: 'GET',  useFormData: false },
     },
     MENU: {
         tree: {url: '/menu/tree', method: 'GET', useFormData: false},
@@ -72,39 +76,51 @@ export const apiConfig:ApiConfig = {
         update:      { url: '/public-transit/line/bus',           method: 'POST', useFormData: false },
         historyList: { url: '/public-transit/line/bus/histories', method: 'GET',  useFormData: false },
         origin:      { url: '/public-transit/line/bus/origin',    method: 'GET',  useFormData: false },
+        export:      { url: '/public-transit/line/bus',           method: 'GET',  useFormData: false },
     },
     BUS_PT_LINE_WEEKDAY: {
         list:        { url: '/public-transit/line/bus/weekday',           method: 'GET',  useFormData: false },
         update:      { url: '/public-transit/line/bus/weekday',           method: 'POST', useFormData: false },
         historyList: { url: '/public-transit/line/bus/weekday/histories', method: 'GET',  useFormData: false },
         origin:      { url: '/public-transit/line/bus/weekday/origin',    method: 'GET',  useFormData: false },
+        export:      { url: '/public-transit/line/bus/weekday',           method: 'GET',  useFormData: false },
     },
     BUS_PT_LINE_WEEKEND: {
         list:        { url: '/public-transit/line/bus/weekend',           method: 'GET',  useFormData: false },
         update:      { url: '/public-transit/line/bus/weekend',           method: 'POST', useFormData: false },
         historyList: { url: '/public-transit/line/bus/weekend/histories', method: 'GET',  useFormData: false },
         origin:      { url: '/public-transit/line/bus/weekend/origin',    method: 'GET',  useFormData: false },
+        export:      { url: '/public-transit/line/bus/weekend',           method: 'GET',  useFormData: false },
     },
     RAIL_PT_LINE: {
         list:        { url: '/public-transit/line/rail',           method: 'GET',  useFormData: false },
         update:      { url: '/public-transit/line/rail',           method: 'POST', useFormData: false },
         historyList: { url: '/public-transit/line/rail/histories', method: 'GET',  useFormData: false },
         origin:      { url: '/public-transit/line/rail/origin',    method: 'GET',  useFormData: false },
+        export:      { url: '/public-transit/line/rail',           method: 'GET',  useFormData: false },
     },
     SIGNAL_TOD: {
         list:        { url: '/signal-tod',           method: 'GET',  useFormData: false },
         update:      { url: '/signal-tod',           method: 'POST', useFormData: false },
         historyList: { url: '/signal-tod/histories', method: 'GET',  useFormData: false },
         origin:      { url: '/signal-tod/origin',    method: 'GET',  useFormData: false },
+        export:      { url: '/signal-tod',           method: 'GET',  useFormData: false },
     },
     SIMULATION_SCENARIO: {
         list:        { url: '/simulation-scenario',           method: 'GET',  useFormData: false },
         update:      { url: '/simulation-scenario',           method: 'POST', useFormData: false },
         historyList: { url: '/simulation-scenario/histories', method: 'GET',  useFormData: false },
         origin:      { url: '/simulation-scenario/origin',    method: 'GET',  useFormData: false },
+        export:      { url: '/simulation-scenario',           method: 'GET',  useFormData: false },
     },
     SCENARIO_VERSION: {
         create: { url: '/scenario', method: 'POST', useFormData: false },
+    },
+    THREED_TILESET: {
+        list:   { url: '/threed-tileset',      method: 'GET',    useFormData: false },
+        create: { url: '/threed-tileset',      method: 'POST',   useFormData: false },
+        update: { url: '/threed-tileset/{id}', method: 'PUT',    useFormData: false },
+        delete: { url: '/threed-tileset/{id}', method: 'DELETE', useFormData: false },
     },
     OD_MATRIX: {
         list:        { url: '/od-matrix',           method: 'GET',  useFormData: false },

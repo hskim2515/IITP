@@ -1,151 +1,266 @@
-import React, { useEffect, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { usePropertyStore } from "@stores/usePropertyStore";
 import { findMenuByCode, useMenuStore } from "@stores/useMenuStore";
-import { faClose } from "@fortawesome/free-solid-svg-icons/faClose";
+import { faClose, faEdit, faChevronDown, faChevronRight } from "@fortawesome/free-solid-svg-icons";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { faEdit } from "@fortawesome/free-solid-svg-icons";
-import { MenuTreeResponse } from "@type/openapi.gen";
 import { useSchemaStore } from "@stores/useSchemaStore";
 import { findMenuCodeBySchemaDefinition } from "@utils/schema";
+import { propertyFormSchema } from "@schema/propertyFormSchema";
 
-function truncate(value: string, maxLength: number = 50): string {
-    if (value.length <= maxLength) return value;
-    return value.slice(0, maxLength) + '...';
+// 모든 스키마에서 fieldName → label 역인덱스 빌드
+function buildFieldLabelMap(): Record<string, string> {
+    const map: Record<string, string> = {};
+    Object.values(propertyFormSchema).forEach((schema) => {
+        [...(schema.fields ?? []), ...(schema.inputFields ?? []), ...(schema.rowFields ?? [])].forEach((f) => {
+            if (f.name && f.label) map[f.name] = f.label;
+        });
+    });
+    return map;
 }
+
+const FIELD_LABEL_MAP = buildFieldLabelMap();
+const INTERNAL_KEYS = new Set(['__guid', 'featureType']);
+const MAX_STR_LEN = 80;
+
+function truncate(s: string, max = MAX_STR_LEN) {
+    return s.length <= max ? s : s.slice(0, max) + '…';
+}
+
+interface ValueCellProps {
+    propKey: string;
+    value: unknown;
+}
+
+const ValueCell = ({ propKey, value }: ValueCellProps) => {
+    const [expanded, setExpanded] = useState(false);
+
+    if (Array.isArray(value)) {
+        return (
+            <span>
+                <button
+                    onClick={() => setExpanded(p => !p)}
+                    style={styles.arrayToggle}
+                >
+                    <FontAwesomeIcon
+                        icon={expanded ? faChevronDown : faChevronRight}
+                        style={{ marginRight: 4, fontSize: 10 }}
+                    />
+                    {value.length}개
+                </button>
+                {expanded && (
+                    <div style={styles.arrayList}>
+                        {value.map((item, i) => (
+                            <div key={i} style={styles.arrayItem}>
+                                <span style={styles.arrayIndex}>{i}</span>
+                                <span>{typeof item === 'object' ? truncate(JSON.stringify(item)) : String(item)}</span>
+                            </div>
+                        ))}
+                    </div>
+                )}
+            </span>
+        );
+    }
+
+    if (value !== null && typeof value === 'object') {
+        const str = JSON.stringify(value);
+        return <span title={str} style={styles.valueText}>{truncate(str)}</span>;
+    }
+
+    const str = String(value ?? '');
+    return <span title={str} style={styles.valueText}>{truncate(str)}</span>;
+};
 
 const PropertyModal = () => {
     const selectedProps = usePropertyStore((state) => state.selectedProps);
+    const setSelectedProps = usePropertyStore((state) => state.setSelectedProps);
+    const { activeSubmenu, menu, setActiveSubmenu } = useMenuStore();
     const getSchemaDefinitionBySchemaDefinitionName = useSchemaStore.getState().getSchemaDefinitionBySchemaDefinitionName;
-    const [showViewer, setShowViewer] = useState<boolean | null>(false);
-    const [subMenu, setSubMenu] = useState<MenuTreeResponse | null>(null);
 
-    // subMenu 가 null 이 아닐 때만 보이게.
-    // 가시화를 조정하는 것이 나을지, 아니면 컴포넌트를 제거하는 것이 나을지,
-
-    const {
-        activeSubmenu,
-        menu,
-
-        setActiveSubmenu,
-    } = useMenuStore();
-
-    useEffect(() => {
-        const isValidProps =
-            selectedProps &&
-            typeof selectedProps === "object" &&
-            Object.keys(selectedProps).length > 0;
-
-        setShowViewer(isValidProps);
+    const displayEntries = useMemo(() => {
+        if (!selectedProps) return [];
+        return Object.entries(selectedProps).filter(([key]) => !INTERNAL_KEYS.has(key));
     }, [selectedProps]);
 
-    useEffect(() => {
-        if(menu){
-            setSubMenu(findMenuByCode(menu, 'NETWORK'))
-        }
-        console.log(subMenu)
-    }, [menu]);
-
     if (!selectedProps || Object.keys(selectedProps).length === 0) return null;
-    if (!showViewer || activeSubmenu) return null;
+    if (activeSubmenu) return null;
 
-    const onClickClose = () => {
-        setShowViewer(false);
-    }
+    const featureType = selectedProps.featureType as string | undefined;
+
+    const onClickClose = () => setSelectedProps(null);
 
     const onClickEdit = () => {
-        const featureType = selectedProps.featureType;
-
-        const menuCode = findMenuCodeBySchemaDefinition(getSchemaDefinitionBySchemaDefinitionName(featureType));
-        console.log("menuCode:::", menuCode)
-        if(!menuCode) return;
-        if (menuCode && menu) {
-            const foundMenu = findMenuByCode(menu, menuCode);
-            console.log("menuCode:::found:::",foundMenu)
-            setSubMenu(foundMenu);
-            setActiveSubmenu(foundMenu);
-        }
-    }
+        if (!featureType || !menu) return;
+        const menuCode = findMenuCodeBySchemaDefinition(
+            getSchemaDefinitionBySchemaDefinitionName(featureType)
+        );
+        if (!menuCode) return;
+        const foundMenu = findMenuByCode(menu, menuCode);
+        if (foundMenu) setActiveSubmenu(foundMenu);
+    };
 
     return (
         <div style={styles.container}>
-            <table style={styles.table}>
-                <thead>
-                <tr>
-                    <th colSpan={2}>
-                        <h2 style={{display: "contents"}}>{selectedProps?.featureType}</h2>
-                        <FontAwesomeIcon className="close-btn" style={{float:"right", marginRight: "10px", fontSize:"20px"}} icon={faClose} onClick={onClickClose}/>
-                        <FontAwesomeIcon className="edit-btn" style={{float:"right", marginRight: "10px", fontSize:"16px"}} icon={faEdit} onClick={onClickEdit}/>
-                    </th>
-                </tr>
-                <tr>
-                    <th style={styles.th}>Property</th>
-                    <th style={styles.th}>Value</th>
-                </tr>
-                </thead>
-                <tbody>
-                {Object.entries(selectedProps).map(([key, value]) => (
-                    <tr key={key}>
-                        <td style={styles.td}>{key}</td>
-                        <td style={styles.td} title={String(value)}>
-                            {Array.isArray(value)
-                                ? `${value.length} (count)`
-                                : typeof value === 'object'
-                                    ? truncate(JSON.stringify(value), 60)
-                                    : truncate(String(value), 60)}
-                        </td>
+            {/* 헤더 */}
+            <div style={styles.header}>
+                <span style={styles.featureType}>{featureType ?? '속성'}</span>
+                <div style={styles.actions}>
+                    <button style={styles.iconBtn} title="편집" onClick={onClickEdit}>
+                        <FontAwesomeIcon icon={faEdit} />
+                    </button>
+                    <button style={styles.iconBtn} title="닫기" onClick={onClickClose}>
+                        <FontAwesomeIcon icon={faClose} />
+                    </button>
+                </div>
+            </div>
 
-                    </tr>
-                ))}
-                </tbody>
-            </table>
+            {/* 속성 테이블 */}
+            <div style={styles.scrollArea}>
+                <table style={styles.table}>
+                    <thead>
+                        <tr>
+                            <th style={{ ...styles.th, width: '40%' }}>속성</th>
+                            <th style={styles.th}>값</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {displayEntries.map(([key, value]) => (
+                            <tr key={key} style={styles.row}>
+                                <td style={styles.tdKey} title={key}>
+                                    {FIELD_LABEL_MAP[key] ?? key}
+                                </td>
+                                <td style={styles.tdValue}>
+                                    <ValueCell propKey={key} value={value} />
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
         </div>
     );
 };
 
 const styles = {
     container: {
-        position: "fixed",
-        bottom: "120px",
-        left: "1300px",
-        right: "5px",
-        backgroundColor: "rgba(20, 20, 30, 0.95)", // 더 어두운 배경
-        border: "1px solid rgba(255, 255, 255, 0.1)", // subtle 테두리
-        borderRadius: "8px",
-        padding: "16px",
-        maxHeight: "30vh",
-        overflowY: "auto",
-        overflowX: "auto",
+        position: 'fixed' as const,
+        bottom: '100px',
+        right: '16px',
+        width: '380px',
+        maxHeight: '45vh',
+        display: 'flex',
+        flexDirection: 'column' as const,
+        backgroundColor: 'rgba(16, 18, 28, 0.97)',
+        border: '1px solid rgba(0, 200, 255, 0.2)',
+        borderRadius: '8px',
         zIndex: 2000,
-        boxShadow: "0 0 12px rgba(0, 255, 255, 0.1)", // 네온 느낌
-        color: "#e0e0e0", // 기본 텍스트 밝기
-        backdropFilter: "blur(6px)", // 유리 느낌
+        boxShadow: '0 4px 24px rgba(0, 0, 0, 0.5), 0 0 12px rgba(0, 200, 255, 0.08)',
+        backdropFilter: 'blur(8px)',
+        overflow: 'hidden',
+    },
+    header: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '8px 12px',
+        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        backgroundColor: 'rgba(0, 180, 255, 0.08)',
+        flexShrink: 0,
+    },
+    featureType: {
+        fontSize: '13px',
+        fontWeight: 600,
+        color: '#5dd0ff',
+        letterSpacing: '0.4px',
+    },
+    actions: {
+        display: 'flex',
+        gap: '4px',
+    },
+    iconBtn: {
+        background: 'none',
+        border: 'none',
+        color: '#aaa',
+        cursor: 'pointer',
+        padding: '4px 6px',
+        borderRadius: '4px',
+        fontSize: '13px',
+        lineHeight: 1,
+        transition: 'color 0.15s',
+    },
+    scrollArea: {
+        overflowY: 'auto' as const,
+        flex: 1,
     },
     table: {
-        width: "100%",
-        borderCollapse: "collapse",
-        fontSize: "13px",
-        color: "#ccc",
+        width: '100%',
+        borderCollapse: 'collapse' as const,
+        fontSize: '12px',
     },
     th: {
-        textAlign: "center",
-        padding: "10px",
-        backgroundColor: "rgba(30, 30, 45, 0.9)",
-        borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
-        color: "#00ffff", // 시안 계열 포인트
-        fontWeight: "600",
-        fontSize: "12px",
+        textAlign: 'left' as const,
+        padding: '6px 10px',
+        backgroundColor: 'rgba(30, 35, 55, 0.9)',
+        borderBottom: '1px solid rgba(255,255,255,0.08)',
+        color: '#7aa2cc',
+        fontWeight: 600,
+        fontSize: '11px',
+        letterSpacing: '0.5px',
+        position: 'sticky' as const,
+        top: 0,
     },
-    td: {
-        textAlign: "center",
-        padding: "10px",
-        borderBottom: "1px solid rgba(255, 255, 255, 0.05)",
-        verticalAlign: "top",
-        wordBreak: "break-word",
-        whiteSpace: "pre-wrap",
-        fontSize: "12px",
-        color: "#e0e0e0",
+    row: {
+        borderBottom: '1px solid rgba(255,255,255,0.04)',
+    },
+    tdKey: {
+        padding: '6px 10px',
+        color: '#8899bb',
+        verticalAlign: 'top' as const,
+        fontSize: '12px',
+        whiteSpace: 'nowrap' as const,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        maxWidth: '150px',
+    },
+    tdValue: {
+        padding: '6px 10px',
+        color: '#dde8f0',
+        verticalAlign: 'top' as const,
+        fontSize: '12px',
+        wordBreak: 'break-all' as const,
+    },
+    valueText: {
+        display: 'block',
+    },
+    arrayToggle: {
+        background: 'rgba(0, 180, 255, 0.1)',
+        border: '1px solid rgba(0, 180, 255, 0.3)',
+        borderRadius: '4px',
+        color: '#5dd0ff',
+        cursor: 'pointer',
+        padding: '2px 8px',
+        fontSize: '11px',
+        display: 'inline-flex',
+        alignItems: 'center',
+    },
+    arrayList: {
+        marginTop: '6px',
+        display: 'flex',
+        flexDirection: 'column' as const,
+        gap: '2px',
+        maxHeight: '120px',
+        overflowY: 'auto' as const,
+    },
+    arrayItem: {
+        display: 'flex',
+        gap: '6px',
+        fontSize: '11px',
+        color: '#b0c4d8',
+    },
+    arrayIndex: {
+        color: '#5dd0ff',
+        minWidth: '18px',
+        fontVariantNumeric: 'tabular-nums',
     },
 } as const;
-
 
 export default PropertyModal;

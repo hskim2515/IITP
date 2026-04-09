@@ -8,7 +8,7 @@ import type { BufferGeometry } from "three";
  * 핵심 구현:
  *  - RTC(Relative-to-Center): ECEF float32 정밀도 문제 해결
  *  - GPU instanced draw: 모든 인스턴스 1회 DrawCall
- *  - 차종별 텍스처: GLB 내장 PNG를 vehicleType에 따라 선택
+ *  - 텍스처: 차종별로 분리된 GLB 파일의 첫 번째 material 텍스처를 그대로 사용
  */
 export default class VehiclePrimitive {
     // ─── Cesium 렌더링 리소스 ──────────────────────────────────────────────
@@ -54,15 +54,6 @@ export default class VehiclePrimitive {
     private cesiumTexture:  any = null;
     private hasTexture      = false;
 
-    /** vehicleType → GLB material name 매핑 (조정 가능) */
-    static VEHICLE_TYPE_TO_MATERIAL: Record<string, string> = {
-        'CAR':     'CAR_01',
-        'TAXI':    'CAR_02',
-        'BUS':     'CAR_06',
-        'TRUCK':   'CAR_07',
-        'MOTO':    'CAR_09',
-        'default': 'CAR_03',
-    };
 
     // ─── RTC 기준점 ───────────────────────────────────────────────────────
     private referenceCenter = new Cesium.Cartesian3();
@@ -539,26 +530,18 @@ export default class VehiclePrimitive {
     }
 
     /**
-     * vehicleType에 맞는 텍스처 이미지를 GLB 바이너리에서 추출.
-     * GLB에 해당 차종 material이 없으면 mesh 기본 material을 사용.
+     * GLB 바이너리에서 텍스처 이미지 추출.
+     * GLB가 차종별로 분리되어 있으므로 첫 번째 material의 텍스처를 그대로 사용.
      */
     private async extractTextureImage(
         gltfJson: any,
         arrayBuffer: ArrayBuffer,
         binOffset: number
     ): Promise<HTMLImageElement | null> {
-        // 차종별 material name → 없으면 mesh 기본 material
-        const targetName = VehiclePrimitive.VEHICLE_TYPE_TO_MATERIAL[this.vehicleType]
-            ?? VehiclePrimitive.VEHICLE_TYPE_TO_MATERIAL['default'];
+        // 첫 번째 mesh primitive의 material 사용
+        const matIndex = gltfJson.meshes?.[0]?.primitives?.[0]?.material ?? 0;
 
-        let matIndex = gltfJson.materials?.findIndex((m: any) => m.name === targetName) ?? -1;
-        if (matIndex < 0) {
-            // fallback: mesh 기본 material
-            matIndex = gltfJson.meshes?.[0]?.primitives?.[0]?.material ?? -1;
-        }
-        if (matIndex < 0) return null;
-
-        const texIndex = gltfJson.materials[matIndex]?.pbrMetallicRoughness?.baseColorTexture?.index;
+        const texIndex = gltfJson.materials?.[matIndex]?.pbrMetallicRoughness?.baseColorTexture?.index;
         if (texIndex === undefined) return null;
 
         const imgIndex = gltfJson.textures?.[texIndex]?.source;

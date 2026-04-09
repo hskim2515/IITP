@@ -41,6 +41,7 @@ export const layerNameToHistoryStoreMap: Record<string, HistoryStoreFactoryType>
     busRouteWeekday: useBusPtLineWeekdayHistoryStore,
     busRouteWeekend: useBusPtLineWeekendHistoryStore,
     railRoute: useRailPtLineHistoryStore,
+    simulationScenario: useSimulationScenarioHistoryStore,
 }
 
 const useHistoryInit = (reloadFlag:boolean) => {

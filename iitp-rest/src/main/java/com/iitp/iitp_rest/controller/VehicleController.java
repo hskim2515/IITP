@@ -51,6 +51,8 @@ public class VehicleController {
 
     /** 현재 비동기 생성 중인 scenarioKey 집합 */
     private final java.util.concurrent.ConcurrentHashMap<String, Boolean> generatingSet = new java.util.concurrent.ConcurrentHashMap<>();
+    /** 마지막 생성 실패 메시지 (scenarioKey → 에러메시지) */
+    private final java.util.concurrent.ConcurrentHashMap<String, String> failedSet = new java.util.concurrent.ConcurrentHashMap<>();
 
     @Value("${database.vehicle_sim.remoteUrl}")
     private String remoteUrl;
@@ -61,6 +63,12 @@ public class VehicleController {
             @PathVariable String scenarioKey) throws IOException {
 
         Scenario scenario = scenarioService.getScenarioByKey(scenarioKey);
+
+        if (scenario == null || scenario.getLatitude() == null || scenario.getLongitude() == null) {
+            logger.error("[generateVehicleRoute] scenarioKey={}의 기준 좌표(latitude/longitude)가 설정되지 않았습니다.", scenarioKey);
+            return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                    .body(Map.of("error", "시나리오 기준 좌표(latitude/longitude)가 설정되지 않았습니다: " + scenarioKey));
+        }
 
         String networkXmlUrl = remoteUrl + scenarioKey + "/network.xml";
         logger.info("[generateVehicleRoute] scenarioKey={}, networkXmlUrl={}", scenarioKey, networkXmlUrl);
@@ -92,7 +100,13 @@ public class VehicleController {
             converterCache.put(key, converter);
         });
 
-        Map<String, List<VehicleEvent>> grouped = vehicleDataReader.readVehicleEvent(scenarioKey).stream()
+        List<VehicleEvent> vehicleEvents = vehicleDataReader.readVehicleEvent(scenarioKey);
+        if (vehicleEvents.isEmpty()) {
+            logger.warn("[generateVehicleRoute] scenarioKey={}의 vehicle_sim.db 데이터가 없습니다. 시뮬레이션 결과 파일을 먼저 업로드해주세요.", scenarioKey);
+            throw new java.io.FileNotFoundException("시뮬레이션 결과 파일(vehicle_sim.db)이 없습니다: " + scenarioKey);
+        }
+
+        Map<String, List<VehicleEvent>> grouped = vehicleEvents.stream()
                 .collect(Collectors.groupingBy(VehicleEvent::getId));
 
         Map<String, VehicleInfo> vehicleInfoMap = vehicleDataReader.readVehicleInfoMap(scenarioKey);
@@ -372,6 +386,13 @@ public class VehicleController {
         Optional<VehicleRoute> optional = vehicleRouteService.getByVersionId(scenarioKey);
 
         if (optional.isEmpty()) {
+            // 이전 생성 실패 에러가 있으면 반환
+            String failMsg = failedSet.remove(scenarioKey);
+            if (failMsg != null) {
+                logger.warn("[vehicle-route] {} 이전 생성 실패 결과 반환: {}", scenarioKey, failMsg);
+                return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                        .body(Map.of("status", "failed", "message", failMsg));
+            }
             // 이미 생성 중이면 202 반환
             if (generatingSet.containsKey(scenarioKey)) {
                 logger.info("[vehicle-route] {} 생성 중, 202 반환", scenarioKey);
@@ -388,6 +409,7 @@ public class VehicleController {
                     logger.info("[vehicle-route] {} 생성 완료", scenarioKey);
                 } catch (Exception e) {
                     logger.error("[vehicle-route] {} 생성 실패: {}", scenarioKey, e.getMessage());
+                    failedSet.put(scenarioKey, e.getMessage() != null ? e.getMessage() : "알 수 없는 오류");
                 } finally {
                     generatingSet.remove(scenarioKey);
                 }

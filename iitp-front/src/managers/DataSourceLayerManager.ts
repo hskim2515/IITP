@@ -56,7 +56,7 @@ class DataSourceLayerManager {
         }
         toRemove.forEach(d => this.viewer.dataSources.remove(d, true));
 
-        ds.dataSource.show = basic;
+        if (ds.dataSource) ds.dataSource.show = basic;
         ds?.setVisible?.(basic);
         group.set(layerName, ds);
 

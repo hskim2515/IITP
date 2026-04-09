@@ -1,5 +1,5 @@
 import React, { memo, useCallback } from "react";
-import type { ColumnsType } from "antd/es/table";
+import type { ColDef, ICellRendererParams } from "ag-grid-community";
 
 import { LayerSchemaFieldResponse, SchemaColumn, SchemaDefinition, SchemaStructure } from "@type/openapi.gen";
 import { EditableCell } from "@component/schema/EditableCell";
@@ -37,19 +37,19 @@ export function getChildrenStructure(structure: SchemaStructure | null): string[
         .filter((name) => name.length > 0);
 }
 
-interface CellRendererProps {
+interface AgCellRendererProps {
+    data: any;
     field: LayerSchemaFieldResponse;
     column: SchemaColumn;
-    record: any;
     onCellUpdate: (record: any, partial: Partial<Record<string, any>>) => void;
 }
 
-const CellRenderer = memo(function CellRenderer({
+export const AgCellRenderer = memo(function AgCellRenderer({
+    data: record,
     field,
     column,
-    record,
     onCellUpdate,
-}: CellRendererProps) {
+}: AgCellRendererProps) {
     const handleUpdate = useCallback(
         (partial: Partial<LayerSchemaFieldResponse>) => {
             const entries = Object.entries(partial ?? {});
@@ -63,22 +63,23 @@ const CellRenderer = memo(function CellRenderer({
         [record, onCellUpdate, field.name]
     );
 
+    const fieldName = field.name ?? "";
     return (
         <EditableCell
             field={field}
             column={column}
-            value={record[field.name]}
+            value={record?.[fieldName]}
             onUpdate={handleUpdate}
         />
     );
 });
 
-/** definition 기반 컬럼 생성 */
+/** definition 기반 AG Grid ColDef 생성 */
 export function buildColumnsFromDefinition(
     definition: SchemaDefinition | null,
     columnSpecList: SchemaColumn[] | null,
     onCellUpdate: (record: any, updates: Partial<Record<string, any>>) => void
-): ColumnsType<any> {
+): ColDef[] {
     if (!definition?.fields) return [];
     return definition.fields
         .filter((f: LayerSchemaFieldResponse) => f?.status === "ACTIVE")
@@ -94,19 +95,19 @@ export function buildColumnsFromDefinition(
             };
 
             return {
-                title: field.name,
-                dataIndex: field.name,
-                key: field.name,
-                width: DEFAULT_CELL_WIDTH,
-                render: (_: any, record: any) => (
-                    <CellRenderer
+                headerName: field.name,
+                field: field.name,
+                width: colSpec?.width ?? DEFAULT_CELL_WIDTH,
+                resizable: true,
+                sortable: true,
+                cellRenderer: (params: ICellRendererParams) => (
+                    <AgCellRenderer
+                        data={params.data}
                         field={field}
                         column={columnForCell}
-                        record={record}
                         onCellUpdate={onCellUpdate}
                     />
                 ),
-                ...colSpec,
-            };
+            } as ColDef;
         });
 }

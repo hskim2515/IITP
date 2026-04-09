@@ -23,11 +23,15 @@ import { setModifyingFeature, clearModifyingFeature, reapplySelectionHighlight }
 const setMessage = useMessageStore.getState().setMessage;
 
 const modifyFeatureHandlersInternal = {
-    nodes: () => {
-    },
+    nodes: () => {},
+    links: () => {},
 
-    links: () => {
-    },
+    /** 네트워크 하위 요소: 테이블 편집 전용 */
+    lanes: () => {},
+    cells: () => {},
+    segments: () => {},
+    connections: () => {},
+    ports: () => {},
 
     busStations: (featureType: string) => {
         const network = useNetworkStore.getState().currentJsonData;
@@ -271,6 +275,23 @@ const modifyFeatureHandlersInternal = {
         return cleanup;
     },
 
+    /** 신호: 공간 이동 없이 테이블에서 nodeId 편집 — 별도 상호작용 불필요 */
+    signals: (_featureType: string) => {
+        // 신호 위치는 nodeId 기반으로 자동 계산되므로 드래그 수정 없음
+        return undefined;
+    },
+
+    /** 버스/철도 노선: 테이블에서 시퀀스 편집 */
+    busRoute: (_featureType: string) => { return undefined; },
+    railRoute: (_featureType: string) => { return undefined; },
+    lines: (_featureType: string) => { return undefined; },
+    routes: (_featureType: string) => { return undefined; },
+
+    /** SignalTod / SimulationScenario: 테이블 전용 편집 */
+    signalTod: (_featureType: string) => { return undefined; },
+    scenarios: (_featureType: string) => { return undefined; },
+    plans: (_featureType: string) => { return undefined; },
+
     exits: (featureType: string) => {
         const network = useNetworkStore.getState().currentJsonData;
 
@@ -408,7 +429,7 @@ export const modifyFeatureEventHandlers = (
         console.warn("`featureType` 인자는 필수입니다.");
         return;
     }
-    const handler = modifyFeatureHandlersInternal[featureType];
+    const handler = (modifyFeatureHandlersInternal as Record<string, ((ft: string) => (() => void) | undefined)>)[featureType];
     if (!handler) {
         console.warn("등록되지 않은 featureType:", featureType);
         return;

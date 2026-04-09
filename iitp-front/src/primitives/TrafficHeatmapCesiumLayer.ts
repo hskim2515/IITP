@@ -2,79 +2,92 @@ import * as Cesium from "cesium";
 import { Cartographic, Ellipsoid, Math as CesiumMath } from "cesium";
 import { fromLonLat } from "ol/proj";
 import { useNetworkStore } from "@stores/useNetworkStore";
+import { useHeatmapSettingStore } from "@stores/useHeatmapSettingStore";
 import { Link } from "@type/Network";
 import {
     TRAFFIC_EMA_DECAY,
     TRAFFIC_MAX_TRAFFIC,
     TRAFFIC_SNAP_DIST_M,
     TRAFFIC_UPDATE_INTERVAL,
+    NUM_TRAFFIC_BUCKETS,
+    emaToBucket,
     buildLinkSegments,
     findNearestLink,
     LinkSegment,
 } from "@features/TrafficHeatmapFeatureLayer";
 
-// 교통량 비율(0~1) → Cesium.Color (green → yellow → red)
-function cesiumTrafficColor(ema: number): Cesium.Color {
-    if (ema < 0.3) return new Cesium.Color(0.5, 0.5, 0.5, 0.25); // 미감지: 흐린 회색
-    const t = Math.min(ema / TRAFFIC_MAX_TRAFFIC, 1);
-    let r: number, g: number;
-    if (t < 0.5) { r = t * 2; g = 0.78; }
-    else          { r = 1.0;  g = 0.78 * (1 - (t - 0.5) * 2); }
-    return new Cesium.Color(r, g, 0, 0.85);
-}
+/* 버킷별 기본 선 두께 (exaggeration 1.0 기준, px) */
+const BUCKET_BASE_WIDTHS = [1.5, 3, 5, 7, 10];
 
-// 교통량에 따른 최대 벽 높이 (m)
-const MAX_WALL_HEIGHT = 80;
-// 벽 재빌드 주기 (프레임 수)
-const REBUILD_INTERVAL = 90;
+/* 재빌드 최소 간격 (ms) */
+const REBUILD_MIN_MS = 2000;
+
+function cesiumColorForBucket(bucket: number, colors: string[]): Cesium.Color {
+    if (bucket === 0) return Cesium.Color.fromCssColorString("#aaaaaa").withAlpha(0.25);
+    const hex = colors[bucket - 1] ?? "#ff2200";
+    return Cesium.Color.fromCssColorString(hex).withAlpha(0.9);
+}
 
 /**
  * 교통량 히트맵 Cesium 3D 레이어
- * - 도로 링크마다 WallGeometry로 수직 벽을 생성
- * - 벽 높이 = EMA 교통량 × MAX_WALL_HEIGHT
- * - 색상 = 초록(적음) → 노랑 → 빨강(많음)
+ * - WallGeometry 대신 GroundPolylinePrimitive (버킷별 색상/두께)
+ * - 버킷: 0=미감지, 1=낮음, 2=중간, 3=높음, 4=혼잡
+ * - useHeatmapSettingStore 연동 (colors, exaggeration)
+ * - 시간 기반 재빌드 (2초 간격)
  */
 export default class TrafficHeatmapCesiumLayer {
     layer      = "";
     layerGroup = "";
+    destroyed  = false;
 
-    private _show    = false;
-    private _scene   : Cesium.Scene;
-    private _links   : Link[] = [];
+    private _show = false;
+    private _scene: Cesium.Scene;
+    private _links: Link[] = [];
     private linkSegments: LinkSegment[] = [];
-    private emaByLink    = new Map<number, number>();
+    private emaByLink = new Map<number, number>();
 
-    // 현재 표시 중인 WallPrimitive
-    private _wallPrimitive: Cesium.Primitive | null = null;
-    // 비동기 빌드 중인 WallPrimitive
-    private _pendingPrimitive: Cesium.Primitive | null = null;
+    /* 버킷별 Primitive (bucket 0은 사용 안 함) */
+    private _bucketPrimitives: (Cesium.GroundPolylinePrimitive | null)[] =
+        new Array(NUM_TRAFFIC_BUCKETS).fill(null);
 
     private _pendingPositions: (number[] | null)[] | null = null;
     private _frameCount   = 0;
     private _needsRebuild = false;
+    private _lastRebuildTime = 0;
 
-    // ── show getter/setter ───────────────────────────────────────
+    private _settingsUnsubscribe: (() => void) | null = null;
+
     get show() { return this._show; }
     set show(val: boolean) {
         this._show = val;
-        if (this._wallPrimitive) this._wallPrimitive.show = val;
+        for (const p of this._bucketPrimitives) {
+            if (p) p.show = val;
+        }
     }
 
     constructor(viewer: Cesium.Viewer) {
         this._scene = viewer.scene;
         this._buildFromStore();
+
+        /* settings 변경 시 즉시 재빌드 */
+        this._settingsUnsubscribe = (useHeatmapSettingStore as any).subscribe(
+            (s: any) => [s.colors, s.exaggeration],
+            () => {
+                this._needsRebuild = true;
+                this._lastRebuildTime = 0; // throttle 해제
+            },
+        );
     }
 
     private _buildFromStore() {
         const network = (useNetworkStore.getState().currentJsonData
                       ?? useNetworkStore.getState().originData) as any;
         if (!network?.links) return;
-        this._links        = network.links as Link[];
-        this.linkSegments  = buildLinkSegments(this._links);
+        this._links       = network.links as Link[];
+        this.linkSegments = buildLinkSegments(this._links);
         this._links.forEach(l => this.emaByLink.set(l.id, 0));
     }
 
-    // ── ECEF → EPSG:3857 (nearest-link 매칭) ────────────────────
     private _ecefToOl(pos: number[]): number[] | null {
         try {
             const c = Cartographic.fromCartesian(
@@ -83,9 +96,8 @@ export default class TrafficHeatmapCesiumLayer {
         } catch { return null; }
     }
 
-    // ── EMA 업데이트 ─────────────────────────────────────────────
     private _updateEMA(positions: (number[] | null)[]) {
-        const snapDist2 = TRAFFIC_SNAP_DIST_M * TRAFFIC_SNAP_DIST_M;
+        const snapDist2  = TRAFFIC_SNAP_DIST_M * TRAFFIC_SNAP_DIST_M;
         const countByLink = new Map<number, number>();
 
         for (const pos of positions) {
@@ -103,90 +115,54 @@ export default class TrafficHeatmapCesiumLayer {
         }
     }
 
-    // ── WallGeometry 재빌드 ──────────────────────────────────────
-    private _rebuildWalls() {
-        const instances: Cesium.GeometryInstance[] = [];
+    private _rebuildPrimitives() {
+        const { colors, exaggeration } = useHeatmapSettingStore.getState();
+
+        /* 링크를 버킷별로 분류 */
+        const bucketPositions: Cesium.Cartesian3[][][] =
+            Array.from({ length: NUM_TRAFFIC_BUCKETS }, () => []);
 
         for (const link of this._links) {
-            const ema    = this.emaByLink.get(link.id) ?? 0;
-            const height = Math.max(1, Math.min(ema / TRAFFIC_MAX_TRAFFIC, 1) * MAX_WALL_HEIGHT);
-            const color  = cesiumTrafficColor(ema);
-
             if (!link.coordinates || link.coordinates.length < 2) continue;
-
-            const positions = link.coordinates.map(c =>
-                Cesium.Cartesian3.fromDegrees(c.lng, c.lat, 0));
-            const n = positions.length;
-
-            try {
-                const wall = new Cesium.WallGeometry({
-                    positions,
-                    minimumHeights : new Array(n).fill(0),
-                    maximumHeights : new Array(n).fill(height),
-                    granularity    : Cesium.Math.toRadians(0.1),
-                });
-                const geom = Cesium.WallGeometry.createGeometry(wall);
-                if (!geom) continue;
-
-                instances.push(new Cesium.GeometryInstance({
-                    geometry  : geom,
-                    attributes: {
-                        color: Cesium.ColorGeometryInstanceAttribute.fromColor(color),
-                    },
-                }));
-            } catch { /* skip degenerate geometry */ }
+            const ema    = this.emaByLink.get(link.id) ?? 0;
+            const bucket = emaToBucket(ema);
+            if (bucket === 0) continue; // 미감지 링크는 그리지 않음 (성능)
+            bucketPositions[bucket]!.push(
+                link.coordinates.map(c => Cesium.Cartesian3.fromDegrees(c.lng, c.lat))
+            );
         }
 
-        if (instances.length === 0) return;
+        /* 기존 primitives 제거 후 교체 */
+        for (let b = 1; b < NUM_TRAFFIC_BUCKETS; b++) {
+            const old = this._bucketPrimitives[b];
+            if (old && !old.isDestroyed()) this._scene.primitives.remove(old);
+            this._bucketPrimitives[b] = null;
 
-        // 이전 비동기 빌드 중인 primitive 정리
-        if (this._pendingPrimitive && !this._pendingPrimitive.isDestroyed()) {
-            this._scene.primitives.remove(this._pendingPrimitive);
-        }
+            const linkPosList = bucketPositions[b]!;
+            if (linkPosList.length === 0) continue;
 
-        this._pendingPrimitive = new Cesium.Primitive({
-            geometryInstances : instances,
-            appearance        : new Cesium.PerInstanceColorAppearance({
-                flat       : true,   // 조명 없이 flat shading (성능, 선명한 색)
-                translucent: true,
-            }),
-            asynchronous: false,     // WallGeometry 이미 계산 완료 → worker 불필요
-        });
-        this._pendingPrimitive.show = this._show;
-        this._scene.primitives.add(this._pendingPrimitive);
-    }
+            const width = (BUCKET_BASE_WIDTHS[b] ?? 3) * exaggeration;
+            const color = cesiumColorForBucket(b, colors);
 
-    // ── update (PrimitiveCollection이 매 프레임 호출) ────────────
-    update(_frameState: any) {
-        if (this.destroyed) return;
-        if (this.linkSegments.length === 0) { this._buildFromStore(); return; }
+            const instances = linkPosList.map(positions =>
+                new Cesium.GeometryInstance({
+                    geometry: new Cesium.GroundPolylineGeometry({ positions, width }),
+                })
+            );
 
-        this._frameCount++;
-
-        // EMA 업데이트
-        if (this._frameCount % TRAFFIC_UPDATE_INTERVAL === 0 && this._pendingPositions) {
-            this._updateEMA(this._pendingPositions);
-            this._needsRebuild = true;
-        }
-
-        // 비동기 pending primitive 완료 확인 → 교체
-        if (this._pendingPrimitive?.ready) {
-            if (this._wallPrimitive && !this._wallPrimitive.isDestroyed()) {
-                this._scene.primitives.remove(this._wallPrimitive);
-            }
-            this._wallPrimitive    = this._pendingPrimitive;
-            this._pendingPrimitive = null;
-            this._wallPrimitive.show = this._show;
-        }
-
-        // 주기적 재빌드
-        if (this._needsRebuild && this._frameCount % REBUILD_INTERVAL === 0) {
-            this._rebuildWalls();
-            this._needsRebuild = false;
+            const primitive = new Cesium.GroundPolylinePrimitive({
+                geometryInstances: instances,
+                appearance: new Cesium.PolylineMaterialAppearance({
+                    material: Cesium.Material.fromType("Color", { color }),
+                }),
+                show: this._show,
+            });
+            this._scene.primitives.add(primitive);
+            this._bucketPrimitives[b] = primitive;
         }
     }
 
-    // ── 외부 인터페이스 ─────────────────────────────────────────
+    // ── 외부 인터페이스 ─────────────────────────────────────────────
     public setLatestPositions(data: { positions: (number[] | null)[] }) {
         this._pendingPositions = data.positions;
     }
@@ -194,17 +170,36 @@ export default class TrafficHeatmapCesiumLayer {
     public setSpeed(_v: number) {}
     public setStatus(_s: any) {}
 
-    destroyed = false;
+    // ── update (PrimitiveCollection이 매 프레임 호출) ────────────────
+    update(_frameState: any) {
+        if (this.destroyed) return;
+        if (this.linkSegments.length === 0) { this._buildFromStore(); return; }
+
+        this._frameCount++;
+
+        /* EMA 업데이트 */
+        if (this._frameCount % TRAFFIC_UPDATE_INTERVAL === 0 && this._pendingPositions) {
+            this._updateEMA(this._pendingPositions);
+            this._needsRebuild = true;
+        }
+
+        /* 시간 기반 재빌드 (최대 2초 간격) */
+        const now = Date.now();
+        if (this._needsRebuild && now - this._lastRebuildTime >= REBUILD_MIN_MS) {
+            this._rebuildPrimitives();
+            this._lastRebuildTime = now;
+            this._needsRebuild = false;
+        }
+    }
 
     public destroy() {
+        if (this.destroyed) return;
         this.destroyed = true;
-        if (this._wallPrimitive && !this._wallPrimitive.isDestroyed()) {
-            this._scene.primitives.remove(this._wallPrimitive);
+        this._settingsUnsubscribe?.();
+        for (let b = 0; b < NUM_TRAFFIC_BUCKETS; b++) {
+            const p = this._bucketPrimitives[b];
+            if (p && !p.isDestroyed()) this._scene.primitives.remove(p);
         }
-        if (this._pendingPrimitive && !this._pendingPrimitive.isDestroyed()) {
-            this._scene.primitives.remove(this._pendingPrimitive);
-        }
-        this._wallPrimitive    = null;
-        this._pendingPrimitive = null;
+        this._bucketPrimitives = new Array(NUM_TRAFFIC_BUCKETS).fill(null);
     }
 }

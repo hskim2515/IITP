@@ -1,0 +1,139 @@
+/* ── 공통 인풋 스타일 ─────────────────────────────────────────── */
+.input,
+.textarea,
+.select {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    color: #c8ccd4;
+    font-size: 12px;
+    font-family: 'Segoe UI', sans-serif;
+    outline: none;
+    transition: border-color 0.15s, background 0.15s;
+    box-sizing: border-box;
+}
+
+.input,
+.select {
+    height: 26px;
+    padding: 0 7px;
+}
+
+.textarea {
+    padding: 4px 7px;
+    resize: vertical;
+    min-height: 26px;
+    max-height: 72px;
+    line-height: 1.4;
+}
+
+.input:focus,
+.textarea:focus,
+.select:focus {
+    border-color: rgba(65, 105, 225, 0.7);
+    background: rgba(65, 105, 225, 0.08);
+}
+
+.input:hover,
+.textarea:hover,
+.select:hover {
+    border-color: rgba(255, 255, 255, 0.22);
+}
+
+/* number 인풋 스피너 숨김 */
+.input[type="number"]::-webkit-inner-spin-button,
+.input[type="number"]::-webkit-outer-spin-button {
+    opacity: 0.3;
+}
+
+/* select 화살표 */
+.select {
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23888'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 7px center;
+    padding-right: 22px;
+    cursor: pointer;
+}
+
+.select option {
+    background: #1a1d2e;
+    color: #c8ccd4;
+}
+
+/* ── 체크박스 ─────────────────────────────────────────────────── */
+.checkboxWrap {
+    display: flex;
+    align-items: center;
+    height: 100%;
+}
+
+.checkbox {
+    width: 14px;
+    height: 14px;
+    accent-color: #4169E1;
+    cursor: pointer;
+}
+
+/* ── 태그 에디터 ──────────────────────────────────────────────── */
+.tagsWrap {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 3px;
+    min-height: 26px;
+    padding: 2px 5px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    cursor: text;
+    box-sizing: border-box;
+    width: 100%;
+}
+
+.tagsWrap:focus-within {
+    border-color: rgba(65, 105, 225, 0.7);
+    background: rgba(65, 105, 225, 0.08);
+}
+
+.tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: rgba(65, 105, 225, 0.2);
+    border: 1px solid rgba(65, 105, 225, 0.35);
+    border-radius: 3px;
+    color: #7aa2ff;
+    font-size: 11px;
+    padding: 1px 5px;
+    white-space: nowrap;
+}
+
+.tagRemove {
+    background: none;
+    border: none;
+    color: #7aa2ff;
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 1;
+    padding: 0;
+    opacity: 0.7;
+}
+
+.tagRemove:hover {
+    opacity: 1;
+}
+
+.tagInput {
+    flex: 1;
+    min-width: 60px;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: #c8ccd4;
+    font-size: 12px;
+    padding: 0 2px;
+    height: 20px;
+}

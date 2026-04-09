@@ -368,8 +368,13 @@ export default class NetworkFeatureLayer extends VectorLayer {
         }
         if (!prev.links?.length || !next.links?.length) return true;
 
-        // Fast path: 첫 링크 참조 동일 → 기존 링크들이 유지된 증분 변경 (도로 그리기)
-        if (next.links.length >= prev.links.length && next.links[0] === prev.links[0]) {
+        // 링크 수가 같으면서 어느 링크라도 참조가 달라진 경우 → 기존 링크 수정 (형상 편집 등) → 전체 재빌드
+        if (next.links.length === prev.links.length) {
+            return next.links.some((l, i) => l !== prev.links[i]);
+        }
+
+        // Fast path: append-only (도로 그리기) — 첫 링크 참조 동일이면 안전한 증분
+        if (next.links.length > prev.links.length && next.links[0] === prev.links[0]) {
             return false;
         }
 

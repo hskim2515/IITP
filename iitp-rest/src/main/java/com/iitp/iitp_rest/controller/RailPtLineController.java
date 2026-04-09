@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.controller;
 
+import com.iitp.iitp_rest.model.publicTransit.rail.RailPtLineXml;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerLog;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerSaveRequest;
 import com.iitp.iitp_rest.service.publicTransit.line.RailPtLineService;
@@ -7,7 +8,9 @@ import com.iitp.iitp_rest.service.xmllayer.XmlLayerConverter;
 import com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -62,6 +65,29 @@ public class RailPtLineController {
     public ResponseEntity<List<XmlLayerLog>> getHistories(@PathVariable String scenarioKey) {
         log.info("[RailPtLineController] GET histories scenarioKey={}", scenarioKey);
         return ResponseEntity.ok(xmlLayerVersionService.getLogs(LAYER_KEY, scenarioKey));
+    }
+
+    @GetMapping("/{scenarioKey}/export")
+    public ResponseEntity<byte[]> exportAsXml(@PathVariable String scenarioKey) {
+        try {
+            Map<String, Object> data = xmlLayerVersionService.getLatest(
+                    LAYER_KEY, scenarioKey,
+                    () -> {
+                        try { return XmlLayerConverter.toMap(railPtLineService.getByScenarioKey(scenarioKey)); }
+                        catch (java.io.IOException e) { throw new RuntimeException(e); }
+                    }
+            );
+            RailPtLineXml xml = XmlLayerConverter.fromMap(data, RailPtLineXml.class);
+            byte[] bytes = railPtLineService.marshalToXml(xml);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_XML);
+            headers.setContentDispositionFormData("attachment", "railPTLine_" + scenarioKey + ".xml");
+            headers.setContentLength(bytes.length);
+            return ResponseEntity.ok().headers(headers).body(bytes);
+        } catch (Exception e) {
+            log.error("[RailPtLineController] export 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 
     @PostMapping("/{scenarioKey}")

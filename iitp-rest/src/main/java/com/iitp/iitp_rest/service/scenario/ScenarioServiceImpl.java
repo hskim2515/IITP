@@ -73,6 +73,22 @@ public class ScenarioServiceImpl implements ScenarioService {
     }
 
     @Override
+    public void updateCoordinatesByKey(String key, double latitude, double longitude) {
+        // versionKey일 수도 있으므로 ScenarioVersion → Scenario 순으로 조회
+        Scenario scenario = versionRepository.findByKey(key)
+                .map(ScenarioVersion::getScenario)
+                .orElseGet(() -> scenarioRepository.findByKey(key).orElse(null));
+        if (scenario == null) {
+            log.warn("[ScenarioService] updateCoordinatesByKey: key={}에 해당하는 시나리오를 찾을 수 없습니다.", key);
+            return;
+        }
+        scenario.setLatitude(latitude);
+        scenario.setLongitude(longitude);
+        scenarioRepository.save(scenario);
+        log.info("[ScenarioService] 시나리오 좌표 업데이트: key={}, lat={}, lon={}", scenario.getKey(), latitude, longitude);
+    }
+
+    @Override
     public ScenarioVersion createVersion(Long scenarioId, String key, String label) {
         if (!key.matches("[A-Za-z0-9_]+")) {
             throw new IllegalArgumentException("버전 키는 영문자, 숫자, 밑줄(_)만 허용됩니다.");

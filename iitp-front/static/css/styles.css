@@ -625,25 +625,38 @@ body {
 }
 
 .grid-btn {
-    margin: 5px;
-    padding: 6px 12px;
-    border: none;
+    margin: 3px;
+    padding: 0 10px;
+    height: 24px;
     border-radius: 4px;
     cursor: pointer;
-    font-size: 14px;
-    color: white;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    border: 1px solid transparent;
+    transition: background 0.15s, border-color 0.15s;
 }
 .grid-btn.delete-btn {
-    background-color: #dc3545;
+    background: rgba(220, 53, 69, 0.15);
+    border-color: rgba(220, 53, 69, 0.35);
+    color: #f07070;
 }
 .grid-btn.delete-btn:hover {
-    background-color: #c82333;
+    background: rgba(220, 53, 69, 0.28);
+    border-color: rgba(220, 53, 69, 0.55);
+}
+.grid-btn.delete-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
 }
 .grid-btn.add-btn {
-    background-color: #28a745;
+    background: rgba(40, 167, 69, 0.15);
+    border-color: rgba(40, 167, 69, 0.35);
+    color: #6fcf97;
 }
 .grid-btn.add-btn:hover {
-    background-color: #218838;
+    background: rgba(40, 167, 69, 0.28);
+    border-color: rgba(40, 167, 69, 0.55);
 }
 
 .transparent-table .ant-table,

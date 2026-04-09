@@ -51,7 +51,7 @@ export default class BusRouteWeekendFeatureLayer extends VectorLayer {
     }
 
         public styleFunction(_feature: FeatureLike, _resolution: number): Style[] {
-        return [new Style({ stroke: new Stroke({ color: '#ffaa00', width: 2, lineDash: [4, 4] }) })];
+        return [new Style({ stroke: new Stroke({ color: '#ffaa00', width: 5, lineDash: [4, 4] }) })];
     }
 
     public async load(): Promise<void> {

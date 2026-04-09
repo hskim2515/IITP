@@ -60,7 +60,7 @@ export default class RailRouteFeatureLayer extends VectorLayer {
     }
 
     public styleFunction(_feature: FeatureLike, _resolution: number): Style[] {
-        return [new Style({ stroke: new Stroke({ color: '#0052a5', width: 3 }) })];
+        return [new Style({ stroke: new Stroke({ color: '#0052a5', width: 6 }) })];
     }
 
     public async load(): Promise<void> {

@@ -36,7 +36,7 @@ public class RailPtLineService {
     }
 
     public void saveByScenarioKey(String scenarioKey, RailPtLineXml data) throws Exception {
-        byte[] xmlBytes = marshal(data);
+        byte[] xmlBytes = marshalToXml(data);
         sftpFileManager.uploadFile(new ByteArrayInputStream(xmlBytes), scenarioKey, "railPTLine.xml");
         log.info("[RailPtLineService] SFTP 저장 완료: {}/railPTLine.xml", scenarioKey);
     }
@@ -51,7 +51,7 @@ public class RailPtLineService {
         }
     }
 
-    private byte[] marshal(RailPtLineXml data) throws JAXBException {
+    public byte[] marshalToXml(RailPtLineXml data) throws JAXBException {
         JAXBContext ctx = JAXBContext.newInstance(RailPtLineXml.class);
         Marshaller m = ctx.createMarshaller();
         m.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);

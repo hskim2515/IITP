@@ -29,26 +29,50 @@ const C_MARKER_STA   = Color.fromCssColorString("#0d47a1");
 const LOD_3D      = new Cesium.DistanceDisplayCondition(0.0, 400.0);
 const LOD_LABEL   = new Cesium.DistanceDisplayCondition(0.0, 600.0);
 const LOD_EXIT_LB = new Cesium.DistanceDisplayCondition(0.0, 180.0);
-const MARKER_SCALE_STA = new Cesium.NearFarScalar(50, 3.0, 4000, 0.3);
 const MARKER_SCALE_EX  = new Cesium.NearFarScalar(30, 2.0, 3000, 0.2);
-const FADE_OUT    = new Cesium.NearFarScalar(3000, 1.0, 5000, 0.0);
+const FADE_OUT_EX = new Cesium.NearFarScalar(3000, 1.0, 5000, 0.0);
+
+/* ── 역 중심 마커 아이콘 (모듈 레벨, 1회 생성) ── */
+const RAIL_STATION_ICON = (() => {
+    const size = 24;
+    const c = document.createElement("canvas");
+    c.width = size; c.height = size;
+    const ctx = c.getContext("2d")!;
+    const r = size / 2;
+    ctx.beginPath(); ctx.arc(r, r, r - 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = "#0052a5"; ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = "white";
+    ctx.font = `bold ${Math.round(size * 0.42)}px sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("R", r, r + 0.5);
+    return c.toDataURL();
+})();
+
+/* 역 중심 아이콘 표시 거리 (3D 모델이 사라지는 시점 이후) */
+const STATION_BB_NEAR = 400;
+const STATION_BB_FAR  = 10000;
+const STATION_BB_DDC  = new Cesium.DistanceDisplayCondition(STATION_BB_NEAR, STATION_BB_FAR);
 
 export default class RailStationDataSourceLayer {
     private readonly LAYER_NAME = "railStation";
     public readonly dataSource: CustomDataSource;
-    private markerCollection: Cesium.PointPrimitiveCollection;
-    private labelCollection:  Cesium.LabelCollection;
+    private stationMarkers: Cesium.BillboardCollection;
+    private exitMarkers:    Cesium.PointPrimitiveCollection;
+    private labelCollection: Cesium.LabelCollection;
     private unsubscribes: Array<() => void> = [];
     private destroyed = false;
     private needsReload = false;
 
     constructor(private viewer: Viewer) {
-        this.dataSource       = new CustomDataSource(this.LAYER_NAME);
-        this.markerCollection = new Cesium.PointPrimitiveCollection();
-        this.labelCollection  = new Cesium.LabelCollection();
+        this.dataSource     = new CustomDataSource(this.LAYER_NAME);
+        this.stationMarkers = new Cesium.BillboardCollection();
+        this.exitMarkers    = new Cesium.PointPrimitiveCollection();
+        this.labelCollection = new Cesium.LabelCollection();
 
         this.viewer.dataSources.add(this.dataSource);
-        this.viewer.scene.primitives.add(this.markerCollection);
+        this.viewer.scene.primitives.add(this.stationMarkers);
+        this.viewer.scene.primitives.add(this.exitMarkers);
         this.viewer.scene.primitives.add(this.labelCollection);
 
         this.load();
@@ -72,9 +96,10 @@ export default class RailStationDataSourceLayer {
     }
 
     public setVisible(visible: boolean): void {
-        this.dataSource.show       = visible;
-        this.markerCollection.show = visible;
-        this.labelCollection.show  = visible;
+        this.dataSource.show      = visible;
+        this.stationMarkers.show  = visible;
+        this.exitMarkers.show     = visible;
+        this.labelCollection.show = visible;
         if (visible && this.needsReload) this.load();
     }
 
@@ -90,7 +115,8 @@ export default class RailStationDataSourceLayer {
         }
         this.needsReload = false;
 
-        this.markerCollection.removeAll();
+        this.stationMarkers.removeAll();
+        this.exitMarkers.removeAll();
         this.labelCollection.removeAll();
 
         const store        = layerNameToStoreMap[this.LAYER_NAME];
@@ -222,15 +248,13 @@ export default class RailStationDataSourceLayer {
                     },
                 }));
 
-                // ② 역 중심 원거리 포인트 마커
-                this.markerCollection.add({
+                // ② 역 중심 원거리 아이콘 ("R" 빌보드)
+                this.stationMarkers.add({
                     position:                 Cesium.Cartesian3.fromDegrees(centroidLng, centroidLat, stH + 1.0),
-                    color:                    C_MARKER_STA,
-                    pixelSize:               14,
-                    outlineColor:             Cesium.Color.WHITE,
-                    outlineWidth:             2.5,
-                    scaleByDistance:          MARKER_SCALE_STA,
-                    translucencyByDistance:   FADE_OUT,
+                    image:                    RAIL_STATION_ICON,
+                    width:                    24,
+                    height:                   24,
+                    distanceDisplayCondition: STATION_BB_DDC,
                     disableDepthTestDistance: Number.POSITIVE_INFINITY,
                 });
 
@@ -257,14 +281,14 @@ export default class RailStationDataSourceLayer {
                     const exH = terrainHeightMap.get(coordKey(ex.lng, ex.lat)) ?? stH;
 
                     // ① 출구 원거리 마커
-                    this.markerCollection.add({
+                    this.exitMarkers.add({
                         position:                 Cesium.Cartesian3.fromDegrees(ex.lng, ex.lat, exH + 0.5),
                         color:                    C_MARKER_EXIT,
                         pixelSize:               8,
                         outlineColor:             Cesium.Color.WHITE,
                         outlineWidth:             1.5,
                         scaleByDistance:          MARKER_SCALE_EX,
-                        translucencyByDistance:   FADE_OUT,
+                        translucencyByDistance:   FADE_OUT_EX,
                         disableDepthTestDistance: Number.POSITIVE_INFINITY,
                     });
 
@@ -362,7 +386,8 @@ export default class RailStationDataSourceLayer {
         this.unsubscribes.forEach(u => u());
         this.unsubscribes = [];
         this.viewer.dataSources.remove(this.dataSource, true);
-        this.viewer.scene.primitives.remove(this.markerCollection);
+        this.viewer.scene.primitives.remove(this.stationMarkers);
+        this.viewer.scene.primitives.remove(this.exitMarkers);
         this.viewer.scene.primitives.remove(this.labelCollection);
     }
 }

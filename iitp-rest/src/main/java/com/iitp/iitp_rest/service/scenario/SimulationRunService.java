@@ -36,7 +36,7 @@ public class SimulationRunService {
     }
 
     public void saveByScenarioKey(String scenarioKey, SimulationRunXml data) throws Exception {
-        byte[] xmlBytes = marshal(data);
+        byte[] xmlBytes = marshalToXml(data);
         sftpFileManager.uploadFile(new ByteArrayInputStream(xmlBytes), scenarioKey, "scenario.xml");
         log.info("[SimulationRunService] SFTP 저장 완료: {}/scenario.xml", scenarioKey);
     }
@@ -51,7 +51,7 @@ public class SimulationRunService {
         }
     }
 
-    private byte[] marshal(SimulationRunXml data) throws JAXBException {
+    public byte[] marshalToXml(SimulationRunXml data) throws JAXBException {
         JAXBContext ctx = JAXBContext.newInstance(SimulationRunXml.class);
         Marshaller m = ctx.createMarshaller();
         m.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);

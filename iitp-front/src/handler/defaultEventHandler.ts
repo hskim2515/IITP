@@ -38,9 +38,10 @@ export const defaultEventHandlers ={
 
 
     handleCesiumSelect : (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
-        // 도로 그리기 / 커넥션 그리기 모드 중에는 선택 이벤트 무시
+        // 도로 그리기 / 커넥션 그리기 / 선택편집 모드 중에는 속성조회 이벤트 무시
         const drawStore = useNetworkDrawStore.getState();
-        if (drawStore.isActive || drawStore.isConnectionActive) return;
+        if (drawStore.isActive || drawStore.isConnectionActive || drawStore.isSelectActive) return;
+        if (useMenuStore.getState().activeSubmenu) return;
 
         const viewer = useCesiumStore.getState().viewer;
         if (!viewer) return;
@@ -74,6 +75,15 @@ export const defaultEventHandlers ={
                 } else {
                     setSelectedProps(null);
                 }
+            } else if (picked.id && typeof picked.id === 'object' && !(picked.id instanceof Cesium.Entity)) {
+                // PointPrimitive / Billboard 등 — id에 plain object가 설정된 경우 (버스정류장 마커, 신호 램프 등)
+                Object.assign(props, picked.id);
+                if (props.__guid || props.featureType) {
+                    setSelectedProps(props);
+                    setSelectedGuid(props.__guid ? [props.__guid] : []);
+                } else {
+                    setSelectedProps(null);
+                }
             } else {
                 setSelectedProps(null);
             }
@@ -83,6 +93,9 @@ export const defaultEventHandlers ={
     },
 
     handleOLSelect : (e: MapBrowserEvent<UIEvent>) => {
+        // 선택편집 모드 중에는 속성조회 이벤트 무시
+        if (useNetworkDrawStore.getState().isSelectActive) return;
+        if (useMenuStore.getState().activeSubmenu) return;
         const olMap = useOpenLayersStore.getState().map;
 
         if (!olMap) {

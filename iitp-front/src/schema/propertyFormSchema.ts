@@ -8,6 +8,8 @@ export interface FormField {
 export interface PropertyFormSchemaProps {
     type: string;
     layer?: string;
+    /** true이면 저장 시 currentJsonData 전체를 전송 (XML 기반 레이어). false/undefined이면 첫 번째 배열만 전송 */
+    fullData?: boolean;
     fields: FormField[];
     inputFields: FormField[];
     rowFields: FormField[];
@@ -123,6 +125,7 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
     NETWORK: {
         type:"table",
         layer: "network",
+        fullData: true,
         fields: [
             { name: "ffspeed", label: "Freeflow speed (km/h)", type: "number" },
             { name: "waveSpeed", label: "Wave speed (km/h)", type: "number" },
@@ -277,6 +280,7 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
     BUS_PT_LINE: {
         type: "table",
         layer: "busRoute",
+        fullData: true,
         fields: [
             { name: "id", label: "노선 ID", type: "text" },
             { name: "interval", label: "배차간격 (분)", type: "number" },
@@ -290,6 +294,7 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
     BUS_PT_LINE_WEEKDAY: {
         type: "table",
         layer: "busRouteWeekday",
+        fullData: true,
         fields: [
             { name: "id", label: "노선 ID", type: "text" },
             { name: "interval", label: "배차간격 (분)", type: "number" },
@@ -303,6 +308,7 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
     BUS_PT_LINE_WEEKEND: {
         type: "table",
         layer: "busRouteWeekend",
+        fullData: true,
         fields: [
             { name: "id", label: "노선 ID", type: "text" },
             { name: "interval", label: "배차간격 (분)", type: "number" },
@@ -316,6 +322,7 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
     RAIL_PT_LINE: {
         type: "table",
         layer: "railRoute",
+        fullData: true,
         fields: [
             { name: "id", label: "노선 ID", type: "number" },
             { name: "name", label: "노선명", type: "text" },
@@ -339,6 +346,7 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
     SIGNAL_TOD: {
         type: "table",
         layer: "signalTod",
+        fullData: true,
         fields: [
             { name: "nodeId", label: "교차로 ID", type: "text" },
             { name: "planId", label: "Plan ID", type: "number" },
@@ -350,6 +358,8 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
     },
     SIMULATION_SCENARIO: {
         type: "table",
+        layer: "simulationScenario",
+        fullData: true,
         fields: [
             { name: "id", label: "시나리오 ID", type: "number" },
             { name: "startTime", label: "시작 시간", type: "text" },

@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.controller;
 
+import com.iitp.iitp_rest.model.publicTransit.bus.BusPtLinesXml;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerLog;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerSaveRequest;
 import com.iitp.iitp_rest.service.publicTransit.line.BusPtLineService;
@@ -7,7 +8,9 @@ import com.iitp.iitp_rest.service.xmllayer.XmlLayerConverter;
 import com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -57,6 +60,12 @@ public class BusPtLineController {
         return saveResp(LAYER_KEY_DEFAULT, scenarioKey, req);
     }
 
+    @GetMapping("/{scenarioKey}/export")
+    public ResponseEntity<byte[]> export(@PathVariable String scenarioKey) {
+        return exportResp(scenarioKey, LAYER_KEY_DEFAULT, () -> ioWrap(() -> busPtLineService.getDefault(scenarioKey)),
+                "roadPTline_" + scenarioKey + ".xml");
+    }
+
     // ── weekday ──────────────────────────────────────────────────────
     @GetMapping("/weekday/{scenarioKey}")
     public ResponseEntity<Map<String, Object>> getWeekday(@PathVariable String scenarioKey) {
@@ -78,6 +87,12 @@ public class BusPtLineController {
         return saveResp(LAYER_KEY_WEEKDAY, scenarioKey, req);
     }
 
+    @GetMapping("/weekday/{scenarioKey}/export")
+    public ResponseEntity<byte[]> exportWeekday(@PathVariable String scenarioKey) {
+        return exportResp(scenarioKey, LAYER_KEY_WEEKDAY, () -> ioWrap(() -> busPtLineService.getWeekday(scenarioKey)),
+                "roadPTline-weekday_" + scenarioKey + ".xml");
+    }
+
     // ── weekend ──────────────────────────────────────────────────────
     @GetMapping("/weekend/{scenarioKey}")
     public ResponseEntity<Map<String, Object>> getWeekend(@PathVariable String scenarioKey) {
@@ -97,6 +112,12 @@ public class BusPtLineController {
     @PostMapping("/weekend/{scenarioKey}")
     public ResponseEntity<Void> saveWeekend(@PathVariable String scenarioKey, @RequestBody XmlLayerSaveRequest req) {
         return saveResp(LAYER_KEY_WEEKEND, scenarioKey, req);
+    }
+
+    @GetMapping("/weekend/{scenarioKey}/export")
+    public ResponseEntity<byte[]> exportWeekend(@PathVariable String scenarioKey) {
+        return exportResp(scenarioKey, LAYER_KEY_WEEKEND, () -> ioWrap(() -> busPtLineService.getWeekend(scenarioKey)),
+                "roadPTline-weekend_" + scenarioKey + ".xml");
     }
 
     // ── private helpers ──────────────────────────────────────────────
@@ -131,6 +152,23 @@ public class BusPtLineController {
             return ResponseEntity.ok().build();
         } catch (Exception e) {
             log.error("[BusPtLineController] 저장 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    private ResponseEntity<byte[]> exportResp(String key, String layerKey,
+                                               Supplier<Map<String, Object>> xmlFetcher, String filename) {
+        try {
+            Map<String, Object> data = xmlLayerVersionService.getLatest(layerKey, key, xmlFetcher);
+            BusPtLinesXml xml = XmlLayerConverter.fromMap(data, BusPtLinesXml.class);
+            byte[] bytes = busPtLineService.marshalToXml(xml);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_XML);
+            headers.setContentDispositionFormData("attachment", filename);
+            headers.setContentLength(bytes.length);
+            return ResponseEntity.ok().headers(headers).body(bytes);
+        } catch (Exception e) {
+            log.error("[BusPtLineController] export 오류 layerKey={}", layerKey, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

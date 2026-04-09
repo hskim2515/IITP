@@ -22,6 +22,7 @@ export default class NetworkDataSourceLayer {
 
     // featureType별 가시성 상태
     private featureTypeVisible: Record<string, boolean> = {};
+    private destroyed = false;
 
     // 레인 교차 음영 색상
     private static readonly LANE_COLORS = [
@@ -158,7 +159,12 @@ export default class NetworkDataSourceLayer {
     public load(): void {
         const store = layerNameToStoreMap[this.LAYER_NAME];
         const network: Network | undefined = store?.getState().currentJsonData;
-        if (!network || !network.nodes || !network.links) return;
+        if (!network || !network.nodes || !network.links) {
+            console.warn('[NetworkDataSourceLayer.load] 데이터 없음 또는 구조 불일치', network ? Object.keys(network) : 'null');
+            return;
+        }
+
+        console.log(`[NetworkDataSourceLayer.load] nodes=${network.nodes.length}, links=${network.links.length}, dataSource.show=${this.dataSource.show}`);
 
         if (!this.prevNetwork || this.isFullReplace(this.prevNetwork, network)) {
             this.fullBuild(network).catch(e => console.error("NetworkDataSourceLayer.fullBuild 에러:", e));
@@ -193,6 +199,7 @@ export default class NetworkDataSourceLayer {
     private async fullBuild(network: Network): Promise<void> {
         // 지형 고도 샘플링 (지형 없으면 즉시 반환)
         await this.sampleTerrainHeights(network);
+        if (this.destroyed) return; // await 이후 destroy된 경우 중단
 
         this.nodeEntityIds.clear();
         this.lanePositionMap.clear();
@@ -211,21 +218,20 @@ export default class NetworkDataSourceLayer {
         this.rebuildPrimitives(linkInstances, laneInstances, dividerInstances);
 
         // 노드·포트·커넥션 → DataSource Entity
-        if (!this.viewer.dataSources.contains(this.dataSource)) {
-            this.viewer.dataSources.add(this.dataSource);
+        // suspendEvents()+removeAll()은 렌더 틱과 race를 일으켜
+        // StaticGroundPolylinePerMaterialBatch 내부 _items에 undefined 슬롯을 만든다.
+        // viewer에서 완전히 제거 후 새 DataSource로 교체하면 배치 오염이 없다.
+        const wasShown = this.dataSource.show;
+        this.viewer.dataSources.remove(this.dataSource, true);
+        this.dataSource = new Cesium.CustomDataSource(this.LAYER_NAME);
+        this.dataSource.show = wasShown;
+        for (const node of network.nodes) {
+            this.buildNodeEntities(node, this.cachedLinkMap, this.cachedNodeMap);
         }
-        this.dataSource.entities.suspendEvents();
-        try {
-            this.dataSource.entities.removeAll();
-            for (const node of network.nodes) {
-                this.buildNodeEntities(node, this.cachedLinkMap, this.cachedNodeMap);
-            }
-            // 네트워크 로드 시 지형 depth test 비활성화
-            this.viewer.scene.globe.depthTestAgainstTerrain = false;
-        } finally {
-            this.dataSource.entities.resumeEvents();
-            try { this.viewer.scene.requestRender(); } catch (_) {}
-        }
+        this.viewer.dataSources.add(this.dataSource);
+        // 네트워크 로드 시 지형 depth test 비활성화
+        this.viewer.scene.globe.depthTestAgainstTerrain = false;
+        try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
     private rebuildPrimitives(
@@ -722,6 +728,7 @@ export default class NetworkDataSourceLayer {
     // 정리
     // ─────────────────────────────────────────────
     public destroy(): void {
+        this.destroyed = true;
         // 레이어 제거 시 지형 depth test 복원
         try { this.viewer.scene.globe.depthTestAgainstTerrain = true; } catch (_) {}
         this.unsubscribe?.();

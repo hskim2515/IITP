@@ -24,33 +24,48 @@ const C_SIGN      = Color.fromCssColorString("#00838f");   // 청록 (한국 버
 const C_SIGN_TOP  = Color.fromCssColorString("#ffe082");   // 황색 상단 밴드
 const C_PLATFORM  = Color.fromCssColorString("#e0e0e0").withAlpha(0.9);
 const C_SHELTER   = Color.fromCssColorString("#b3e5fc").withAlpha(0.55);
-const C_MARKER    = Color.fromCssColorString("#00acc1");   // 원거리 마커 색상
 
 /* ── LOD 거리 조건 ── */
 // 3D 디테일: 400m 이내에서만 표시
 const DETAIL_DIST = new Cesium.DistanceDisplayCondition(0.0, 400.0);
 // 라벨: 120m 이내
 const LABEL_DIST  = new Cesium.DistanceDisplayCondition(0.0, 120.0);
-// 마커 포인트: 항상 표시 (LOD 없음), scaleByDistance로 크기 조절
-const MARKER_SCALE = new Cesium.NearFarScalar(50, 2.0, 3000, 0.4);
-const MARKER_ALPHA = new Cesium.NearFarScalar(2500, 1.0, 5000, 0.0);
+// 빌보드 ("B" 아이콘): 3D 모델이 사라지는 지점 이후
+const STATION_BB_DDC = new Cesium.DistanceDisplayCondition(400, 10000);
+
+/* ── 버스정류장 아이콘 (모듈 레벨, 1회 생성) ── */
+const BUS_STATION_ICON = (() => {
+    const size = 22;
+    const c = document.createElement("canvas");
+    c.width = size; c.height = size;
+    const ctx = c.getContext("2d")!;
+    const r = size / 2;
+    ctx.beginPath(); ctx.arc(r, r, r - 1.5, 0, Math.PI * 2);
+    ctx.fillStyle = "#00838f"; ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = "white";
+    ctx.font = `bold ${Math.round(size * 0.45)}px sans-serif`;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("B", r, r + 0.5);
+    return c.toDataURL();
+})();
 
 export default class BusStationDataSourceLayer {
     private readonly LAYER_NAME = "busStation";
     public readonly dataSource: CustomDataSource;
-    private markerCollection:  Cesium.PointPrimitiveCollection;
-    private labelCollection:   Cesium.LabelCollection;
+    private stationMarkers: Cesium.BillboardCollection;
+    private labelCollection: Cesium.LabelCollection;
     private unsubscribes: Array<() => void> = [];
     private destroyed = false;
     private needsReload = false;
 
     constructor(private viewer: Viewer) {
         this.dataSource     = new CustomDataSource(this.LAYER_NAME);
-        this.markerCollection = new Cesium.PointPrimitiveCollection();
-        this.labelCollection  = new Cesium.LabelCollection();
+        this.stationMarkers = new Cesium.BillboardCollection();
+        this.labelCollection = new Cesium.LabelCollection();
 
         this.viewer.dataSources.add(this.dataSource);
-        this.viewer.scene.primitives.add(this.markerCollection);
+        this.viewer.scene.primitives.add(this.stationMarkers);
         this.viewer.scene.primitives.add(this.labelCollection);
 
         this.load();
@@ -75,9 +90,9 @@ export default class BusStationDataSourceLayer {
     }
 
     public setVisible(visible: boolean): void {
-        this.dataSource.show       = visible;
-        this.markerCollection.show = visible;
-        this.labelCollection.show  = visible;
+        this.dataSource.show      = visible;
+        this.stationMarkers.show  = visible;
+        this.labelCollection.show = visible;
         if (visible && this.needsReload) this.load();
     }
 
@@ -89,7 +104,7 @@ export default class BusStationDataSourceLayer {
         if (!this.dataSource.show) { this.needsReload = true; return; }
         this.needsReload = false;
 
-        this.markerCollection.removeAll();
+        this.stationMarkers.removeAll();
         this.labelCollection.removeAll();
 
         const store        = layerNameToStoreMap[this.LAYER_NAME];
@@ -138,6 +153,7 @@ export default class BusStationDataSourceLayer {
             parkingEnd: Cesium.Cartesian3;
             platformLength: number;
             stationName: string;
+            station: any;
         }
         const entries: StationEntry[] = [];
 
@@ -171,7 +187,7 @@ export default class BusStationDataSourceLayer {
             const lng   = Cesium.Math.toDegrees(carto.longitude);
             const lat   = Cesium.Math.toDegrees(carto.latitude);
             const stationName = (station as any).name ?? (station as any).stationName ?? "";
-            entries.push({ lng, lat, offsetPosition, parkingEnd, platformLength, stationName });
+            entries.push({ lng, lat, offsetPosition, parkingEnd, platformLength, stationName, station });
         }
 
         if (!entries.length) return;
@@ -208,18 +224,17 @@ export default class BusStationDataSourceLayer {
             this.dataSource.entities.removeAll();
 
             for (const e of entries) {
-                const { lng, lat, offsetPosition, parkingEnd, platformLength, stationName } = e;
+                const { lng, lat, offsetPosition, parkingEnd, platformLength, stationName, station } = e;
                 const baseH = terrainHeightMap.get(key(lng, lat)) ?? 0;
 
-                /* ① 원거리 포인트 마커 */
-                this.markerCollection.add({
+                /* ① 원거리 아이콘 마커 ("B" 빌보드) */
+                this.stationMarkers.add({
+                    id:                       station,
                     position:                 Cesium.Cartesian3.fromDegrees(lng, lat, baseH + 0.5),
-                    color:                    C_MARKER.clone(),
-                    pixelSize:               10,
-                    outlineColor:             Cesium.Color.WHITE,
-                    outlineWidth:             1.5,
-                    scaleByDistance:          MARKER_SCALE,
-                    translucencyByDistance:   MARKER_ALPHA,
+                    image:                    BUS_STATION_ICON,
+                    width:                    22,
+                    height:                   22,
+                    distanceDisplayCondition: STATION_BB_DDC,
                     disableDepthTestDistance: Number.POSITIVE_INFINITY,
                 });
 
@@ -255,7 +270,7 @@ export default class BusStationDataSourceLayer {
                 (poleE as any).distanceDisplayCondition = DETAIL_DIST;
                 this.dataSource.entities.add(poleE);
 
-                /* ④ 표지판 본체 — 청록색 (400m 이내) */
+                /* ④ 표지판 본체 — 청록색 (400m 이내), properties로 station 데이터 포함 */
                 const signE = new Entity({
                     position: Cesium.Cartesian3.fromDegrees(lng, lat, baseH + POLE_HEIGHT + SIGN_H / 2),
                     box: {
@@ -263,6 +278,17 @@ export default class BusStationDataSourceLayer {
                         material: C_SIGN,
                         outline: false,
                     },
+                    properties: new Cesium.PropertyBag({
+                        __guid:      station.__guid,
+                        featureType: station.featureType ?? 'busStations',
+                        id:          station.id,
+                        linkRef:     station.linkRef,
+                        laneRef:     station.laneRef,
+                        offset:      station.offset,
+                        address:     station.address,
+                        transitMode: station.transitMode,
+                        type:        station.type,
+                    }),
                 });
                 (signE as any).distanceDisplayCondition = DETAIL_DIST;
                 this.dataSource.entities.add(signE);
@@ -323,7 +349,7 @@ export default class BusStationDataSourceLayer {
         this.unsubscribes.forEach(u => u());
         this.unsubscribes = [];
         this.viewer.dataSources.remove(this.dataSource, true);
-        this.viewer.scene.primitives.remove(this.markerCollection);
+        this.viewer.scene.primitives.remove(this.stationMarkers);
         this.viewer.scene.primitives.remove(this.labelCollection);
     }
 }

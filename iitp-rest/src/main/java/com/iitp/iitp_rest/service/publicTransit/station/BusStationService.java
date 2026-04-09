@@ -88,6 +88,38 @@ public class BusStationService {
         busStationLogsRepository.save(entityLog);
     }
 
+    /**
+     * DB(또는 XML fallback) 데이터를 PublicTransitXml로 변환 후 marshal
+     */
+    public byte[] exportAsXml(String versionId) throws Exception {
+        PublicTransitResponse response = getBusStationsByVersionId(versionId);
+        PublicTransitXml xml = toPublicTransitXml(response.getBusStations());
+        return busStationJaxbParser.marshal(xml);
+    }
+
+    private PublicTransitXml toPublicTransitXml(List<BusStationResponse> stations) {
+        List<BusStationXml> xmlStations = stations.stream().map(r -> {
+            BusStationXml x = new BusStationXml();
+            try { x.setId(Long.parseLong(r.getId())); } catch (Exception ignore) {}
+            x.setTransitMode(r.getTransitMode());
+            x.setLinkRef(r.getLinkRef());
+            x.setLaneRef(r.getLaneRef() != null ? String.valueOf(r.getLaneRef()) : null);
+            x.setOffset(r.getOffset());
+            x.setType(r.getType());
+            x.setParkingLots(r.getParkingLots() != null ? String.valueOf(r.getParkingLots()) : null);
+            x.setCenter(r.getCenter());
+            if (r.getLine() != null) {
+                BusLineXml line = new BusLineXml();
+                line.setList(r.getLine().getList());
+                x.setLine(line);
+            }
+            return x;
+        }).toList();
+        PublicTransitXml xml = new PublicTransitXml();
+        xml.setBusStations(xmlStations);
+        return xml;
+    }
+
     private PublicTransitResponse getFromXml(String versionId) throws IOException {
         InputStream is = new URL(remoteUrl + versionId + "/roadStation.xml").openStream();
         PublicTransitXml xml = busStationJaxbParser.parse(is);

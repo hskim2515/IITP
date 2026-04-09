@@ -56,6 +56,7 @@ export const layerNameToStoreMap: Record<string, FeatureStoreFactoryType<any>> =
     busRouteWeekday: useBusPtLineWeekdayStore,
     busRouteWeekend: useBusPtLineWeekendStore,
     railRoute: useRailPtLineStore,
+    simulationScenario: useSimulationScenarioStore,
 }
 
 const useLayerInit = (): void => {

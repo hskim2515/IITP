@@ -57,11 +57,15 @@ public class XmlLayerVersionService {
     }
 
     /**
-     * 항상 XML 원본 반환 (HistoryModal 복원 기준점).
+     * HistoryModal 복원 기준점 반환.
+     * DB에 슬라이딩 origin이 저장돼 있으면 그것을 반환, 없으면 XML 원본 반환.
      */
     public Map<String, Object> getOrigin(String layerKey, String versionId,
                                           Supplier<Map<String, Object>> xmlFetcher) {
-        return xmlFetcher.get();
+        return versionRepo.findByLayerKeyAndVersionId(layerKey, versionId + ":origin")
+                .filter(v -> v.getData() != null && !v.getData().isEmpty())
+                .map(XmlLayerVersion::getData)
+                .orElseGet(xmlFetcher);
     }
 
     /**
@@ -72,7 +76,10 @@ public class XmlLayerVersionService {
     }
 
     /**
-     * DB 저장 + 변경 로그 추가 (max 10 유지).
+     * DB 저장 + 변경 로그 추가 (max 10 유지, 슬라이딩 윈도우 origin 관리).
+     *
+     * <p>로그가 max에 도달하면 오래된 로그를 삭제하고, origin_data를 현재 상태로 갱신한다.
+     * 이렇게 하면 HistoryModal이 "origin + 남은 로그"로 정확하게 복원할 수 있다.</p>
      *
      * @param layerKey  레이어 식별자
      * @param versionId 버전/시나리오 키
@@ -82,7 +89,7 @@ public class XmlLayerVersionService {
     @Transactional
     public void save(String layerKey, String versionId,
                      Map<String, Object> data, LogsData logs) {
-        // 1. LATEST 버전 갱신 (upsert)
+        // 1. LATEST 갱신 (upsert)
         XmlLayerVersion entity = versionRepo.findByLayerKeyAndVersionId(layerKey, versionId)
                 .orElse(XmlLayerVersion.builder()
                         .layerKey(layerKey)
@@ -91,10 +98,20 @@ public class XmlLayerVersionService {
         entity.setData(data);
         versionRepo.save(entity);
 
-        // 2. 로그 max 초과 시 오래된 것 삭제
+        // 2. 로그 max 초과 시 슬라이딩 윈도우: origin 갱신 + 오래된 로그 삭제
         List<XmlLayerLog> existingLogs =
                 logRepo.findByLayerKeyAndVersionIdOrderByCreatedAtAsc(layerKey, versionId);
         if (existingLogs.size() >= MAX_LOGS) {
+            // origin = 현재 LATEST (이후 HistoryModal의 복원 기준점)
+            XmlLayerVersion origin = versionRepo
+                    .findByLayerKeyAndVersionId(layerKey, versionId + ":origin")
+                    .orElse(XmlLayerVersion.builder()
+                            .layerKey(layerKey)
+                            .versionId(versionId + ":origin")
+                            .build());
+            origin.setData(data);
+            versionRepo.save(origin);
+
             int removeCount = existingLogs.size() - MAX_LOGS + 1;
             logRepo.deleteAll(existingLogs.subList(0, removeCount));
         }

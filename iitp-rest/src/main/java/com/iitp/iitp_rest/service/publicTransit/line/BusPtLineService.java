@@ -52,7 +52,7 @@ public class BusPtLineService {
     }
 
     private void upload(String scenarioKey, String fileName, BusPtLinesXml data) throws Exception {
-        byte[] xmlBytes = marshal(data);
+        byte[] xmlBytes = marshalToXml(data);
         sftpFileManager.uploadFile(new ByteArrayInputStream(xmlBytes), scenarioKey, fileName);
         log.info("[BusPtLineService] SFTP 저장 완료: {}/{}", scenarioKey, fileName);
     }
@@ -75,7 +75,7 @@ public class BusPtLineService {
         }
     }
 
-    private byte[] marshal(BusPtLinesXml data) throws JAXBException {
+    public byte[] marshalToXml(BusPtLinesXml data) throws JAXBException {
         JAXBContext ctx = JAXBContext.newInstance(BusPtLinesXml.class);
         Marshaller m = ctx.createMarshaller();
         m.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);

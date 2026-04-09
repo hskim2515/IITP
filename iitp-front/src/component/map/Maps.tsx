@@ -8,6 +8,7 @@ import useMapSync from "@hooks/sync/useMapSync";
 import useLayer from "@hooks/useLayer";
 import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
 import { useLayerStore } from "@stores/useLayerStore";
+import { useMapStore } from "@stores/useMapStore";
 import useLayerInit from "@hooks/useLayerInit";
 import useDefaultSelect from "@hooks/sync/select/useDefaultSelect";
 import '../../App.css'
@@ -16,15 +17,17 @@ import styles from "@css/Maps.module.css"
 import Divider from "@component/map/Divider";
 import ToolsPanel from "@component/tool/ToolsPanel";
 import { useNetworkDraw } from "@hooks/useNetworkDraw";
+import { useNetworkSelect } from "@hooks/useNetworkSelect";
 import { useOsmBboxDraw } from "@hooks/useOsmBboxDraw";
+import NodeContextMenu from "@component/tool/NodeContextMenu";
 
 interface MapsProps {
     singleMapMode?: boolean;
-    mapMode?: '2D' | '3D';
-    onMapModeChange?: (mode: '2D' | '3D') => void;
 }
 
-const Maps = ({ singleMapMode = false, mapMode = '2D', onMapModeChange }: MapsProps) => {
+const Maps = ({ singleMapMode = false }: MapsProps) => {
+    const mapViewMode = useMapStore((s) => s.mapViewMode);
+    const setMapViewMode = useMapStore((s) => s.setMapViewMode);
 
     const containerRef = useRef<HTMLDivElement | null>(null);
     const openlayersMapRef = useRef<HTMLDivElement | undefined>(undefined);
@@ -48,6 +51,7 @@ const Maps = ({ singleMapMode = false, mapMode = '2D', onMapModeChange }: MapsPr
     useDefaultSelect();
     useDefaultMoveMouse();
     useNetworkDraw();
+    useNetworkSelect();
     useOsmBboxDraw();
 
     const getContainerWidth = useCallback(() => {
@@ -100,24 +104,28 @@ const Maps = ({ singleMapMode = false, mapMode = '2D', onMapModeChange }: MapsPr
     const leftWidth = `${dividerX}px`;
     const rightWidth = `${Math.max(containerWidth - (dividerX ?? 0), 0)}px`;
 
-    // singleMapMode: 두 지도를 absolute로 겹쳐두고 visibility로 전환.
+    // 두 지도를 absolute로 겹쳐두고 visibility로 전환.
     // width:0 으로 숨기면 WebGL 컨텍스트가 중단되어 preRender 이벤트가 멈추고
     // 시뮬레이션 업데이트 루프가 끊기기 때문에 이 방식을 사용.
-    const olStyle = singleMapMode
+    const useStackedLayout = singleMapMode || mapViewMode !== 'split';
+    const olVisible = mapViewMode !== '3D';
+    const cesiumVisible = mapViewMode !== '2D';
+
+    const olStyle = useStackedLayout
         ? {
             position: 'absolute' as const, inset: 0,
-            visibility: mapMode === '2D' ? 'visible' as const : 'hidden' as const,
-            pointerEvents: mapMode === '2D' ? 'auto' as const : 'none' as const,
-            zIndex: mapMode === '2D' ? 1 : 0,
+            visibility: olVisible ? 'visible' as const : 'hidden' as const,
+            pointerEvents: olVisible ? 'auto' as const : 'none' as const,
+            zIndex: olVisible ? 1 : 0,
           }
         : { width: leftWidth, transition: isResizing.current ? "none" : "width 0.3s ease" };
 
-    const cesiumStyle = singleMapMode
+    const cesiumStyle = useStackedLayout
         ? {
             position: 'absolute' as const, inset: 0,
-            visibility: mapMode === '3D' ? 'visible' as const : 'hidden' as const,
-            pointerEvents: mapMode === '3D' ? 'auto' as const : 'none' as const,
-            zIndex: mapMode === '3D' ? 1 : 0,
+            visibility: cesiumVisible ? 'visible' as const : 'hidden' as const,
+            pointerEvents: cesiumVisible ? 'auto' as const : 'none' as const,
+            zIndex: cesiumVisible ? 1 : 0,
           }
         : { width: rightWidth, transition: isResizing.current ? "none" : "width 0.3s ease" };
 
@@ -126,7 +134,7 @@ const Maps = ({ singleMapMode = false, mapMode = '2D', onMapModeChange }: MapsPr
     return (
         <div
             ref={containerRef}
-            className={`${styles['container']} ${singleMapMode ? styles['containerSingle'] : ''}`}
+            className={`${styles['container']} ${useStackedLayout ? styles['containerSingle'] : ''}`}
         >
             {isLoading && (
                 <div style={{
@@ -150,23 +158,30 @@ const Maps = ({ singleMapMode = false, mapMode = '2D', onMapModeChange }: MapsPr
                 </div>
             )}
             <ToolsPanel/>
+            <NodeContextMenu/>
 
-            {singleMapMode && (
-                <div className={styles.mapModeToggle}>
+            <div className={styles.mapModeToggle}>
+                <button
+                    className={mapViewMode === '2D' ? styles.mapModeBtnActive : styles.mapModeBtn}
+                    onClick={() => setMapViewMode('2D')}
+                >
+                    2D
+                </button>
+                {!singleMapMode && (
                     <button
-                        className={mapMode === '2D' ? styles.mapModeBtnActive : styles.mapModeBtn}
-                        onClick={() => onMapModeChange?.('2D')}
+                        className={mapViewMode === 'split' ? styles.mapModeBtnActive : styles.mapModeBtn}
+                        onClick={() => setMapViewMode('split')}
                     >
-                        2D
+                        분할
                     </button>
-                    <button
-                        className={mapMode === '3D' ? styles.mapModeBtnActive : styles.mapModeBtn}
-                        onClick={() => onMapModeChange?.('3D')}
-                    >
-                        3D
-                    </button>
-                </div>
-            )}
+                )}
+                <button
+                    className={mapViewMode === '3D' ? styles.mapModeBtnActive : styles.mapModeBtn}
+                    onClick={() => setMapViewMode('3D')}
+                >
+                    3D
+                </button>
+            </div>
 
             <MapOL
                 ref={openlayersMapRef}
@@ -174,7 +189,7 @@ const Maps = ({ singleMapMode = false, mapMode = '2D', onMapModeChange }: MapsPr
                 className={styles['map']}
             />
 
-            {!singleMapMode && <Divider onMouseDown={handleMouseDown}/>}
+            {!singleMapMode && mapViewMode === 'split' && <Divider onMouseDown={handleMouseDown}/>}
 
             <MapCesium
                 ref={cesiumMapRef}

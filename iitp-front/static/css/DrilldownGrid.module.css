@@ -43,3 +43,33 @@
     min-width: 0; /* 이 줄도 필수입니다 */
     overflow: hidden;
 }
+
+/* ── 빈 데이터 안내 ─────────────────────────────────────────────── */
+.emptyWrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 10px;
+    color: #555;
+    padding: 40px 20px;
+}
+
+.emptyIcon {
+    font-size: 32px;
+    opacity: 0.4;
+}
+
+.emptyTitle {
+    font-size: 13px;
+    color: #666;
+    font-weight: 500;
+}
+
+.emptyDesc {
+    font-size: 11px;
+    color: #444;
+    text-align: center;
+    line-height: 1.6;
+}

@@ -153,4 +153,44 @@ public class SignalService {
         return signalVersionsRepository.findByVersionIdAndVersionRole(versionId,BaseVersion.VersionRole.ORIGIN).orElse(new SignalVersion());
     }
 
+    /**
+     * List&lt;SignalResponse&gt; (flat) → SignalXml (계층구조) 역변환.
+     * nodeId 별로 그룹핑, 같은 turnId 는 connList 문자열로 합침.
+     */
+    public SignalXml toSignalXml(List<SignalResponse> responses) {
+        // nodeId → (turnId → TurnListXml)
+        Map<String, Map<String, SignalXml.TurnListXml>> nodeMap = new LinkedHashMap<>();
+        for (SignalResponse r : responses) {
+            String nid = r.getNodeId() != null ? r.getNodeId() : "";
+            String tid = r.getTurnId() != null ? r.getTurnId() : "";
+            nodeMap.computeIfAbsent(nid, k -> new LinkedHashMap<>());
+            Map<String, SignalXml.TurnListXml> turnMap = nodeMap.get(nid);
+            SignalXml.TurnListXml turn = turnMap.computeIfAbsent(tid, k -> {
+                SignalXml.TurnListXml t = new SignalXml.TurnListXml();
+                t.setId(tid);
+                t.setTurning(r.getTurning());
+                t.setType(r.getType());
+                t.setConnList("");
+                return t;
+            });
+            // connList 에 connectionId 추가
+            if (r.getConnectionId() != null && !r.getConnectionId().isEmpty()) {
+                String existing = turn.getConnList() != null ? turn.getConnList().trim() : "";
+                turn.setConnList(existing.isEmpty() ? r.getConnectionId() : existing + " " + r.getConnectionId());
+            }
+        }
+
+        List<SignalXml.SignalNodeXml> nodes = new ArrayList<>();
+        for (Map.Entry<String, Map<String, SignalXml.TurnListXml>> entry : nodeMap.entrySet()) {
+            SignalXml.SignalNodeXml node = new SignalXml.SignalNodeXml();
+            try { node.setId(Long.parseLong(entry.getKey())); } catch (NumberFormatException ignore) {}
+            node.setTurns(new ArrayList<>(entry.getValue().values()));
+            nodes.add(node);
+        }
+
+        SignalXml xml = new SignalXml();
+        xml.setNode(nodes);
+        return xml;
+    }
+
 }

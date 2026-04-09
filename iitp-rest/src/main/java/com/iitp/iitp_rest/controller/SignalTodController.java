@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.controller;
 
+import com.iitp.iitp_rest.model.signal.SignalTodXml;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerLog;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerSaveRequest;
 import com.iitp.iitp_rest.service.signal.SignalTodService;
@@ -7,7 +8,9 @@ import com.iitp.iitp_rest.service.xmllayer.XmlLayerConverter;
 import com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -66,6 +69,30 @@ public class SignalTodController {
     public ResponseEntity<List<XmlLayerLog>> getHistories(@PathVariable String scenarioKey) {
         log.info("[SignalTodController] GET histories scenarioKey={}", scenarioKey);
         return ResponseEntity.ok(xmlLayerVersionService.getLogs(LAYER_KEY, scenarioKey));
+    }
+
+    /** 현재 DB(또는 XML) 데이터를 signalTOD.xml 파일로 내보내기 */
+    @GetMapping("/{scenarioKey}/export")
+    public ResponseEntity<byte[]> exportAsXml(@PathVariable String scenarioKey) {
+        try {
+            Map<String, Object> data = xmlLayerVersionService.getLatest(
+                    LAYER_KEY, scenarioKey,
+                    () -> {
+                        try { return XmlLayerConverter.toMap(signalTodService.getByScenarioKey(scenarioKey)); }
+                        catch (java.io.IOException e) { throw new RuntimeException(e); }
+                    }
+            );
+            SignalTodXml xml = XmlLayerConverter.fromMap(data, SignalTodXml.class);
+            byte[] bytes = signalTodService.marshalToXml(xml, SignalTodXml.class);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_XML);
+            headers.setContentDispositionFormData("attachment", "signalTOD_" + scenarioKey + ".xml");
+            headers.setContentLength(bytes.length);
+            return ResponseEntity.ok().headers(headers).body(bytes);
+        } catch (Exception e) {
+            log.error("[SignalTodController] export 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 
     /** DB 저장 + 로그 추가 */

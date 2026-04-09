@@ -5,7 +5,6 @@ import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import VectorLayer from "ol/layer/Vector";
 import { apiConfig, ApiMenuKey } from "@config/apiConfig";
 import axiosInstance from "@api/axiosInstance";
-import JsonGrid from "@component/util/JsonGrid";
 import {faChevronDown, faChevronUp, faMinus} from "@fortawesome/free-solid-svg-icons";
 import { faClose } from "@fortawesome/free-solid-svg-icons/faClose";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -26,8 +25,10 @@ import { extractFeatureTypeFromGuid } from "@utils/guid";
 import { MenuTreeResponse } from "@type/openapi.gen";
 import styles from "@css/PropertyPanel.module.css";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
+import {useMenuStore} from "@stores/useMenuStore";
 import DrilldownGrid from "@component/util/DrilldownGrid";
 import SignalTodTimelineEditor from "@component/util/SignalTodTimelineEditor";
+import SignalGroupedEditor from "@component/util/SignalGroupedEditor";
 import SaveVersionModal from "@component/modal/SaveVersionModal";
 
 export interface PropertyPanelProps {
@@ -57,6 +58,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     const rafRef = useRef<number | null>(null);
     const overlayRef = useRef<HTMLDivElement>(null);
     const { minimizeSession, closeSession } = useWorkflowStore();
+    const setActiveSubmenu = useMenuStore((s) => s.setActiveSubmenu);
 
     type BodySize = "mini" | "default" | "full";
     const [bodySize, setBodySize] = useState<BodySize>("default");
@@ -144,8 +146,8 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         const logJson = historyStore.getState().updateLogs;
         const snapshotLogJson = historyStore.getState().snapshotUpdateLogs;
         const mergedLog = mergeUpdateLogs(logJson, snapshotLogJson);
-        const extractedArray = Object.values(currentJson)[0];
-        const payload = { data: extractedArray, logs: mergedLog };
+        const payloadData = submenu.item?.fullData ? currentJson : Object.values(currentJson)[0];
+        const payload = { data: payloadData, logs: mergedLog };
         try {
             await axiosInstance({ method: api.method, url: api.url + '/' + versionKey, data: payload });
             historyStore.getState().resetUpdateLogs();
@@ -250,11 +252,11 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                         {/*        <FontAwesomeIcon icon={faChevronDown} />*/}
                         {/*    </button>*/}
                         {/*)}*/}
-                        <button>
-                            <FontAwesomeIcon className={styles.closeIconBtn} icon={faMinus} onClick={() => minimizeSession(activeSubmenu.menuCode)} title="최소화"/>
+                        <button className={styles.closeIconBtn} onClick={() => { minimizeSession(activeSubmenu.menuCode); setActiveSubmenu(null); }} title="최소화">
+                            <FontAwesomeIcon icon={faMinus}/>
                         </button>
 
-                        <button className={styles.closeIconBtn} onClick={() => closeSession(activeSubmenu.menuCode)} title="닫기">
+                        <button className={styles.closeIconBtn} onClick={() => { closeSession(activeSubmenu.menuCode); setActiveSubmenu(null); }} title="닫기">
                             <FontAwesomeIcon icon={faClose}/>
                         </button>
                     </div>
@@ -273,6 +275,8 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                         <div className={styles.gridWrap}>
                             {activeSubmenu.menuCode === "SIGNAL_TOD" ? (
                                 <SignalTodTimelineEditor containerHeight={height} />
+                            ) : activeSubmenu.menuCode === "SIGNAL" ? (
+                                <SignalGroupedEditor containerHeight={height} />
                             ) : (
                                 <DrilldownGrid
                                     layerName={submenu.item.layer}

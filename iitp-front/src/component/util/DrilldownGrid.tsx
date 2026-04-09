@@ -139,13 +139,10 @@ const DrilldownGrid = ({
 
         const targetSchema = getSchemaDefinitionByNames(layerName, currentFrame.levelName);
         const template = generateTemplate(targetSchema);
-        if (!template) {
-            setMessage({ type: "error", text: "레이어에 스키마가 정의되어 있지 않습니다." });
-            return;
-        }
         const tempRecord: Record<string, any> = {
-            ...template,
+            ...(template ?? {}),
             featureType: currentFrame.levelName,
+            layerName: layerName,
             id: Date.now(),
             __guid: undefined,
             parentGuid: currentFrame.parentGuid ?? null,
@@ -169,7 +166,21 @@ const DrilldownGrid = ({
         dataStore.getState().save?.();
     }, [dataStore]);
 
-    if (!frame) return null;
+    // 데이터 없음 상태
+    if (!frame || rootKeys.length === 0) {
+        return (
+            <div className={style.container}>
+                <div className={style.emptyWrap}>
+                    <span className={style.emptyIcon}>⚠</span>
+                    <span className={style.emptyTitle}>데이터가 없습니다</span>
+                    <span className={style.emptyDesc}>
+                        서버에서 불러온 데이터가 없습니다.<br />
+                        OSM 가져오기 또는 XML 임포트로 데이터를 추가하세요.
+                    </span>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className={style.container}>

@@ -82,4 +82,27 @@ public interface NetworkMapper {
     // Section
     SectionResponse toResponse(SectionXml src);
     List<SectionResponse> toSectionResponseList(List<SectionXml> src);
+
+    // ── Reverse mappings (Response → Xml) ──────────────────────
+
+    NetworkXml fromResponse(NetworkResponse src);
+
+    @Mapping(target = "portLinkIds", ignore = true)
+    NodeXml fromResponse(NodeResponse src);
+
+    PortXml fromResponse(PortResponse src);
+
+    @Mapping(target = "coordinates", ignore = true)
+    ConnectionXml fromResponse(ConnectionResponse src);
+
+    @Mapping(target = "coordinates", ignore = true)
+    LinkXml fromResponse(LinkResponse src);
+
+    LaneXml fromResponse(LaneResponse src);
+
+    SegmentXml fromResponse(SegmentResponse src);
+
+    CellXml fromResponse(CellResponse src);
+
+    SectionXml fromResponse(SectionResponse src);
 }

@@ -15,7 +15,8 @@ interface Actions {
 }
 
 const initialState = {
-    colors: [ "#0000FF", "#00FF00", "#FFFF00", "#FF0000" ],
+    // 교통량 버킷 1~4 색상: 낮음(녹) → 중간(황록) → 높음(주황) → 혼잡(적)
+    colors: [ "#00cc44", "#aadd00", "#ffaa00", "#ff2200" ],
     exaggeration: 1,
     blur: 20
 }

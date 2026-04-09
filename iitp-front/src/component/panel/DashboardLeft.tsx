@@ -4,6 +4,14 @@ import { useVehicleStore } from '@stores/useVehicleStore';
 import { useNetworkStore, useNetworkHistoryStore } from '@stores/useNetworkStore';
 import { useScenarioStore } from '@stores/useScenarioStore';
 import { useSignalTimelineStore } from '@stores/useSignalTimelineStore';
+import { useBusStationStore } from '@stores/useBusStationStore';
+import { useRailStationStore } from '@stores/useRailStationStore';
+import { useSignalStore } from '@stores/useSignalStore';
+import { useBusPtLineStore, useBusPtLineWeekdayStore, useBusPtLineWeekendStore } from '@stores/useBusPtLineStore';
+import { useRailPtLineStore } from '@stores/useRailPtLineStore';
+import { useSignalTodStore } from '@stores/useSignalTodStore';
+import { useSimulationScenarioStore } from '@stores/useSimulationScenarioStore';
+import { usePavementMarkingStore } from '@stores/usePavementMarkingStore';
 import { JulianDate } from 'cesium';
 import styles from '@css/Dashboard.module.css';
 import { useLayerStore } from '@stores/useLayerStore';
@@ -76,9 +84,66 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
     //     [updateLogs]
     // );
     const networkData = useNetworkStore((s) => s.currentJsonData);
+    const networkChanged = useNetworkStore((s) => s.isChanged);
 
     const linkCount = networkData?.links?.length ?? 0;
     const nodeCount = networkData?.nodes?.length ?? 0;
+
+    // 시설물 현황
+    const busStationData = useBusStationStore((s) => s.currentJsonData);
+    const busStationChanged = useBusStationStore((s) => s.isChanged);
+    const railStationData = useRailStationStore((s) => s.currentJsonData);
+    const railStationChanged = useRailStationStore((s) => s.isChanged);
+    const signalData = useSignalStore((s) => s.currentJsonData);
+    const signalChanged = useSignalStore((s) => s.isChanged);
+    const busPtLineData = useBusPtLineStore((s) => s.currentJsonData);
+    const busPtLineChanged = useBusPtLineStore((s) => s.isChanged);
+    const busPtLineWeekdayData = useBusPtLineWeekdayStore((s) => s.currentJsonData);
+    const busPtLineWeekdayChanged = useBusPtLineWeekdayStore((s) => s.isChanged);
+    const busPtLineWeekendData = useBusPtLineWeekendStore((s) => s.currentJsonData);
+    const busPtLineWeekendChanged = useBusPtLineWeekendStore((s) => s.isChanged);
+    const railPtLineData = useRailPtLineStore((s) => s.currentJsonData);
+    const railPtLineChanged = useRailPtLineStore((s) => s.isChanged);
+    const signalTodData = useSignalTodStore((s) => s.currentJsonData);
+    const signalTodChanged = useSignalTodStore((s) => s.isChanged);
+    const simScenarioData = useSimulationScenarioStore((s) => s.currentJsonData);
+    const simScenarioChanged = useSimulationScenarioStore((s) => s.isChanged);
+    const pavementMarkingData = usePavementMarkingStore((s) => s.currentJsonData);
+    const pavementMarkingChanged = usePavementMarkingStore((s) => s.isChanged);
+
+    const facilityStats = useMemo(() => [
+        { label: '네트워크 링크', count: (networkData as any)?.links?.length ?? 0 },
+        { label: '네트워크 노드', count: (networkData as any)?.nodes?.length ?? 0 },
+        { label: '버스 정류장',   count: (busStationData as any)?.busStations?.length ?? 0 },
+        { label: '철도 역',       count: (railStationData as any)?.railStations?.length ?? 0 },
+        { label: '신호',          count: (signalData as any)?.signals?.length ?? 0 },
+        { label: '신호 TOD',      count: (signalTodData as any)?.nodes?.length ?? 0 },
+        { label: '버스 노선',     count: (busPtLineData as any)?.lines?.length ?? 0 },
+        { label: '버스 노선(평일)',count: (busPtLineWeekdayData as any)?.lines?.length ?? 0 },
+        { label: '버스 노선(주말)',count: (busPtLineWeekendData as any)?.lines?.length ?? 0 },
+        { label: '철도 노선',     count: (railPtLineData as any)?.lines?.length ?? 0 },
+        { label: '시뮬레이션 시나리오', count: (simScenarioData as any)?.scenarios?.length ?? 0 },
+        { label: '노면 마킹',     count: (pavementMarkingData as any)?.pavementMarkings?.length ?? 0 },
+    ].filter(s => s.count > 0), [networkData, busStationData, railStationData, signalData, signalTodData,
+        busPtLineData, busPtLineWeekdayData, busPtLineWeekendData, railPtLineData, simScenarioData, pavementMarkingData]);
+
+    const unsavedLayers = useMemo(() => {
+        const layers: string[] = [];
+        if (networkChanged) layers.push('네트워크');
+        if (busStationChanged) layers.push('버스 정류장');
+        if (railStationChanged) layers.push('철도 역');
+        if (signalChanged) layers.push('신호');
+        if (signalTodChanged) layers.push('신호 TOD');
+        if (busPtLineChanged) layers.push('버스 노선');
+        if (busPtLineWeekdayChanged) layers.push('버스 노선(평일)');
+        if (busPtLineWeekendChanged) layers.push('버스 노선(주말)');
+        if (railPtLineChanged) layers.push('철도 노선');
+        if (simScenarioChanged) layers.push('시뮬레이션 시나리오');
+        if (pavementMarkingChanged) layers.push('노면 마킹');
+        return layers;
+    }, [networkChanged, busStationChanged, railStationChanged, signalChanged, signalTodChanged,
+        busPtLineChanged, busPtLineWeekdayChanged, busPtLineWeekendChanged, railPtLineChanged,
+        simScenarioChanged, pavementMarkingChanged]);
 
     const formatTime = (jd?: JulianDate) => {
         if (!jd) return '--:--:--';
@@ -248,6 +313,50 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
                     )}
                 </div>
             </div>
+
+            {/* ── 시설물 현황 ── */}
+            {facilityStats.length > 0 && (
+                <div className={styles.sectionBox}>
+                    <div className={styles.sectionHeader}>
+                        <div className={styles.sectionAccent} style={{ background: '#06b6d4' }}/>
+                        <span className={styles.sectionTitle}>시설물 현황</span>
+                        <span className={styles.sectionMeta}>{facilityStats.length}개 레이어</span>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                        {facilityStats.map(({ label, count }) => (
+                            <div key={label} style={{
+                                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                padding: '4px 8px', background: 'rgba(6,182,212,0.05)',
+                                border: '1px solid rgba(6,182,212,0.15)', borderRadius: 6,
+                            }}>
+                                <span style={{ fontSize: 10, color: '#666', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: '#06b6d4', marginLeft: 4, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{count.toLocaleString()}</span>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* ── 미저장 레이어 ── */}
+            {unsavedLayers.length > 0 && (
+                <div className={styles.sectionBox}>
+                    <div className={styles.sectionHeader}>
+                        <div className={styles.sectionAccent} style={{ background: '#f59e0b' }}/>
+                        <span className={styles.sectionTitle}>미저장 레이어</span>
+                        <span className={styles.sectionMeta} style={{ color: '#f59e0b' }}>{unsavedLayers.length}개</span>
+                    </div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                        {unsavedLayers.map(name => (
+                            <span key={name} style={{
+                                fontSize: 10, padding: '3px 8px',
+                                background: 'rgba(245,158,11,0.12)',
+                                border: '1px solid rgba(245,158,11,0.35)',
+                                borderRadius: 12, color: '#f59e0b',
+                            }}>{name}</span>
+                        ))}
+                    </div>
+                </div>
+            )}
 
             {/* ── 속도 제한별 링크 분포 ── */}
             {speedLimitStats.length > 0 && (

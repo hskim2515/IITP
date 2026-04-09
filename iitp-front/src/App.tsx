@@ -7,6 +7,7 @@ import { useScenarioStore } from "@stores/useScenarioStore";
 import PropertyModal from "@component/modal/PropertyModal";
 import PropertyPanel from "@component/panel/PropertyPanel";
 import { isDescendantOf, useMenuStore } from "@stores/useMenuStore";
+import { usePropertyStore } from "@stores/usePropertyStore";
 import { MessagePopup } from "@component/message/MessagePopup";
 import { useSchemaStore } from "@stores/useSchemaStore";
 import SchemaSetting from "@component/schema/SchemaSetting";
@@ -152,7 +153,6 @@ const initGuideLaterBtnStyle: React.CSSProperties = {
 function App() {
 
     const [showDashboard, setShowDashboard] = useState(false);
-    const [mapMode, setMapMode] = useState<'2D' | '3D'>('2D');
     const [showInitGuide, setShowInitGuide] = useState(false);
 
     const selectedScenario = useScenarioStore((state) => state.selectedScenario);
@@ -175,6 +175,13 @@ function App() {
     } = useMenuStore();
 
     const activeSession = sessions.find(s => s.menuCode === activeMenuCode && !s.isMinimized);
+
+    // 편집 모드 진입 시 속성 선택 초기화 (PropertyModal이 편집 패널 뒤에 표시되지 않도록)
+    useEffect(() => {
+        if (activeSubmenu) {
+            usePropertyStore.getState().setSelectedProps(null);
+        }
+    }, [activeSubmenu]);
 
     useEffect(() => {
         fetchSchema()
@@ -220,8 +227,6 @@ function App() {
                     >
                         <Maps
                             singleMapMode={showDashboard}
-                            mapMode={mapMode}
-                            onMapModeChange={setMapMode}
                         />
 
                         {!showDashboard && <Taskbar/>}

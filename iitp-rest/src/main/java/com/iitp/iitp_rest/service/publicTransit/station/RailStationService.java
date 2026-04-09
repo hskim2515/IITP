@@ -85,10 +85,22 @@ public class RailStationService {
         return dto;
     }
 
+    public byte[] exportAsXml(String versionId) throws Exception {
+        // coordinates는 @XmlTransient이므로 원본 XML 그대로 재직렬화
+        RailPublicTransitXml xml = getRailStationXmlByVersionId(versionId);
+        return railStationJaxbParser.marshal(xml);
+    }
+
     public RailPublicTransitXml transformRailPublicTransitCoordinates(String versionKey, RailPublicTransitXml dto) {
         Scenario scenario = scenarioVersionRepository.findByKey(versionKey)
                 .map(ScenarioVersion::getScenario)
-                .orElseGet(() -> scenarioRepository.findByKey(versionKey).orElse(new Scenario()));
+                .orElseGet(() -> scenarioRepository.findByKey(versionKey).orElse(null));
+
+        if (scenario == null || scenario.getLatitude() == null || scenario.getLongitude() == null) {
+            log.warn("[RailStationService] versionKey={}에 대한 시나리오 좌표를 찾을 수 없어 좌표 변환을 건너뜁니다.", versionKey);
+            return dto;
+        }
+
         double baseLatitude = scenario.getLatitude();
         double baseLongitude = scenario.getLongitude();
 
