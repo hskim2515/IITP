@@ -48,11 +48,33 @@ export const useWorkflowStore = create((set, get) => ({
     closeSession: (menuCode: string) => {
         const { sessions, activeMenuCode } = get();
         const remaining = sessions.filter(s => s.menuCode !== menuCode);
+        let nextActive = activeMenuCode;
+        if (activeMenuCode === menuCode) {
+            // 최소화되지 않은 마지막 세션으로 복원, 없으면 null
+            const candidate = [...remaining].reverse().find(s => !s.isMinimized);
+            nextActive = candidate?.menuCode ?? null;
+        }
         set({
             sessions: remaining,
-            activeMenuCode: activeMenuCode === menuCode
-                ? (remaining[remaining.length - 1]?.menuCode ?? null)
-                : activeMenuCode
+            activeMenuCode: nextActive,
         });
+    },
+
+    // Taskbar 토글: active면 minimize, 아니면 restore
+    toggleSession: (menu: MenuTreeResponse) => {
+        const { sessions, activeMenuCode } = get();
+        const existing = sessions.find(s => s.menuCode === menu.menuCode);
+        if (existing && activeMenuCode === menu.menuCode && !existing.isMinimized) {
+            // 이미 활성 상태 → 최소화
+            set({
+                activeMenuCode: null,
+                sessions: sessions.map(s =>
+                    s.menuCode === menu.menuCode ? { ...s, isMinimized: true } : s
+                )
+            });
+        } else {
+            // 최소화 상태이거나 비활성 → 복원/활성화
+            get().openSession(menu);
+        }
     }
 }));

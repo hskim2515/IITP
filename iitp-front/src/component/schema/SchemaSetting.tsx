@@ -4,6 +4,8 @@ import { useMenuStore } from "@stores/useMenuStore";
 import { propertyFormSchema } from "@schema/propertyFormSchema";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faClose } from "@fortawesome/free-solid-svg-icons/faClose";
+import { faMinus } from "@fortawesome/free-solid-svg-icons";
+import { useWorkflowStore } from "@stores/useWorkflowStore";
 import { SchemaTable } from "@component/schema/SchemaTable";
 import debounce from "lodash.debounce";
 import { LayerSchemaResponse, SchemaDefinition } from "@type/openapi.gen";
@@ -65,9 +67,17 @@ const SchemaSetting = () => {
         await updateSchema(layerName);
     }, [layerSchema, layerName, updateSchema, setCurrentSchema]);
 
+    const minimizeSession = useWorkflowStore((s: any) => s.minimizeSession);
+    const closeSession = useWorkflowStore((s: any) => s.closeSession);
+
+    const onClickMinimize = useCallback(() => {
+        if (menuCode) minimizeSession(menuCode);
+    }, [menuCode, minimizeSession]);
+
     const onClickClose = useCallback(() => {
+        if (menuCode) closeSession(menuCode);
         setActiveSubmenu(null);
-    }, [setActiveSubmenu]);
+    }, [menuCode, closeSession, setActiveSubmenu]);
 
     if (!menuCode || !item) return null;
 
@@ -89,7 +99,10 @@ const SchemaSetting = () => {
                             전체 저장
                         </button>
                     )}
-                    <button onClick={onClickClose} className={styles.closeBtn}>
+                    <button onClick={onClickMinimize} className={styles.closeBtn} title="최소화">
+                        <FontAwesomeIcon icon={faMinus} />
+                    </button>
+                    <button onClick={onClickClose} className={styles.closeBtn} title="닫기">
                         <FontAwesomeIcon icon={faClose} />
                     </button>
                 </div>
