@@ -132,7 +132,7 @@ const OsmImportModal: React.FC = () => {
         return (
             <div style={selectingBannerStyle}>
                 <span style={{ fontSize: 13, color: '#e0e0e0' }}>
-                    지도에서 드래그하여 영역을 선택하세요
+                    Shift + 드래그로 영역을 선택하세요 (일반 드래그: 지도 이동)
                 </span>
                 <button
                     style={cancelSelectBtnStyle}

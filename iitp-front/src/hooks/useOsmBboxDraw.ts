@@ -1,17 +1,17 @@
 import { useEffect, useRef } from 'react';
 import DragBox from 'ol/interaction/DragBox';
-import { platformModifierKeyOnly } from 'ol/events/condition';
+import { shiftKeyOnly } from 'ol/events/condition';
 import { toLonLat } from 'ol/proj';
 import { useOpenLayersStore } from '@stores/useOpenLayersStore';
 import { useOsmBboxStore } from '@stores/useOsmBboxStore';
 
 /**
  * OSM bbox 선택 모드일 때 OL 지도에 DragBox 인터랙션을 추가.
+ * Shift + 드래그 → bbox 그리기 / 일반 드래그 → 지도 이동(기본 동작 유지)
  * 드래그 완료 시 extent → WGS84 bbox로 변환 후 스토어에 저장.
  * Maps.tsx 에서 호출.
  */
 export function useOsmBboxDraw() {
-    const map       = useOpenLayersStore.getState().map;
     const selecting = useOsmBboxStore((s) => s.selecting);
     const setBbox   = useOsmBboxStore((s) => s.setBbox);
     const setSelecting = useOsmBboxStore((s) => s.setSelecting);
@@ -23,8 +23,8 @@ export function useOsmBboxDraw() {
         if (!olMap) return;
 
         if (selecting) {
-            // DragBox: modifier 키 없이도 동작하도록 condition 없음
-            const dragBox = new DragBox({ condition: () => true });
+            // Shift + 드래그일 때만 bbox 그리기, 일반 드래그는 지도 이동 유지
+            const dragBox = new DragBox({ condition: shiftKeyOnly });
             dragBoxRef.current = dragBox;
             olMap.addInteraction(dragBox);
 

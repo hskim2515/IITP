@@ -3,6 +3,8 @@ import { useStore } from 'zustand';
 import { useMessageStore } from '@stores/useMessageStore';
 import styles from '@css/ToolsPanel.module.css';
 import { useNetworkStore, useNetworkHistoryStore } from '@stores/useNetworkStore';
+import { useOsmBboxStore } from '@stores/useOsmBboxStore';
+import { assignPropertyToResponseData } from '@utils/guid';
 import { useBusStationStore, useBusStationHistoryStore } from '@stores/useBusStationStore';
 import { useRailStationStore, useRailStationHistoryStore } from '@stores/useRailStationStore';
 import { usePavementMarkingStore, usePavementMarkingHistoryStore } from '@stores/usePavementMarkingStore';
@@ -12,7 +14,6 @@ import { useBusPtLineStore, useBusPtLineWeekdayStore, useBusPtLineWeekendStore,
          useBusPtLineHistoryStore, useBusPtLineWeekdayHistoryStore, useBusPtLineWeekendHistoryStore } from '@stores/useBusPtLineStore';
 import { useRailPtLineStore, useRailPtLineHistoryStore } from '@stores/useRailPtLineStore';
 import { useSimulationScenarioStore, useSimulationScenarioHistoryStore } from '@stores/useSimulationScenarioStore';
-import { assignPropertyToResponseData } from '@utils/guid';
 import { apiConfig, ApiMenuKey } from '@config/apiConfig';
 import axiosInstance from '@api/axiosInstance';
 import { useScenarioStore } from '@stores/useScenarioStore';
@@ -570,6 +571,9 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
                             {importStatus.text}
                         </div>
                     )}
+
+                    <div className={styles.sectionDivider} />
+                    <AutoNetworkSection onStatus={setImportStatus} />
                 </>)}
             </div>
         </>
@@ -719,6 +723,179 @@ const importSmallBtnStyle: React.CSSProperties = {
     border: '1px solid rgba(65,105,225,0.45)',
     background: 'rgba(65,105,225,0.2)',
     color: '#7aa2ff', cursor: 'pointer', fontWeight: 600,
+};
+
+// ── 자동 네트워크 생성 섹션 ──────────────────────────────────────
+const AutoNetworkSection: React.FC<{
+    onStatus: (s: { type: 'ok' | 'error'; text: string } | null) => void;
+}> = ({ onStatus }) => {
+    const { selecting, bbox, setSelecting, setBbox } = useOsmBboxStore();
+
+    const [expanded, setExpanded] = useState(false);
+    const [south,    setSouth]    = useState('');
+    const [west,     setWest]     = useState('');
+    const [north,    setNorth]    = useState('');
+    const [east,     setEast]     = useState('');
+    const [loading,  setLoading]  = useState(false);
+
+    // bbox 지도 선택 반영
+    React.useEffect(() => {
+        if (!bbox) return;
+        setSouth(bbox.south.toFixed(6));
+        setWest(bbox.west.toFixed(6));
+        setNorth(bbox.north.toFixed(6));
+        setEast(bbox.east.toFixed(6));
+    }, [bbox]);
+
+    const handleGenerate = async () => {
+        if (!south || !west || !north || !east) {
+            onStatus({ type: 'error', text: '바운딩 박스 좌표를 모두 입력하세요.' });
+            return;
+        }
+        const s = parseFloat(south), n = parseFloat(north);
+        const w = parseFloat(west),  e = parseFloat(east);
+        if (n - s > 0.2 || e - w > 0.2) {
+            onStatus({ type: 'error', text: '영역이 너무 큽니다. 최대 0.2° × 0.2°' });
+            return;
+        }
+        setLoading(true);
+        onStatus(null);
+        try {
+            const formData = new FormData();
+            formData.append('south', south);
+            formData.append('west',  west);
+            formData.append('north', north);
+            formData.append('east',  east);
+
+            const res = await fetch(
+                `${import.meta.env.VITE_API_URL}/network/import/auto/json`,
+                { method: 'POST', body: formData },
+            );
+            if (!res.ok) {
+                const body = await res.text().catch(() => `HTTP ${res.status}`);
+                throw new Error(body || `서버 오류 ${res.status}`);
+            }
+            const resp = await res.json();
+            // resp = { network: {...}, signals: [...] }
+            const networkData = resp.network ?? resp;
+            const signalsData = resp.signals ?? [];
+
+            assignPropertyToResponseData(networkData);
+            useNetworkStore.getState().setCurrentJsonDataWithFullBuild(networkData);
+            useNetworkStore.getState().setChange(true);
+
+            // 신호 데이터 주입
+            if (signalsData.length > 0) {
+                assignPropertyToResponseData({ signals: signalsData });
+                useSignalStore.getState().setCurrentJsonData({ signals: signalsData });
+                useSignalStore.getState().setChange(true);
+            }
+
+            const nodeCount   = networkData.nodes?.length   ?? 0;
+            const linkCount   = networkData.links?.length   ?? 0;
+            const signalCount = signalsData.length;
+            onStatus({ type: 'ok', text: `생성 완료 — 노드 ${nodeCount}개, 링크 ${linkCount}개, 신호 ${signalCount}개` });
+            setBbox(null);
+        } catch (e: unknown) {
+            onStatus({ type: 'error', text: e instanceof Error ? e.message : '생성 실패' });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div>
+            <button
+                style={{
+                    width: '100%', textAlign: 'left', padding: '6px 8px',
+                    background: expanded ? 'rgba(65,105,225,0.1)' : 'transparent',
+                    border: '1px solid ' + (expanded ? 'rgba(65,105,225,0.3)' : 'rgba(255,255,255,0.08)'),
+                    borderRadius: 6, cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                }}
+                onClick={() => setExpanded(v => !v)}
+            >
+                <span style={{ fontSize: 11, color: '#7aa2ff', fontWeight: 600 }}>
+                    ✦ 자동 네트워크 생성
+                </span>
+                <span style={{ fontSize: 10, color: '#555' }}>{expanded ? '▲' : '▼'}</span>
+            </button>
+
+            {expanded && (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <p style={{ fontSize: 10, color: '#666', margin: 0, lineHeight: 1.5 }}>
+                        선택 영역의 표준노드링크 데이터를 불러옵니다.
+                        차선수·제한속도·도로폭 등 속성이 포함됩니다.
+                    </p>
+
+                    {/* 영역 선택 버튼 */}
+                    {selecting ? (
+                        <>
+                            <div style={{ fontSize: 10, color: '#ffaa44', lineHeight: 1.5 }}>
+                                Shift + 드래그로 영역을 선택하세요<br/>
+                                <span style={{ color: '#666' }}>(일반 드래그: 지도 이동)</span>
+                            </div>
+                            <button
+                                style={{ ...autoSmallBtnStyle, borderColor: 'rgba(255,160,50,0.5)', color: '#ffaa44' }}
+                                onClick={() => setSelecting(false)}
+                            >
+                                선택 취소
+                            </button>
+                        </>
+                    ) : (
+                        <button style={autoSmallBtnStyle} onClick={() => setSelecting(true)}>
+                            지도에서 영역 선택
+                        </button>
+                    )}
+
+                    {/* 좌표 입력 */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 8px' }}>
+                        {([
+                            ['남(S)', south, setSouth],
+                            ['서(W)', west,  setWest],
+                            ['북(N)', north, setNorth],
+                            ['동(E)', east,  setEast],
+                        ] as [string, string, React.Dispatch<React.SetStateAction<string>>][]).map(([label, val, setter]) => (
+                            <div key={label}>
+                                <div style={{ fontSize: 10, color: '#666', marginBottom: 2 }}>{label}</div>
+                                <input
+                                    type="number" step="any" value={val}
+                                    onChange={e => setter(e.target.value)}
+                                    style={autoInputStyle}
+                                />
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* 생성 버튼 */}
+                    <button
+                        style={{
+                            ...importSmallBtnStyle,
+                            opacity: loading ? 0.5 : 1,
+                            padding: '7px 0',
+                        }}
+                        onClick={handleGenerate}
+                        disabled={loading}
+                    >
+                        {loading ? '⟳ 생성 중...' : '네트워크 생성'}
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+};
+
+const autoSmallBtnStyle: React.CSSProperties = {
+    padding: '5px 10px', fontSize: 10, borderRadius: 4,
+    border: '1px solid rgba(65,105,225,0.4)',
+    background: 'rgba(65,105,225,0.1)', color: '#7aa2ff',
+    cursor: 'pointer', whiteSpace: 'nowrap',
+};
+
+const autoInputStyle: React.CSSProperties = {
+    width: '100%', boxSizing: 'border-box',
+    background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 4, color: '#ccc', fontSize: 11, padding: '4px 7px', outline: 'none',
 };
 
 export default DataIOPanel;

@@ -207,31 +207,33 @@ export default class NetworkFeatureLayer extends VectorLayer {
             }));
         }
         if (geom instanceof Point && featureType === "ports") {
-            const portType = props.type; // 피처에 설정된 'in' 또는 'out'
+            const portType = props.type;
             const r = NetworkFeatureLayer.PORT_ICON_SCALE / res;
-            const strokeW = (0.2 * 0.2) / res;
 
             if (portType === "out") {
-                const outFill = "rgba(0,200,200,0.5)";
                 styles.push(new Style({
                     image: new CircleStyle({
                         radius: r * 0.75,
-                        fill: new Fill({ color: outFill }),
+                        fill: new Fill({ color: "rgba(0,200,200,0.5)" }),
                     }),
-                    zIndex: zIndex + 1 // 예: 160
+                    zIndex: zIndex + 1
                 }));
-            }
-            else if (portType === "in") {
-                const inFill = "rgba(200,0,200,0.5)";
-
+            } else if (portType === "in") {
                 styles.push(new Style({
                     image: new CircleStyle({
                         radius: r,
-                        fill: new Fill({ color: inFill }),
+                        fill: new Fill({ color: "rgba(200,0,200,0.5)" }),
                     }),
                     zIndex: zIndex
                 }));
             }
+        }
+        // 정지선 (in 포트의 수직선)
+        if (geom instanceof LineString && featureType === "ports") {
+            styles.push(new Style({
+                stroke: new Stroke({ color: "rgba(255,255,255,0.9)", width: Math.max(1, 2 / res) }),
+                zIndex: zIndex + 1,
+            }));
         }
 
         return styles;
@@ -482,18 +484,32 @@ export default class NetworkFeatureLayer extends VectorLayer {
             for (const port of newPorts) {
                 const link = this.cachedLinkMap.get(String(port.linkId));
                 if (!link) continue;
-                let portPos: number[];
+
                 if (port.type === 'out' && link.coordinates?.[0]) {
-                    portPos = fromLonLat([link.coordinates[0].lng, link.coordinates[0].lat]);
-                } else if (port.type === 'in' && link.coordinates?.length) {
-                    const last = link.coordinates[link.coordinates.length - 1];
-                    portPos = fromLonLat([last.lng, last.lat]);
-                } else {
-                    portPos = fromLonLat([nextNode.coordinates.lng, nextNode.coordinates.lat]);
+                    const portPos = fromLonLat([link.coordinates[0].lng, link.coordinates[0].lat]);
+                    const f = new Feature({ ...port, geometry: new Point(portPos), featureType: 'ports' });
+                    existingFeatures.push(f); addBuffer.push(f);
+
+                } else if (port.type === 'in' && link.coordinates?.length >= 2) {
+                    const coords = link.coordinates;
+                    const p1 = fromLonLat([coords[coords.length - 2].lng, coords[coords.length - 2].lat]);
+                    const p2 = fromLonLat([coords[coords.length - 1].lng, coords[coords.length - 1].lat]);
+                    const dx = p2[0] - p1[0], dy = p2[1] - p1[1];
+                    const len = Math.sqrt(dx * dx + dy * dy);
+                    if (len > 0) {
+                        const px = -dy / len, py = dx / len;
+                        const halfW = (link.width ?? 7) / 2;
+                        const stopLine = new LineString([
+                            [p2[0] - px * halfW, p2[1] - py * halfW],
+                            [p2[0] + px * halfW, p2[1] + py * halfW],
+                        ]);
+                        const sf = new Feature({ ...port, geometry: stopLine, featureType: 'ports' });
+                        existingFeatures.push(sf); addBuffer.push(sf);
+                    }
+                    const last = coords[coords.length - 1];
+                    const pf = new Feature({ ...port, geometry: new Point(fromLonLat([last.lng, last.lat])), featureType: 'ports' });
+                    existingFeatures.push(pf); addBuffer.push(pf);
                 }
-                const portFeature = new Feature({ ...port, geometry: new Point(portPos), featureType: 'ports' });
-                existingFeatures.push(portFeature);
-                addBuffer.push(portFeature);
             }
 
             const newConns = nextNode.connections.slice(prevNode.connections.length);
@@ -665,16 +681,40 @@ export default class NetworkFeatureLayer extends VectorLayer {
         for (const port of (node.ports ?? [])) {
             const link = linkMap.get(String(port.linkId));
             if (!link) continue;
-            // out: link 시작(node에서 나감), in: link 끝(node로 들어옴)
-            let portPos: Coordinate = nodePt;
+
             if (port.type === "out" && link.coordinates?.[0]) {
-                portPos = fromLonLat([link.coordinates[0].lng, link.coordinates[0].lat]);
-            } else if (port.type === "in" && link.coordinates?.length) {
-                const last = link.coordinates[link.coordinates.length - 1];
-                portPos = fromLonLat([last.lng, last.lat]);
+                // out 포트: 원형 마커
+                const portPos = fromLonLat([link.coordinates[0].lng, link.coordinates[0].lat]);
+                const portFeature = new Feature({ ...port, geometry: new Point(portPos), featureType: "ports" });
+                features.push(portFeature);
+
+            } else if (port.type === "in" && link.coordinates?.length >= 2) {
+                // in 포트: 정지선 (링크 끝점에 수직인 선) + 원형 마커
+                const coords = link.coordinates;
+                const p1 = fromLonLat([coords[coords.length - 2].lng, coords[coords.length - 2].lat]);
+                const p2 = fromLonLat([coords[coords.length - 1].lng, coords[coords.length - 1].lat]);
+
+                const dx = p2[0] - p1[0];
+                const dy = p2[1] - p1[1];
+                const len = Math.sqrt(dx * dx + dy * dy);
+                if (len > 0) {
+                    // 수직 단위벡터 (EPSG:3857 — 단위 ≈ meter)
+                    const px = -dy / len;
+                    const py =  dx / len;
+                    const halfW = (link.width ?? 7) / 2;
+                    const stopLine = new LineString([
+                        [p2[0] - px * halfW, p2[1] - py * halfW],
+                        [p2[0] + px * halfW, p2[1] + py * halfW],
+                    ]);
+                    const stopFeature = new Feature({ ...port, geometry: stopLine, featureType: "ports" });
+                    features.push(stopFeature);
+                }
+
+                // 원형 마커도 유지
+                const last = coords[coords.length - 1];
+                const portFeature = new Feature({ ...port, geometry: new Point(fromLonLat([last.lng, last.lat])), featureType: "ports" });
+                features.push(portFeature);
             }
-            const portFeature = new Feature({ ...port, geometry: new Point(portPos), featureType: "ports" });
-            features.push(portFeature);
         }
         return features;
     }

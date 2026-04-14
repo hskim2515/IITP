@@ -109,14 +109,26 @@ const linkSnapStyle = [
 ];
 
 // ── CAD 가이드 스타일 ──────────────────────────────────────────
-// 노드 정렬 레이: 기존 링크 방향의 확장선
+// 노드 정렬 레이: 기존 링크 방향의 확장선 (비활성)
 const alignRayStyle = new Style({
-    stroke: new Stroke({ color: 'rgba(0, 220, 255, 0.40)', width: 1, lineDash: [4, 7] }),
+    stroke: new Stroke({ color: 'rgba(0, 220, 255, 0.30)', width: 1, lineDash: [4, 7] }),
 });
+// 정렬 스냅 활성: 커서가 연장선 위에 있을 때
+const alignSnapActiveRayStyle = new Style({
+    stroke: new Stroke({ color: 'rgba(50, 255, 180, 0.85)', width: 1.8, lineDash: [6, 4] }),
+});
+const alignSnapStyle = [
+    new Style({ image: new CircleStyle({ radius: 16, fill: new Fill({ color: 'rgba(50,255,180,0.08)' }), stroke: new Stroke({ color: 'rgba(50,255,180,0.4)', width: 1 }) }) }),
+    new Style({ image: new CircleStyle({ radius: 9,  fill: new Fill({ color: 'rgba(50,255,180,0.9)' }), stroke: new Stroke({ color: '#fff', width: 2 }) }) }),
+];
 // Shift 각도 고정 가이드 라인
 const angleLockStyle = new Style({
     stroke: new Stroke({ color: 'rgba(255, 220, 0, 0.70)', width: 1.2, lineDash: [8, 5] }),
 });
+
+const ALIGN_SNAP_MIN_M  = 10;   // 이 거리 이내는 노드 스냅에 맡김
+const ALIGN_SNAP_MAX_M  = 400;  // 이 거리 이상은 너무 멀어서 무시
+const ALIGN_ANGLE_DEG   = 8;    // 연장선 방향과 ±8° 이내면 스냅
 
 // ── 유틸 ────────────────────────────────────────────────────────
 function buildRoadPolygon(p1: Coordinate, p2: Coordinate, halfW: number): Coordinate[] | null {
@@ -166,6 +178,77 @@ function findSnapLink(links: Link[], cursor: Coordinate, nodeSnapped: boolean): 
             if (distM < bestDist) {
                 bestDist = distM;
                 best = { link, coord: [px, py], wgs84: { lng: ll[0]!, lat: ll[1]! } };
+            }
+        }
+    }
+    return best;
+}
+
+// ── 도로 연장선 방향 스냅 (CAD Alignment Snap) ───────────────────
+type AlignmentSnap = {
+    nodeOl: Coordinate;     // 기준 노드 OL 좌표
+    angle: number;          // 스냅 방향 (radians, OL 좌표계)
+    coord: Coordinate;      // 스냅된 커서 OL 좌표
+    bearingDeg: number;     // WGS84 방위각 (표시용)
+};
+
+function getAlignRayAngles(node: Node, links: Link[]): Array<{ angle: number; nodeOl: Coordinate; bearingDeg: number }> {
+    const nodeOl = fromLonLat([node.coordinates.lng, node.coordinates.lat]);
+    const result: Array<{ angle: number; nodeOl: Coordinate; bearingDeg: number }> = [];
+    for (const link of links) {
+        const isFrom = String(link.fromNode) === String(node.id);
+        const isTo   = String(link.toNode)   === String(node.id);
+        if (!isFrom && !isTo) continue;
+        const c = link.coordinates;
+        // 가장 가까운 이웃 점 → 연장선 방향 계산
+        const otherWgs84 = isFrom ? c[1] ?? c[0]! : c[c.length - 2] ?? c[0]!;
+        const otherOl = fromLonLat([otherWgs84.lng, otherWgs84.lat]);
+        const dx = otherOl[0]! - nodeOl[0]!, dy = otherOl[1]! - nodeOl[1]!;
+        const baseAngle = Math.atan2(dy, dx);
+        // 연장선: 기존 방향(연장) + 역방향(역연장) 두 가지
+        for (const a of [baseAngle, baseAngle + Math.PI]) {
+            // WGS84 방위각 계산 (표시용)
+            const extLl = toLonLat([nodeOl[0]! + Math.cos(a) * 100, nodeOl[1]! + Math.sin(a) * 100]);
+            const dLon = (extLl[0]! - node.coordinates.lng) * Math.PI / 180;
+            const lat1r = node.coordinates.lat * Math.PI / 180;
+            const lat2r = extLl[1]! * Math.PI / 180;
+            const bearing = Math.round(
+                ((Math.atan2(Math.sin(dLon) * Math.cos(lat2r),
+                    Math.cos(lat1r) * Math.sin(lat2r) - Math.sin(lat1r) * Math.cos(lat2r) * Math.cos(dLon))
+                * 180 / Math.PI) + 360) % 360
+            );
+            result.push({ angle: a, nodeOl, bearingDeg: bearing });
+        }
+    }
+    return result;
+}
+
+function findAlignmentSnap(
+    nodes: Node[], links: Link[], cursor: Coordinate, cursorLonLat: number[],
+): AlignmentSnap | null {
+    const THRESH = ALIGN_ANGLE_DEG * Math.PI / 180;
+    let best: AlignmentSnap | null = null;
+    let minDiff = THRESH;
+
+    for (const node of nodes) {
+        const distM = getDistance([node.coordinates.lng, node.coordinates.lat], cursorLonLat);
+        if (distM < ALIGN_SNAP_MIN_M || distM > ALIGN_SNAP_MAX_M) continue;
+
+        const nodeOl = fromLonLat([node.coordinates.lng, node.coordinates.lat]);
+        const toCursorAngle = Math.atan2(cursor[1]! - nodeOl[1]!, cursor[0]! - nodeOl[0]!);
+        const distOl = Math.hypot(cursor[0]! - nodeOl[0]!, cursor[1]! - nodeOl[1]!);
+
+        for (const ray of getAlignRayAngles(node, links)) {
+            let diff = Math.abs(toCursorAngle - ray.angle);
+            if (diff > Math.PI) diff = 2 * Math.PI - diff;
+            if (diff < minDiff) {
+                minDiff = diff;
+                best = {
+                    nodeOl,
+                    angle: ray.angle,
+                    coord: [nodeOl[0]! + distOl * Math.cos(ray.angle), nodeOl[1]! + distOl * Math.sin(ray.angle)],
+                    bearingDeg: ray.bearingDeg,
+                };
             }
         }
     }
@@ -548,15 +631,40 @@ export const useNetworkDraw = () => {
         ((endOlCoord: Coordinate, endWgs84: Coordinates, snapEnd: Node | null) => void) | null
     >(null);
 
-    // ── Shift 각도 스냅: 15° 단위로 OL 좌표 제한 ────────────────
+    // ── Shift 각도 스냅: 15° 단위 + 근처 노드 정렬 방향 ──────────
     function applyAngleSnapOl(cursor: Coordinate, start: Coordinate): Coordinate {
         const dx = cursor[0]! - start[0]!;
         const dy = cursor[1]! - start[1]!;
         const angle = Math.atan2(dy, dx);
-        const STEP = Math.PI / 12; // 15°
-        const snapped = Math.round(angle / STEP) * STEP;
         const d = Math.hypot(dx, dy);
-        return [start[0]! + d * Math.cos(snapped), start[1]! + d * Math.sin(snapped)];
+
+        // 후보 각도: 15° 격자
+        const STEP = Math.PI / 12;
+        const candidates: number[] = [Math.round(angle / STEP) * STEP];
+
+        // 근처 노드의 정렬 방향도 후보에 추가
+        const network = useNetworkStore.getState().currentJsonData;
+        if (network) {
+            const cursorLonLat = toLonLat(cursor);
+            for (const node of network.nodes) {
+                const distM = getDistance([node.coordinates.lng, node.coordinates.lat], cursorLonLat);
+                if (distM < ALIGN_SNAP_MIN_M || distM > ALIGN_SNAP_MAX_M) continue;
+                for (const ray of getAlignRayAngles(node, network.links)) {
+                    candidates.push(ray.angle);
+                }
+            }
+        }
+
+        // 현재 각도와 가장 가까운 후보 선택
+        let bestAngle = candidates[0]!;
+        let minDiff = Infinity;
+        for (const c of candidates) {
+            let diff = Math.abs(angle - c);
+            if (diff > Math.PI) diff = 2 * Math.PI - diff;
+            if (diff < minDiff) { minDiff = diff; bestAngle = c; }
+        }
+
+        return [start[0]! + d * Math.cos(bestAngle), start[1]! + d * Math.sin(bestAngle)];
     }
 
     // ── 그리기/커넥션 모드 중 Cesium 기본 이벤트 차단 ──────────
@@ -740,12 +848,21 @@ export const useNetworkDraw = () => {
             let effCoord: Coordinate;
             let snapIndicatorStyles: Style | Style[];
 
+            // 정렬 스냅 탐색 (노드·링크 스냅 없을 때만)
+            const alignSnap = (!snapNode && !snapLink)
+                ? findAlignmentSnap(nodes, links, cursor, lonLat)
+                : null;
+
             if (snapNode) {
                 effCoord = fromLonLat([snapNode.coordinates.lng, snapNode.coordinates.lat]);
                 snapIndicatorStyles = snapStyle;
             } else if (snapLink) {
                 effCoord = snapLink.coord;
                 snapIndicatorStyles = linkSnapStyle;
+            } else if (alignSnap) {
+                // 정렬 스냅: 도로 연장선 방향으로 커서 고정
+                effCoord = alignSnap.coord;
+                snapIndicatorStyles = alignSnapStyle;
             } else {
                 // Shift 각도 스냅: 시작점이 있을 때 15° 단위로 제한
                 effCoord = (shiftRef.current && startOlCoordRef.current)
@@ -756,30 +873,69 @@ export const useNetworkDraw = () => {
 
             source.clear();
 
-            // ── ① 노드 정렬 가이드 레이 (snapNode 시 연결 링크 방향 확장선) ──
+            // ── ① 노드 정렬 가이드 레이 (snapNode 시 연결 링크 방향 확장선 + 방위각 라벨) ──
             if (snapNode) {
                 const nodeOl = fromLonLat([snapNode.coordinates.lng, snapNode.coordinates.lat]);
-                const RAY_LEN = 200; // 200m (EPSG:3857 ≈ m)
-                for (const link of links) {
-                    const isFrom = String(link.fromNode) === String(snapNode.id);
-                    const isTo   = String(link.toNode)   === String(snapNode.id);
-                    if (!isFrom && !isTo) continue;
-                    const c = link.coordinates;
-                    const otherWgs84 = isFrom
-                        ? (c.length > 1 ? c[1]! : c[0]!)
-                        : (c.length > 1 ? c[c.length - 2]! : c[0]!);
-                    const otherOl = fromLonLat([otherWgs84.lng, otherWgs84.lat]);
-                    const dx = otherOl[0]! - nodeOl[0]!;
-                    const dy = otherOl[1]! - nodeOl[1]!;
-                    const len = Math.hypot(dx, dy) || 1;
-                    const ux = dx / len, uy = dy / len;
+                const RAY_LEN = 350;
+                const rays = getAlignRayAngles(snapNode, links);
+                // 중복 방향 제거 (180° 반대쌍은 같은 선이므로 하나만 그림)
+                const drawnAngles = new Set<number>();
+                for (const ray of rays) {
+                    const normalised = ((ray.angle % Math.PI) + Math.PI) % Math.PI;
+                    const key = Math.round(normalised * 100);
+                    if (drawnAngles.has(key)) continue;
+                    drawnAngles.add(key);
+                    const ux = Math.cos(ray.angle), uy = Math.sin(ray.angle);
                     const rayF = new Feature(new LineString([
                         [nodeOl[0]! - ux * RAY_LEN, nodeOl[1]! - uy * RAY_LEN],
                         [nodeOl[0]! + ux * RAY_LEN, nodeOl[1]! + uy * RAY_LEN],
                     ]));
                     rayF.setStyle(alignRayStyle);
                     source.addFeature(rayF);
+                    // 방위각 라벨
+                    const labelPos = [nodeOl[0]! + ux * (RAY_LEN * 0.6), nodeOl[1]! + uy * (RAY_LEN * 0.6)];
+                    const lbF = new Feature(new Point(labelPos));
+                    lbF.setStyle(new Style({ text: new OlText({
+                        text: `${ray.bearingDeg}°`,
+                        font: '10px monospace',
+                        fill: new Fill({ color: 'rgba(0,220,255,0.85)' }),
+                        stroke: new Stroke({ color: 'rgba(0,0,0,0.7)', width: 2 }),
+                        offsetY: -8,
+                    })}));
+                    source.addFeature(lbF);
                 }
+            }
+
+            // ── ① 정렬 스냅 활성 시: 해당 연장선 강조 표시 ──
+            if (alignSnap) {
+                const ux = Math.cos(alignSnap.angle), uy = Math.sin(alignSnap.angle);
+                const EXT = 800;
+                const rayF = new Feature(new LineString([
+                    [alignSnap.nodeOl[0]! - ux * EXT, alignSnap.nodeOl[1]! - uy * EXT],
+                    [alignSnap.nodeOl[0]! + ux * EXT, alignSnap.nodeOl[1]! + uy * EXT],
+                ]));
+                rayF.setStyle(alignSnapActiveRayStyle);
+                source.addFeature(rayF);
+                // 기준 노드 표시
+                const nodeDotF = new Feature(new Point(alignSnap.nodeOl));
+                nodeDotF.setStyle(new Style({ image: new CircleStyle({
+                    radius: 5, fill: new Fill({ color: 'rgba(50,255,180,0.8)' }),
+                    stroke: new Stroke({ color: '#fff', width: 1.5 }),
+                })}));
+                source.addFeature(nodeDotF);
+                // 방위각 라벨
+                const midPt = [(alignSnap.nodeOl[0]! + effCoord[0]!) / 2, (alignSnap.nodeOl[1]! + effCoord[1]!) / 2];
+                const alignLbF = new Feature(new Point(midPt));
+                alignLbF.setStyle(new Style({ text: new OlText({
+                    text: `⊙ ${alignSnap.bearingDeg}° 정렬`,
+                    font: 'bold 11px monospace',
+                    fill: new Fill({ color: 'rgba(50,255,180,1)' }),
+                    stroke: new Stroke({ color: 'rgba(0,0,0,0.8)', width: 3 }),
+                    offsetY: -14,
+                    backgroundFill: new Fill({ color: 'rgba(0,0,0,0.4)' }),
+                    padding: [2, 6, 2, 6],
+                })}));
+                source.addFeature(alignLbF);
             }
 
             // ── ② Shift 각도 고정 가이드 라인 ──────────────────────────

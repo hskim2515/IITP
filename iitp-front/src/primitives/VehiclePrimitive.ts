@@ -329,21 +329,23 @@ export default class VehiclePrimitive {
 
                 out vec2 v_uv;
                 out float v_eyeDist;
+                out float v_meshAlpha;
 
                 vec3 quatRotate(vec3 v, vec4 q) {
                     return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
                 }
 
                 void main() {
-                    // 인스턴스 중심의 eye-space 거리로 LOD 판단
                     vec3 instCenter = mat3(u_view) * (u_rtcCenter + a_instanceOffset);
                     float instDist  = length(instCenter);
 
-                    // 800m 이상은 포인트 스프라이트가 담당 → 메쉬 숨김
-                    if (instDist > 2000.0) {
-                        gl_Position = vec4(2.0, 2.0, 0.0, 1.0); // NDC 밖 → 클리핑
-                        v_uv      = vec2(0.0);
-                        v_eyeDist = instDist;
+                    // 메쉬 페이드 아웃: 1400~1800m 구간에서 부드럽게 소멸
+                    // 1800m 이상이면 완전히 클리핑
+                    if (instDist > 1800.0) {
+                        gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
+                        v_uv        = vec2(0.0);
+                        v_eyeDist   = instDist;
+                        v_meshAlpha = 0.0;
                         return;
                     }
 
@@ -351,8 +353,10 @@ export default class VehiclePrimitive {
                     vec3 posRel  = u_rtcCenter + a_instanceOffset + rotated;
                     vec3 posEye  = mat3(u_view) * posRel;
                     gl_Position  = u_projection * vec4(posEye, 1.0);
-                    v_uv      = a_uv;
-                    v_eyeDist = length(posEye);
+                    v_uv        = a_uv;
+                    v_eyeDist   = length(posEye);
+                    // 1400m부터 서서히 투명해짐
+                    v_meshAlpha = 1.0 - smoothstep(1400.0, 1800.0, instDist);
                 }
             `,
             fragmentShaderSource: `
@@ -361,6 +365,7 @@ export default class VehiclePrimitive {
 
                 in vec2 v_uv;
                 in float v_eyeDist;
+                in float v_meshAlpha;
                 uniform sampler2D u_texture;
                 uniform vec3      u_baseColor;
                 uniform bool      u_hasTexture;
@@ -368,11 +373,15 @@ export default class VehiclePrimitive {
                 out vec4 fragColor;
 
                 void main() {
-                    vec4 colorOnly = vec4(u_baseColor, 0.9);
+                    if (v_meshAlpha <= 0.0) discard;
+
+                    vec4 colorOnly = vec4(u_baseColor, 0.9 * v_meshAlpha);
                     if (u_hasTexture) {
-                        // 100m 이내: 텍스쳐, 300m 이상: 색상만, 사이: 블렌딩
+                        // 100m 이내: 텍스처, 300m 이상: 색상만, 사이: 블렌딩
                         float texWeight = 1.0 - smoothstep(100.0, 300.0, v_eyeDist);
-                        fragColor = mix(colorOnly, texture(u_texture, v_uv), texWeight);
+                        vec4 texColor = texture(u_texture, v_uv);
+                        texColor.a   *= v_meshAlpha;
+                        fragColor = mix(colorOnly, texColor, texWeight);
                     } else {
                         fragColor = colorOnly;
                     }
@@ -447,18 +456,23 @@ export default class VehiclePrimitive {
                 uniform mat4 u_projection;
                 uniform vec3 u_rtcCenter;
 
+                out float v_pointAlpha;
+
                 void main() {
                     vec3 instEye  = mat3(u_view) * (u_rtcCenter + a_instanceOffset);
                     float instDist = length(instEye);
-                    // 600m 이하는 메쉬가 담당 → 포인트 숨김
-                    if (instDist < 600.0) {
+
+                    // 1400m 이하는 메쉬가 담당 → 포인트는 1200~1600m 구간에서 페이드 인
+                    if (instDist < 1200.0) {
                         gl_Position  = vec4(2.0, 2.0, 0.0, 1.0);
                         gl_PointSize = 1.0;
+                        v_pointAlpha = 0.0;
                         return;
                     }
                     gl_Position  = u_projection * vec4(instEye, 1.0);
-                    // 거리에 따라 점 크기 조정 (멀수록 작게, 최소 3px 보장)
                     gl_PointSize = clamp(8000.0 / instDist, 3.0, 10.0);
+                    // 메쉬 페이드 아웃 구간(1400~1800m)에서 포인트는 페이드 인
+                    v_pointAlpha = smoothstep(1200.0, 1600.0, instDist);
                 }
             `,
             fragmentShaderSource: `
@@ -466,12 +480,14 @@ export default class VehiclePrimitive {
                 precision mediump float;
 
                 uniform vec3 u_baseColor;
+                in float v_pointAlpha;
                 out vec4 fragColor;
 
                 void main() {
+                    if (v_pointAlpha <= 0.0) discard;
                     // 원형 점
                     if (length(gl_PointCoord - vec2(0.5)) > 0.5) discard;
-                    fragColor = vec4(u_baseColor, 1.0);
+                    fragColor = vec4(u_baseColor, v_pointAlpha);
                 }
             `,
             attributeLocations: {
@@ -502,6 +518,7 @@ export default class VehiclePrimitive {
             renderState:   Cesium.RenderState.fromCache({
                 depthTest: { enabled: true },
                 cull:      { enabled: false },
+                blending:  Cesium.BlendingState.ALPHA_BLEND,
             }),
         });
 

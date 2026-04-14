@@ -14,21 +14,45 @@ export default class NetworkDataSourceLayer {
     // 노드·포트·커넥션은 Entity (실린더/화살표 머티리얼, 수가 적음)
     private dataSource: Cesium.CustomDataSource;
     // 링크 Primitive (featureType별 독립 on/off를 위해 분리)
+    private linkOutlinePrimitive: Cesium.Primitive | null = null;  // 외곽선(그림자 효과)
     private linkPrimitive: Cesium.Primitive | null = null;
     // 레인 Primitive
     private lanePrimitive: Cesium.Primitive | null = null;
     // 레인 경계선 Primitive
     private laneDividerPrimitive: Cesium.Primitive | null = null;
+    // 중앙선 Primitive
+    private centerLinePrimitive: Cesium.Primitive | null = null;
 
     // featureType별 가시성 상태
     private featureTypeVisible: Record<string, boolean> = {};
     private destroyed = false;
 
-    // 레인 교차 음영 색상
+    // ── 색상 팔레트 ─────────────────────────────────────────────
+    // 아스팔트 도로 기본 (외곽 → 메인 순)
+    private static readonly COLOR_LINK_OUTLINE = Cesium.Color.fromBytes(15, 15, 15, 200);   // 외곽 그림자
+    private static readonly COLOR_LINK_BASE    = Cesium.Color.fromBytes(50, 52, 56, 245);   // 아스팔트 기본
+
+    // 레인 교차 음영 (짝/홀)
     private static readonly LANE_COLORS = [
-        Cesium.Color.fromBytes(30, 30, 30, 220),
-        Cesium.Color.fromBytes(65, 65, 65, 220),
+        Cesium.Color.fromBytes(42, 44, 48, 255),
+        Cesium.Color.fromBytes(56, 58, 62, 255),
     ];
+
+    // 도로 타입별 색조 (link.type 기준)
+    private static readonly LINK_TYPE_COLOR: Record<string, Cesium.Color> = {
+        'highway':    Cesium.Color.fromBytes(70, 60, 30, 245),   // 고속도로 — 황토
+        'motorway':   Cesium.Color.fromBytes(70, 60, 30, 245),
+        'trunk':      Cesium.Color.fromBytes(60, 55, 35, 245),   // 주간선 — 황갈색
+        'primary':    Cesium.Color.fromBytes(55, 52, 40, 245),   // 1차로 — 진한 회갈
+        'secondary':  Cesium.Color.fromBytes(50, 52, 50, 245),   // 2차로
+        'local':      Cesium.Color.fromBytes(46, 48, 50, 245),   // 이면도로
+        'ramp':       Cesium.Color.fromBytes(48, 55, 38, 245),   // 램프 — 녹색조
+    };
+
+    // 차선 구분선 (경계)
+    private static readonly COLOR_DIVIDER      = Cesium.Color.fromBytes(190, 190, 190, 200);  // 흰색 실선
+    // 중앙선
+    private static readonly COLOR_CENTER_LINE  = Cesium.Color.fromBytes(220, 180, 40, 220);   // 황색 중앙선
 
     private unsubscribe: (() => void) | undefined;
     private unsubscribeDraw: (() => void) | undefined;
@@ -209,13 +233,15 @@ export default class NetworkDataSourceLayer {
         this.cachedLinkMap = new Map(network.links.map(l => [String(l.id), l]));
 
         // 링크·레인 → Primitive (featureType별 분리)
+        const linkOutlineInstances: Cesium.GeometryInstance[] = [];
         const linkInstances: Cesium.GeometryInstance[] = [];
         const laneInstances: Cesium.GeometryInstance[] = [];
         const dividerInstances: Cesium.GeometryInstance[] = [];
+        const centerLineInstances: Cesium.GeometryInstance[] = [];
         for (const link of network.links) {
-            this.buildLinkInstances(link, this.cachedNodeMap, linkInstances, laneInstances, dividerInstances);
+            this.buildLinkInstances(link, this.cachedNodeMap, linkOutlineInstances, linkInstances, laneInstances, dividerInstances, centerLineInstances);
         }
-        this.rebuildPrimitives(linkInstances, laneInstances, dividerInstances);
+        this.rebuildPrimitives(linkOutlineInstances, linkInstances, laneInstances, dividerInstances, centerLineInstances);
 
         // 노드·포트·커넥션 → DataSource Entity
         // suspendEvents()+removeAll()은 렌더 틱과 race를 일으켜
@@ -235,11 +261,17 @@ export default class NetworkDataSourceLayer {
     }
 
     private rebuildPrimitives(
+        linkOutlineInstances: Cesium.GeometryInstance[],
         linkInstances: Cesium.GeometryInstance[],
         laneInstances: Cesium.GeometryInstance[],
-        dividerInstances: Cesium.GeometryInstance[]
+        dividerInstances: Cesium.GeometryInstance[],
+        centerLineInstances: Cesium.GeometryInstance[]
     ): void {
         // 기존 Primitive 제거
+        if (this.linkOutlinePrimitive) {
+            this.viewer.scene.primitives.remove(this.linkOutlinePrimitive);
+            this.linkOutlinePrimitive = null;
+        }
         if (this.linkPrimitive) {
             this.viewer.scene.primitives.remove(this.linkPrimitive);
             this.linkPrimitive = null;
@@ -252,6 +284,10 @@ export default class NetworkDataSourceLayer {
             this.viewer.scene.primitives.remove(this.laneDividerPrimitive);
             this.laneDividerPrimitive = null;
         }
+        if (this.centerLinePrimitive) {
+            this.viewer.scene.primitives.remove(this.centerLinePrimitive);
+            this.centerLinePrimitive = null;
+        }
         // 하이라이트 상태 초기화 (이전 primitive 참조 무효)
         this.highlightedGuid = null;
         this.originalHighlightColor = null;
@@ -262,6 +298,17 @@ export default class NetworkDataSourceLayer {
         const laneVisible  = layerVisible && (this.featureTypeVisible['lanes']  ?? true);
 
         const appearance = () => new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true });
+
+        // 외곽 그림자 (가장 먼저, 가장 아래)
+        if (linkOutlineInstances.length > 0) {
+            this.linkOutlinePrimitive = new Cesium.Primitive({
+                geometryInstances: linkOutlineInstances,
+                appearance: appearance(),
+                asynchronous: true,
+                show: linkVisible,
+            });
+            this.viewer.scene.primitives.add(this.linkOutlinePrimitive);
+        }
 
         if (linkInstances.length > 0) {
             this.linkPrimitive = new Cesium.Primitive({
@@ -292,14 +339,26 @@ export default class NetworkDataSourceLayer {
             });
             this.viewer.scene.primitives.add(this.laneDividerPrimitive);
         }
+
+        if (centerLineInstances.length > 0) {
+            this.centerLinePrimitive = new Cesium.Primitive({
+                geometryInstances: centerLineInstances,
+                appearance: appearance(),
+                asynchronous: true,
+                show: laneVisible,
+            });
+            this.viewer.scene.primitives.add(this.centerLinePrimitive);
+        }
     }
 
     /** 레이어 전체 on/off (DataSourceLayerManager에서 호출) */
     public setVisible(visible: boolean): void {
         this.dataSource.show = visible;
-        if (this.linkPrimitive)        this.linkPrimitive.show        = visible && (this.featureTypeVisible['links'] ?? true);
-        if (this.lanePrimitive)        this.lanePrimitive.show        = visible && (this.featureTypeVisible['lanes'] ?? true);
-        if (this.laneDividerPrimitive) this.laneDividerPrimitive.show = visible && (this.featureTypeVisible['lanes'] ?? true);
+        if (this.linkOutlinePrimitive)  this.linkOutlinePrimitive.show  = visible && (this.featureTypeVisible['links'] ?? true);
+        if (this.linkPrimitive)         this.linkPrimitive.show         = visible && (this.featureTypeVisible['links'] ?? true);
+        if (this.lanePrimitive)         this.lanePrimitive.show         = visible && (this.featureTypeVisible['lanes'] ?? true);
+        if (this.laneDividerPrimitive)  this.laneDividerPrimitive.show  = visible && (this.featureTypeVisible['lanes'] ?? true);
+        if (this.centerLinePrimitive)   this.centerLinePrimitive.show   = visible && (this.featureTypeVisible['lanes'] ?? true);
         // 네트워크 레이어 표시 중에는 지형 depth test 비활성화 → 도로가 지형에 묻히지 않음
         this.viewer.scene.globe.depthTestAgainstTerrain = !visible;
         try { this.viewer.scene.requestRender(); } catch (_) {}
@@ -311,10 +370,12 @@ export default class NetworkDataSourceLayer {
         const layerVisible = this.dataSource.show;
 
         if (featureType === 'links') {
-            if (this.linkPrimitive) this.linkPrimitive.show = layerVisible && visible;
+            if (this.linkOutlinePrimitive) this.linkOutlinePrimitive.show = layerVisible && visible;
+            if (this.linkPrimitive)        this.linkPrimitive.show        = layerVisible && visible;
         } else if (featureType === 'lanes') {
-            if (this.lanePrimitive)       this.lanePrimitive.show       = layerVisible && visible;
+            if (this.lanePrimitive)        this.lanePrimitive.show        = layerVisible && visible;
             if (this.laneDividerPrimitive) this.laneDividerPrimitive.show = layerVisible && visible;
+            if (this.centerLinePrimitive)  this.centerLinePrimitive.show  = layerVisible && visible;
         }
         // nodes, ports, connections는 DataSource entity로 처리되므로 별도 처리 불필요
         try { this.viewer.scene.requestRender(); } catch (_) {}
@@ -372,13 +433,15 @@ export default class NetworkDataSourceLayer {
         if (newLinks.length > 0) {
             networkPrimitivePropertiesMap.clear();
             this.lanePositionMap.clear();
+            const linkOutlineInstances: Cesium.GeometryInstance[] = [];
             const linkInstances: Cesium.GeometryInstance[] = [];
             const laneInstances: Cesium.GeometryInstance[] = [];
             const dividerInstances: Cesium.GeometryInstance[] = [];
+            const centerLineInstances: Cesium.GeometryInstance[] = [];
             for (const link of next.links) {
-                this.buildLinkInstances(link, this.cachedNodeMap, linkInstances, laneInstances, dividerInstances);
+                this.buildLinkInstances(link, this.cachedNodeMap, linkOutlineInstances, linkInstances, laneInstances, dividerInstances, centerLineInstances);
             }
-            this.rebuildPrimitives(linkInstances, laneInstances, dividerInstances);
+            this.rebuildPrimitives(linkOutlineInstances, linkInstances, laneInstances, dividerInstances, centerLineInstances);
         }
 
         // 변경·추가된 노드의 Entity 처리
@@ -438,12 +501,21 @@ export default class NetworkDataSourceLayer {
     // ─────────────────────────────────────────────
     // 링크·레인 GeometryInstance 생성
     // ─────────────────────────────────────────────
+    /** link.type → 도로 색상 */
+    private getLinkColor(link: any): Cesium.Color {
+        const t = (link.type ?? '').toLowerCase();
+        return NetworkDataSourceLayer.LINK_TYPE_COLOR[t]
+            ?? NetworkDataSourceLayer.COLOR_LINK_BASE;
+    }
+
     private buildLinkInstances(
         link: any,
         nodeMap: Map<string, any>,
+        linkOutlineInstances: Cesium.GeometryInstance[],
         linkInstances: Cesium.GeometryInstance[],
         laneInstances: Cesium.GeometryInstance[],
-        dividerInstances: Cesium.GeometryInstance[]
+        dividerInstances: Cesium.GeometryInstance[],
+        centerLineInstances: Cesium.GeometryInstance[]
     ): void {
         const sourceNode = nodeMap.get(String(link.fromNode));
         const targetNode = nodeMap.get(String(link.toNode));
@@ -459,32 +531,59 @@ export default class NetworkDataSourceLayer {
         }
         const avgTerrainH = terrainCount > 0 ? terrainSum / terrainCount : 0;
 
+        const H_OUTLINE  = avgTerrainH + 0.01;
+        const H_LINK     = avgTerrainH + 0.02;
+        const H_LANE     = avgTerrainH + 0.04;
+        const H_DIVIDER  = avgTerrainH + 0.06;
+        const H_CENTER   = avgTerrainH + 0.07;
+
         // 중간 좌표 모두 반영
         const linkPositions = link.coordinates.map((c: any) =>
             Cesium.Cartesian3.fromDegrees(c.lng, c.lat)
         );
 
-        // 링크 corridor instance (배경 도로) → linkInstances
+        const roadWidth = link.width ?? 7;
+
+        // ── 1. 외곽 그림자 (도로 폭보다 약간 크게, 어두운 색) ─────
+        linkOutlineInstances.push(new Cesium.GeometryInstance({
+            id: `${link.__guid}_outline`,
+            geometry: new Cesium.CorridorGeometry({
+                positions: linkPositions,
+                width: roadWidth + 1.2,
+                height: H_OUTLINE,
+                cornerType: Cesium.CornerType.ROUNDED,
+                vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
+            }),
+            attributes: {
+                color: Cesium.ColorGeometryInstanceAttribute.fromColor(
+                    NetworkDataSourceLayer.COLOR_LINK_OUTLINE
+                ),
+            },
+        }));
+
+        // ── 2. 아스팔트 도로 (타입별 색상) ───────────────────────
+        const roadColor = this.getLinkColor(link);
         linkInstances.push(new Cesium.GeometryInstance({
             id: link.__guid,
             geometry: new Cesium.CorridorGeometry({
                 positions: linkPositions,
-                width: link.width,
-                height: avgTerrainH + 0.02,
-                cornerType: Cesium.CornerType.MITERED,
+                width: roadWidth,
+                height: H_LINK,
+                cornerType: Cesium.CornerType.ROUNDED,
                 vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
             }),
             attributes: {
-                color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.SILVER.withAlpha(0.8)),
+                color: Cesium.ColorGeometryInstanceAttribute.fromColor(roadColor),
             },
         }));
         networkPrimitivePropertiesMap.set(link.__guid, { ...link, featureType: "links" });
 
         const laneCount = link.lanes.length || 2;
+        const laneWidth = roadWidth / laneCount;
+
         for (let i = 0; i < link.lanes.length; i++) {
             const lane = link.lanes[i];
             if (!lane) continue;
-            const laneWidth = link.width / laneCount;
             const lateralOffset = ((laneCount - 1) / 2 - i) * laneWidth;
 
             const lanePositions = this.computeOffsetPositions(link.coordinates, lateralOffset);
@@ -493,15 +592,15 @@ export default class NetworkDataSourceLayer {
                 target: lanePositions[lanePositions.length - 1]!,
             });
 
-            // 레인 교차 음영 색상 → laneInstances
+            // ── 3. 레인 교차 음영 ──────────────────────────────
             const laneColor = NetworkDataSourceLayer.LANE_COLORS[i % 2]!;
             laneInstances.push(new Cesium.GeometryInstance({
                 id: lane.__guid,
                 geometry: new Cesium.CorridorGeometry({
                     positions: lanePositions,
-                    width: laneWidth * 0.92,
-                    height: avgTerrainH + 0.04,
-                    cornerType: Cesium.CornerType.MITERED,
+                    width: laneWidth * 0.94,
+                    height: H_LANE,
+                    cornerType: Cesium.CornerType.ROUNDED,
                     vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
                 }),
                 attributes: {
@@ -510,7 +609,7 @@ export default class NetworkDataSourceLayer {
             }));
             networkPrimitivePropertiesMap.set(lane.__guid, { ...lane, featureType: "lanes", linkRef: link.id });
 
-            // 레인 사이 경계선 (마지막 레인 제외) → dividerInstances
+            // ── 4. 차선 구분선 (흰색 실선, 마지막 레인 제외) ──
             if (i < link.lanes.length - 1 && lane.__guid) {
                 const boundaryOffset = lateralOffset - laneWidth / 2;
                 const boundaryPositions = this.computeOffsetPositions(link.coordinates, boundaryOffset);
@@ -518,16 +617,39 @@ export default class NetworkDataSourceLayer {
                     id: `${lane.__guid}_divider`,
                     geometry: new Cesium.CorridorGeometry({
                         positions: boundaryPositions,
-                        width: laneWidth * 0.06,
-                        height: avgTerrainH + 0.06,
-                        cornerType: Cesium.CornerType.MITERED,
+                        width: Math.max(laneWidth * 0.055, 0.15),
+                        height: H_DIVIDER,
+                        cornerType: Cesium.CornerType.ROUNDED,
                         vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
                     }),
                     attributes: {
-                        color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.WHITE.withAlpha(0.75)),
+                        color: Cesium.ColorGeometryInstanceAttribute.fromColor(
+                            NetworkDataSourceLayer.COLOR_DIVIDER
+                        ),
                     },
                 }));
             }
+        }
+
+        // ── 5. 중앙선 (황색, 양방향 도로의 경계) ──────────────
+        // 레인이 2개 이상이고 중간 경계에 황색 중앙선 표시
+        if (laneCount >= 2) {
+            const centerPositions = this.computeOffsetPositions(link.coordinates, 0);
+            centerLineInstances.push(new Cesium.GeometryInstance({
+                id: `${link.__guid}_center`,
+                geometry: new Cesium.CorridorGeometry({
+                    positions: centerPositions,
+                    width: Math.max(laneWidth * 0.04, 0.12),
+                    height: H_CENTER,
+                    cornerType: Cesium.CornerType.ROUNDED,
+                    vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
+                }),
+                attributes: {
+                    color: Cesium.ColorGeometryInstanceAttribute.fromColor(
+                        NetworkDataSourceLayer.COLOR_CENTER_LINE
+                    ),
+                },
+            }));
         }
     }
 
@@ -733,12 +855,14 @@ export default class NetworkDataSourceLayer {
         try { this.viewer.scene.globe.depthTestAgainstTerrain = true; } catch (_) {}
         this.unsubscribe?.();
         this.unsubscribeDraw?.();
-        for (const p of [this.linkPrimitive, this.lanePrimitive, this.laneDividerPrimitive]) {
+        for (const p of [this.linkOutlinePrimitive, this.linkPrimitive, this.lanePrimitive, this.laneDividerPrimitive, this.centerLinePrimitive]) {
             if (p) this.viewer.scene.primitives.remove(p);
         }
+        this.linkOutlinePrimitive = null;
         this.linkPrimitive = null;
         this.lanePrimitive = null;
         this.laneDividerPrimitive = null;
+        this.centerLinePrimitive = null;
         if (this.dataSource) {
             this.viewer.dataSources.remove(this.dataSource, true);
         }
