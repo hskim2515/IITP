@@ -1,7 +1,6 @@
-version: '3'
 services:
   postgres:
-    image: gaia3d/iitp-db:latest
+    image: postgis/postgis:16-3.4
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -9,5 +8,28 @@ services:
     volumes:
       - ./database:/database:ro
       - ./database/restore.sh:/docker-entrypoint-initdb.d/init-user-db.sh:ro
+      - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+
+  iitp-ml:
+    build:
+      context: ./iitp-ml
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      # 데이터 소스: hdmap (정밀도로지도) 또는 ktdb (표준노드링크)
+      - DATA_SOURCE=ktdb
+      - HDMAP_ROOT=/data/hdmap
+      # 표준노드링크 (DATA_SOURCE=ktdb 일 때 사용)
+      - KTDB_LINK_SHP=/data/ktdb/MOCT_LINK.shp
+      - KTDB_NODE_SHP=/data/ktdb/MOCT_NODE.shp
+    volumes:
+      - /Users/hskim/Downloads/(B110)정밀도로지도_202604108863:/data/hdmap:ro
+      - /Users/hskim/Documents/data/ktdb:/data/ktdb:ro
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
