@@ -68,13 +68,12 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
         run: |
+          sshpass -p "$SSH_PASSWORD" ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            'mkdir -p /home/gaia3d/iitp/database'
           sshpass -p "$SSH_PASSWORD" scp -o StrictHostKeyChecking=no -P "$SSH_PORT" \
-            docker-compose.yml \
-            database/sync_tables.sql \
-            "$SSH_USER@$SSH_HOST:/home/gaia3d/iitp/"
+            docker-compose.yml "$SSH_USER@$SSH_HOST:/home/gaia3d/iitp/"
           sshpass -p "$SSH_PASSWORD" scp -o StrictHostKeyChecking=no -P "$SSH_PORT" \
-            database/sync_tables.sql \
-            "$SSH_USER@$SSH_HOST:/home/gaia3d/iitp/database/"
+            database/sync_tables.sql "$SSH_USER@$SSH_HOST:/home/gaia3d/iitp/database/"
 
       - name: Run remote script with password authentication
         env:
