@@ -54,6 +54,7 @@ const TYPE_COLORS: Record<string, [number, number, number, number]> = {
 export default class TailPrimitive {
 
     private positions:    number[][];
+    private vehicleTypes: string[];
     private context:      any;
     private destroyed:    boolean;
     private status:       string;
@@ -65,6 +66,7 @@ export default class TailPrimitive {
     private _stopped: boolean;
     private _drainingSet: Set<number>;
     private _lastDrainTime: number;
+    private _highlightedType: string;
 
     constructor(
         positions:    number[][],
@@ -74,6 +76,7 @@ export default class TailPrimitive {
         vehicleTypes: string[] = []
     ) {
         this.positions    = positions;
+        this.vehicleTypes = vehicleTypes;
         this.context      = context;
         this.destroyed    = false;
         this.status       = status;
@@ -82,6 +85,7 @@ export default class TailPrimitive {
         this._stopped = false;
         this._drainingSet = new Set();
         this._lastDrainTime = 0;
+        this._highlightedType = 'ALL';
         this.trails = [];
 
         this.positions.forEach((position, i) => {
@@ -94,7 +98,12 @@ export default class TailPrimitive {
             const color = new Cesium.Cartesian4(r / 255, g / 255, b / 255, a);
             resources.drawCommand.uniformMap = {
                 ...resources.drawCommand.uniformMap,
-                u_color: () => color,
+                u_color: () => {
+                    if (this._highlightedType !== 'ALL' && this._highlightedType === vType) {
+                        return new Cesium.Cartesian4(0.0, 1.0, 1.0, 1.0);
+                    }
+                    return color;
+                },
             };
             this.trails.push(resources);
         });
@@ -329,6 +338,8 @@ export default class TailPrimitive {
         const N   = this.MAX_TRAIL_LENGTH;
         const pos = this.latestPositions![index]!;
         const buf = trail.buffer;
+        const vehicleType = this.vehicleTypes[index] ?? 'default';
+        const highlighted = this._highlightedType !== 'ALL' && this._highlightedType === vehicleType;
 
         // 순간이동 감지 → 버퍼 초기화
         if (buf.count > 0) {
@@ -351,7 +362,7 @@ export default class TailPrimitive {
         buf.head = (buf.head + 1) % N;
         if (buf.count < N) buf.count++;
 
-        const MAX_WIDTH = 5.0;
+        const MAX_WIDTH = highlighted ? 7.0 : 5.0;
         const fadeLen    = Math.max(buf.count, 1);
         const widthStep  = MAX_WIDTH / N;
 
@@ -435,6 +446,10 @@ export default class TailPrimitive {
         if (N === this.MAX_TRAIL_LENGTH) return;
         this.MAX_TRAIL_LENGTH = N;
         this._rebuildBuffers();
+    }
+
+    setHighlightFilter(highlightedType: string): void {
+        this._highlightedType = highlightedType;
     }
 
     private _rebuildBuffers(): void {

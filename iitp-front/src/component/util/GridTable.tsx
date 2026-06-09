@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
 import {
     AllCommunityModule,
+    CellMouseDownEvent,
     ColDef,
     ModuleRegistry,
     RowSelectionOptions,
@@ -40,6 +41,8 @@ export const GridTable = ({
     onCellUpdate,
 }: GridTableProps) => {
     const gridRef = useRef<AgGridReact>(null);
+    const selectionFromStoreRef = useRef(false);
+    const [gridReady, setGridReady] = useState(false);
     const push = useNavigationStore((s) => s.push);
     const navigateByPath = useNavigationStore((s) => s.navigateByPath);
 
@@ -153,16 +156,27 @@ export const GridTable = ({
         ...dataCols,
     ], [drillColumn, dataCols]);
 
+    const onGridReady = useCallback(() => {
+        setGridReady(true);
+    }, []);
+
     // 선택 동기화: selectedGuid → AG Grid
     useEffect(() => {
         const api = gridRef.current?.api;
-        if (!api || !selectedGuid?.length) return;
+        if (!api) return;
         const guidSet = new Set(selectedGuid);
+        let firstSelectedNode: any = null;
+        selectionFromStoreRef.current = true;
         api.forEachNode((node) => {
             const selected = guidSet.has(node.data?.__guid);
             if (node.isSelected() !== selected) node.setSelected(selected, false, "api");
+            if (selected && !firstSelectedNode) firstSelectedNode = node;
         });
-    }, [selectedGuid, frame.rows]);
+        selectionFromStoreRef.current = false;
+        if (firstSelectedNode) {
+            api.ensureNodeVisible(firstSelectedNode, "middle");
+        }
+    }, [selectedGuid, frame.rows, gridReady]);
 
     // 드릴다운 네비게이션: selectedGuid가 다른 레벨에 있을 때
     useEffect(() => {
@@ -212,12 +226,48 @@ export const GridTable = ({
         mode: "multiRow",
         checkboxes: true,
         headerCheckbox: true,
-        enableClickSelection: true,
+        enableClickSelection: false,
+        enableSelectionWithoutKeys: false,
     }), []);
 
     const onSelectionChanged = useCallback(() => {
+        if (selectionFromStoreRef.current) return;
         const selected = gridRef.current?.api?.getSelectedRows() ?? [];
         setSelectedGuid(selected.map((r: any) => r.__guid).filter(Boolean));
+    }, [setSelectedGuid]);
+
+    const onCellMouseDown = useCallback((event: CellMouseDownEvent) => {
+        const mouseEvent = event.event as MouseEvent | undefined;
+        const target = mouseEvent?.target as HTMLElement | null;
+        const guid = event.data?.__guid;
+        if (!mouseEvent || mouseEvent.button !== 0 || !event.node || !guid) return;
+        if (event.column.getColId() === "__drill") return;
+        if (target?.closest(".ag-selection-checkbox")) return;
+
+        mouseEvent.preventDefault();
+        mouseEvent.stopPropagation();
+
+        if (mouseEvent.ctrlKey || mouseEvent.metaKey) {
+            const current = useSelectionStore.getState().selectedGuid.filter(
+                (id): id is string => typeof id === "string"
+            );
+            const nextSelected = !current.includes(guid);
+            const nextGuids = nextSelected
+                ? [...current, guid]
+                : current.filter((id) => id !== guid);
+
+            selectionFromStoreRef.current = true;
+            event.node.setSelected(nextSelected, false, "uiSelect");
+            selectionFromStoreRef.current = false;
+            setSelectedGuid(nextGuids);
+            return;
+        }
+
+        selectionFromStoreRef.current = true;
+        event.api.deselectAll();
+        event.node.setSelected(true, false, "uiSelect");
+        selectionFromStoreRef.current = false;
+        setSelectedGuid([guid]);
     }, [setSelectedGuid]);
 
     return (
@@ -231,7 +281,9 @@ export const GridTable = ({
                 rowData={frame.rows}
                 columnDefs={columnDefs}
                 rowSelection={rowSelection}
+                onGridReady={onGridReady}
                 onSelectionChanged={onSelectionChanged}
+                onCellMouseDown={onCellMouseDown}
                 getRowId={(params) => params.data.__guid}
                 defaultColDef={{
                     resizable: true,

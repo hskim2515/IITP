@@ -4,6 +4,12 @@ import TailPrimitive from "@primitives/TailPrimitive";
 import VehiclePrimitive from "@primitives/VehiclePrimitive";
 import SpeedHeatmapLayer from "@primitives/SpeedHeatmapLayer";
 import TrafficHeatmapCesiumLayer from "@primitives/TrafficHeatmapCesiumLayer";
+import DwellTimeCesiumLayer from "@primitives/DwellTimeCesiumLayer";
+import LinkFlowBarCesiumLayer from "@primitives/LinkFlowBarCesiumLayer";
+import LinkBubbleCesiumLayer from "@primitives/LinkBubbleCesiumLayer"
+import GuidewayCesiumLayer from "@primitives/GuidewayCesiumLayer"
+import TraceVehicleCesiumLayer from "@primitives/TraceVehicleCesiumLayer";
+import IntersectionPulseCesiumLayer from "@primitives/IntersectionPulseCesiumLayer";
 import SpeedHeatmapOlLayer from "@features/SpeedHeatmapOlLayer";
 import PrimitiveLayerManager from "./PrimitiveLayerManager";
 import BaseMapLayerManager from "./BaseMapLayerManager";
@@ -17,6 +23,12 @@ import ODMatrixFeatureLayer from "@features/ODMatrixFeatureLayer";
 import VehicleFeatureLayer from "@features/VehicleFeatureLayer";
 import TrailFeatureLayer from "@features/TrailFeatureLayer";
 import TrafficHeatmapFeatureLayer from "@features/TrafficHeatmapFeatureLayer";
+import DwellTimeFeatureLayer from "@features/DwellTimeFeatureLayer";
+import LinkBubbleFeatureLayer from "@features/LinkBubbleFeatureLayer";
+import LinkFlowBarFeatureLayer from "@features/LinkFlowBarFeatureLayer";
+import GuidewayFeatureLayer from "@features/GuidewayFeatureLayer";
+import TraceVehicleFeatureLayer from "@features/TraceVehicleFeatureLayer";
+import IntersectionPulseFeatureLayer from "@features/IntersectionPulseFeatureLayer";
 import DataSourceLayerManager from "@managers/DataSourceLayerManager";
 import VehicleDataSourceLayer from "../datasource/VehicleDataSourceLayer";
 import VectorSource from "ol/source/Vector";
@@ -152,9 +164,9 @@ export class LayerManager {
         const groupName = "analyze"
         const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
         if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
-
         const tailPaths = vehicleRoute.map((entry: any) => Array.isArray(entry) ? entry : entry.path);
-        this.primitiveLayerManager.add(new TailPrimitive(tailPaths, this.cesiumViewer.scene.context, speedFactor, isRunning, vehicleTypeArray ?? []), groupName, "trip");
+        const tailPrimitive = new TailPrimitive(tailPaths, this.cesiumViewer.scene.context, speedFactor, isRunning, vehicleTypeArray ?? []);
+        this.primitiveLayerManager.add(tailPrimitive, groupName, "trip");
         // 속도 히트맵 레이어: Cesium 3D
         const primitiveCollections = this.primitiveLayerManager.add(new SpeedHeatmapLayer(this.cesiumViewer), groupName, "speed");
         const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
@@ -183,7 +195,7 @@ export class LayerManager {
     }
 
     removeTripLayer(): void {
-        this._removeLayers("analyze", "trip", "speed", "traffic", "default"); // trip + speed + traffic + default
+        this._removeLayers("analyze", "trip", "speed", "traffic", "dwellTime", "flowBar", "iconBubble", "guideway", "traceVehicle", "intersectionPulse", "default");
     }
 
     addTrafficLayer() {
@@ -205,6 +217,120 @@ export class LayerManager {
         this.primitiveLayerManager.add(trafficCesium, groupName, layerName, false);
     }
 
+    addDwellTimeLayer() {
+        const groupName = "analyze";
+        const layerName = "dwellTime";
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        const dwellOl = new DwellTimeFeatureLayer();
+        const olLayers = this.vectorLayerManager.add(dwellOl, groupName, layerName, false);
+        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+        olLayers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) vectorLayers.push(layer);
+        });
+
+        const dwellCesium = new DwellTimeCesiumLayer(this.cesiumViewer);
+        this.primitiveLayerManager.add(dwellCesium, groupName, layerName, false);
+    }
+
+    addFlowBarLayer() {
+        const groupName = "analyze";
+        const layerName = "flowBar";
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        // OL 2D
+        const flowOl = new LinkFlowBarFeatureLayer(this.olMap);
+        const olLayers = this.vectorLayerManager.add(flowOl, groupName, layerName, false);
+        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+        olLayers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) vectorLayers.push(layer);
+        });
+
+        // Cesium 3D
+        const trafficCesium = new LinkFlowBarCesiumLayer(this.cesiumViewer);
+        const primitiveCollections = this.primitiveLayerManager.add(trafficCesium, groupName, layerName, false);
+        const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
+        if (!managedCollection.includes(primitiveCollections)) {
+            managedCollection.push(primitiveCollections);
+        }
+    }
+
+    addIconBubbleLayer() {
+        const groupName = "analyze";
+        const layerName = "iconBubble";
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        const bubbleOl = new LinkBubbleFeatureLayer(this.olMap);
+        const olLayers = this.vectorLayerManager.add(bubbleOl, groupName, layerName, false);
+        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+        olLayers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) {
+                vectorLayers.push(layer);
+            }
+        });
+
+        const bubbleLayer = new LinkBubbleCesiumLayer(this.cesiumViewer);
+        this.primitiveLayerManager.add(bubbleLayer, groupName, layerName, false);
+    }
+
+    addGuidewayLayer() {
+        const groupName = "analyze";
+        const layerName = "guideway";
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        const holoOl = new GuidewayFeatureLayer(this.olMap);
+        const olLayers = this.vectorLayerManager.add(holoOl, groupName, layerName, false);
+        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+        olLayers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) vectorLayers.push(layer);
+        });
+
+        const holoLayer = new GuidewayCesiumLayer(this.cesiumViewer);
+        this.primitiveLayerManager.add(holoLayer, groupName, layerName, false);
+    }
+
+    addIntersectionPulseLayer() {
+        const groupName = "analyze";
+        const layerName = "intersectionPulse";
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        const pulseOl = new IntersectionPulseFeatureLayer(this.olMap);
+        const olLayers = this.vectorLayerManager.add(pulseOl, groupName, layerName, false);
+        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+        olLayers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) vectorLayers.push(layer);
+        });
+
+        const pulseCesium = new IntersectionPulseCesiumLayer(this.cesiumViewer);
+        const primitiveCollections = this.primitiveLayerManager.add(pulseCesium, groupName, layerName, false);
+        const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
+        if (!managedCollection.includes(primitiveCollections)) {
+            managedCollection.push(primitiveCollections);
+        }
+    }
+
+    addTraceVehicleLayer() {
+        const groupName = "analyze";
+        const layerName = "traceVehicle";
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        const holoVehicleOl = new TraceVehicleFeatureLayer(this.olMap);
+        const olLayers = this.vectorLayerManager.add(holoVehicleOl, groupName, layerName, false);
+        const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+        olLayers.forEach((layer: BaseLayer) => {
+            if (!vectorLayers.includes(layer)) vectorLayers.push(layer);
+        });
+
+        const holoVehicleLayer = new TraceVehicleCesiumLayer(this.cesiumViewer);
+        this.primitiveLayerManager.add(holoVehicleLayer, groupName, layerName, false);
+    }
+
     addVehicleLayer(
         vehicleRoute,
         vectorSource,
@@ -218,7 +344,6 @@ export class LayerManager {
     ) {
         const groupName = "analyze"
         const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
-
         const VEHICLE_TYPE_COLORS: Record<string, [number, number, number]> = {
             'CAR':   [0.39, 0.63, 1.0],
             'TAXI':  [1.0,  0.86, 0.0],

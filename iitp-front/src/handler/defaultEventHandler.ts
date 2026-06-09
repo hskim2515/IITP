@@ -9,15 +9,16 @@ import {Layer} from "ol/layer";
 import {isVectorLayer, isWebGLVectorLayer, matchesCustomKeyValue} from "@utils/olLayer";
 import {isFeature} from "@utils/feature";
 import {StyleFunction} from "ol/style/Style";
-import { Icon, RegularShape, Style } from "ol/style";
+import { RegularShape, Style } from "ol/style";
 import CircleStyle from "ol/style/Circle";
 import {propertyFormSchema} from "@schema/propertyFormSchema";
 import {useMenuStore} from "@stores/useMenuStore";
 import {useNetworkDrawStore} from "@stores/useNetworkDrawStore";
 import { networkPrimitivePropertiesMap, highlightNetworkPrimitive } from "@datasource/NetworkDataSourceLayer";
+import { getSelectedOlStyle } from "@utils/selectionStyle";
+import { getOlSelectionPriority, OlSelectionCandidate, sortOlSelectionCandidates } from "@utils/selectionPriority";
 
 
-const selectedGuid = useSelectionStore.getState().selectedGuid;
 const setSelectedProps = usePropertyStore.getState().setSelectedProps;
 const setSelectedGuid = useSelectionStore.getState().setSelectedGuid;
 
@@ -33,6 +34,8 @@ const originalSelectedStyles = new WeakMap<Feature, ReturnType<Feature['getStyle
 let modifyingGuid: string | null = null;
 
 const HIGHLIGHT_SCALE = 3;
+const HOVER_STROKE_COLOR = 'rgba(255, 214, 102, 0.70)';
+const HOVER_FILL_COLOR = 'rgba(255, 214, 102, 0.12)';
 
 export const defaultEventHandlers ={
 
@@ -95,7 +98,6 @@ export const defaultEventHandlers ={
     handleOLSelect : (e: MapBrowserEvent<UIEvent>) => {
         // 선택편집 모드 중에는 속성조회 이벤트 무시
         if (useNetworkDrawStore.getState().isSelectActive) return;
-        if (useMenuStore.getState().activeSubmenu) return;
         const olMap = useOpenLayersStore.getState().map;
 
         if (!olMap) {
@@ -110,35 +112,50 @@ export const defaultEventHandlers ={
             highlightedFeature = undefined;
         }
 
-        let isFeatureExist = false;
+        const selectedGuids = useSelectionStore.getState().selectedGuid;
+        const featureCandidates: OlSelectionCandidate<Layer>[] = [];
+
         olMap.forEachFeatureAtPixel(e.pixel, function (feature, layer) {
             const guid = feature.get("__guid");
             if (guid) {
-                isFeatureExist = true;
-                setSelectedProps(feature.getProperties());
-                setSelectedGuid([guid]);
-
-                if (isFeature(feature)) {
-                    // 이전 선택 하이라이트 제거
-                    if (selectedFeature && selectedFeature !== feature) {
-                        clearSelectionHighlight(selectedFeature);
-                    }
-                    // 새 선택 하이라이트 적용
-                    if (selectedFeature !== feature && isVectorLayer(layer)) {
-                        const styleFn = layer.getStyleFunction();
-                        if (styleFn) {
-                            applySelectionHighlight(feature, styleFn);
-                        }
-                    }
-                }
-                return true;
+                featureCandidates.push({
+                    feature,
+                    layer,
+                    priority: getOlSelectionPriority(feature, selectedGuids),
+                });
             }
+            return undefined;
         }, {
             // disableHitDetection: true 인 WebGLVectorLayer(TrailFeatureLayer 등)에서
             // forEachFeatureAtPixel 호출 시 throw 발생 → 해당 레이어 제외
             layerFilter: (layer) => !isWebGLVectorLayer(layer),
         });
-        if (!isFeatureExist) {
+
+        const selectedCandidate = sortOlSelectionCandidates(featureCandidates)[0];
+
+        if (selectedCandidate) {
+            const {feature, layer} = selectedCandidate;
+            const guid = feature.get("__guid");
+            setSelectedProps(feature.getProperties());
+            setSelectedGuid([guid]);
+
+            if (isFeature(feature)) {
+                // 이전 선택 하이라이트 제거
+                if (selectedFeature && selectedFeature !== feature) {
+                    clearSelectionHighlight(selectedFeature);
+                }
+                // 새 선택 하이라이트 적용
+                if (selectedFeature !== feature && isVectorLayer(layer)) {
+                    const styleFn = layer.getStyleFunction();
+                    if (styleFn) {
+                        applySelectionHighlight(feature, styleFn);
+                    }
+                }
+            }
+            return;
+        }
+
+        if (!selectedCandidate) {
             setSelectedProps(null);
             setSelectedGuid([]);
             if (selectedFeature) {
@@ -192,7 +209,10 @@ export const defaultEventHandlers ={
 
         if (!olMap) return;
 
-        const featureInfo = olMap.forEachFeatureAtPixel(
+        const selectedGuids = useSelectionStore.getState().selectedGuid;
+        const featureCandidates: OlSelectionCandidate<Layer>[] = [];
+
+        olMap.forEachFeatureAtPixel(
             e.pixel,
             (feature: FeatureLike, layer: Layer) => {
                 const isTargetLayer = !hoverLayerName || (hoverLayerName && matchesCustomKeyValue(layer, 'layer', hoverLayerName));
@@ -211,7 +231,11 @@ export const defaultEventHandlers ={
                     if (modifyingGuid && guid === modifyingGuid) {
                         return undefined;
                     }
-                    return {feature, layer};
+                    featureCandidates.push({
+                        feature,
+                        layer,
+                        priority: getOlSelectionPriority(feature, selectedGuids),
+                    });
                 }
                 return undefined;
             },
@@ -220,6 +244,8 @@ export const defaultEventHandlers ={
                 layerFilter: (layer) => !isWebGLVectorLayer(layer),
             }
         );
+
+        const featureInfo = sortOlSelectionCandidates(featureCandidates)[0];
 
         if (!featureInfo) {
             if (highlightedFeature) {
@@ -354,7 +380,7 @@ const applySelectionHighlight = (feature: Feature, styleFunction: StyleFunction)
     originalSelectedStyles.set(feature, currentStyle);
     feature.setStyle((f, resolution) => {
         const baseStyle = styleFunction(f, resolution) ?? undefined;
-        return getHighlightedOlStyle(baseStyle, HIGHLIGHT_SCALE);
+        return getSelectedOlStyle(baseStyle);
     });
     selectedFeature = feature;
 };
@@ -454,34 +480,27 @@ const getHighlightedOlStyle = (baseStyle: Style | Style[] | null | undefined, sc
     const styles = Array.isArray(baseStyle) ? baseStyle : [baseStyle];
 
     return styles.map((style) => {
-        const image = style.getImage();
-        const stroke = style.getStroke();
+        const hoverStyle = style.clone();
+        const image = hoverStyle.getImage();
+        const stroke = hoverStyle.getStroke();
+        const fill = hoverStyle.getFill();
 
-        if (image instanceof Icon) {
-            const scaleValue = image.getScale();
-            if (Array.isArray(scaleValue)) {
-                const [scaleX, scaleY] = scaleValue;
-                image.setScale([scaleX * scale, scaleY * scale]);
-            } else {
-                image.setScale(scaleValue * scale);
-            }
-
-        } else if (image instanceof CircleStyle) {
-            image.setRadius(image.getRadius() * scale);
-        } else if (image instanceof RegularShape) {
-            const s = (image as any).getScale?.() ?? 1;
-            if (Array.isArray(s)) {
-                image.setScale([s[0] * scale, s[1] * scale]);
-            } else {
-                image.setScale(s * scale);
-            }
+        if (image instanceof CircleStyle || image instanceof RegularShape) {
+            image.getFill()?.setColor(HOVER_FILL_COLOR);
+            image.getStroke()?.setColor(HOVER_STROKE_COLOR);
+            image.getStroke()?.setWidth(2.5);
         }
-
 
         if (stroke) {
-            const currentWidth = stroke.getWidth() ?? 1;
-            stroke.setWidth(currentWidth * scale);
+            stroke.setColor(HOVER_STROKE_COLOR);
+            stroke.setWidth(Math.max((stroke.getWidth() ?? 1) + 1, 3));
         }
-        return style;
+
+        if (fill) {
+            fill.setColor(HOVER_FILL_COLOR);
+        }
+
+        hoverStyle.setZIndex(250);
+        return hoverStyle;
     });
 };

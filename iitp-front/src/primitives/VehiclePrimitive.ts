@@ -1,6 +1,7 @@
 import * as Cesium from "cesium";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import type { BufferGeometry } from "three";
+import { useLayerStore } from "@stores/useLayerStore";
 
 /**
  * GLB 인스턴싱 기반 차량 Primitive
@@ -40,6 +41,7 @@ export default class VehiclePrimitive {
     correctionHpr: Cesium.HeadingPitchRoll;
     targetSizeM: number;
     zOffset: number;
+    highlightedType = 'ALL';
 
     // ─── GPU 버퍼 ─────────────────────────────────────────────────────────
     private offsetBuffer:      any = null;
@@ -330,6 +332,7 @@ export default class VehiclePrimitive {
                 out vec2 v_uv;
                 out float v_eyeDist;
                 out float v_meshAlpha;
+                out float v_rim;
 
                 vec3 quatRotate(vec3 v, vec4 q) {
                     return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
@@ -346,15 +349,18 @@ export default class VehiclePrimitive {
                         v_uv        = vec2(0.0);
                         v_eyeDist   = instDist;
                         v_meshAlpha = 0.0;
+                        v_rim       = 0.0;
                         return;
                     }
 
                     vec3 rotated = quatRotate(a_modelPosition * a_instanceScale, a_instanceOrientation);
+                    vec3 normalEye = normalize(mat3(u_view) * quatRotate(normalize(a_modelNormal), a_instanceOrientation));
                     vec3 posRel  = u_rtcCenter + a_instanceOffset + rotated;
                     vec3 posEye  = mat3(u_view) * posRel;
                     gl_Position  = u_projection * vec4(posEye, 1.0);
                     v_uv        = a_uv;
                     v_eyeDist   = length(posEye);
+                    v_rim       = pow(1.0 - abs(normalEye.z), 2.4);
                     // 1400m부터 서서히 투명해짐
                     v_meshAlpha = 1.0 - smoothstep(1400.0, 1800.0, instDist);
                 }
@@ -366,9 +372,12 @@ export default class VehiclePrimitive {
                 in vec2 v_uv;
                 in float v_eyeDist;
                 in float v_meshAlpha;
+                in float v_rim;
                 uniform sampler2D u_texture;
                 uniform vec3      u_baseColor;
                 uniform bool      u_hasTexture;
+                uniform float     u_highlightStrength;
+                uniform vec3      u_highlightColor;
 
                 out vec4 fragColor;
 
@@ -385,6 +394,7 @@ export default class VehiclePrimitive {
                     } else {
                         fragColor = colorOnly;
                     }
+                    fragColor.rgb += u_highlightColor * v_rim * u_highlightStrength * 0.9;
                 }
             `,
             attributeLocations: {
@@ -416,6 +426,8 @@ export default class VehiclePrimitive {
                 u_baseColor:   () => new Cesium.Cartesian3(self.baseColor[0], self.baseColor[1], self.baseColor[2]),
                 u_texture:     () => self.cesiumTexture,
                 u_hasTexture:  () => self.hasTexture,
+                u_highlightStrength: () => self.getHighlightStrength(),
+                u_highlightColor: () => new Cesium.Cartesian3(0.0, 1.0, 1.0),
             },
             primitiveType: Cesium.PrimitiveType.TRIANGLES,
             count:         indicesTyped.length,
@@ -480,6 +492,8 @@ export default class VehiclePrimitive {
                 precision mediump float;
 
                 uniform vec3 u_baseColor;
+                uniform float u_highlightStrength;
+                uniform vec3 u_highlightColor;
                 in float v_pointAlpha;
                 out vec4 fragColor;
 
@@ -487,7 +501,8 @@ export default class VehiclePrimitive {
                     if (v_pointAlpha <= 0.0) discard;
                     // 원형 점
                     if (length(gl_PointCoord - vec2(0.5)) > 0.5) discard;
-                    fragColor = vec4(u_baseColor, v_pointAlpha);
+                    vec3 color = mix(u_baseColor, u_highlightColor, u_highlightStrength);
+                    fragColor = vec4(color, v_pointAlpha);
                 }
             `,
             attributeLocations: {
@@ -510,6 +525,8 @@ export default class VehiclePrimitive {
                     return sRTC;
                 },
                 u_baseColor: () => new Cesium.Cartesian3(self.baseColor[0], self.baseColor[1], self.baseColor[2]),
+                u_highlightStrength: () => self.getHighlightStrength(),
+                u_highlightColor: () => new Cesium.Cartesian3(0.0, 1.0, 1.0),
             },
             primitiveType: Cesium.PrimitiveType.POINTS,
             count:         1,
@@ -654,6 +671,19 @@ export default class VehiclePrimitive {
         this.correctionHpr = hpr;
         const corrM = Cesium.Matrix3.fromHeadingPitchRoll(hpr);
         Cesium.Quaternion.fromRotationMatrix(corrM, this.correctionQ);
+    }
+
+    setHighlightFilter(highlightedType: string) {
+        this.highlightedType = highlightedType;
+    }
+
+    private getHighlightStrength(): number {
+        const activeLayerName = useLayerStore.getState().activeLayerName ?? [];
+        const traceVehicleActive = activeLayerName.includes('traceVehicle');
+        if (traceVehicleActive) return 0;
+        return this.highlightedType !== 'ALL' && this.highlightedType === this.vehicleType
+            ? 1
+            : 0;
     }
 
     // ─── 정리 ─────────────────────────────────────────────────────────────

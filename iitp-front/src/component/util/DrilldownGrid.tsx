@@ -4,6 +4,7 @@ import { useNavigationStore, useCurrentFrame } from "@stores/useNavigationStore"
 import { useSelectionStore } from "@stores/useSelectionStore";
 import { useMessageStore } from "@stores/useMessageStore";
 import { useSchemaStore } from "@stores/useSchemaStore";
+import { useTypeSelectStore } from "@stores/useTypeSelectStore";
 
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { layerNameToHistoryStoreMap } from "@hooks/useHistoryInit";
@@ -13,6 +14,7 @@ import { generateTemplate } from "@utils/schema";
 import { createEventHandlers } from "@handler/createEventHandlers";
 import { GridToolbar } from "./GridToolbar";
 import { GridTable } from "./GridTable";
+import { featureTypeDrawRequirements } from "@config/menuDrawConfig";
 
 import style from "@css/DrilldownGrid.module.css";
 import { getChildrenStructure, getStructureByFeatureType } from "@utils/gridUtils";
@@ -25,9 +27,23 @@ type DrilldownGridProps = {
 };
 
 function guidBelongsToRows(rows: any[], targetGuid: string): boolean {
-    return rows.some(
-        (row) => targetGuid === row.__guid || targetGuid.startsWith(`${row.__guid}.`)
-    );
+    return rows.some((row) => guidBelongsToRecord(row, targetGuid));
+}
+
+function guidBelongsToRecord(record: any, targetGuid: string): boolean {
+    if (!record || typeof record !== "object") return false;
+    if (targetGuid === record.__guid || targetGuid.startsWith(`${record.__guid}.`)) return true;
+
+    return Object.values(record).some((value) => {
+        if (Array.isArray(value)) return guidBelongsToRows(value, targetGuid);
+        if (value && typeof value === "object") return guidBelongsToRecord(value, targetGuid);
+        return false;
+    });
+}
+
+function guidBelongsToAnyRoot(data: Record<string, any[]> | undefined, targetGuid: string): boolean {
+    if (!data || !targetGuid) return false;
+    return Object.values(data).some((rows) => Array.isArray(rows) && guidBelongsToRows(rows, targetGuid));
 }
 
 const DrilldownGrid = ({
@@ -101,7 +117,7 @@ const DrilldownGrid = ({
         });
 
         const pendingGuid = useSelectionStore.getState().selectedGuid[0] as string | undefined;
-        if (!pendingGuid || !guidBelongsToRows(rowData, pendingGuid)) {
+        if (!pendingGuid || !guidBelongsToAnyRoot(data, pendingGuid)) {
             clearSelected();
         }
     }, [layerName, activeRootKey, init, rebuildStack, clearSelected, getStructureByLayerName]);
@@ -135,7 +151,11 @@ const DrilldownGrid = ({
 
     const handleAdd = useCallback(() => {
         const currentFrame = useNavigationStore.getState().stack.at(-1);
-        if (!currentFrame) return;
+        if (!currentFrame) {
+            setMessage({ type: "error", text: "현재 프레임이 없습니다 (frame null)." });
+            return;
+        }
+        //setMessage({ type: "info", text: `[handleAdd] levelName: ${currentFrame.levelName}` });
 
         const targetSchema = getSchemaDefinitionByNames(layerName, currentFrame.levelName);
         const template = generateTemplate(targetSchema);
@@ -148,8 +168,18 @@ const DrilldownGrid = ({
             parentGuid: currentFrame.parentGuid ?? null,
         };
         generateGuidWithParentGuid(currentFrame.parentGuid, tempRecord, currentFrame.rows);
+
+        const typeReq = featureTypeDrawRequirements[currentFrame.levelName];
+        if (typeReq) {
+            useTypeSelectStore.getState().open(typeReq.typeKey, (selectedType: string) => {
+                tempRecord.markingType = selectedType;
+                createEventHandlers(tempRecord);
+            });
+            return;
+        }
+
         createEventHandlers(tempRecord);
-    }, [layerName, getSchemaDefinitionByNames, setMessage]);
+    }, [layerName, getSchemaDefinitionByNames]);
 
     const handleDelete = useCallback(() => {
         const currentSelectedGuid = useSelectionStore.getState().selectedGuid;

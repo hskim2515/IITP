@@ -24,6 +24,7 @@ const DropdownMenu = ({title, items, onItemClick}: Props) => {
         } else {
             setActiveDropdownMenu(item);
         }
+        setIsOpen(false);
     };
 
     return (
@@ -32,7 +33,7 @@ const DropdownMenu = ({title, items, onItemClick}: Props) => {
             onMouseEnter={() => setIsOpen(true)}
             onMouseLeave={() => setIsOpen(false)}
         >
-            <span className={styles['title']}>{title}</span>
+            <span className={`${styles['title']} ${isOpen ? styles['titleActive'] : ''}`}>{title}</span>
             {isOpen && (
                 <div className={styles['dropdown']}>
                     {items.map((item) => (

@@ -28,18 +28,21 @@ const BaseMap = ({ fields }: Props) => {
 
     return (
         <div>
-            {fields.map(field => (
-                <label key={field.key} className={styles.layerItem}>
+            {fields.map(field => {
+                const isChecked = currentBaseMap === field.key;
+                return (
+                <label key={field.key} className={`${styles.layerItem} ${isChecked ? styles.layerItemChecked : ''}`}>
                     <input
                         type={field.formType}
                         name="baseMap"
                         value={field.key}
-                        checked={currentBaseMap === field.key}
+                        checked={isChecked}
                         onChange={() => handleSelect(field.key)}
                     />
                     {field.label}
                 </label>
-            ))}
+                );
+            })}
         </div>
     );
 };
