@@ -9,6 +9,7 @@ interface VehicleState {
     vehicleData : object,
     vehicleRoute : object,
     features: object,
+    latestPositions: Array<number[] | null>,
     setNumVehicle: (num: number) => void;
     setActiveVehicleCount: (count: number) => void;
     setSpeedFactor: (speed: number) => void;
@@ -16,6 +17,7 @@ interface VehicleState {
     setVehicleData: (vehicleData: object) => void;
     setVehicleRoute: (vehicleRoute: object) => void;
     setFeatures: (features: object) => void;
+    setLatestPositions: (positions: Array<number[] | null>) => void;
 }
 
 export const useVehicleStore = create<VehicleState>(((set) => ({
@@ -26,6 +28,7 @@ export const useVehicleStore = create<VehicleState>(((set) => ({
     vehicleData : '',
     vehicleRoute : '',
     features : '',
+    latestPositions: [],
     setNumVehicle: (state : VehicleState) => set({ numVehicle: state }),
     setActiveVehicleCount: (count: number) => set({ activeVehicleCount: count }),
     setSpeedFactor: (state: VehicleState) => set({ speedFactor: state }),
@@ -33,4 +36,5 @@ export const useVehicleStore = create<VehicleState>(((set) => ({
     setVehicleData: (state: VehicleState) => set({ vehicleData: state }),
     setVehicleRoute: (state: VehicleState) => set({ vehicleRoute: state }),
     setFeatures: (state: VehicleState) => set({ features: state }),
+    setLatestPositions: (positions) => set({ latestPositions: positions }),
 })));

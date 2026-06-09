@@ -1,0 +1,119 @@
+.overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+}
+
+.container {
+    background: rgba(14, 16, 28, 0.98);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
+    width: 520px;
+    max-width: 90vw;
+    display: flex;
+    flex-direction: column;
+    color: #e0e0e0;
+}
+
+.header {
+    padding: 14px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.content {
+    padding: 16px 20px;
+}
+
+/* 카드 그리드 */
+.cardGrid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+}
+
+.card {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 6px;
+    border-radius: 8px;
+    border: 1.5px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.04);
+    color: #ccc;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.card:hover {
+    background: rgba(255, 255, 255, 0.09);
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+.cardSelected {
+    background: rgba(59, 130, 246, 0.2);
+    border-color: rgba(59, 130, 246, 0.7);
+    color: #93c5fd;
+}
+
+.cardImage {
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+    border-radius: 4px;
+}
+
+.cardImagePlaceholder {
+    width: 72px;
+    height: 72px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px dashed rgba(255, 255, 255, 0.15);
+}
+
+.cardLabel {
+    font-size: 11px;
+    text-align: center;
+    word-break: break-all;
+}
+
+/* 액션 버튼 */
+.actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.btn {
+    padding: 6px 18px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.07);
+    color: #e0e0e0;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background 0.15s;
+}
+
+.btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.btnConfirm {
+    composes: btn;
+    background: rgba(59, 130, 246, 0.4);
+    border-color: rgba(59, 130, 246, 0.6);
+}
+
+.btnConfirm:hover {
+    background: rgba(59, 130, 246, 0.6);
+}

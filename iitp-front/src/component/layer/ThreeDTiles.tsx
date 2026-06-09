@@ -25,7 +25,7 @@ const ThreeDTiles = (_props: Props) => {
     return (
         <div>
             {tilesets.map(entry => (
-                <label key={entry.id} className={styles.layerItem}>
+                <label key={entry.id} className={`${styles.layerItem} ${entry.enabled ? styles.layerItemChecked : ''}`}>
                     <input
                         type="checkbox"
                         checked={entry.enabled}

@@ -5,7 +5,6 @@ import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import throttle from 'lodash/throttle';
 import { useSelectionStore } from "@stores/useSelectionStore";
 import {defaultEventHandlers} from "@handler/defaultEventHandler";
-import debounce from "lodash.debounce";
 
 const useDefaultMoveMouse = () => {
 
@@ -18,8 +17,6 @@ const useDefaultMoveMouse = () => {
     const selectedGuid = useSelectionStore((state) => state.selectedGuid)
 
     const THROTTLE_MS = 16
-    const DEBOUNCE_MS = 100
-
     // const hoverLayerName = useMemo(() => {
     //     if (!activeSubmenu) {
     //         return undefined;
@@ -30,7 +27,10 @@ const useDefaultMoveMouse = () => {
     useEffect(() => {
         if (!olMap || !olManager) return;
 
-        const optimizedOlHover = throttle(debounce(defaultEventHandlers.handleOlHover, DEBOUNCE_MS), THROTTLE_MS);
+        const optimizedOlHover = throttle(defaultEventHandlers.handleOlHover, THROTTLE_MS, {
+            leading: true,
+            trailing: true,
+        });
 
         olManager.bind("pointermove", optimizedOlHover);
 

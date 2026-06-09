@@ -4,64 +4,77 @@
     left: 0;
     width: 100%;
     height: 44px;
-    background-color: rgba(12, 13, 21, 0.90);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    background:
+        linear-gradient(180deg, rgba(19, 23, 32, 0.94) 0%, rgba(11, 13, 20, 0.92) 100%);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
     color: #fff;
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 0 14px;
     z-index: 999;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+    border-bottom: 1px solid rgba(176, 192, 222, 0.13);
+    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.32);
     box-sizing: border-box;
 }
 
 .nav {
     display: flex;
-    gap: 4px;
+    align-items: center;
+    gap: 3px;
 }
 
 .container {
     position: relative;
     cursor: pointer;
-    padding-bottom: 8px;
-    margin-bottom: -8px;
+    padding: 5px 0 10px;
+    margin-bottom: -10px;
 }
 
 .title {
     display: inline-block;
-    padding: 6px 10px;
+    padding: 6px 11px;
     font-size: 13px;
-    font-weight: 500;
-    color: #ccc;
-    border-radius: 5px;
-    transition: background 0.15s, color 0.15s;
+    font-weight: 600;
+    color: rgba(232, 237, 248, 0.72);
+    border: 1px solid transparent;
+    border-radius: 6px;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
     letter-spacing: 0.2px;
+    line-height: 1;
 }
 
 .title:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.06);
     color: #fff;
+    border-color: rgba(176, 192, 222, 0.12);
+}
+
+.titleActive {
+    background: rgba(122, 162, 255, 0.13);
+    color: #eef4ff;
+    border-color: rgba(122, 162, 255, 0.22);
 }
 
 .dropdown {
     position: absolute;
     top: 100%;
     left: 0;
-    background-color: rgba(18, 20, 30, 0.97);
+    background:
+        linear-gradient(180deg, rgba(23, 27, 38, 0.98) 0%, rgba(13, 16, 24, 0.98) 100%);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+    border: 1px solid rgba(176, 192, 222, 0.14);
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.46);
     border-radius: 8px;
     overflow: hidden;
     min-width: 160px;
     z-index: 1000;
     display: flex;
     flex-direction: column;
-    animation: dropIn 0.12s ease;
+    padding: 4px;
+    animation: dropIn 0.14s ease;
 }
 
 @keyframes dropIn {
@@ -70,24 +83,21 @@
 }
 
 .item {
-    padding: 9px 14px;
+    padding: 8px 11px;
     cursor: pointer;
-    color: #ccc;
+    color: rgba(232, 237, 248, 0.72);
     font-size: 13px;
     background-color: transparent;
     border: none;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
     text-align: left;
     transition: background 0.15s, color 0.15s;
     letter-spacing: 0.1px;
-}
-
-.item:last-child {
-    border-bottom: none;
+    white-space: nowrap;
 }
 
 .item:hover {
-    background-color: rgba(255, 255, 255, 0.08);
+    background-color: rgba(255, 255, 255, 0.06);
     color: #fff;
 }
 
@@ -183,6 +193,103 @@
     background: rgba(65, 105, 225, 0.32);
     border-color: rgba(65, 105, 225, 0.65);
     color: #9dbfff;
+}
+
+.simBtnActive {
+    background: rgba(122, 162, 255, 0.24);
+    border-color: rgba(122, 162, 255, 0.58);
+    color: #f4f7ff;
+}
+
+.simStateGroup {
+    height: 26px;
+    display: inline-flex;
+    align-items: center;
+    overflow: hidden;
+    border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    background: rgba(255, 255, 255, 0.06);
+    white-space: nowrap;
+}
+
+.simStateGroupRunning {
+    background: rgba(57, 197, 118, 0.12);
+    border-color: rgba(57, 197, 118, 0.34);
+}
+
+.simStateGroupPaused {
+    background: rgba(255, 185, 76, 0.10);
+    border-color: rgba(255, 185, 76, 0.26);
+}
+
+.simStateGroupEnded {
+    background: rgba(148, 163, 184, 0.12);
+    border-color: rgba(148, 163, 184, 0.30);
+}
+
+.simStatus {
+    height: 100%;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 9px;
+    color: #c2cadc;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1px;
+}
+
+.simStateGroupRunning .simStatus {
+    color: #bff5d5;
+}
+
+.simStateGroupPaused .simStatus {
+    color: #f0d4a2;
+}
+
+.simStateGroupEnded .simStatus {
+    color: #d2d8e4;
+}
+
+.simStatusDot {
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+    flex-shrink: 0;
+}
+
+.simStateGroupRunning .simStatusDot {
+    animation: simPulse 1.2s ease-in-out infinite;
+}
+
+.simTime {
+    height: 100%;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 0 9px;
+    border-left: 1px solid rgba(255, 255, 255, 0.09);
+    color: #c8cfdd;
+    font-size: 11px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.simTimeSep {
+    color: #687083;
+    font-weight: 500;
+}
+
+@keyframes simPulse {
+    0%, 100% {
+        opacity: 0.55;
+        transform: scale(0.85);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1.18);
+    }
 }
 
 .simSpeed {

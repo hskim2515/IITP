@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useHeatmapSettingStore } from '@stores/useHeatmapSettingStore';
 import { useAnalysisSettingStore } from '@stores/useAnalysisSettingStore';
+import { useVisualLayerSettingStore } from '@stores/useVisualLayerSettingStore';
 import { useLayerStore } from '@stores/useLayerStore';
 import ColorBar from "@component/util/ColorBar";
 import styles from "@css/ToolsPanel.module.css";
@@ -8,6 +9,42 @@ import styles from "@css/ToolsPanel.module.css";
 interface Props {
     layerType: string | undefined;
 }
+
+const VEHICLE_HIGHLIGHT_OPTIONS = [
+    { value: 'ALL', label: '전체 차종' },
+    { value: 'CAR', label: '승용차' },
+    { value: 'TAXI', label: '택시' },
+    { value: 'BUS', label: '버스' },
+    { value: 'TRUCK', label: '화물차' },
+    { value: 'MOTO', label: '이륜차' },
+];
+
+const ICON_BUBBLE_VEHICLE_OPTIONS = [
+    { value: 'ALL', label: '전체 차량' },
+    { value: 'CAR', label: '승용차' },
+    { value: 'TAXI', label: '택시' },
+    { value: 'BUS', label: '버스' },
+    { value: 'TRUCK', label: '화물차' },
+    { value: 'MOTO', label: '이륜차' },
+];
+
+const DWELL_TIME_METRIC_OPTIONS = [
+    { value: 'dwell', label: '정체시간 강도' },
+    { value: 'slowCount', label: '저속 차량 수' },
+    { value: 'stopGo', label: '정지-재출발' },
+];
+
+const INTERSECTION_PULSE_METRIC_OPTIONS = [
+    { value: 'incoming', label: '유입량' },
+    { value: 'waiting', label: '대기량' },
+    { value: 'outgoing', label: '방출량' },
+];
+
+const FLOW_BAR_METRIC_OPTIONS = [
+    { value: 'volume', label: '교통량' },
+    { value: 'avgSpeed', label: '평균속도' },
+    { value: 'dwell', label: '체류강도' },
+];
 
 const colorMaps: Record<string, string[]> = {
     default:    ["#0000FF", "#00FF00", "#FFFF00", "#FF0000"],
@@ -42,7 +79,30 @@ const SliderRow = ({
 
 const LayerSettingPopup = ({ layerType }: Props) => {
     const { colors, exaggeration, setColors, setExaggeration } = useHeatmapSettingStore();
-    const { vehicle, trip, od, speed, setVehicle, setTrip, setOd, setSpeed } = useAnalysisSettingStore();
+    const {
+        vehicle,
+        trip,
+        od,
+        speed,
+        dwellTime,
+        iconBubble,
+        intersectionPulse,
+        flowBar,
+        setVehicle,
+        setTrip,
+        setOd,
+        setSpeed,
+        setDwellTime,
+        setIconBubble,
+        setIntersectionPulse,
+        setFlowBar,
+    } = useAnalysisSettingStore();
+    const {
+        guidewayColor,
+        traceVehicleColor,
+        setGuidewayColor,
+        setTraceVehicleColor,
+    } = useVisualLayerSettingStore();
     const layerManager = useLayerStore((s) => s.layerManager);
     const [tempExaggeration, setTempExaggeration] = useState(exaggeration);
 
@@ -61,8 +121,32 @@ const LayerSettingPopup = ({ layerType }: Props) => {
         <div>
 
             {/* ── 히트맵 ── */}
-            {layerType === 'heatmap' && (
+            {(layerType === 'heatmap' || layerType === 'flowBar') && (
                 <>
+                    {layerType === 'flowBar' && (
+                        <>
+                            <div className={styles.settingRow}>
+                                <span className={styles.settingLabel}>분석 기준</span>
+                                <select
+                                    className={styles.settingSelect}
+                                    value={flowBar.metric}
+                                    onChange={(e) => {
+                                        const metric = e.target.value as 'volume' | 'avgSpeed' | 'dwell';
+                                        setFlowBar({ metric });
+                                        applyToLayers((l) => {
+                                            if (typeof l.setFlowMetric === 'function') {
+                                                l.setFlowMetric(metric);
+                                            }
+                                        });
+                                    }}
+                                >
+                                    {FLOW_BAR_METRIC_OPTIONS.map((option) => (
+                                        <option key={option.value} value={option.value}>{option.label}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </>
+                    )}
                     <div className={styles.settingRow}>
                         <span className={styles.settingLabel}>Color</span>
                     </div>
@@ -73,17 +157,93 @@ const LayerSettingPopup = ({ layerType }: Props) => {
                             </div>
                         ))}
                     </div>
-                    <div className={styles.sectionDivider} />
-                    <SliderRow
-                        label="Exaggeration"
-                        min={0.1} max={2} step={0.1}
-                        value={tempExaggeration}
-                        display={tempExaggeration.toFixed(1)}
-                        onChange={(v) => {
-                            setTempExaggeration(v);
-                            setExaggeration(v);
-                        }}
-                    />
+                    {layerType === 'heatmap' && (
+                        <>
+                            <div className={styles.sectionDivider} />
+                            <SliderRow
+                                label="Exaggeration"
+                                min={0.1} max={2} step={0.1}
+                                value={tempExaggeration}
+                                display={tempExaggeration.toFixed(1)}
+                                onChange={(v) => {
+                                    setTempExaggeration(v);
+                                    setExaggeration(v);
+                                }}
+                            />
+                        </>
+                    )}
+                </>
+            )}
+
+            {/* ── 체류시간 분석 ── */}
+            {layerType === 'dwellTime' && (
+                <>
+                    <div className={styles.settingRow}>
+                        <span className={styles.settingLabel}>분석 기준</span>
+                        <select
+                            className={styles.settingSelect}
+                            value={dwellTime.metric}
+                            onChange={(e) => {
+                                setDwellTime({ metric: e.target.value as 'dwell' | 'slowCount' | 'stopGo' });
+                            }}
+                        >
+                            {DWELL_TIME_METRIC_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                        </select>
+                    </div>
+                </>
+            )}
+
+            {/* ── 링크 아이콘 ── */}
+            {layerType === 'iconBubble' && (
+                <>
+                    <div className={styles.settingRow}>
+                        <span className={styles.settingLabel}>차량 종류</span>
+                        <select
+                            className={styles.settingSelect}
+                            value={iconBubble.vehicleType}
+                            onChange={(e) => {
+                                const vehicleType = e.target.value as 'ALL' | 'CAR' | 'TAXI' | 'BUS' | 'TRUCK' | 'MOTO';
+                                setIconBubble({ vehicleType });
+                                applyToLayers((l) => {
+                                    if (typeof l.setVehicleTypeFilter === 'function') {
+                                        l.setVehicleTypeFilter(vehicleType);
+                                    }
+                                });
+                            }}
+                        >
+                            {ICON_BUBBLE_VEHICLE_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                        </select>
+                    </div>
+                </>
+            )}
+
+            {/* ── 교차로 펄스 ── */}
+            {layerType === 'intersectionPulse' && (
+                <>
+                    <div className={styles.settingRow}>
+                        <span className={styles.settingLabel}>분석 기준</span>
+                        <select
+                            className={styles.settingSelect}
+                            value={intersectionPulse.metric}
+                            onChange={(e) => {
+                                const metric = e.target.value as 'incoming' | 'waiting' | 'outgoing';
+                                setIntersectionPulse({ metric });
+                                applyToLayers((l) => {
+                                    if (typeof l.setPulseMetric === 'function') {
+                                        l.setPulseMetric(metric);
+                                    }
+                                });
+                            }}
+                        >
+                            {INTERSECTION_PULSE_METRIC_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                        </select>
+                    </div>
                 </>
             )}
 
@@ -162,6 +322,64 @@ const LayerSettingPopup = ({ layerType }: Props) => {
                 </>
             )}
 
+            {/* ── 가이드 웨이 ── */}
+            {layerType === 'guideway' && (
+                <>
+                    <div className={styles.settingRow}>
+                        <span className={styles.settingLabel}>색상</span>
+                        <input
+                            type="color"
+                            value={guidewayColor}
+                            onChange={(e) => {
+                                const c = e.target.value;
+                                setGuidewayColor(c);
+                                applyToLayers((l) => {
+                                    if (typeof l.setGuidewayColor === 'function') l.setGuidewayColor(c);
+                                });
+                            }}
+                        />
+                    </div>
+                </>
+            )}
+
+            {/* ── 차량 강조 ── */}
+            {layerType === 'traceVehicle' && (
+                <>
+                    <div className={styles.settingRow}>
+                        <span className={styles.settingLabel}>강조 차종</span>
+                        <select
+                            className={styles.settingSelect}
+                            value={vehicle.highlightedType}
+                            onChange={(e) => {
+                                const highlightedType = e.target.value;
+                                setVehicle({ highlightedType });
+                                applyToLayers((l) => {
+                                    if (typeof l.setHighlightType === 'function') l.setHighlightType(highlightedType);
+                                });
+                            }}
+                        >
+                            {VEHICLE_HIGHLIGHT_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div className={styles.settingRow}>
+                        <span className={styles.settingLabel}>색상</span>
+                        <input
+                            type="color"
+                            value={traceVehicleColor}
+                            onChange={(e) => {
+                                const c = e.target.value;
+                                setTraceVehicleColor(c);
+                                applyToLayers((l) => {
+                                    if (typeof l.setTraceVehicleColor === 'function') l.setTraceVehicleColor(c);
+                                });
+                            }}
+                        />
+                    </div>
+                </>
+            )}
+
             {/* ── 속도 히트맵 ── */}
             {layerType === 'speed' && (
                 <>
@@ -195,6 +413,7 @@ const LayerSettingPopup = ({ layerType }: Props) => {
                     />
                 </>
             )}
+
         </div>
     );
 };

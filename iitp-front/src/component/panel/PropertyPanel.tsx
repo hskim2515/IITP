@@ -36,6 +36,19 @@ export interface PropertyPanelProps {
     onClose: () => void;
 }
 
+function dataContainsGuid(data: unknown, guid: string | number | React.Key): boolean {
+    if (!data || !guid) return false;
+    if (Array.isArray(data)) {
+        return data.some(item => dataContainsGuid(item, guid));
+    }
+    if (typeof data === "object") {
+        const record = data as Record<string, unknown>;
+        if (record.__guid === guid) return true;
+        return Object.values(record).some(value => dataContainsGuid(value, guid));
+    }
+    return false;
+}
+
 const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     const submenu = {
         item: propertyFormSchema[activeSubmenu.menuCode],
@@ -98,7 +111,12 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         };
     }, [selectedGuid, submenu.item.layer]);
 
-    useEffect(() => { clearSelected(); }, [activeSubmenu]);
+    useEffect(() => {
+        const currentSelected = useSelectionStore.getState().selectedGuid;
+        const firstGuid = currentSelected[0];
+        if (firstGuid && dataContainsGuid(currentJsonData, firstGuid)) return;
+        clearSelected();
+    }, [activeSubmenu, clearSelected, currentJsonData]);
 
     const handleMouseMove = useCallback((e: MouseEvent) => {
         if (rafRef.current !== null) return;

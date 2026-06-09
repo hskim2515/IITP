@@ -12,7 +12,7 @@ import { Coordinates } from "@type/openapi.gen";
 import { projectPointOntoSegmentCesium, projectPointOntoSegmentOl } from "@utils/offset";
 import { pickFromCesium, pickFromOpenLayers } from "@utils/pick";
 import { createCoordinatesFromCesium, createCoordinatesFromOl } from "@utils/coordinates";
-import { getFeaturesByProperties } from "@utils/feature";
+import { getFeaturesByProperties, getSnapFeature } from "@utils/feature";
 import Collection from "ol/Collection";
 import Feature from "ol/Feature";
 import Geometry from "ol/geom/Geometry";
@@ -544,13 +544,34 @@ const featureTypeHandlersInternal = {
             setMessage({type: "warn", text: "노면마킹을 추가할 네트워크가 존재하지 않습니다."});
             return;
         }
-        const processAndStorepavementMarking = (linkRef: number | string, laneRef: number | string, offset: number, coordinates: Coordinates) => {
+        const findCellId = (link: any, laneRef: number, offset: number): number | null => {
+            const lane = link?.lanes?.[laneRef];
+            if (!lane?.cells?.length) return null;
+            for (const cell of lane.cells) {
+                const cellStart = cell.offset ?? 0;
+                if (offset >= cellStart && offset < cellStart + (cell.length ?? 0)) {
+                    return cell.id;
+                }
+            }
+            return null;
+        };
+
+        const processAndStorepavementMarking = (
+            linkRef: number | string,
+            laneRef: number | string,
+            cellId: number | null,
+            offset: number,
+            coordinates: { lng: number; lat: number },
+            angle: number,
+        ) => {
             const newPavementMarking: PavementMarkingData = {
                 ...record,
-                coordinates,
+                coordinates: [coordinates],
                 linkRef,
                 laneRef,
+                cellId,
                 offset,
+                angle,
             } as PavementMarkingData;
             const {updateCurrentJsonData} = usePavementMarkingStore.getState();
             updateCurrentJsonData(newPavementMarking, usePavementMarkingHistoryStore);
@@ -563,30 +584,33 @@ const featureTypeHandlersInternal = {
         setMessage({type: "info", text: "지도 위의 차선을 클릭하여 노면마킹을 추가하세요."});
 
         const olDrawend = (e: DrawEvent) => {
-            const olMap = useOpenLayersStore.getState().map;
-            if (!olMap) return;
-
             const geom = e.feature.getGeometry();
             if (!(geom instanceof Point)) {
-                setMessage({type: "error", text: "정류장 Point가 없습니다."});
+                setMessage({type: "error", text: "Point geometry가 없습니다."});
                 return;
             }
             const coord = geom.getCoordinates();
-            const pixel = olMap.getPixelFromCoordinate(coord)
-            const laneFeature = pickFromOpenLayers(
-                olMap,
-                pixel,
-                (feature) => feature.get('featureType')===('lanes')
-            );
+
+            // lane-edit feature만 걸러낸 뒤 가장 가까운 feature를 거리 기반으로 찾음
+            const snapLayer = useLayerStore.getState().layerManager?.getLayerByName(snapLayerName);
+            const laneEditFeatures = getFeaturesByProperties(snapLayer ?? undefined, { featureType: 'lane-edit' });
+            const laneFeature = getSnapFeature(laneEditFeatures, coord, Infinity);
 
             if (!laneFeature) {
                 setMessage({type: "warn", text: "노면마킹은 차선 위에만 추가할 수 있습니다."});
                 return;
             }
             const laneData = laneFeature.getProperties();
+            console.log("[pavementMarking] laneData:", { linkRef: laneData.linkRef, laneRef: laneData.laneRef, __guid: laneData.__guid });
 
             const laneStart = laneData.laneSource;
             const laneEnd = laneData.laneTarget;
+
+            if (!laneStart || !laneEnd) {
+                setMessage({type: "error", text: "차선 좌표 정보가 없습니다."});
+                return;
+            }
+
             const parentLink = network.links.find(link => link.lanes.some(lane => lane.__guid === laneData.__guid));
 
             if (!parentLink) {
@@ -595,9 +619,16 @@ const featureTypeHandlersInternal = {
             }
 
             const {offset, offsetPosition} = projectPointOntoSegmentOl(laneStart, laneEnd, coord);
-            const coordinates = createCoordinatesFromOl(offsetPosition)
+            const coordinates = createCoordinatesFromOl(offsetPosition);
+            console.log("[pavementMarking] offset:", offset, "coordinates:", coordinates);
             if (!coordinates) return;
-            processAndStorepavementMarking(parentLink.id, laneData.id, offset, coordinates);
+
+            // lane 진행 방향 각도 계산 (interpolateAlongLine과 동일한 방식)
+            const angle = Math.atan2(laneEnd[0] - laneStart[0], laneEnd[1] - laneStart[1]);
+
+            const cellId = findCellId(parentLink, laneData.laneRef, offset);
+            // laneRef는 lane 배열 인덱스(interpolateByOffset에서 `${linkRef}_${laneRef}`로 참조)
+            processAndStorepavementMarking(parentLink.id, laneData.laneRef, cellId, offset, coordinates, angle);
             e.target.abortDrawing()
         }
         const cesiumSingleClick = (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
@@ -631,10 +662,19 @@ const featureTypeHandlersInternal = {
                 offset,
                 offsetPosition
             } = projectPointOntoSegmentCesium(laneData.laneSource, laneData.laneTarget, userClickPosition);
-            const coordinates = createCoordinatesFromCesium(offsetPosition)
+            const coordinates = createCoordinatesFromCesium(offsetPosition);
             if (!coordinates) return;
 
-            processAndStorepavementMarking(parentLink.id, laneData.id, offset, coordinates);
+            // Cesium lane 진행 방향 각도: laneSource→laneTarget 벡터를 경도/위도로 변환 후 atan2
+            const srcCarto = Cesium.Cartographic.fromCartesian(laneData.laneSource);
+            const tgtCarto = Cesium.Cartographic.fromCartesian(laneData.laneTarget);
+            const angle = Math.atan2(
+                Cesium.Math.toDegrees(tgtCarto.longitude) - Cesium.Math.toDegrees(srcCarto.longitude),
+                Cesium.Math.toDegrees(tgtCarto.latitude)  - Cesium.Math.toDegrees(srcCarto.latitude)
+            );
+
+            const cellId = findCellId(parentLink, laneData.laneRef, offset);
+            processAndStorepavementMarking(parentLink.id, laneData.laneRef, cellId, offset, coordinates, angle);
         }
 
         const {olEventManager, cesiumEventManager} = useEventStore.getState();

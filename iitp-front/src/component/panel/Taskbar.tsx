@@ -1,7 +1,16 @@
 import React from 'react';
 import { useWorkflowStore } from "@stores/useWorkflowStore";
 import { useMenuStore } from "@stores/useMenuStore";
+import { useSelectionStore } from "@stores/useSelectionStore";
+import { usePropertyStore } from "@stores/usePropertyStore";
+import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import styles from "@css/Taskbar.module.css";
+
+const clearMapSelection = () => {
+    useSelectionStore.getState().clearSelected();
+    usePropertyStore.getState().setSelectedProps(null);
+    useNetworkDrawStore.getState().clearSelection();
+};
 
 const Taskbar = () => {
     const sessions = useWorkflowStore((s: any) => s.sessions);
@@ -14,6 +23,9 @@ const Taskbar = () => {
 
     const handleChipClick = (session: any) => {
         const isActive = activeMenuCode === session.menuCode && !session.isMinimized;
+        if (!isActive && activeMenuCode !== session.menuCode) {
+            clearMapSelection();
+        }
         toggleSession(session.menu);
         // activeSubmenu를 워크플로와 동기화
         setActiveSubmenu(isActive ? null : session.menu);

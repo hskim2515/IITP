@@ -140,11 +140,12 @@ const Facility = ({ fields }: FacilityProps) => {
                 const parentKey = field.key;
                 const nestedFields = nestedArrayFieldsMap[parentKey] || [];
                 const isExpanded = expandedParents[parentKey] ?? false;
+                const parentChecked = !!isParentChecked(parentKey);
 
                 return (
                     <div key={parentKey}>
                         <div
-                            className={styles.sectionLabel}
+                            className={`${styles.sectionLabel} ${parentChecked ? styles.layerItemChecked : ''}`}
                             onClick={() => nestedFields.length && toggleExpand(parentKey)}
                         >
                             {nestedFields.length > 0 && (
@@ -155,23 +156,26 @@ const Facility = ({ fields }: FacilityProps) => {
                             <span style={{ flex: 1 }}>{field.label}</span>
                             <input
                                 type="checkbox"
-                                checked={!!isParentChecked(parentKey)}
+                                checked={parentChecked}
                                 onChange={(e) => toggleParent(parentKey, e.target.checked)}
                                 onClick={(e) => e.stopPropagation()}
                                 style={{ accentColor: '#7aa2ff', width: 13, height: 13, cursor: 'pointer' }}
                             />
                         </div>
 
-                        {isExpanded && nestedFields.map(childKey => (
-                            <label key={`${parentKey}.${childKey}`} className={styles.childItem}>
+                        {isExpanded && nestedFields.map(childKey => {
+                            const childChecked = !!isChildChecked(parentKey, childKey);
+                            return (
+                            <label key={`${parentKey}.${childKey}`} className={`${styles.childItem} ${childChecked ? styles.layerItemChecked : ''}`}>
                                 <input
                                     type="checkbox"
-                                    checked={!!isChildChecked(parentKey, childKey)}
+                                    checked={childChecked}
                                     onChange={(e) => toggleChild(parentKey, childKey, e.target.checked)}
                                 />
                                 {childKey}
                             </label>
-                        ))}
+                            );
+                        })}
                     </div>
                 );
             })}

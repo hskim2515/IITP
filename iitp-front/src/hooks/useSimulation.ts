@@ -108,6 +108,14 @@ async function applyTerrainHeightsToRoute(
     return adjusted;
 }
 
+function isSimulationLayerVisible(layer: any): boolean {
+    if (!layer) return false;
+    if (typeof layer.getVisible === "function") return !!layer.getVisible();
+    if (typeof layer.show === "boolean") return layer.show;
+    if (typeof layer.dataSource?.show === "boolean") return layer.dataSource.show;
+    return true;
+}
+
 const useSimulation = () => {
     const { isRunning, isStop, speed } = useSimulationStore();
 
@@ -210,6 +218,7 @@ const useSimulation = () => {
                 viewer.clock.shouldAnimate = false;
                 useSimulationStore.getState().setCurrentTime(JulianDate.clone(viewer.clock.startTime));
                 useVehicleStore.getState().setActiveVehicleCount(0);
+                useVehicleStore.getState().setLatestPositions([]);
 
                 // worker 리셋
                 const startSimTime = Cesium.JulianDate.toDate(viewer.clock.startTime).getTime();
@@ -547,6 +556,12 @@ const useSimulation = () => {
             layerManager.addODArrows(vehicleRoute, speedFactor, isRunningRef.current);
             layerManager.addTripLayer(vehicleRoute, speedFactor, isRunningRef.current, typeGroups, vehicleTypeArray);
             layerManager.addTrafficLayer();
+            layerManager.addDwellTimeLayer();
+            layerManager.addFlowBarLayer();
+            layerManager.addIconBubbleLayer();
+            layerManager.addIntersectionPulseLayer();
+            layerManager.addGuidewayLayer();
+            layerManager.addTraceVehicleLayer();
 
             const VehicleModelData: { id: string; position: Cesium.Cartesian3; visible: boolean; model?: Cesium.Model }[] = [];
 
@@ -581,6 +596,7 @@ const useSimulation = () => {
 
                         layerManager.getLayerGroup("analyze").forEach((layer) => {
                             if (layer && typeof layer.setLatestPositions === "function") {
+                                if (!isSimulationLayerVisible(layer)) return;
                                 const vType = (layer as any).vehicleType;
                                 const isOlLayer = layer.constructor?.name?.includes('FeatureLayer');
                                 // OL FeatureLayer(VehicleFeatureLayer 등): null 포함 인덱스 보존 배열
@@ -598,10 +614,12 @@ const useSimulation = () => {
                             }
                         });
                         lastPositionsRef.current = result; // OD 워커용으로 항상 전체 positions 유지
+                        useVehicleStore.getState().setLatestPositions(result.positions ?? []);
                     } else {
                         // 구버전: 모든 레이어에 동일한 positions 전달
                         layerManager.getLayerGroup("analyze").forEach((layer) => {
                             if (layer && typeof layer.setLatestPositions === "function") {
+                                if (!isSimulationLayerVisible(layer)) return;
                                 try {
                                     layer.setLatestPositions(result);
                                 } catch (err) {
@@ -610,6 +628,7 @@ const useSimulation = () => {
                             }
                         });
                         lastPositionsRef.current = result;
+                        useVehicleStore.getState().setLatestPositions(result.positions ?? []);
                     }
 
                     useVehicleStore.getState().setActiveVehicleCount(result.positions?.filter(Boolean).length ?? 0);
@@ -618,7 +637,6 @@ const useSimulation = () => {
 
             makeOdDataWorkerRef.current.onmessage = (e) => {
                 const { odData } = e.data;
-                console.log('[OD] worker result odData.length:', odData?.length);
                 if (odData) {
                     // getLayer()는 레이어가 1개면 단일 객체, 2개 이상이면 배열을 반환하므로 항상 배열로 처리
                     const odLayers = layerManager.getLayer("analyze", "od");

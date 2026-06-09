@@ -2,6 +2,7 @@ import VectorSource from "ol/source/Vector";
 import VectorLayer from "ol/layer/Vector";
 import { Icon, Style } from "ol/style";
 import {layerNameToStoreMap} from "@hooks/useLayerInit";
+import {buildFileUrl} from "@utils/fileUrl";
 import { Feature } from "ol";
 import {
     FEATURE_TYPE,
@@ -40,14 +41,14 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
                 const scale = 0.05 * (baseResolution / resolution);
                 const markingType = feature.get("markingType");
                 const iconFile = PavementMarkingType[markingType];
-                const url = `${ process.env.REACT_APP_FILE_BASE_URL }models/${ iconFile }`;
+                const url = buildFileUrl(`models/${ iconFile }`);
 
                 const angle = feature.get("angle") || 0;
                 return new Style({
                     image: new Icon({
                         src: url,
                         scale,
-                        anchor: [ 0.5, 1 ],
+                        anchor: [ 0.5, 0.5 ],
                         rotateWithView: true,
                         rotation: angle,
                     }),
@@ -161,6 +162,9 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
                     const dto = this.recordToDto(item);
                     const feature = this.createFeature(dto);
                     const mergeFeature = interpolateFeatureByOffset(feature);
+                    const geom = mergeFeature.getGeometry();
+                    const coords = geom?.getCoordinates?.();
+                    console.log("[OL PavementMarking] added feature geom:", coords, "linkRef:", dto.linkRef, "laneRef:", dto.laneRef, "offset:", dto.offset);
                     src.addFeature(mergeFeature);
                 });
             });
