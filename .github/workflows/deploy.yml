@@ -67,11 +67,13 @@ jobs:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
         run: |
           sshpass -p "$SSH_PASSWORD" ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
             'mkdir -p /home/gaia3d/iitp/database'
+          envsubst '${DOCKER_USERNAME}' < docker-compose.prod.yml > /tmp/docker-compose.yml
           sshpass -p "$SSH_PASSWORD" scp -o StrictHostKeyChecking=no -P "$SSH_PORT" \
-            docker-compose.yml "$SSH_USER@$SSH_HOST:/home/gaia3d/iitp/"
+            /tmp/docker-compose.yml "$SSH_USER@$SSH_HOST:/home/gaia3d/iitp/docker-compose.yml"
           sshpass -p "$SSH_PASSWORD" scp -o StrictHostKeyChecking=no -P "$SSH_PORT" \
             database/sync_tables.sql "$SSH_USER@$SSH_HOST:/home/gaia3d/iitp/database/"
 

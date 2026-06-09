@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: iitp
+    volumes:
+      - ./database:/database:ro
+      - ./database/restore.sh:/docker-entrypoint-initdb.d/init-user-db.sh:ro
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "45432:5432"
+    restart: unless-stopped
+
+  iitp-front:
+    image: ${DOCKER_USERNAME}/iitp-front:latest
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  iitp-rest:
+    image: ${DOCKER_USERNAME}/iitp-rest:latest
+    ports:
+      - "49090:9090"
+    restart: unless-stopped
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
