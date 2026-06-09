@@ -13,13 +13,13 @@ services:
       - "45432:5432"
     restart: unless-stopped
 
-  iitp-front:
+  front:
     image: ${DOCKER_USERNAME}/iitp-front:latest
     ports:
       - "8080:8080"
     restart: unless-stopped
 
-  iitp-rest:
+  rest:
     image: ${DOCKER_USERNAME}/iitp-rest:latest
     ports:
       - "49090:9090"
