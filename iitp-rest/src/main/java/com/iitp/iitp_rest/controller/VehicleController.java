@@ -4,13 +4,17 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iitp.iitp_rest.model.*;
 import com.iitp.iitp_rest.model.VehicleInfo;
+import com.iitp.iitp_rest.model.network.NetworkXml;
 import com.iitp.iitp_rest.model.network.road.RoadResponse;
 import com.iitp.iitp_rest.model.geometry.Cartesian3;
 import com.iitp.iitp_rest.model.vehicle.route.VehicleRequest;
 import com.iitp.iitp_rest.model.scenario.Scenario;
 import com.iitp.iitp_rest.model.signal.SignalTimelineResponse;
+import com.iitp.iitp_rest.service.network.NetworkService;
+import com.iitp.iitp_rest.util.SftpFileManager;
 import com.iitp.iitp_rest.service.scenario.ScenarioService;
 import com.iitp.iitp_rest.service.signal.SignalTimelineService;
+import com.iitp.iitp_rest.service.vehicle.DummyVehicleGenerator;
 import com.iitp.iitp_rest.service.vehicle.VehicleRouteService;
 import com.iitp.iitp_rest.util.CoordinateConverter;
 import com.iitp.iitp_rest.util.GeoJsonUtils;
@@ -48,6 +52,9 @@ public class VehicleController {
     private final ScenarioService scenarioService;
     private final VehicleRouteService vehicleRouteService;
     private final SignalTimelineService signalTimelineService;
+    private final NetworkService networkService;
+    private final DummyVehicleGenerator dummyVehicleGenerator;
+    private final SftpFileManager sftpFileManager;
 
     /** 현재 비동기 생성 중인 scenarioKey 집합 */
     private final java.util.concurrent.ConcurrentHashMap<String, Boolean> generatingSet = new java.util.concurrent.ConcurrentHashMap<>();
@@ -102,8 +109,23 @@ public class VehicleController {
 
         List<VehicleEvent> vehicleEvents = vehicleDataReader.readVehicleEvent(scenarioKey);
         if (vehicleEvents.isEmpty()) {
-            logger.warn("[generateVehicleRoute] scenarioKey={}의 vehicle_sim.db_bak 데이터가 없습니다. 시뮬레이션 결과 파일을 먼저 업로드해주세요.", scenarioKey);
-            throw new java.io.FileNotFoundException("시뮬레이션 결과 파일(vehicle_sim.db_bak)이 없습니다: " + scenarioKey);
+            logger.info("[generateVehicleRoute] {} vehicle_sim.db 없음 — 네트워크 기반 더미 데이터 생성 후 SFTP 저장", scenarioKey);
+            try {
+                NetworkXml networkXml = networkService.getNetworkXmlByVersionId(scenarioKey);
+                int numVehicles = request.getNumVehicle() > 0 ? request.getNumVehicle() : 100;
+                vehicleEvents = dummyVehicleGenerator.generate(networkXml, roadMap, numVehicles, 600, 42L);
+                if (!vehicleEvents.isEmpty()) {
+                    try (java.io.InputStream dbStream = dummyVehicleGenerator.writeToSqlite(vehicleEvents)) {
+                        sftpFileManager.uploadFile(dbStream, scenarioKey, "vehicle_sim.db");
+                        logger.info("[generateVehicleRoute] {} vehicle_sim.db SFTP 업로드 완료", scenarioKey);
+                    }
+                }
+            } catch (Exception e) {
+                logger.error("[generateVehicleRoute] 더미 데이터 생성/업로드 실패", e);
+            }
+            if (vehicleEvents.isEmpty()) {
+                throw new java.io.FileNotFoundException("시뮬레이션 결과 파일(vehicle_sim.db)이 없습니다: " + scenarioKey);
+            }
         }
 
         Map<String, List<VehicleEvent>> grouped = vehicleEvents.stream()

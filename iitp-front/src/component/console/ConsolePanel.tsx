@@ -43,7 +43,7 @@ export const ConsolePanel: React.FC = () => {
     useEffect(() => {
         if (entries.length === 0) return;
         const last = entries[entries.length - 1];
-        if (last.type === 'error' || last.type === 'warn') setOpen(true);
+        if (last?.type === 'error' || last?.type === 'warn') setOpen(true);
         if (open && bodyRef.current) {
             bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
         }

@@ -40,12 +40,22 @@ public class VehicleDataReader {
         File tempDbFile = File.createTempFile("vehicle_sim_temp", ".db");
         tempDbFile.deleteOnExit();
 
-        try (InputStream in = new URL(remoteUrl + versionId + "/vehicle_sim.db_bak").openStream();
-             OutputStream out = new FileOutputStream(tempDbFile)) {
+        // vehicle_sim.db 우선, 없으면 vehicle_sim.db_bak 시도
+        String[] candidates = { "vehicle_sim.db", "vehicle_sim.db_bak" };
+        InputStream in = null;
+        for (String candidate : candidates) {
+            try {
+                in = new URL(remoteUrl + versionId + "/" + candidate).openStream();
+                logger.debug("[VehicleDataReader] {} 로드: {}", candidate, versionId);
+                break;
+            } catch (FileNotFoundException ignored) {}
+        }
+        if (in == null) throw new FileNotFoundException("vehicle_sim.db 파일 없음: " + versionId);
 
+        try (InputStream src = in; OutputStream out = new FileOutputStream(tempDbFile)) {
             byte[] buffer = new byte[8192];
             int len;
-            while ((len = in.read(buffer)) != -1) {
+            while ((len = src.read(buffer)) != -1) {
                 out.write(buffer, 0, len);
             }
         }

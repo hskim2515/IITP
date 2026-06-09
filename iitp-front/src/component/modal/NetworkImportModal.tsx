@@ -3,6 +3,8 @@ import { useWorkflowStore } from '@stores/useWorkflowStore';
 import { useNetworkStore } from '@stores/useNetworkStore';
 import { useScenarioStore } from '@stores/useScenarioStore';
 import { assignPropertyToResponseData } from '@utils/guid';
+import { useOnboardingStore } from '@stores/useOnboardingStore';
+import { useLogStore } from '@stores/useLogStore';
 
 const MENU_CODE = 'NETWORK_IMPORT';
 
@@ -87,6 +89,10 @@ const NetworkImportModal: React.FC = () => {
         assignPropertyToResponseData(pendingData);
         useNetworkStore.getState().setCurrentJsonDataWithFullBuild(pendingData);
         useNetworkStore.getState().setChange(true);
+        const nodeCount = pendingData.nodes?.length ?? 0;
+        const linkCount = pendingData.links?.length ?? 0;
+        useLogStore.getState().addLog('info', `네트워크 반영 완료 (노드 ${nodeCount}개, 링크 ${linkCount}개)`);
+        useOnboardingStore.getState().setStep('need-dummy');
         handleClose();
     };
 

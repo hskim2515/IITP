@@ -25,6 +25,8 @@ import DashboardLeft from "@component/panel/DashboardLeft";
 import DashboardRight from "@component/panel/DashboardRight";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 import { ConsolePanel } from "@component/console/ConsolePanel";
+import { useOnboardingStore } from "@stores/useOnboardingStore";
+import { useLogStore } from "@stores/useLogStore";
 
 function VersionPopup({ scenarioId, onSelect }: { scenarioId: number; onSelect: (v: ScenarioVersions) => void }) {
     const [versions, setVersions] = useState<ScenarioVersions[] | null>(null);
@@ -67,57 +69,143 @@ function VersionPopup({ scenarioId, onSelect }: { scenarioId: number; onSelect: 
     );
 }
 
-function InitGuideModal({ onClose }: { onClose: () => void }) {
+function OnboardingGuide() {
+    const step = useOnboardingStore((s) => s.step);
+    const setStep = useOnboardingStore((s) => s.setStep);
+    const scenarioKey = useScenarioStore.getState().selectedScenario?.key ?? '';
+    const [generating, setGenerating] = useState(false);
+
+    if (step === 'idle') return null;
+
+    const handleDismiss = () => setStep('idle');
+
+    const handleGenerateDummy = async () => {
+        setGenerating(true);
+        useLogStore.getState().addLog('info', '더미 시뮬레이션 데이터 생성 시작...');
+        try {
+            const res = await fetch(
+                `${import.meta.env.VITE_API_URL}/vehicle/vehicle-route/${scenarioKey}`,
+                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ numVehicle: 100 }) }
+            );
+            if (res.status === 202 || res.ok) {
+                useLogStore.getState().addLog('info', '더미 시뮬레이션 데이터 생성 완료 — 시뮬레이션 재생으로 확인하세요.');
+                setStep('idle');
+            } else {
+                const body = await res.json().catch(() => ({}));
+                const msg = body?.error ?? `서버 오류 (${res.status})`;
+                useLogStore.getState().addLog('error', `더미 데이터 생성 실패: ${msg}`);
+            }
+        } catch (e) {
+            useLogStore.getState().addLog('error', '더미 데이터 생성 중 오류 발생');
+        } finally {
+            setGenerating(false);
+        }
+    };
+
     return (
-        <div style={initGuideOverlayStyle}>
-            <div style={initGuidePanelStyle}>
-                <div style={initGuideHeaderStyle}>
-                    <span style={{ fontWeight: 600, fontSize: 14, color: '#e0e0e0' }}>네트워크 데이터 없음</span>
+        <div style={obOverlayStyle}>
+            <div style={obPanelStyle}>
+                {/* 단계 표시 */}
+                <div style={obStepRowStyle}>
+                    <StepDot active={step === 'need-network'} done={step === 'need-dummy'} label="1" />
+                    <div style={obStepLineStyle} />
+                    <StepDot active={step === 'need-dummy'} done={false} label="2" />
                 </div>
-                <div style={{ padding: '20px 24px' }}>
-                    <p style={{ fontSize: 12, color: '#888', margin: 0, lineHeight: 1.8 }}>
-                        이 버전에는 아직 네트워크 데이터가 없습니다.<br />
-                        상단 메뉴 <span style={{ color: '#7aa2ff', fontWeight: 600 }}>파일 &rsaquo; 가져오기</span> 에서 데이터를 불러오세요.
-                    </p>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 20px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
-                    <button style={initGuideLaterBtnStyle} onClick={onClose}>확인</button>
-                </div>
+
+                {step === 'need-network' && (
+                    <>
+                        <div style={obTitleStyle}>네트워크 데이터 없음</div>
+                        <p style={obDescStyle}>
+                            이 버전에는 아직 도로 네트워크 데이터가 없습니다.<br />
+                            상단 메뉴 <span style={obHighlight}>파일 › 가져오기 › 네트워크 XML</span> 에서<br />
+                            network.xml 파일을 불러오세요.
+                        </p>
+                        <div style={obFooterStyle}>
+                            <button style={obDismissBtn} onClick={handleDismiss}>나중에</button>
+                        </div>
+                    </>
+                )}
+
+                {step === 'need-dummy' && (
+                    <>
+                        <div style={obTitleStyle}>시뮬레이션 더미 데이터 생성</div>
+                        <p style={obDescStyle}>
+                            네트워크 반영이 완료됐습니다.<br />
+                            생성된 네트워크를 기반으로 더미 차량 시뮬레이션 데이터를 만들어<br />
+                            시뮬레이션 재생을 미리 확인할 수 있습니다.
+                        </p>
+                        <div style={obFooterStyle}>
+                            <button style={obDismissBtn} onClick={handleDismiss} disabled={generating}>건너뛰기</button>
+                            <button
+                                style={generating ? { ...obPrimaryBtn, opacity: 0.6 } : obPrimaryBtn}
+                                onClick={handleGenerateDummy}
+                                disabled={generating}
+                            >
+                                {generating ? '생성 중...' : '더미 데이터 생성'}
+                            </button>
+                        </div>
+                    </>
+                )}
             </div>
         </div>
     );
 }
 
-const initGuideOverlayStyle: React.CSSProperties = {
+function StepDot({ active, done, label }: { active: boolean; done: boolean; label: string }) {
+    const bg = done ? '#4ecb8d' : active ? '#5588ee' : 'rgba(255,255,255,0.1)';
+    const color = (done || active) ? '#fff' : '#555';
+    return (
+        <div style={{ width: 24, height: 24, borderRadius: '50%', background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color, flexShrink: 0 }}>
+            {done ? '✓' : label}
+        </div>
+    );
+}
+
+const obOverlayStyle: React.CSSProperties = {
     position: 'fixed', inset: 0,
-    background: 'rgba(0,0,0,0.6)',
+    background: 'rgba(0,0,0,0.55)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     zIndex: 1500,
 };
-const initGuidePanelStyle: React.CSSProperties = {
+const obPanelStyle: React.CSSProperties = {
     background: 'rgba(14,16,28,0.98)',
     border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 12,
-    boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
+    borderRadius: 12, boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
     width: 420, maxWidth: '90vw',
-    display: 'flex', flexDirection: 'column',
+    padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 16,
 };
-const initGuideHeaderStyle: React.CSSProperties = {
-    padding: '14px 20px',
-    borderBottom: '1px solid rgba(255,255,255,0.07)',
+const obStepRowStyle: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 0,
 };
-
-const initGuideLaterBtnStyle: React.CSSProperties = {
+const obStepLineStyle: React.CSSProperties = {
+    flex: 1, height: 1, background: 'rgba(255,255,255,0.1)', margin: '0 8px',
+};
+const obTitleStyle: React.CSSProperties = {
+    fontSize: 14, fontWeight: 600, color: '#e0e0e0',
+};
+const obDescStyle: React.CSSProperties = {
+    fontSize: 12, color: '#888', margin: 0, lineHeight: 1.8,
+};
+const obHighlight: React.CSSProperties = {
+    color: '#7aa2ff', fontWeight: 600,
+};
+const obFooterStyle: React.CSSProperties = {
+    display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4,
+};
+const obDismissBtn: React.CSSProperties = {
     padding: '6px 16px', fontSize: 12, borderRadius: 5,
-    border: '1px solid rgba(255,255,255,0.12)',
-    background: 'rgba(255,255,255,0.05)',
+    border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)',
     color: '#888', cursor: 'pointer',
+};
+const obPrimaryBtn: React.CSSProperties = {
+    padding: '6px 18px', fontSize: 12, borderRadius: 5, fontWeight: 600,
+    border: '1px solid rgba(85,136,238,0.5)', background: 'rgba(85,136,238,0.2)',
+    color: '#7aa2ff', cursor: 'pointer',
 };
 
 function App() {
 
     const [showDashboard, setShowDashboard] = useState(false);
-    const [showInitGuide, setShowInitGuide] = useState(false);
 
     const selectedScenario = useScenarioStore((state) => state.selectedScenario);
     const selectedScenarioVersion = useScenarioStore((state) => state.selectedScenarioVersion);
@@ -162,9 +250,7 @@ function App() {
                         onSelect={handleVersionSelect}
                     />
                 )}
-                {showInitGuide && (
-                    <InitGuideModal onClose={() => setShowInitGuide(false)} />
-                )}
+                <OnboardingGuide />
                 <Header onDashboard={() => setShowDashboard(prev => !prev)} isDashboardOpen={showDashboard} dashboardMode={showDashboard}/>
                 <MessagePopup/>
                 <PropertyModal/>

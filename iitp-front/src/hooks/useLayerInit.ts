@@ -29,6 +29,7 @@ import { useSignalTodStore } from "@stores/useSignalTodStore";
 import { useSimulationScenarioStore } from "@stores/useSimulationScenarioStore";
 import { useBusPtLineStore, useBusPtLineWeekdayStore, useBusPtLineWeekendStore } from "@stores/useBusPtLineStore";
 import { useRailPtLineStore } from "@stores/useRailPtLineStore";
+import { useOnboardingStore } from "@stores/useOnboardingStore";
 
 const LAYER_LABELS: Record<string, string> = {
     NETWORK:               '도로',
@@ -167,6 +168,12 @@ const useLayerInit = (): void => {
 
             isInitializedRef.current = true;
             useLayerStore.getState().setInitialized(true);
+
+            // 네트워크 데이터가 없으면 가져오기 유도
+            const networkData = useNetworkStore.getState().originData;
+            if (!networkData) {
+                useOnboardingStore.getState().setStep('need-network');
+            }
         } finally {
             isInitializingRef.current = false;
         }
