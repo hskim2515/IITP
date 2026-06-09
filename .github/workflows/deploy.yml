@@ -88,8 +88,8 @@ jobs:
             cd /home/gaia3d/iitp
             docker compose pull
             docker compose down --remove-orphans
-            docker stop $(docker ps -q --filter "publish=8080") 2>/dev/null || true
-            docker stop $(docker ps -q --filter "publish=49090") 2>/dev/null || true
+            fuser -k 8080/tcp 2>/dev/null || true
+            fuser -k 49090/tcp 2>/dev/null || true
             docker container prune -f
             docker compose up -d
           '
