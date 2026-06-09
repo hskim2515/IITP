@@ -46,18 +46,26 @@ public class NetworkController {
 
     /** DB 우선, 없으면 XML fallback → NetworkResponse 반환 */
     @GetMapping("/{versionId}")
-    public ResponseEntity<Map<String, Object>> getNetworkByVersionId(@PathVariable String versionId) throws java.io.IOException {
-        Map<String, Object> result = xmlLayerVersionService.getLatest(
-                LAYER_KEY, versionId,
-                () -> {
-                    try {
-                        NetworkXml xml = networkService.getNetworkXmlByVersionId(versionId);
-                        NetworkResponse resp = networkMapper.toResponse(xml);
-                        return XmlLayerConverter.toMap(resp);
-                    } catch (java.io.IOException e) { throw new RuntimeException(e); }
-                }
-        );
-        return ResponseEntity.ok(result);
+    public ResponseEntity<Map<String, Object>> getNetworkByVersionId(@PathVariable String versionId) {
+        try {
+            Map<String, Object> result = xmlLayerVersionService.getLatest(
+                    LAYER_KEY, versionId,
+                    () -> {
+                        try {
+                            NetworkXml xml = networkService.getNetworkXmlByVersionId(versionId);
+                            NetworkResponse resp = networkMapper.toResponse(xml);
+                            return XmlLayerConverter.toMap(resp);
+                        } catch (java.io.FileNotFoundException e) { throw new RuntimeException(e); }
+                          catch (java.io.IOException e) { throw new RuntimeException(e); }
+                    }
+            );
+            return ResponseEntity.ok(result);
+        } catch (RuntimeException e) {
+            if (e.getCause() instanceof java.io.FileNotFoundException) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+            }
+            throw e;
+        }
     }
 
     /** 항상 XML 원본 반환 */

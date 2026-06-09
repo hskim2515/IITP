@@ -33,6 +33,10 @@ export default class NetworkFeatureLayer extends VectorLayer {
     private static readonly SEGMENT_WIDTH_RATIO = 0.4;
 
     private static readonly EPS = 1e-9;
+
+    // LOD 해상도 임계값 (EPSG:3857 m/px 기준)
+    private static readonly LOD_RES_OUTLINE_ONLY = 8;  // > 8m/px → link-edit 중심선만
+    private static readonly LOD_RES_LINK_ONLY    = 2;  // > 2m/px → links + nodes만
     private static readonly PORT_ICON_SCALE = 2.0;
     private static readonly NODE_RADIUS_SCALE = 0.8;
     private static readonly NODE_STROKE_SCALE = 0.1;
@@ -90,6 +94,16 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const styles: Style[] = [];
 
         const featureType = props.featureType ?? "";
+
+        // LOD 필터링: 원거리에서 불필요한 피처 타입 렌더링 생략
+        if (resolution > NetworkFeatureLayer.LOD_RES_OUTLINE_ONLY) {
+            // 매우 원거리: 링크 중심선만
+            if (featureType !== 'link-edit') return [];
+        } else if (resolution > NetworkFeatureLayer.LOD_RES_LINK_ONLY) {
+            // 중간 거리: 링크 폴리곤 + 노드만 (레인/커넥션/포트 생략)
+            if (!['links', 'link-edit', 'nodes'].includes(featureType)) return [];
+        }
+
         const zIndex = this.zIndexMap[featureType] ?? 0;
         const res = Math.max(resolution, NetworkFeatureLayer.EPS);
 
@@ -349,10 +363,11 @@ export default class NetworkFeatureLayer extends VectorLayer {
             const network: Network | undefined = store.getState().currentJsonData;
             if (!network) return;
 
-            if (!this.prevNetwork || this.isFullReplace(this.prevNetwork, network)) {
+            const doFull = !this.prevNetwork || this.isFullReplace(this.prevNetwork, network);
+            if (doFull) {
                 this.fullBuild(network);
             } else {
-                this.incrementalUpdate(this.prevNetwork, network);
+                this.incrementalUpdate(this.prevNetwork!, network);
             }
             this.prevNetwork = network;
         } catch (e) {
@@ -522,9 +537,19 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 } else {
                     const fromLaneFeat = this.laneMap.get(`${conn.fromLink}_${conn.fromLane}`);
                     const toLaneFeat   = this.laneMap.get(`${conn.toLink}_${conn.toLane}`);
-                    if (!fromLaneFeat || !toLaneFeat) continue;
-                    fromPt = fromLaneFeat.get('laneTarget');
-                    toPt   = toLaneFeat.get('laneSource');
+                    if (fromLaneFeat && toLaneFeat) {
+                        fromPt = fromLaneFeat.get('laneTarget');
+                        toPt   = toLaneFeat.get('laneSource');
+                    } else {
+                        const fromLink = this.cachedLinkMap.get(String(conn.fromLink));
+                        const toLink   = this.cachedLinkMap.get(String(conn.toLink));
+                        if (!fromLink || !toLink) continue;
+                        const fp = this.computeLaneEndpoint(fromLink, conn.fromLane, 'target');
+                        const tp = this.computeLaneEndpoint(toLink, conn.toLane, 'source');
+                        if (!fp || !tp) continue;
+                        fromPt = fp;
+                        toPt   = tp;
+                    }
                 }
                 if (!fromPt || !toPt) continue;
                 const coord = conn.turning === 'Straight'
@@ -558,28 +583,45 @@ export default class NetworkFeatureLayer extends VectorLayer {
         if (!sourceNode || !targetNode || !link.lanes) return [];
         if (!link.coordinates || !link.coordinates[0] || !link.coordinates[1]) return [];
 
-        const p1 = fromLonLat([link.coordinates[0].lng, link.coordinates[0].lat]);
-        const lastCoord = link.coordinates[link.coordinates.length - 1];
-        const p2 = fromLonLat([lastCoord.lng, lastCoord.lat]);
-        const p1b = fromLonLat([link.coordinates[1].lng, link.coordinates[1].lat]);
+        // coordinates 전체를 OL 좌표 배열로 변환 (꺾임 표현)
+        const allPts: [number, number][] = link.coordinates.map((c: any) =>
+            fromLonLat([c.lng, c.lat]) as [number, number]);
+        if (allPts.length < 2) return [];
+
+        const p1  = allPts[0]!;
+        const p2  = allPts[allPts.length - 1]!;
+        const p1b = allPts[1]!;
         if (!p1[0] || !p1[1] || !p2[0] || !p2[1]) return [];
 
+        // 시작 방향 기준 법선 (폴리곤/차선 오프셋용)
         const dx = p1b[0] - p1[0], dy = p1b[1] - p1[1];
         const len = Math.hypot(dx, dy);
         const unitNormal: [number, number] = len > 0 ? [-dy / len, dx / len] : [0, 0];
 
         const features: Feature[] = [];
 
-        // link-edit (center line)
-        const linkLineFeature = new Feature(new LineString([p1, p2]));
+        // link-edit (center line) — 모든 점 사용
+        const linkLineFeature = new Feature(new LineString(allPts));
         linkLineFeature.setProperties({ ...link, featureType: "link-edit", linkRef: link.id });
         features.push(linkLineFeature);
 
-        // link polygon
+        // link polygon — shape 전체 점을 따라가는 버퍼 폴리곤
         const half = (link.width ?? 0) / 2;
-        const left = [p1, p2].map(([x, y]) => x && y ? [x - unitNormal[0] * half, y - unitNormal[1] * half] : undefined);
-        const right = [p2, p1].map(([x, y]) => x && y ? [x + unitNormal[0] * half, y + unitNormal[1] * half] : undefined);
-        const linkPolygonFeature = new Feature(new Polygon([[...left, ...right, left[0]]]));
+        const leftSide: number[][] = [];
+        const rightSide: number[][] = [];
+        for (let i = 0; i < allPts.length; i++) {
+            const prev = allPts[Math.max(0, i - 1)]!;
+            const next = allPts[Math.min(allPts.length - 1, i + 1)]!;
+            const segDx = next[0] - prev[0], segDy = next[1] - prev[1];
+            const segLen = Math.hypot(segDx, segDy);
+            const nx = segLen > 0 ? -segDy / segLen : 0;
+            const ny = segLen > 0 ?  segDx / segLen : 0;
+            const pt = allPts[i]!;
+            leftSide.push([pt[0] + nx * half, pt[1] + ny * half]);
+            rightSide.push([pt[0] - nx * half, pt[1] - ny * half]);
+        }
+        const ring = [...leftSide, ...[...rightSide].reverse(), leftSide[0]!];
+        const linkPolygonFeature = new Feature(new Polygon([ring]));
         linkPolygonFeature.setProperties({ ...link, featureType: "links" });
         features.push(linkPolygonFeature);
 
@@ -602,14 +644,32 @@ export default class NetworkFeatureLayer extends VectorLayer {
             const laneProps = {
                 ...lane, linkRef: link.id, featureType: "lanes",
                 length: link.length, laneRef: i,
-                laneSource: centerP1, laneTarget: centerP2,
+                laneSource: centerP1, laneTarget: centerP2, laneAllPts: allPts,
             };
-            const laneFeature = new Feature(new Polygon([[innerP1, innerP2, outerP2, outerP1, innerP1]]));
+            // 차선 폴리곤도 shape 전체 점 사용
+            const laneLeft: number[][] = [];
+            const laneRight: number[][] = [];
+            for (let j = 0; j < allPts.length; j++) {
+                const prev = allPts[Math.max(0, j - 1)]!;
+                const next = allPts[Math.min(allPts.length - 1, j + 1)]!;
+                const sDx = next[0] - prev[0], sDy = next[1] - prev[1];
+                const sLen = Math.hypot(sDx, sDy);
+                const snx = sLen > 0 ? -sDy / sLen : unitNormal[0];
+                const sny = sLen > 0 ?  sDx / sLen : unitNormal[1];
+                const pt = allPts[j]!;
+                const cx = pt[0] + snx * offsetCenter, cy = pt[1] + sny * offsetCenter;
+                laneLeft.push([cx + snx * halfWidth, cy + sny * halfWidth]);
+                laneRight.push([cx - snx * halfWidth, cy - sny * halfWidth]);
+            }
+            const laneRing = [...laneLeft, ...[...laneRight].reverse(), laneLeft[0]!];
+            const laneFeature = new Feature(new Polygon([laneRing]));
             laneFeature.setProperties(laneProps);
             this.laneMap.set(`${link.id}_${i}`, laneFeature); // 클래스 laneMap 갱신
             features.push(laneFeature);
 
-            const laneLineFeature = new Feature(new LineString([centerP1, centerP2]));
+            // 차선 중심선도 모든 점 오프셋 적용
+            const laneAllPts = allPts.map(([x, y]) => [x + unitNormal[0] * offsetCenter, y + unitNormal[1] * offsetCenter]);
+            const laneLineFeature = new Feature(new LineString(laneAllPts));
             laneLineFeature.setProperties({ ...laneProps, featureType: "lane-edit" });
             features.push(laneLineFeature);
 
@@ -662,9 +722,19 @@ export default class NetworkFeatureLayer extends VectorLayer {
             } else {
                 const fromLaneFeat = this.laneMap.get(`${conn.fromLink}_${conn.fromLane}`);
                 const toLaneFeat = this.laneMap.get(`${conn.toLink}_${conn.toLane}`);
-                if (!fromLaneFeat || !toLaneFeat) continue;
-                fromPt = fromLaneFeat.get("laneTarget");
-                toPt = toLaneFeat.get("laneSource");
+                if (fromLaneFeat && toLaneFeat) {
+                    fromPt = fromLaneFeat.get("laneTarget");
+                    toPt = toLaneFeat.get("laneSource");
+                } else {
+                    const fromLink = linkMap.get(String(conn.fromLink));
+                    const toLink = linkMap.get(String(conn.toLink));
+                    if (!fromLink || !toLink) continue;
+                    const fp = this.computeLaneEndpoint(fromLink, conn.fromLane, 'target');
+                    const tp = this.computeLaneEndpoint(toLink, conn.toLane, 'source');
+                    if (!fp || !tp) continue;
+                    fromPt = fp;
+                    toPt = tp;
+                }
             }
             if (!fromPt || !toPt) continue;
 
@@ -717,6 +787,24 @@ export default class NetworkFeatureLayer extends VectorLayer {
             }
         }
         return features;
+    }
+
+    private computeLaneEndpoint(link: any, laneIdx: number, side: 'source' | 'target'): number[] | null {
+        if (!link?.coordinates || link.coordinates.length < 2) return null;
+        const allPts: [number, number][] = link.coordinates.map((c: any) =>
+            fromLonLat([c.lng, c.lat]) as [number, number]);
+        const p1 = allPts[0]!;
+        const p1b = allPts[1]!;
+        const p2 = allPts[allPts.length - 1]!;
+        const dx = p1b[0] - p1[0], dy = p1b[1] - p1[1];
+        const len = Math.hypot(dx, dy);
+        const ux = len > 0 ? -dy / len : 0;
+        const uy = len > 0 ? dx / len : 0;
+        const laneCount = link.lanes?.length ?? 1;
+        const laneWidth = (link.width ?? 7) / laneCount;
+        const offsetCenter = ((laneCount - 1) / 2 - laneIdx) * laneWidth;
+        const pt = side === 'source' ? p1 : p2;
+        return [pt[0] + ux * offsetCenter, pt[1] + uy * offsetCenter];
     }
 
     private measureChunkLength(source: Coordinate, target: Coordinate, ring: Coordinate[]): number {

@@ -76,20 +76,50 @@ export default class BusRouteDataSourceLayer {
             }
         }
 
-        /* GeometryInstance 생성 */
-        const instances: Cesium.GeometryInstance[] = [];
-        for (const line of data.lines) {
-            const linkIds: string[] = (line.link?.seq ?? "").trim().split(/\s+/).filter(Boolean);
-            const positions: Cesium.Cartesian3[] = [];
-            for (const linkId of linkIds) {
-                const pts = linkPosMap.get(Number(linkId));
-                if (pts) positions.push(...pts);
+        /* GeometryInstance 생성 — 세그먼트(null separator 기준)마다 별도 instance */
+        const MIN_SEG_DIST = 1.0; // Cesium은 동일/근접 좌표에서 WebGL 오류 발생
+        const dedup = (pts: Cesium.Cartesian3[]): Cesium.Cartesian3[] => {
+            const out: Cesium.Cartesian3[] = [pts[0]];
+            for (let i = 1; i < pts.length; i++) {
+                if (Cesium.Cartesian3.distance(pts[i], out[out.length - 1]) >= MIN_SEG_DIST)
+                    out.push(pts[i]);
             }
-            if (positions.length < 2) continue;
-            instances.push(new Cesium.GeometryInstance({
-                id: { id: line.id, interval: line.interval, featureType: "busRoute" },
-                geometry: new Cesium.GroundPolylineGeometry({ positions, width: 5 }),
-            }));
+            return out;
+        };
+        const instances: Cesium.GeometryInstance[] = [];
+        const pushSeg = (lineId: any, seg: Cesium.Cartesian3[]) => {
+            if (seg.length < 2) return;
+            const clean = dedup(seg);
+            if (clean.length < 2) return;
+            try {
+                instances.push(new Cesium.GeometryInstance({
+                    id: { id: lineId, featureType: "busRoute" },
+                    geometry: new Cesium.GroundPolylineGeometry({ positions: clean, width: 5 }),
+                }));
+            } catch (_) {}
+        };
+
+        for (const line of data.lines) {
+            if (Array.isArray(line.coords) && line.coords.length >= 2) {
+                let seg: Cesium.Cartesian3[] = [];
+                for (const c of line.coords) {
+                    if (c === null) {
+                        pushSeg(line.id, seg);
+                        seg = [];
+                    } else {
+                        seg.push(Cesium.Cartesian3.fromDegrees(c.lng, c.lat));
+                    }
+                }
+                pushSeg(line.id, seg);
+            } else {
+                const positions: Cesium.Cartesian3[] = [];
+                const linkIds: string[] = (line.link?.seq ?? "").trim().split(/\s+/).filter(Boolean);
+                for (const linkId of linkIds) {
+                    const pts = linkPosMap.get(Number(linkId));
+                    if (pts) positions.push(...pts);
+                }
+                pushSeg(line.id, positions);
+            }
         }
         if (!instances.length) return;
 

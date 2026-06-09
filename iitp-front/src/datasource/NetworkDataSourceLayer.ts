@@ -59,6 +59,13 @@ export default class NetworkDataSourceLayer {
     private static readonly EPSILON = 1e-9;
     private selectedScenario = useScenarioStore.getState().selectedScenario;
 
+    // LOD 고도 임계값 (미터, 카메라 타원체 기준)
+    private static readonly LOD_LINK_ONLY    = 3000;   // > 3km → 링크만 (레인 숨김)
+    private static readonly LOD_OUTLINE_ONLY = 10000;  // > 10km → 외곽선만
+    private _layerVisible: boolean = true;
+    private currentLod: 'full' | 'link' | 'outline' = 'full';
+    private cameraChangeUnsubscribe?: () => void;
+
     // 지형 고도 캐시 (lng,lat 소수점5자리 키 → 미터 고도)
     private terrainHeightMap = new Map<string, number>();
     private terrainKey(lng: number, lat: number) {
@@ -141,6 +148,46 @@ export default class NetworkDataSourceLayer {
                 }
             }
         );
+
+        // 카메라 고도 기반 LOD
+        const onCameraChange = () => this.onCameraChange();
+        this.viewer.camera.changed.addEventListener(onCameraChange);
+        this.cameraChangeUnsubscribe = () => this.viewer.camera.changed.removeEventListener(onCameraChange);
+        this.currentLod = this.calcLod();
+    }
+
+    // ─────────────────────────────────────────────
+    // LOD (Level of Detail)
+    // ─────────────────────────────────────────────
+    private calcLod(): 'full' | 'link' | 'outline' {
+        const alt = this.viewer.camera.positionCartographic.height;
+        if (alt > NetworkDataSourceLayer.LOD_OUTLINE_ONLY) return 'outline';
+        if (alt > NetworkDataSourceLayer.LOD_LINK_ONLY)    return 'link';
+        return 'full';
+    }
+
+    private onCameraChange(): void {
+        const newLod = this.calcLod();
+        if (newLod === this.currentLod) return;
+        this.currentLod = newLod;
+        this.applyVisibility();
+        try { this.viewer.scene.requestRender(); } catch (_) {}
+    }
+
+    private applyVisibility(): void {
+        const layer   = this._layerVisible;
+        const linkFT  = this.featureTypeVisible['links'] ?? true;
+        const laneFT  = this.featureTypeVisible['lanes'] ?? true;
+        const showLinks = layer && linkFT;
+        const showLanes = layer && laneFT && this.currentLod === 'full';
+
+        if (this.linkOutlinePrimitive)  this.linkOutlinePrimitive.show  = showLinks;
+        if (this.linkPrimitive)         this.linkPrimitive.show         = showLinks && this.currentLod !== 'outline';
+        if (this.lanePrimitive)         this.lanePrimitive.show         = showLanes;
+        if (this.laneDividerPrimitive)  this.laneDividerPrimitive.show  = showLanes;
+        if (this.centerLinePrimitive)   this.centerLinePrimitive.show   = showLanes;
+        this.dataSource.show = layer && this.currentLod === 'full';
+        this.viewer.scene.globe.depthTestAgainstTerrain = !layer;
     }
 
     // ─────────────────────────────────────────────
@@ -247,16 +294,14 @@ export default class NetworkDataSourceLayer {
         // suspendEvents()+removeAll()은 렌더 틱과 race를 일으켜
         // StaticGroundPolylinePerMaterialBatch 내부 _items에 undefined 슬롯을 만든다.
         // viewer에서 완전히 제거 후 새 DataSource로 교체하면 배치 오염이 없다.
-        const wasShown = this.dataSource.show;
         this.viewer.dataSources.remove(this.dataSource, true);
         this.dataSource = new Cesium.CustomDataSource(this.LAYER_NAME);
-        this.dataSource.show = wasShown;
         for (const node of network.nodes) {
             this.buildNodeEntities(node, this.cachedLinkMap, this.cachedNodeMap);
         }
         this.viewer.dataSources.add(this.dataSource);
-        // 네트워크 로드 시 지형 depth test 비활성화
-        this.viewer.scene.globe.depthTestAgainstTerrain = false;
+        // LOD + 레이어 가시성 일괄 적용 (depthTestAgainstTerrain 포함)
+        this.applyVisibility();
         try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
@@ -292,11 +337,6 @@ export default class NetworkDataSourceLayer {
         this.highlightedGuid = null;
         this.originalHighlightColor = null;
 
-        // DataSource 현재 가시성 + featureType별 가시성 반영
-        const layerVisible = this.dataSource.show;
-        const linkVisible  = layerVisible && (this.featureTypeVisible['links']  ?? true);
-        const laneVisible  = layerVisible && (this.featureTypeVisible['lanes']  ?? true);
-
         const appearance = () => new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true });
 
         // 외곽 그림자 (가장 먼저, 가장 아래)
@@ -305,7 +345,7 @@ export default class NetworkDataSourceLayer {
                 geometryInstances: linkOutlineInstances,
                 appearance: appearance(),
                 asynchronous: true,
-                show: linkVisible,
+                show: true,
             });
             this.viewer.scene.primitives.add(this.linkOutlinePrimitive);
         }
@@ -315,7 +355,7 @@ export default class NetworkDataSourceLayer {
                 geometryInstances: linkInstances,
                 appearance: appearance(),
                 asynchronous: true,
-                show: linkVisible,
+                show: true,
             });
             this.viewer.scene.primitives.add(this.linkPrimitive);
         }
@@ -325,7 +365,7 @@ export default class NetworkDataSourceLayer {
                 geometryInstances: laneInstances,
                 appearance: appearance(),
                 asynchronous: true,
-                show: laneVisible,
+                show: true,
             });
             this.viewer.scene.primitives.add(this.lanePrimitive);
         }
@@ -335,7 +375,7 @@ export default class NetworkDataSourceLayer {
                 geometryInstances: dividerInstances,
                 appearance: appearance(),
                 asynchronous: true,
-                show: laneVisible,
+                show: true,
             });
             this.viewer.scene.primitives.add(this.laneDividerPrimitive);
         }
@@ -345,7 +385,7 @@ export default class NetworkDataSourceLayer {
                 geometryInstances: centerLineInstances,
                 appearance: appearance(),
                 asynchronous: true,
-                show: laneVisible,
+                show: true,
             });
             this.viewer.scene.primitives.add(this.centerLinePrimitive);
         }
@@ -353,31 +393,15 @@ export default class NetworkDataSourceLayer {
 
     /** 레이어 전체 on/off (DataSourceLayerManager에서 호출) */
     public setVisible(visible: boolean): void {
-        this.dataSource.show = visible;
-        if (this.linkOutlinePrimitive)  this.linkOutlinePrimitive.show  = visible && (this.featureTypeVisible['links'] ?? true);
-        if (this.linkPrimitive)         this.linkPrimitive.show         = visible && (this.featureTypeVisible['links'] ?? true);
-        if (this.lanePrimitive)         this.lanePrimitive.show         = visible && (this.featureTypeVisible['lanes'] ?? true);
-        if (this.laneDividerPrimitive)  this.laneDividerPrimitive.show  = visible && (this.featureTypeVisible['lanes'] ?? true);
-        if (this.centerLinePrimitive)   this.centerLinePrimitive.show   = visible && (this.featureTypeVisible['lanes'] ?? true);
-        // 네트워크 레이어 표시 중에는 지형 depth test 비활성화 → 도로가 지형에 묻히지 않음
-        this.viewer.scene.globe.depthTestAgainstTerrain = !visible;
+        this._layerVisible = visible;
+        this.applyVisibility();
         try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
     /** 하위 featureType on/off (DataSourceLayerManager.toggleByFeatureType에서 호출) */
     public toggleFeatureTypeVisible(featureType: string, visible: boolean): void {
         this.featureTypeVisible[featureType] = visible;
-        const layerVisible = this.dataSource.show;
-
-        if (featureType === 'links') {
-            if (this.linkOutlinePrimitive) this.linkOutlinePrimitive.show = layerVisible && visible;
-            if (this.linkPrimitive)        this.linkPrimitive.show        = layerVisible && visible;
-        } else if (featureType === 'lanes') {
-            if (this.lanePrimitive)        this.lanePrimitive.show        = layerVisible && visible;
-            if (this.laneDividerPrimitive) this.laneDividerPrimitive.show = layerVisible && visible;
-            if (this.centerLinePrimitive)  this.centerLinePrimitive.show  = layerVisible && visible;
-        }
-        // nodes, ports, connections는 DataSource entity로 처리되므로 별도 처리 불필요
+        this.applyVisibility();
         try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
@@ -442,6 +466,7 @@ export default class NetworkDataSourceLayer {
                 this.buildLinkInstances(link, this.cachedNodeMap, linkOutlineInstances, linkInstances, laneInstances, dividerInstances, centerLineInstances);
             }
             this.rebuildPrimitives(linkOutlineInstances, linkInstances, laneInstances, dividerInstances, centerLineInstances);
+            this.applyVisibility();
         }
 
         // 변경·추가된 노드의 Entity 처리
@@ -521,6 +546,7 @@ export default class NetworkDataSourceLayer {
         const targetNode = nodeMap.get(String(link.toNode));
         if (!sourceNode || !targetNode || !link.lanes) return;
         if (!link.coordinates || link.coordinates.length < 2) return;
+        if (!link.__guid) return; // GUID 미부여 링크는 스킵 (assignPropertyToResponseData 전 호출 방지)
 
         // 링크 좌표의 평균 지형 고도 계산
         let terrainSum = 0;
@@ -537,10 +563,21 @@ export default class NetworkDataSourceLayer {
         const H_DIVIDER  = avgTerrainH + 0.06;
         const H_CENTER   = avgTerrainH + 0.07;
 
-        // 중간 좌표 모두 반영
-        const linkPositions = link.coordinates.map((c: any) =>
+        // 중간 좌표 모두 반영 (NaN·중복 좌표 제거 — Cesium WebGL 오류 방지)
+        const MIN_LINK_DIST = 0.5;
+        const validCoords = link.coordinates.filter(
+            (c: any) => c && isFinite(c.lng) && isFinite(c.lat)
+        );
+        if (validCoords.length < 2) return;
+        const rawLinkPos = validCoords.map((c: any) =>
             Cesium.Cartesian3.fromDegrees(c.lng, c.lat)
         );
+        const linkPositions: Cesium.Cartesian3[] = [rawLinkPos[0]];
+        for (let _i = 1; _i < rawLinkPos.length; _i++) {
+            if (Cesium.Cartesian3.distance(rawLinkPos[_i], linkPositions[linkPositions.length - 1]) >= MIN_LINK_DIST)
+                linkPositions.push(rawLinkPos[_i]);
+        }
+        if (linkPositions.length < 2) return;
 
         const roadWidth = link.width ?? 7;
 
@@ -551,7 +588,7 @@ export default class NetworkDataSourceLayer {
                 positions: linkPositions,
                 width: roadWidth + 1.2,
                 height: H_OUTLINE,
-                cornerType: Cesium.CornerType.ROUNDED,
+                cornerType: Cesium.CornerType.MITERED,
                 vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
             }),
             attributes: {
@@ -569,7 +606,7 @@ export default class NetworkDataSourceLayer {
                 positions: linkPositions,
                 width: roadWidth,
                 height: H_LINK,
-                cornerType: Cesium.CornerType.ROUNDED,
+                cornerType: Cesium.CornerType.MITERED,
                 vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
             }),
             attributes: {
@@ -600,7 +637,7 @@ export default class NetworkDataSourceLayer {
                     positions: lanePositions,
                     width: laneWidth * 0.94,
                     height: H_LANE,
-                    cornerType: Cesium.CornerType.ROUNDED,
+                    cornerType: Cesium.CornerType.MITERED,
                     vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
                 }),
                 attributes: {
@@ -619,7 +656,7 @@ export default class NetworkDataSourceLayer {
                         positions: boundaryPositions,
                         width: Math.max(laneWidth * 0.055, 0.15),
                         height: H_DIVIDER,
-                        cornerType: Cesium.CornerType.ROUNDED,
+                        cornerType: Cesium.CornerType.MITERED,
                         vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
                     }),
                     attributes: {
@@ -641,7 +678,7 @@ export default class NetworkDataSourceLayer {
                     positions: centerPositions,
                     width: Math.max(laneWidth * 0.04, 0.12),
                     height: H_CENTER,
-                    cornerType: Cesium.CornerType.ROUNDED,
+                    cornerType: Cesium.CornerType.MITERED,
                     vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
                 }),
                 attributes: {
@@ -851,6 +888,7 @@ export default class NetworkDataSourceLayer {
     // ─────────────────────────────────────────────
     public destroy(): void {
         this.destroyed = true;
+        this.cameraChangeUnsubscribe?.();
         // 레이어 제거 시 지형 depth test 복원
         try { this.viewer.scene.globe.depthTestAgainstTerrain = true; } catch (_) {}
         this.unsubscribe?.();

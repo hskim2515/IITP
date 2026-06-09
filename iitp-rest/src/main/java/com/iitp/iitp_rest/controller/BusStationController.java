@@ -23,10 +23,19 @@ public class BusStationController {
     private final BusStationService busStationService;
 
     @GetMapping("/{versionId}")
-    public ResponseEntity<PublicTransitResponse> getBusStationsByVersionId(@PathVariable String versionId) throws java.io.IOException {
+    public ResponseEntity<PublicTransitResponse> getBusStationsByVersionId(@PathVariable String versionId) {
         log.info("[getBusStationsByVersionId] versionId: {}", versionId);
-        PublicTransitResponse body = busStationService.getBusStationsByVersionId(versionId);
-        return ResponseEntity.ok(body);
+        try {
+            PublicTransitResponse body = busStationService.getBusStationsByVersionId(versionId);
+            return ResponseEntity.ok(body);
+        } catch (Exception e) {
+            Throwable cause = e instanceof RuntimeException ? e.getCause() : e;
+            if (cause instanceof java.io.FileNotFoundException) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+            }
+            log.error("[getBusStationsByVersionId] 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 
     @GetMapping("/origin/{versionId}")

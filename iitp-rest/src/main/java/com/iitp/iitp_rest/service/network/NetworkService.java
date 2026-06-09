@@ -80,6 +80,11 @@ public class NetworkService {
         if (overrideLatitude != null && overrideLongitude != null) {
             baseLatitude = overrideLatitude;
             baseLongitude = overrideLongitude;
+        } else if (dto.getBaseLat() != null && dto.getBaseLon() != null) {
+            // network.xml에 base 좌표가 기록된 경우 최우선 사용 (import 시 origin과 일치 보장)
+            baseLatitude  = dto.getBaseLat();
+            baseLongitude = dto.getBaseLon();
+            log.info("[NetworkService] network.xml base 좌표 사용: lat={}, lon={}", baseLatitude, baseLongitude);
         } else {
             Scenario scenario = scenarioVersionRepository.findByKey(versionKey)
                     .map(ScenarioVersion::getScenario)

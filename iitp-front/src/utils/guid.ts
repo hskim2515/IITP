@@ -38,7 +38,6 @@ function addMultiplePropertiesRecursively(
 }
 
 export function assignPropertyToResponseData<T extends Record<string, unknown>>(data: T): T {
-    console.log("assignPropertyToData:::", data)
     const propertyGenerators = {
         __guid: (path: string[]) => generatePathGUID(path),
         featureType: (path: string[]) => path[path.length - 1]?.split("-")[0] ?? "unknown",
@@ -47,7 +46,6 @@ export function assignPropertyToResponseData<T extends Record<string, unknown>>(
     Object.keys(data).forEach(key => {
         addMultiplePropertiesRecursively(data[key], [key], propertyGenerators);
     });
-    console.log("assignPropertyToData after :::", data)
     return data;
 }
 

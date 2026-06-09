@@ -102,8 +102,8 @@ public class VehicleController {
 
         List<VehicleEvent> vehicleEvents = vehicleDataReader.readVehicleEvent(scenarioKey);
         if (vehicleEvents.isEmpty()) {
-            logger.warn("[generateVehicleRoute] scenarioKey={}의 vehicle_sim.db 데이터가 없습니다. 시뮬레이션 결과 파일을 먼저 업로드해주세요.", scenarioKey);
-            throw new java.io.FileNotFoundException("시뮬레이션 결과 파일(vehicle_sim.db)이 없습니다: " + scenarioKey);
+            logger.warn("[generateVehicleRoute] scenarioKey={}의 vehicle_sim.db_bak 데이터가 없습니다. 시뮬레이션 결과 파일을 먼저 업로드해주세요.", scenarioKey);
+            throw new java.io.FileNotFoundException("시뮬레이션 결과 파일(vehicle_sim.db_bak)이 없습니다: " + scenarioKey);
         }
 
         Map<String, List<VehicleEvent>> grouped = vehicleEvents.stream()

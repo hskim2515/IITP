@@ -2,6 +2,8 @@ import {useEffect, useRef} from "react";
 import { propertyFormSchema, PropertyFormSchemaProps } from "@schema/propertyFormSchema";
 import { apiConfig, ApiMenuKey } from "@config/apiConfig";
 import axiosInstance from "@api/axiosInstance";
+import { AxiosError } from "axios";
+import { useLogStore } from "@stores/useLogStore";
 import { FeatureStoreFactoryType } from "@stores/useFeatureStoreFactory";
 import {useNetworkStore} from "@stores/useNetworkStore";
 import {useScenarioStore} from "@stores/useScenarioStore";
@@ -27,6 +29,20 @@ import { useSignalTodStore } from "@stores/useSignalTodStore";
 import { useSimulationScenarioStore } from "@stores/useSimulationScenarioStore";
 import { useBusPtLineStore, useBusPtLineWeekdayStore, useBusPtLineWeekendStore } from "@stores/useBusPtLineStore";
 import { useRailPtLineStore } from "@stores/useRailPtLineStore";
+
+const LAYER_LABELS: Record<string, string> = {
+    NETWORK:               '도로',
+    SIGNAL:                '신호등',
+    BUS_STATION:           '버스 정류장',
+    RAIL_STATION:          '철도 정류장',
+    PAVEMENT_MARKING:      '노면표시',
+    BUS_PT_LINE:           '버스 노선',
+    BUS_PT_LINE_WEEKDAY:   '버스 노선(평일)',
+    BUS_PT_LINE_WEEKEND:   '버스 노선(주말)',
+    RAIL_PT_LINE:          '철도 노선',
+    SIGNAL_TOD:            '신호 TOD',
+    SIMULATION_SCENARIO:   '시뮬레이션 시나리오',
+};
 
 // 각 도메인 별로 store를 생성하기 위함
 export const menuCodeToStoreMap: Record<string, FeatureStoreFactoryType<any>> = {
@@ -100,8 +116,14 @@ const useLayerInit = (): void => {
 
                     store.getState().setOriginData(response.data);
                     assignPropertyToResponseData(response.data);
-                    console.log(`${menuCode} 데이터 fetch 완료`);
+                    const label = LAYER_LABELS[menuCode] ?? menuCode;
+                    useLogStore.getState().addLog('info', `${label} 데이터 로드 완료`);
                 } catch (err) {
+                    if (err instanceof AxiosError && err.response?.status === 404) {
+                        const label = LAYER_LABELS[menuCode] ?? menuCode;
+                        useLogStore.getState().addLog('warn', `${label} 데이터 없음`);
+                        continue;
+                    }
                     console.error(`[${menuCode}] 데이터 불러오기 실패`, err);
                 }
             }
@@ -138,7 +160,6 @@ const useLayerInit = (): void => {
                 if (!store) continue;
                 try {
                     store.getState().initCurrentData();
-                    console.log(`${menuCode} 데이터 초기화 완료`);
                 } catch (err) {
                     console.error(`[${menuCode}] initCurrentData 실패`, err);
                 }

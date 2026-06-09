@@ -26,40 +26,39 @@ import java.io.ByteArrayInputStream;
 import java.util.List;
 
 /**
- * OSM → SUMO netconvert → network 임포트 엔드포인트
+ * OSM → SUMO netconvert → network 임포트 엔드포인트 (명시적 SUMO 경로)
  *
- * GET /network/import/osm        → network.xml 파일 다운로드
- * GET /network/import/osm/json   → NetworkResponse JSON
- * GET /network/import/osm/save   → SFTP 저장 + OsmSaveResponse (신호 포함)
- *
- * 내부적으로 SUMO netconvert(Docker)를 사용합니다.
+ * GET /network/import/sumo/json  → NetworkResponse JSON
+ * GET /network/import/sumo/save  → SFTP 저장 + OsmSaveResponse (신호 포함)
+ * GET /network/import/sumo       → network.xml 파일 다운로드
  */
 @Log4j2
-@Tag(name = "OSM Import", description = "OSM → SUMO netconvert → network 변환")
+@Tag(name = "SUMO Import", description = "OSM → SUMO netconvert 기반 네트워크 자동 생성")
 @RestController
 @RequestMapping("/network/import")
 @AllArgsConstructor
-public class OsmImportController {
+public class SumoImportController {
 
-    private final OsmOverpassService  overpassService;
-    private final NetconvertRunner    netconvertRunner;
-    private final SumoNetConverter    sumoNetConverter;
+    private final OsmOverpassService   overpassService;
+    private final NetconvertRunner     netconvertRunner;
+    private final SumoNetConverter     sumoNetConverter;
     private final OsmFacilityConverter facilityConverter;
-    private final NetworkJaxbParser   networkJaxbParser;
-    private final NetworkMapper       networkMapper;
-    private final OsmNetworkValidator validator;
-    private final SftpFileManager     sftpFileManager;
-    private final ScenarioService     scenarioService;
+    private final NetworkJaxbParser    networkJaxbParser;
+    private final NetworkMapper        networkMapper;
+    private final OsmNetworkValidator  validator;
+    private final SftpFileManager      sftpFileManager;
+    private final ScenarioService      scenarioService;
 
     // ── 공통 변환 로직 ────────────────────────────────────────────────────────
 
-    private record ConvertContext(SumoNetConverter.ConvertResult result,
-                                   OsmFacilityConverter.FacilityResult facilities,
-                                   double originLat, double originLon) {}
+    private record SumoConvertContext(SumoNetConverter.ConvertResult result,
+                                       OsmFacilityConverter.FacilityResult facilities,
+                                       double originLat, double originLon) {}
 
-    private ConvertContext build(double south, double west, double north, double east,
-                                  Double baseLat, Double baseLon, int networkId,
-                                  String versionId) throws Exception {
+    private SumoConvertContext build(
+            double south, double west, double north, double east,
+            Double baseLat, Double baseLon, int networkId, String versionId) throws Exception {
+
         double originLat, originLon;
         if (baseLat != null && baseLon != null) {
             originLat = baseLat;
@@ -81,16 +80,16 @@ public class OsmImportController {
             originLon = scenLon != null ? scenLon : (west  + east)  / 2.0;
         }
 
-        log.info("OSM(SUMO) 변환 시작: bbox=({},{},{},{}), 원점=({},{})",
+        log.info("SUMO 변환 시작: bbox=({},{},{},{}), 원점=({},{})",
                 south, west, north, east, originLat, originLon);
 
-        byte[] osmXml    = overpassService.queryBboxAsXml(south, west, north, east);
-        byte[] sumoNet   = netconvertRunner.run(osmXml);
+        byte[] osmXml  = overpassService.queryBboxAsXml(south, west, north, east);
+        byte[] sumoNet = netconvertRunner.run(osmXml);
         SumoNetConverter.ConvertResult result =
                 sumoNetConverter.convert(sumoNet, originLat, originLon, networkId);
 
         applyCoordinates(result.networkXml(), originLon, originLat);
-        return new ConvertContext(result, null, originLat, originLon);
+        return new SumoConvertContext(result, null, originLat, originLon);
     }
 
     private void applyCoordinates(NetworkXml networkXml, double originLon, double originLat) {
@@ -108,11 +107,11 @@ public class OsmImportController {
         }
     }
 
-    // ── 1. XML 다운로드 ───────────────────────────────────────────────────────
+    // ── 1. JSON 응답 ──────────────────────────────────────────────────────────
 
-    @Operation(summary = "OSM bbox → network.xml 다운로드")
-    @GetMapping("/osm")
-    public ResponseEntity<byte[]> importFromOsmXml(
+    @Operation(summary = "OSM bbox → SUMO netconvert → NetworkResponse JSON")
+    @GetMapping("/sumo/json")
+    public ResponseEntity<NetworkResponse> importSumoJson(
             @Parameter(description = "남쪽 위도") @RequestParam double south,
             @Parameter(description = "서쪽 경도") @RequestParam double west,
             @Parameter(description = "북쪽 위도") @RequestParam double north,
@@ -121,54 +120,28 @@ public class OsmImportController {
             @Parameter(description = "원점 경도") @RequestParam(required = false) Double baseLon,
             @Parameter(description = "Network id (기본: 0)") @RequestParam(defaultValue = "0") int networkId
     ) {
-        log.info("OSM XML 다운로드: bbox=({},{},{},{})", south, west, north, east);
+        log.info("SUMO JSON 임포트: bbox=({},{},{},{})", south, west, north, east);
         try {
-            ConvertContext ctx = build(south, west, north, east, baseLat, baseLon, networkId, null);
-            byte[] xmlBytes = networkJaxbParser.marshal(ctx.result().networkXml());
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_XML);
-            headers.setContentDispositionFormData("attachment", "network.xml");
-            headers.setContentLength(xmlBytes.length);
-            return ResponseEntity.ok().headers(headers).body(xmlBytes);
-        } catch (Exception e) {
-            log.error("OSM XML 다운로드 실패", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
-        }
-    }
-
-    // ── 2. JSON 응답 (지도 교체용) ────────────────────────────────────────────
-
-    @Operation(summary = "OSM bbox → NetworkResponse JSON")
-    @GetMapping("/osm/json")
-    public ResponseEntity<NetworkResponse> importFromOsmJson(
-            @Parameter(description = "남쪽 위도") @RequestParam double south,
-            @Parameter(description = "서쪽 경도") @RequestParam double west,
-            @Parameter(description = "북쪽 위도") @RequestParam double north,
-            @Parameter(description = "동쪽 경도") @RequestParam double east,
-            @Parameter(description = "원점 위도") @RequestParam(required = false) Double baseLat,
-            @Parameter(description = "원점 경도") @RequestParam(required = false) Double baseLon,
-            @Parameter(description = "Network id (기본: 0)") @RequestParam(defaultValue = "0") int networkId
-    ) {
-        log.info("OSM JSON 임포트: bbox=({},{},{},{})", south, west, north, east);
-        try {
-            ConvertContext ctx = build(south, west, north, east, baseLat, baseLon, networkId, null);
+            SumoConvertContext ctx = build(south, west, north, east, baseLat, baseLon, networkId, null);
             NetworkResponse response = networkMapper.toResponse(ctx.result().networkXml());
-            log.info("JSON 변환 완료: 노드 {}개, 링크 {}개",
-                    response.getNodes().size(), response.getLinks().size());
+            log.info("JSON 변환 완료: 노드 {}개, 링크 {}개, 신호 {}개",
+                    response.getNodes().size(), response.getLinks().size(),
+                    ctx.result().signals().size());
             return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            log.error("SUMO JSON 변환 실패: {}", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         } catch (Exception e) {
-            log.error("OSM JSON 임포트 실패", e);
+            log.error("SUMO JSON 변환 실패", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
 
-    // ── 3. SFTP 저장 + JSON 응답 ──────────────────────────────────────────────
+    // ── 2. SFTP 저장 + JSON 응답 ──────────────────────────────────────────────
 
-    @Operation(summary = "OSM bbox → 검증 + network.xml SFTP 저장 + OsmSaveResponse",
-               description = "신호등 connection 정보가 signals 필드로 함께 반환됩니다.")
-    @GetMapping("/osm/save")
-    public ResponseEntity<OsmSaveResponse> importAndSave(
+    @Operation(summary = "OSM bbox → SUMO netconvert → 검증 + SFTP 저장 + OsmSaveResponse")
+    @GetMapping("/sumo/save")
+    public ResponseEntity<OsmSaveResponse> importSumoSave(
             @Parameter(description = "남쪽 위도") @RequestParam double south,
             @Parameter(description = "서쪽 경도") @RequestParam double west,
             @Parameter(description = "북쪽 위도") @RequestParam double north,
@@ -177,13 +150,12 @@ public class OsmImportController {
             @Parameter(description = "원점 경도") @RequestParam(required = false) Double baseLon,
             @Parameter(description = "Network id (기본: 0)") @RequestParam(defaultValue = "0") int networkId,
             @Parameter(description = "시나리오 버전 키 (SFTP 저장 경로)") @RequestParam String versionId
-    ) throws Exception {
-        log.info("OSM Save: bbox=({},{},{},{}), versionId={}", south, west, north, east, versionId);
+    ) {
+        log.info("SUMO Save: bbox=({},{},{},{}), versionId={}", south, west, north, east, versionId);
         try {
-            ConvertContext ctx = build(south, west, north, east, baseLat, baseLon, networkId, versionId);
+            SumoConvertContext ctx = build(south, west, north, east, baseLat, baseLon, networkId, versionId);
             NetworkXml networkXml = ctx.result().networkXml();
 
-            // 검증
             OsmNetworkValidator.Result validation = validator.validate(networkXml);
             if (!validation.valid()) {
                 log.warn("네트워크 검증 실패: {}", validation.errors());
@@ -191,11 +163,9 @@ public class OsmImportController {
                         .body(new OsmSaveResponse(null, validation.errors()));
             }
 
-            // base 좌표를 XML에 기록 → 재로드 시 동일한 origin 사용
             networkXml.setBaseLat(ctx.originLat());
             networkXml.setBaseLon(ctx.originLon());
 
-            // SFTP 업로드
             byte[] xmlBytes = networkJaxbParser.marshal(networkXml);
             sftpFileManager.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "network.xml");
             log.info("SFTP 업로드 완료: {}/network.xml ({} bytes)", versionId, xmlBytes.length);
@@ -216,12 +186,6 @@ public class OsmImportController {
             OsmFacilityConverter.FacilityResult fac =
                     facilityConverter.convert(facilityRaw, networkXml, ctx.originLat(), ctx.originLon(), new double[]{south, west, north, east});
 
-            log.info("저장 완료: 노드 {}개, 링크 {}개, 신호 {}개, 버스정류장 {}개, 경고 {}개",
-                    networkResponse.getNodes().size(), networkResponse.getLinks().size(),
-                    ctx.result().signals().size(),
-                    fac.busStations() != null ? fac.busStations().getBusStations().size() : 0,
-                    validation.warnings().size());
-
             return ResponseEntity.ok(new OsmSaveResponse(
                     networkResponse, validation.warnings(), List.of(),
                     ctx.result().signals(),
@@ -229,9 +193,42 @@ public class OsmImportController {
                     fac.busRoutes(), fac.railRoutes()));
 
         } catch (RuntimeException e) {
-            log.error("OSM Save 실패: {}", e.getMessage());
+            log.error("SUMO Save 실패: {}", e.getMessage());
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(new OsmSaveResponse(null, java.util.List.of(e.getMessage())));
+        } catch (Exception e) {
+            log.error("SUMO Save 실패", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(new OsmSaveResponse(null, java.util.List.of(e.getMessage())));
+        }
+    }
+
+    // ── 3. XML 다운로드 ───────────────────────────────────────────────────────
+
+    @Operation(summary = "OSM bbox → SUMO netconvert → network.xml 다운로드")
+    @GetMapping("/sumo")
+    public ResponseEntity<byte[]> importSumoXml(
+            @Parameter(description = "남쪽 위도") @RequestParam double south,
+            @Parameter(description = "서쪽 경도") @RequestParam double west,
+            @Parameter(description = "북쪽 위도") @RequestParam double north,
+            @Parameter(description = "동쪽 경도") @RequestParam double east,
+            @Parameter(description = "원점 위도") @RequestParam(required = false) Double baseLat,
+            @Parameter(description = "원점 경도") @RequestParam(required = false) Double baseLon,
+            @Parameter(description = "Network id (기본: 0)") @RequestParam(defaultValue = "0") int networkId
+    ) {
+        log.info("SUMO XML 다운로드: bbox=({},{},{},{})", south, west, north, east);
+        try {
+            SumoConvertContext ctx = build(south, west, north, east, baseLat, baseLon, networkId, null);
+            byte[] xmlBytes = networkJaxbParser.marshal(ctx.result().networkXml());
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_XML);
+            headers.setContentDispositionFormData("attachment", "network.xml");
+            headers.setContentLength(xmlBytes.length);
+            return ResponseEntity.ok().headers(headers).body(xmlBytes);
+        } catch (Exception e) {
+            log.error("SUMO XML 다운로드 실패", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
 }

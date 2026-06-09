@@ -7,6 +7,7 @@ import { Point } from "ol/geom";
 import CircleStyle from "ol/style/Circle";
 import { FeatureLike } from "ol/Feature";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
+import { fromLonLat } from "ol/proj";
 import { RailPublicStationResponse } from "@type/Station";
 import { useSchemaStore } from "@stores/useSchemaStore";
 import { buildLinkMapOl, computeExitPositionOl } from "@utils/railStationPosition";
@@ -120,7 +121,16 @@ export default class RailStationFeatureLayer extends VectorLayer {
                     featureBuffer.push(exitFeature);
                 }
 
-                if (exitPositions.length === 0) continue;
+                // exit 없으면 coordinates 직접 사용
+                if (exitPositions.length === 0) {
+                    if (station.coordinates?.lng && station.coordinates?.lat) {
+                        const pos = fromLonLat([station.coordinates.lng, station.coordinates.lat]);
+                        const f = new Feature(new Point(pos));
+                        f.setProperties({ ...stationTemplate, ...station, featureType: "railStations" });
+                        featureBuffer.push(f);
+                    }
+                    continue;
+                }
 
                 const cx = exitPositions.reduce((s, p) => s + (p[0] as number), 0) / exitPositions.length;
                 const cy = exitPositions.reduce((s, p) => s + (p[1] as number), 0) / exitPositions.length;

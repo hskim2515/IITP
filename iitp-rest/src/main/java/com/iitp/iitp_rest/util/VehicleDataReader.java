@@ -40,7 +40,7 @@ public class VehicleDataReader {
         File tempDbFile = File.createTempFile("vehicle_sim_temp", ".db");
         tempDbFile.deleteOnExit();
 
-        try (InputStream in = new URL(remoteUrl + versionId + "/vehicle_sim.db").openStream();
+        try (InputStream in = new URL(remoteUrl + versionId + "/vehicle_sim.db_bak").openStream();
              OutputStream out = new FileOutputStream(tempDbFile)) {
 
             byte[] buffer = new byte[8192];

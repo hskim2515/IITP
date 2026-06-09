@@ -59,13 +59,14 @@ export default class RailRouteDataSourceLayer {
         const ptLineData  = store.getState().currentJsonData;
         const stationData = railStationStore.getState().currentJsonData;
         const networkData = networkStore.getState().currentJsonData;
-        if (!ptLineData?.routes || !stationData?.railStations || !networkData?.links) return;
+        if (!ptLineData?.routes) return;
 
-        /* exit centroid 기반 역 위치 */
-        const centroidMap = computeStationCentroidsOl(stationData.railStations, networkData);
+        /* exit centroid 기반 역 위치 (stationData 없으면 빈 맵으로 처리) */
+        const railStations = stationData?.railStations ?? [];
+        const centroidMap = computeStationCentroidsOl(railStations, networkData);
 
         const stationPosMap = new Map<string, Cesium.Cartesian3>();
-        for (const station of stationData.railStations) {
+        for (const station of railStations) {
             const id = String(station.id ?? "");
             if (centroidMap.has(id)) {
                 const { lng, lat } = centroidMap.get(id)!;
@@ -75,19 +76,50 @@ export default class RailRouteDataSourceLayer {
             }
         }
 
-        /* GeometryInstance 생성 */
+        /* GeometryInstance 생성 — 세그먼트(null separator 기준)마다 별도 instance */
+        const MIN_SEG_DIST = 1.0;
+        const dedup = (pts: Cesium.Cartesian3[]): Cesium.Cartesian3[] => {
+            const out: Cesium.Cartesian3[] = [pts[0]];
+            for (let i = 1; i < pts.length; i++) {
+                if (Cesium.Cartesian3.distance(pts[i], out[out.length - 1]) >= MIN_SEG_DIST)
+                    out.push(pts[i]);
+            }
+            return out;
+        };
         const instances: Cesium.GeometryInstance[] = [];
-        for (const route of ptLineData.routes) {
-            const stationIds: string[] = (route.railStationSeq ?? "").trim().split(/\s+/).filter(Boolean);
-            const positions: Cesium.Cartesian3[] = stationIds
-                .map((sid) => stationPosMap.get(sid))
-                .filter((p): p is Cesium.Cartesian3 => p !== undefined);
-
-            if (positions.length >= 2) {
+        const pushSeg = (route: any, seg: Cesium.Cartesian3[]) => {
+            if (seg.length < 2) return;
+            const clean = dedup(seg);
+            if (clean.length < 2) return;
+            try {
                 instances.push(new Cesium.GeometryInstance({
                     id: { id: route.id, name: route.name, featureType: "railRoute" },
-                    geometry: new Cesium.GroundPolylineGeometry({ positions, width: 6 }),
+                    geometry: new Cesium.GroundPolylineGeometry({ positions: clean, width: 6 }),
                 }));
+            } catch (_) {}
+        };
+
+        for (const route of ptLineData.routes) {
+            if (Array.isArray(route.coords) && route.coords.length >= 2) {
+                let seg: Cesium.Cartesian3[] = [];
+                for (const c of route.coords) {
+                    if (c === null) {
+                        pushSeg(route, seg);
+                        seg = [];
+                    } else {
+                        seg.push(Cesium.Cartesian3.fromDegrees(c.lng, c.lat));
+                    }
+                }
+                pushSeg(route, seg);
+            } else {
+                // 기존: 역 centroid 기반
+                const positions: Cesium.Cartesian3[] = [];
+                const stationIds: string[] = (route.railStationSeq ?? "").trim().split(/\s+/).filter(Boolean);
+                for (const sid of stationIds) {
+                    const pos = stationPosMap.get(sid);
+                    if (pos) positions.push(pos);
+                }
+                pushSeg(route, positions);
             }
         }
         if (!instances.length) return;

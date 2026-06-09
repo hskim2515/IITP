@@ -10,6 +10,7 @@ import { Coordinate } from 'ol/coordinate';
 import { getDistance } from 'ol/sphere';
 import { useNetworkDrawStore } from '@stores/useNetworkDrawStore';
 import { useNetworkStore, useNetworkHistoryStore } from '@stores/useNetworkStore';
+import { useNetworkUndoStore } from '@stores/useNetworkUndoStore';
 import { useNodeContextMenuStore } from '@stores/useNodeContextMenuStore';
 import { useOpenLayersStore } from '@stores/useOpenLayersStore';
 import { useCesiumStore } from '@stores/useCesiumStore';
@@ -260,6 +261,7 @@ function findAlignmentSnap(
 export function createIntersectionAtNode(nodeId: number | string): void {
     const network = useNetworkStore.getState().currentJsonData;
     if (!network) return;
+    useNetworkUndoStore.getState().push(network);
     const updated = regenerateNodeConnections(network, nodeId);
     assignPropertyToResponseData(updated as any);
     useNetworkStore.getState().setCurrentJsonData(updated);
@@ -319,8 +321,10 @@ function mergeNodes(
     }));
 
     // removeNode의 포트/커넥션을 keepNode로 이전
+    // conn.coordinates는 stale이 될 수 있으므로 초기화 (렌더러가 laneMap에서 재계산)
     const mergedPorts = [...keepNode.ports, ...removeNode.ports];
-    const mergedConns = [...keepNode.connections, ...removeNode.connections];
+    const mergedConns = [...keepNode.connections, ...removeNode.connections]
+        .map((c: any) => ({ ...c, coordinates: [] }));
 
     const updatedNodes = network.nodes
         .filter(n => String(n.id) !== String(removeNodeId))
@@ -371,8 +375,8 @@ function splitLinkInNetwork(
                 ...n,
                 ports: n.ports.map(p =>
                     String(p.linkId) === String(link.id) && p.type === 'out' ? { ...p, linkId: l1Id } : p),
-                connections: n.connections.map(c =>
-                    String(c.toLink) === String(link.id) ? { ...c, toLink: l1Id } : c),
+                connections: n.connections.map((c: any) =>
+                    String(c.toLink) === String(link.id) ? { ...c, toLink: l1Id, coordinates: [] } : c),
             };
         }
         if (String(n.id) === String(link.toNode)) {
@@ -380,8 +384,8 @@ function splitLinkInNetwork(
                 ...n,
                 ports: n.ports.map(p =>
                     String(p.linkId) === String(link.id) && p.type === 'in' ? { ...p, linkId: l2Id } : p),
-                connections: n.connections.map(c =>
-                    String(c.fromLink) === String(link.id) ? { ...c, fromLink: l2Id } : c),
+                connections: n.connections.map((c: any) =>
+                    String(c.fromLink) === String(link.id) ? { ...c, fromLink: l2Id, coordinates: [] } : c),
             };
         }
         return n;
@@ -786,6 +790,52 @@ export const useNetworkDraw = () => {
         return () => canvas.removeEventListener('contextmenu', onCesiumContextMenu);
     }, [viewer]);
 
+    // ── 항상 활성: Ctrl+Z / Ctrl+Shift+Z → Undo / Redo ────────────
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (!e.ctrlKey && !e.metaKey) return;
+            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+            if (e.key === 'z' && !e.shiftKey) {
+                e.preventDefault();
+                const current = useNetworkStore.getState().currentJsonData;
+                if (!current) return;
+                const prev = useNetworkUndoStore.getState().undo(current);
+                if (prev) {
+                    assignPropertyToResponseData(prev as any);
+                    useNetworkStore.getState().setCurrentJsonData(prev);
+                    useNetworkStore.getState().setChange(true);
+                    useMessageStore.getState().setMessage({ type: 'info', text: '실행 취소 (Ctrl+Z)' });
+                } else {
+                    useMessageStore.getState().setMessage({ type: 'warn', text: '되돌릴 작업이 없습니다' });
+                }
+            } else if (e.key === 'y' || (e.key === 'z' && e.shiftKey)) {
+                e.preventDefault();
+                const current = useNetworkStore.getState().currentJsonData;
+                if (!current) return;
+                const next = useNetworkUndoStore.getState().redo(current);
+                if (next) {
+                    assignPropertyToResponseData(next as any);
+                    useNetworkStore.getState().setCurrentJsonData(next);
+                    useNetworkStore.getState().setChange(true);
+                    useMessageStore.getState().setMessage({ type: 'info', text: '다시 실행 (Ctrl+Shift+Z)' });
+                } else {
+                    useMessageStore.getState().setMessage({ type: 'warn', text: '앞으로 실행할 작업이 없습니다' });
+                }
+            }
+        };
+        document.addEventListener('keydown', onKey);
+        return () => document.removeEventListener('keydown', onKey);
+    }, []);
+
+    // ── 항상 활성: import/OSM 교체 시 undo 스택 초기화 ─────────────
+    useEffect(() => {
+        return useNetworkStore.subscribe((state, prevState) => {
+            const cur  = (state as any).importEpoch as number;
+            const prev = (prevState as any).importEpoch as number;
+            if (cur !== prev) useNetworkUndoStore.getState().clear();
+        });
+    }, []);
+
     // ── OL 이벤트 & 프리뷰 ──────────────────────────────────────
     useEffect(() => {
         if (!olMap || !isActive) return;
@@ -1022,6 +1072,7 @@ export const useNetworkDraw = () => {
         function finishSegment(endOlCoord: Coordinate, endWgs84: Coordinates, snapEnd: Node | null) {
             const network = useNetworkStore.getState().currentJsonData;
             if (!network) return;
+            useNetworkUndoStore.getState().push(network);
 
             // O(links) 1회 빌드 → 이후 모든 find()를 O(1) Map 룩업으로 대체
             const linkMap = new Map<string, Link>(
@@ -1051,6 +1102,11 @@ export const useNetworkDraw = () => {
                 toNodeId = ts + 1;
                 isNewToNode = true;
             }
+
+            // 자기루프(fromNode === toNode) 또는 극소 길이 링크 방지 (더블클릭 안전장치)
+            if (!isNewFromNode && !isNewToNode && String(fromNodeId) === String(toNodeId)) return;
+            const segLenM = getDistance([startWgs84.lng, startWgs84.lat], [endWgs84.lng, endWgs84.lat]);
+            if (segLenM < 1) return;
 
             const newLink = makeLink(
                 linkId, fromNodeId, toNodeId,
@@ -1257,7 +1313,8 @@ export const useNetworkDraw = () => {
                     autoNodeIds.push(nid);
                 }
             }
-            if (autoNodeIds.length > 0) {
+            // 병합/재생성이 일어났으면 신규 객체에 GUID 부여
+            if (autoNodeIds.length > 0 || autoNetwork !== newNetwork) {
                 assignPropertyToResponseData(autoNetwork as any);
             }
 
@@ -1359,6 +1416,18 @@ export const useNetworkDraw = () => {
 
         const onClick = (e: MouseEvent) => {
             e.stopPropagation();   // 다른 OL 핸들러로 전달 차단
+
+            // 더블클릭의 2번째 click: 이어 그리기 체인 종료 (draw 모드 유지)
+            if (e.detail >= 2) {
+                startOlCoordRef.current = null;
+                startNodeIdRef.current  = null;
+                startWgs84Ref.current   = null;
+                snapNodeRef.current     = null;
+                source.clear();
+                useMessageStore.getState().setMessage({ type: 'info', text: '이어 그리기 종료. 새 시작점을 클릭하세요.' });
+                return;
+            }
+
             const snapNode = snapNodeRef.current;
             const snapLink = linkSnapRef.current;
 
@@ -1388,6 +1457,7 @@ export const useNetworkDraw = () => {
                 // 시작점 클릭 시 링크 분할
                 const network = useNetworkStore.getState().currentJsonData;
                 if (!network) return;
+                useNetworkUndoStore.getState().push(network);
                 const ts = Date.now();
                 const { updatedNetwork, newNodeId } = splitLinkInNetwork(
                     network, snapLink.link, chosenWgs84, ts
@@ -1409,6 +1479,7 @@ export const useNetworkDraw = () => {
                 // 끝점이 기존 링크 위: 분할 후 해당 노드로 연결
                 const network = useNetworkStore.getState().currentJsonData;
                 if (!network) return;
+                useNetworkUndoStore.getState().push(network);
                 const ts = Date.now();
                 const { updatedNetwork, newNodeId } = splitLinkInNetwork(
                     network, snapLink.link, chosenWgs84, ts
@@ -1563,7 +1634,22 @@ export const useNetworkDraw = () => {
         }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
         // LEFT_CLICK
+        let lastCesiumClickTime = 0;
         handler.setInputAction((click: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
+            // 더블클릭의 2번째 클릭: 이어 그리기 체인 종료 (draw 모드 유지)
+            const now = Date.now();
+            const isDbl = now - lastCesiumClickTime < 300;
+            lastCesiumClickTime = now;
+            if (isDbl) {
+                startOlCoordRef.current = null;
+                startNodeIdRef.current  = null;
+                startWgs84Ref.current   = null;
+                ds.entities.removeAll();
+                olSrcRef.current?.clear();
+                useMessageStore.getState().setMessage({ type: 'info', text: '이어 그리기 종료. 새 시작점을 클릭하세요.' });
+                return;
+            }
+
             const cartesian = viewer.camera.pickEllipsoid(click.position);
             if (!cartesian) return;
 
@@ -1595,6 +1681,7 @@ export const useNetworkDraw = () => {
             if (!snapNode && snapLink) {
                 const network = useNetworkStore.getState().currentJsonData;
                 if (!network) return;
+                useNetworkUndoStore.getState().push(network);
                 const ts = Date.now();
                 const { updatedNetwork, newNodeId } = splitLinkInNetwork(
                     network, snapLink.link, chosenWgs84, ts
@@ -1871,6 +1958,7 @@ export const useNetworkDraw = () => {
             if (!selectedNodeId) return;
             let network = useNetworkStore.getState().currentJsonData;
             if (!network) return;
+            useNetworkUndoStore.getState().push(network);
             network = regenerateNodeConnections(network, selectedNodeId);
             assignPropertyToResponseData(network as any);
             useNetworkStore.getState().setCurrentJsonData(network);
@@ -1922,6 +2010,7 @@ export const useNetworkDraw = () => {
                     const connId = feat.get('_connId');
                     let network = useNetworkStore.getState().currentJsonData;
                     if (!network || !selectedNodeId) return;
+                    useNetworkUndoStore.getState().push(network);
                     const node = network.nodes.find((n: any) => String(n.id) === String(selectedNodeId));
                     if (!node) return;
                     const newConns = node.connections.filter((c: any) => c.id !== connId);
@@ -1946,6 +2035,7 @@ export const useNetworkDraw = () => {
                     const toLane   = feat.get('_laneIdx') as number;
                     let network = useNetworkStore.getState().currentJsonData;
                     if (!network || !selectedNodeId) return;
+                    useNetworkUndoStore.getState().push(network);
                     const node     = network.nodes.find((n: any) => String(n.id) === String(selectedNodeId));
                     const fromLink = network.links.find((l: any) => String(l.id) === String(fromSel!.linkId));
                     const toLink   = network.links.find((l: any) => String(l.id) === String(toLinkId));
@@ -2011,6 +2101,7 @@ export const useNetworkDraw = () => {
             if ((e.key === 'Delete' || e.key === 'Backspace') && phase === 'edit' && selectedNodeId) {
                 let network = useNetworkStore.getState().currentJsonData;
                 if (!network) return;
+                useNetworkUndoStore.getState().push(network);
                 const updatedNodes = network.nodes.map((n: any) =>
                     String(n.id) === String(selectedNodeId) ? { ...n, connections: [], numConnection: 0 } : n
                 );
@@ -2325,6 +2416,7 @@ export const useNetworkDraw = () => {
             if ((e.key === 'a' || e.key === 'A') && phase === 'edit' && selectedNodeId) {
                 let network = useNetworkStore.getState().currentJsonData;
                 if (!network) return;
+                useNetworkUndoStore.getState().push(network);
                 network = regenerateNodeConnections(network, selectedNodeId);
                 assignPropertyToResponseData(network as any);
                 useNetworkStore.getState().setCurrentJsonData(network);
@@ -2335,6 +2427,7 @@ export const useNetworkDraw = () => {
             if ((e.key === 'Delete' || e.key === 'Backspace') && phase === 'edit' && selectedNodeId) {
                 let network = useNetworkStore.getState().currentJsonData;
                 if (!network) return;
+                useNetworkUndoStore.getState().push(network);
                 const updatedNodes = network.nodes.map((n: any) =>
                     String(n.id) === String(selectedNodeId) ? { ...n, connections: [], numConnection: 0 } : n
                 );
@@ -2747,6 +2840,7 @@ export function detectAndSplitIntersections(): number {
             network = regenerateNodeConnections(network, node.id);
         }
         assignPropertyToResponseData(network as any);
+        useNetworkUndoStore.getState().push(useNetworkStore.getState().currentJsonData!);
         useNetworkStore.getState().setCurrentJsonData(network);
         useNetworkStore.getState().setChange(true);
     }
@@ -2771,6 +2865,7 @@ export function autoGenerateAllIntersections(): number {
     }
 
     assignPropertyToResponseData(result as any);
+    useNetworkUndoStore.getState().push(network);
     useNetworkStore.getState().setCurrentJsonData(result);
     useNetworkStore.getState().setChange(true);
 

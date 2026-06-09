@@ -20,9 +20,12 @@ interface NetworkDrawState {
     drawResetKey: number;
     // 교차로 지정 후 draw effect가 시작점을 자동 설정할 노드 ID
     pendingStartNodeId: string | null;
-    // 선택 모드: 선택된 요소
+    // 선택 모드: 단일 선택 (편집 핸들용)
     selectedLinkId: number | string | null;
     selectedNodeId: number | string | null;
+    // 멀티셀렉트 (Shift+클릭, 박스 드래그)
+    selectedLinkIds: string[];
+    selectedNodeIds: string[];
 
     setActive: (active: boolean) => void;
     setConnectionActive: (active: boolean) => void;
@@ -39,6 +42,11 @@ interface NetworkDrawState {
     setSelectedLink: (id: number | string | null) => void;
     setSelectedNode: (id: number | string | null) => void;
     clearSelection: () => void;
+    toggleSelectedLinkId: (id: string) => void;
+    toggleSelectedNodeId: (id: string) => void;
+    setSelectedLinkIds: (ids: string[]) => void;
+    setSelectedNodeIds: (ids: string[]) => void;
+    clearMultiSelection: () => void;
     reset: () => void;
 }
 
@@ -58,6 +66,8 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
     pendingStartNodeId: null,
     selectedLinkId: null,
     selectedNodeId: null,
+    selectedLinkIds: [],
+    selectedNodeIds: [],
 
     setActive: (active) => set({ isActive: active, isConnectionActive: false, isSelectActive: false }),
     setConnectionActive: (active) => set({ isConnectionActive: active, isActive: false, isSelectActive: false, connSelectedNodeId: null }),
@@ -80,8 +90,25 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
         pendingStartNodeId: startNodeId ?? null,
     })),
     clearPendingStart: () => set({ pendingStartNodeId: null }),
-    setSelectedLink: (id) => set({ selectedLinkId: id, selectedNodeId: null }),
-    setSelectedNode: (id) => set({ selectedNodeId: id, selectedLinkId: null }),
-    clearSelection: () => set({ selectedLinkId: null, selectedNodeId: null }),
-    reset: () => set({ isActive: false, isConnectionActive: false, isSelectActive: false, startNodeId: null, startNodeCoord: null, connSelectedNodeId: null, selectedLinkId: null, selectedNodeId: null }),
+    setSelectedLink: (id) => set({ selectedLinkId: id, selectedNodeId: null, selectedLinkIds: [], selectedNodeIds: [] }),
+    setSelectedNode: (id) => set({ selectedNodeId: id, selectedLinkId: null, selectedLinkIds: [], selectedNodeIds: [] }),
+    clearSelection: () => set({ selectedLinkId: null, selectedNodeId: null, selectedLinkIds: [], selectedNodeIds: [] }),
+    toggleSelectedLinkId: (id) => set(s => ({
+        selectedLinkId: null, selectedNodeId: null,
+        selectedLinkIds: s.selectedLinkIds.includes(id)
+            ? s.selectedLinkIds.filter(x => x !== id)
+            : [...s.selectedLinkIds, id],
+        selectedNodeIds: [],
+    })),
+    toggleSelectedNodeId: (id) => set(s => ({
+        selectedLinkId: null, selectedNodeId: null,
+        selectedNodeIds: s.selectedNodeIds.includes(id)
+            ? s.selectedNodeIds.filter(x => x !== id)
+            : [...s.selectedNodeIds, id],
+        selectedLinkIds: [],
+    })),
+    setSelectedLinkIds: (ids) => set({ selectedLinkIds: ids, selectedNodeIds: [], selectedLinkId: null, selectedNodeId: null }),
+    setSelectedNodeIds: (ids) => set({ selectedNodeIds: ids, selectedLinkIds: [], selectedLinkId: null, selectedNodeId: null }),
+    clearMultiSelection: () => set({ selectedLinkIds: [], selectedNodeIds: [] }),
+    reset: () => set({ isActive: false, isConnectionActive: false, isSelectActive: false, startNodeId: null, startNodeCoord: null, connSelectedNodeId: null, selectedLinkId: null, selectedNodeId: null, selectedLinkIds: [], selectedNodeIds: [] }),
 }));

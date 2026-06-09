@@ -182,8 +182,17 @@ export default class RailStationDataSourceLayer {
             }
             if (resolved.length === 0) continue;
 
-            const centroidLng  = resolved.reduce((s, e) => s + e.lng, 0) / resolved.length;
-            const centroidLat  = resolved.reduce((s, e) => s + e.lat, 0) / resolved.length;
+            // exit 없으면 coordinates 직접 사용
+            let centroidLng: number, centroidLat: number;
+            if (resolved.length > 0) {
+                centroidLng = resolved.reduce((s, e) => s + e.lng, 0) / resolved.length;
+                centroidLat = resolved.reduce((s, e) => s + e.lat, 0) / resolved.length;
+            } else if ((station as any).coordinates?.lng && (station as any).coordinates?.lat) {
+                centroidLng = (station as any).coordinates.lng;
+                centroidLat = (station as any).coordinates.lat;
+            } else {
+                continue; // 위치 없으면 건너뜀
+            }
             const stationName  = (station as any).address ?? (station as any).center ?? String(station.id ?? "");
             entries.push({ stationName, centroidLng, centroidLat, exits: resolved, properties: station });
         }

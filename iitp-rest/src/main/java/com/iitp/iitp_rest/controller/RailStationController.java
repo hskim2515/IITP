@@ -27,11 +27,18 @@ public class RailStationController {
     private final RailStationMapper railStationMapper;
 
     @GetMapping("/{versionId}")
-    public ResponseEntity<RailPublicTransitResponse> getRailStationsByVersionId(@PathVariable String versionId) throws java.io.IOException {
+    public ResponseEntity<RailPublicTransitResponse> getRailStationsByVersionId(@PathVariable String versionId) {
         log.info("[getRailStationsByVersionId] versionId: {}", versionId);
-        RailPublicTransitXml xml = railStationService.getRailStationXmlByVersionId(versionId);
-        RailPublicTransitResponse body = railStationMapper.toResponse(xml);
-        return ResponseEntity.ok(body);
+        try {
+            RailPublicTransitXml xml = railStationService.getRailStationXmlByVersionId(versionId);
+            RailPublicTransitResponse body = railStationMapper.toResponse(xml);
+            return ResponseEntity.ok(body);
+        } catch (java.io.FileNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            log.error("[getRailStationsByVersionId] 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 
     @GetMapping("/origin/{versionId}")

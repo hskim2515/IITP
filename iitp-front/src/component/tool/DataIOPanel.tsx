@@ -19,6 +19,8 @@ import axiosInstance from '@api/axiosInstance';
 import { useScenarioStore } from '@stores/useScenarioStore';
 import { mergeUpdateLogs } from '@utils/history';
 import SaveVersionModal from '@component/modal/SaveVersionModal';
+import { useImportProgress, OSM_STEPS } from '@hooks/useImportProgress';
+import ImportProgressBar from '@component/util/ImportProgressBar';
 
 // ── 레이어 설정 ─────────────────────────────────────────────────
 // xmlExportUrl: XML export/import 엔드포인트 베이스 경로 (null이면 XML 미지원)
@@ -573,7 +575,9 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
                     )}
 
                     <div className={styles.sectionDivider} />
-                    <AutoNetworkSection onStatus={setImportStatus} />
+                    <OsmNetworkSection onStatus={setImportStatus} />
+                    <div style={{ marginTop: 8 }} />
+                    <SumoNetworkSection onStatus={setImportStatus} />
                 </>)}
             </div>
         </>
@@ -725,11 +729,53 @@ const importSmallBtnStyle: React.CSSProperties = {
     color: '#7aa2ff', cursor: 'pointer', fontWeight: 600,
 };
 
-// ── 자동 네트워크 생성 섹션 ──────────────────────────────────────
-const AutoNetworkSection: React.FC<{
+// ── 시설물 응답 → 스토어 일괄 주입 헬퍼 ─────────────────────────────
+function injectFacilities(data: any) {
+    if (!data) return;
+    // 버스 정류장
+    const busStations = data.busStations;
+    if (busStations?.busStations?.length > 0) {
+        assignPropertyToResponseData(busStations);
+        useBusStationStore.getState().setCurrentJsonDataWithFullBuild(busStations);
+        useBusStationStore.getState().setChange(true);
+    }
+    // 철도역
+    const railStations = data.railStations;
+    if (railStations?.railStations?.length > 0) {
+        assignPropertyToResponseData(railStations);
+        useRailStationStore.getState().setCurrentJsonDataWithFullBuild(railStations);
+        useRailStationStore.getState().setChange(true);
+    }
+    // 버스 노선
+    const busRoutes = data.busRoutes;
+    if (busRoutes?.lines?.length > 0) {
+        assignPropertyToResponseData(busRoutes);
+        useBusPtLineStore.getState().setCurrentJsonDataWithFullBuild(busRoutes);
+        useBusPtLineStore.getState().setChange(true);
+    }
+    // 철도 노선
+    const railRoutes = data.railRoutes;
+    if (railRoutes?.routes?.length > 0) {
+        assignPropertyToResponseData(railRoutes);
+        useRailPtLineStore.getState().setCurrentJsonDataWithFullBuild(railRoutes);
+        useRailPtLineStore.getState().setChange(true);
+    }
+    // 신호
+    const signals = data.signals ?? [];
+    if (signals.length > 0) {
+        const signalData = { signals };
+        assignPropertyToResponseData(signalData);
+        useSignalStore.getState().setCurrentJsonData(signalData);
+        useSignalStore.getState().setChange(true);
+    }
+}
+
+// ── OSM 네트워크 생성 섹션 ────────────────────────────────────────
+const OsmNetworkSection: React.FC<{
     onStatus: (s: { type: 'ok' | 'error'; text: string } | null) => void;
 }> = ({ onStatus }) => {
     const { selecting, bbox, setSelecting, setBbox } = useOsmBboxStore();
+    const selectedScenario = useScenarioStore.getState().selectedScenario;
 
     const [expanded, setExpanded] = useState(false);
     const [south,    setSouth]    = useState('');
@@ -737,15 +783,15 @@ const AutoNetworkSection: React.FC<{
     const [north,    setNorth]    = useState('');
     const [east,     setEast]     = useState('');
     const [loading,  setLoading]  = useState(false);
+    const { progress, start: startProgress, finish: finishProgress, reset: resetProgress } = useImportProgress(OSM_STEPS);
 
-    // bbox 지도 선택 반영
     React.useEffect(() => {
-        if (!bbox) return;
+        if (!bbox || !expanded) return;
         setSouth(bbox.south.toFixed(6));
         setWest(bbox.west.toFixed(6));
         setNorth(bbox.north.toFixed(6));
         setEast(bbox.east.toFixed(6));
-    }, [bbox]);
+    }, [bbox, expanded]);
 
     const handleGenerate = async () => {
         if (!south || !west || !north || !east) {
@@ -759,45 +805,43 @@ const AutoNetworkSection: React.FC<{
             return;
         }
         setLoading(true);
+        startProgress();
         onStatus(null);
         try {
+            const versionId = selectedScenario?.key ?? '';
             const formData = new FormData();
             formData.append('south', south);
             formData.append('west',  west);
             formData.append('north', north);
             formData.append('east',  east);
+            if (versionId) formData.append('versionId', versionId);
 
             const res = await fetch(
-                `${import.meta.env.VITE_API_URL}/network/import/auto/json`,
-                { method: 'POST', body: formData },
-            );
-            if (!res.ok) {
-                const body = await res.text().catch(() => `HTTP ${res.status}`);
-                throw new Error(body || `서버 오류 ${res.status}`);
-            }
-            const resp = await res.json();
-            // resp = { network: {...}, signals: [...] }
-            const networkData = resp.network ?? resp;
-            const signalsData = resp.signals ?? [];
+                `${import.meta.env.VITE_API_URL}/network/import/ktdb/save`,
+                { method: 'POST', body: formData });
+            if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
 
+            const data = await res.json();
+            const networkData = data.network ?? data;
             assignPropertyToResponseData(networkData);
             useNetworkStore.getState().setCurrentJsonDataWithFullBuild(networkData);
             useNetworkStore.getState().setChange(true);
+            finishProgress();
 
-            // 신호 데이터 주입
+            const signalsData = data.signals ?? [];
             if (signalsData.length > 0) {
                 assignPropertyToResponseData({ signals: signalsData });
                 useSignalStore.getState().setCurrentJsonData({ signals: signalsData });
                 useSignalStore.getState().setChange(true);
             }
 
-            const nodeCount   = networkData.nodes?.length   ?? 0;
-            const linkCount   = networkData.links?.length   ?? 0;
-            const signalCount = signalsData.length;
-            onStatus({ type: 'ok', text: `생성 완료 — 노드 ${nodeCount}개, 링크 ${linkCount}개, 신호 ${signalCount}개` });
+            const nodeCount = networkData.nodes?.length ?? 0;
+            const linkCount = networkData.links?.length ?? 0;
+            onStatus({ type: 'ok', text: `표준 노드링크 완료 — 노드 ${nodeCount}개, 링크 ${linkCount}개` });
             setBbox(null);
         } catch (e: unknown) {
-            onStatus({ type: 'error', text: e instanceof Error ? e.message : '생성 실패' });
+            resetProgress();
+            onStatus({ type: 'error', text: e instanceof Error ? e.message : '표준 노드링크 생성 실패' });
         } finally {
             setLoading(false);
         }
@@ -816,7 +860,7 @@ const AutoNetworkSection: React.FC<{
                 onClick={() => setExpanded(v => !v)}
             >
                 <span style={{ fontSize: 11, color: '#7aa2ff', fontWeight: 600 }}>
-                    ✦ 자동 네트워크 생성
+                    📍 표준 노드링크 가져오기
                 </span>
                 <span style={{ fontSize: 10, color: '#555' }}>{expanded ? '▲' : '▼'}</span>
             </button>
@@ -824,11 +868,10 @@ const AutoNetworkSection: React.FC<{
             {expanded && (
                 <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
                     <p style={{ fontSize: 10, color: '#666', margin: 0, lineHeight: 1.5 }}>
-                        선택 영역의 표준노드링크 데이터를 불러옵니다.
+                        표준 노드링크 데이터로 네트워크를 생성합니다.
                         차선수·제한속도·도로폭 등 속성이 포함됩니다.
                     </p>
 
-                    {/* 영역 선택 버튼 */}
                     {selecting ? (
                         <>
                             <div style={{ fontSize: 10, color: '#ffaa44', lineHeight: 1.5 }}>
@@ -848,7 +891,6 @@ const AutoNetworkSection: React.FC<{
                         </button>
                     )}
 
-                    {/* 좌표 입력 */}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 8px' }}>
                         {([
                             ['남(S)', south, setSouth],
@@ -867,18 +909,14 @@ const AutoNetworkSection: React.FC<{
                         ))}
                     </div>
 
-                    {/* 생성 버튼 */}
                     <button
-                        style={{
-                            ...importSmallBtnStyle,
-                            opacity: loading ? 0.5 : 1,
-                            padding: '7px 0',
-                        }}
+                        style={{ ...importSmallBtnStyle, opacity: loading ? 0.5 : 1, padding: '7px 0' }}
                         onClick={handleGenerate}
                         disabled={loading}
                     >
-                        {loading ? '⟳ 생성 중...' : '네트워크 생성'}
+                        {loading ? '변환 중...' : '표준 노드링크 가져오기'}
                     </button>
+                    <ImportProgressBar progress={progress} />
                 </div>
             )}
         </div>
@@ -896,6 +934,168 @@ const autoInputStyle: React.CSSProperties = {
     width: '100%', boxSizing: 'border-box',
     background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
     borderRadius: 4, color: '#ccc', fontSize: 11, padding: '4px 7px', outline: 'none',
+};
+
+// ── OSM 가져오기 섹션 ──────────────────────────────────────────
+const SumoNetworkSection: React.FC<{
+    onStatus: (s: { type: 'ok' | 'error'; text: string } | null) => void;
+}> = ({ onStatus }) => {
+    const { selecting, bbox, setSelecting, setBbox } = useOsmBboxStore();
+    const selectedScenario = useScenarioStore.getState().selectedScenario;
+
+    const [expanded, setExpanded] = useState(false);
+    const [south,    setSouth]    = useState('');
+    const [west,     setWest]     = useState('');
+    const [north,    setNorth]    = useState('');
+    const [east,     setEast]     = useState('');
+    const [loading,  setLoading]  = useState(false);
+    const { progress: sumoProgress, start: startSumoProgress, finish: finishSumoProgress, reset: resetSumoProgress } = useImportProgress(OSM_STEPS);
+
+    React.useEffect(() => {
+        if (!bbox || !expanded) return;
+        setSouth(bbox.south.toFixed(6));
+        setWest(bbox.west.toFixed(6));
+        setNorth(bbox.north.toFixed(6));
+        setEast(bbox.east.toFixed(6));
+    }, [bbox, expanded]);
+
+    const handleGenerate = async () => {
+        if (!south || !west || !north || !east) {
+            onStatus({ type: 'error', text: '바운딩 박스 좌표를 모두 입력하세요.' });
+            return;
+        }
+        const s = parseFloat(south), n = parseFloat(north);
+        const w = parseFloat(west),  e = parseFloat(east);
+        if (n - s > 0.2 || e - w > 0.2) {
+            onStatus({ type: 'error', text: '영역이 너무 큽니다. 최대 0.2° × 0.2°' });
+            return;
+        }
+        setLoading(true);
+        startSumoProgress();
+        onStatus(null);
+        try {
+            const versionId = selectedScenario?.key ?? '';
+            const params = new URLSearchParams({ south, west, north, east });
+            const scenLat = selectedScenario?.latitude;
+            const scenLon = selectedScenario?.longitude;
+            if (scenLat && scenLat !== 0) params.append('baseLat', String(scenLat));
+            if (scenLon && scenLon !== 0) params.append('baseLon', String(scenLon));
+            if (versionId) params.append('versionId', versionId);
+
+            const res = await fetch(
+                `${import.meta.env.VITE_API_URL}/network/import/sumo/save?${params}`);
+            if (!res.ok) {
+                const body = await res.text().catch(() => `HTTP ${res.status}`);
+                throw new Error(body || `서버 오류 ${res.status}`);
+            }
+            const data = await res.json();
+            const networkData = data.network ?? data;
+            assignPropertyToResponseData(networkData);
+            useNetworkStore.getState().setCurrentJsonDataWithFullBuild(networkData);
+            useNetworkStore.getState().setChange(true);
+            injectFacilities(data);
+            finishSumoProgress();
+
+            const nodeCount  = networkData.nodes?.length ?? 0;
+            const linkCount  = networkData.links?.length ?? 0;
+            const busCount   = data.busStations?.busStations?.length ?? 0;
+            const railCount  = data.railStations?.railStations?.length ?? 0;
+            const sigCount   = data.signals?.length ?? 0;
+            onStatus({ type: 'ok', text: `OSM 생성 완료 — 노드 ${nodeCount}개, 링크 ${linkCount}개, 신호 ${sigCount}개, 버스정류장 ${busCount}개, 철도역 ${railCount}개` });
+
+            setBbox(null);
+        } catch (e: unknown) {
+            resetSumoProgress();
+            onStatus({ type: 'error', text: e instanceof Error ? e.message : 'OSM 생성 실패' });
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div>
+            <button
+                style={{
+                    width: '100%', textAlign: 'left', padding: '6px 8px',
+                    background: expanded ? 'rgba(100,65,225,0.1)' : 'transparent',
+                    border: '1px solid ' + (expanded ? 'rgba(100,65,225,0.3)' : 'rgba(255,255,255,0.08)'),
+                    borderRadius: 6, cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                }}
+                onClick={() => setExpanded(v => !v)}
+            >
+                <span style={{ fontSize: 11, color: '#aa88ff', fontWeight: 600 }}>
+                    🗺 OSM 가져오기
+                </span>
+                <span style={{ fontSize: 10, color: '#555' }}>{expanded ? '▲' : '▼'}</span>
+            </button>
+
+            {expanded && (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <p style={{ fontSize: 10, color: '#666', margin: 0, lineHeight: 1.5 }}>
+                        OpenStreetMap 도로 데이터를 SUMO netconvert로 변환합니다.
+                        교차로 차선 연결이 정밀 생성됩니다. (Docker 필요)
+                    </p>
+
+                    {selecting ? (
+                        <>
+                            <div style={{ fontSize: 10, color: '#ffaa44', lineHeight: 1.5 }}>
+                                Shift + 드래그로 영역을 선택하세요<br/>
+                                <span style={{ color: '#666' }}>(일반 드래그: 지도 이동)</span>
+                            </div>
+                            <button
+                                style={{ ...autoSmallBtnStyle, borderColor: 'rgba(255,160,50,0.5)', color: '#ffaa44' }}
+                                onClick={() => setSelecting(false)}
+                            >
+                                선택 취소
+                            </button>
+                        </>
+                    ) : (
+                        <button
+                            style={{ ...autoSmallBtnStyle, borderColor: 'rgba(100,65,225,0.4)', color: '#aa88ff' }}
+                            onClick={() => setSelecting(true)}
+                        >
+                            지도에서 영역 선택
+                        </button>
+                    )}
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 8px' }}>
+                        {([
+                            ['남(S)', south, setSouth],
+                            ['서(W)', west,  setWest],
+                            ['북(N)', north, setNorth],
+                            ['동(E)', east,  setEast],
+                        ] as [string, string, React.Dispatch<React.SetStateAction<string>>][]).map(([label, val, setter]) => (
+                            <div key={label}>
+                                <div style={{ fontSize: 10, color: '#666', marginBottom: 2 }}>{label}</div>
+                                <input
+                                    type="number" step="any" value={val}
+                                    onChange={e => setter(e.target.value)}
+                                    style={autoInputStyle}
+                                />
+                            </div>
+                        ))}
+                    </div>
+
+                    <button
+                        style={{
+                            ...importSmallBtnStyle,
+                            opacity: loading ? 0.5 : 1,
+                            padding: '7px 0',
+                            borderColor: 'rgba(100,65,225,0.45)',
+                            background: 'rgba(100,65,225,0.2)',
+                            color: '#aa88ff',
+                        }}
+                        onClick={handleGenerate}
+                        disabled={loading}
+                    >
+                        {loading ? 'netconvert 실행 중...' : 'OSM 가져오기'}
+                    </button>
+                    <ImportProgressBar progress={sumoProgress} color="#aa88ff" />
+                </div>
+            )}
+        </div>
+    );
 };
 
 export default DataIOPanel;

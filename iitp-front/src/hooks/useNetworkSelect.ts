@@ -3,18 +3,38 @@ import * as Cesium from 'cesium';
 import VectorSource from 'ol/source/Vector';
 import VectorLayer from 'ol/layer/Vector';
 import { Feature } from 'ol';
-import { LineString, Point } from 'ol/geom';
+import { LineString, Point, Polygon } from 'ol/geom';
 import { Stroke, Fill, Style, Circle as CircleStyle, RegularShape } from 'ol/style';
 import { fromLonLat, toLonLat } from 'ol/proj';
 import { getDistance } from 'ol/sphere';
 import { Coordinate } from 'ol/coordinate';
+import DragPan from 'ol/interaction/DragPan';
+import DragZoom from 'ol/interaction/DragZoom';
+import { networkPrimitivePropertiesMap } from '@datasource/NetworkDataSourceLayer';
 import { useOpenLayersStore } from '@stores/useOpenLayersStore';
+import { useMapStore } from '@stores/useMapStore';
 import { useCesiumStore } from '@stores/useCesiumStore';
 import { useNetworkDrawStore } from '@stores/useNetworkDrawStore';
 import { useNetworkStore } from '@stores/useNetworkStore';
+import { useNetworkUndoStore } from '@stores/useNetworkUndoStore';
 import { useMessageStore } from '@stores/useMessageStore';
 import { assignPropertyToResponseData } from '@utils/guid';
 import { Network, Link, Node, Lane, Coordinates } from '@type/Network';
+import { containsCoordinate } from 'ol/extent';
+import type { Extent } from 'ol/extent';
+import type OLMap from 'ol/Map';
+
+function setDragPan(map: OLMap, active: boolean) {
+    map.getInteractions().getArray().forEach(i => {
+        if (i instanceof DragPan) i.setActive(active);
+    });
+}
+
+function setDragZoom(map: OLMap, active: boolean) {
+    map.getInteractions().getArray().forEach(i => {
+        if (i instanceof DragZoom) i.setActive(active);
+    });
+}
 
 // ══════════════════════════════════════════════════════════════════
 // 스타일
@@ -59,8 +79,22 @@ const nodeHandleDragStyle = new Style({
     image: new CircleStyle({ radius: 12, fill: new Fill({ color: '#ff9900' }), stroke: new Stroke({ color: '#fff', width: 2 }) }),
 });
 
-const SEL_Z  = 501;
-const EDIT_Z = 504;
+const SEL_Z   = 501;
+const EDIT_Z  = 504;
+const MULTI_Z = 502;
+const BOX_Z   = 503;
+
+const multiSelectLinkStyle = [
+    new Style({ stroke: new Stroke({ color: 'rgba(100,200,255,0.15)', width: 16 }) }),
+    new Style({ stroke: new Stroke({ color: 'rgba(100,200,255,0.85)', width: 2.5, lineDash: [8, 4] }) }),
+];
+const multiSelectNodeStyle = new Style({
+    image: new CircleStyle({ radius: 12, fill: new Fill({ color: 'rgba(100,200,255,0.25)' }), stroke: new Stroke({ color: 'rgba(100,200,255,1)', width: 2 }) }),
+});
+const boxSelectStyle = new Style({
+    fill: new Fill({ color: 'rgba(100,200,255,0.06)' }),
+    stroke: new Stroke({ color: 'rgba(100,200,255,0.7)', width: 1.5, lineDash: [6, 4] }),
+});
 
 // ══════════════════════════════════════════════════════════════════
 // 유틸
@@ -177,44 +211,234 @@ export function updateLinkInNetwork(
     network: Network, linkId: number | string,
     patch: Partial<Pick<Link, 'numLane' | 'width' | 'maxSpd' | 'minSpd'>>,
 ): Network {
-    return { ...network, links: network.links.map(l => {
+    const link = network.links.find(l => String(l.id) === String(linkId));
+    if (!link) return network;
+
+    const updatedLinks = network.links.map(l => {
         if (String(l.id) !== String(linkId)) return l;
         const updated = { ...l, ...patch };
         if (patch.numLane !== undefined && patch.numLane !== l.numLane)
             updated.lanes = rebuildLanes(updated, patch.numLane);
         return updated;
-    })};
+    });
+
+    // width/numLane 변경 → 레인 오프셋 변화 → conn.coordinates stale
+    const laneLayoutChanged = patch.width !== undefined || patch.numLane !== undefined;
+    const updatedNodes = laneLayoutChanged
+        ? network.nodes.map(n => {
+            if (String(n.id) !== String(link.fromNode) && String(n.id) !== String(link.toNode)) return n;
+            return { ...n, connections: n.connections.map((c: any) => ({ ...c, coordinates: [] })) };
+        })
+        : network.nodes;
+
+    return { ...network, nodes: updatedNodes, links: updatedLinks };
 }
 
 export function updateLinkCoordinates(network: Network, linkId: number | string, newCoords: Coordinates[]): Network {
-    return { ...network, links: network.links.map(l => {
+    const link = network.links.find(l => String(l.id) === String(linkId));
+    if (!link) return network;
+
+    const length   = calcPathLength(newCoords);
+    const newFrom  = newCoords[0]!;
+    const newTo    = newCoords[newCoords.length - 1]!;
+    const oldFrom  = link.coordinates[0];
+    const oldTo    = link.coordinates[link.coordinates.length - 1];
+    const endpointMoved =
+        newFrom.lng !== oldFrom?.lng || newFrom.lat !== oldFrom?.lat ||
+        newTo.lng   !== oldTo?.lng   || newTo.lat   !== oldTo?.lat;
+
+    const updatedLinks = network.links.map(l => {
         if (String(l.id) !== String(linkId)) return l;
-        const length = calcPathLength(newCoords);
-        const from = newCoords[0]!, to = newCoords[newCoords.length-1]!;
-        return { ...l, coordinates: newCoords, length, lanes: l.lanes.map(lane => ({
-            ...lane, coordinates: [from, to],
-            segments: [{ ...lane.segments[0]!, initPoint: 0, endPoint: length }],
-        }))};
-    })};
+        return {
+            ...l, coordinates: newCoords, length,
+            lanes: l.lanes.map((lane: any) => ({
+                ...lane,
+                coordinates: newCoords,
+                segments: [{ ...lane.segments[0], initPoint: 0, endPoint: length }],
+            })),
+        };
+    });
+
+    // 끝점이 이동한 경우 연결된 노드의 conn.coordinates 평행이동
+    const updatedNodes = endpointMoved
+        ? network.nodes.map(n => {
+            const isFromNode = String(n.id) === String(link.fromNode);
+            const isToNode   = String(n.id) === String(link.toNode);
+            if (!isFromNode && !isToNode) return n;
+            const deltaFromLat = newFrom.lat - (oldFrom?.lat ?? newFrom.lat);
+            const deltaFromLng = newFrom.lng - (oldFrom?.lng ?? newFrom.lng);
+            const deltaToLat   = newTo.lat   - (oldTo?.lat   ?? newTo.lat);
+            const deltaToLng   = newTo.lng   - (oldTo?.lng   ?? newTo.lng);
+            return {
+                ...n,
+                connections: n.connections.map((c: any) => {
+                    if (!c.coordinates?.length) return c;
+                    // fromLink가 바뀐 링크이면 from 쪽 delta, toLink이면 to 쪽 delta 적용
+                    const isFromLink = String(c.fromLink) === String(linkId);
+                    const isToLink   = String(c.toLink)   === String(linkId);
+                    if (!isFromLink && !isToLink) return c;
+                    const dLat = isFromLink ? deltaToLat   : deltaFromLat;
+                    const dLng = isFromLink ? deltaToLng   : deltaFromLng;
+                    if (dLat === 0 && dLng === 0) return c;
+                    return {
+                        ...c,
+                        coordinates: c.coordinates.map((pt: any) => ({
+                            ...pt,
+                            lat: pt.lat + dLat,
+                            lng: pt.lng + dLng,
+                        })),
+                    };
+                }),
+            };
+        })
+        : network.nodes;
+
+    return { ...network, nodes: updatedNodes, links: updatedLinks };
+}
+
+// ── 링크 방향 반전 (fromNode ↔ toNode, 좌표 역순, 포트 타입 flip) ──
+export function reverseLinkDirection(network: Network, linkId: number | string): Network {
+    const link = network.links.find(l => String(l.id) === String(linkId));
+    if (!link) return network;
+
+    const oldFrom = link.fromNode;
+    const oldTo   = link.toNode;
+    const reversedCoords = [...link.coordinates].reverse();
+
+    const updatedLinks = network.links.map(l => {
+        if (String(l.id) !== String(linkId)) return l;
+        return {
+            ...l,
+            fromNode: oldTo,
+            toNode: oldFrom,
+            coordinates: reversedCoords,
+            lanes: l.lanes.map(lane => ({
+                ...lane,
+                coordinates: [...lane.coordinates].reverse(),
+            })),
+        };
+    });
+
+    const updatedNodes = network.nodes.map(n => {
+        const isFrom = String(n.id) === String(oldFrom);
+        const isTo   = String(n.id) === String(oldTo);
+        if (!isFrom && !isTo) return n;
+        const newPorts = n.ports.map(p =>
+            String(p.linkId) === String(linkId)
+                ? { ...p, type: (p.type === 'in' ? 'out' : 'in') as 'in' | 'out' }
+                : p
+        );
+        const newConns = n.connections.filter(c =>
+            String(c.fromLink) !== String(linkId) && String(c.toLink) !== String(linkId)
+        );
+        return { ...n, ports: newPorts, numPort: newPorts.length, connections: newConns, numConnection: newConns.length };
+    });
+
+    return { ...network, links: updatedLinks, nodes: updatedNodes };
+}
+
+// ── 두 노드 병합 (keepNodeId 위치에 removeNodeId 흡수) ─────────────
+export function mergeNodesInNetwork(
+    network: Network,
+    keepNodeId: number | string,
+    removeNodeId: number | string,
+): Network {
+    const keepNode   = network.nodes.find(n => String(n.id) === String(keepNodeId));
+    const removeNode = network.nodes.find(n => String(n.id) === String(removeNodeId));
+    if (!keepNode || !removeNode) return network;
+
+    const keepCoord = keepNode.coordinates;
+
+    const updatedLinks = network.links.map(l => {
+        let coords = [...l.coordinates];
+        let fromNode = l.fromNode;
+        let toNode   = l.toNode;
+        if (String(l.fromNode) === String(removeNodeId)) { fromNode = keepNodeId as number; coords = [keepCoord, ...coords.slice(1)]; }
+        if (String(l.toNode)   === String(removeNodeId)) { toNode   = keepNodeId as number; coords = [...coords.slice(0, -1), keepCoord]; }
+        if (fromNode === l.fromNode && toNode === l.toNode) return l;
+        return { ...l, fromNode, toNode, coordinates: coords, length: calcPathLength(coords) };
+    });
+
+    const selfLoopIds = new Set(
+        updatedLinks.filter(l => String(l.fromNode) === String(l.toNode)).map(l => String(l.id))
+    );
+    const filteredLinks = updatedLinks.filter(l => !selfLoopIds.has(String(l.id)));
+
+    const mergedPorts = [...keepNode.ports, ...removeNode.ports]
+        .filter(p => !selfLoopIds.has(String(p.linkId)));
+    const mergedConns = [...keepNode.connections, ...removeNode.connections]
+        .filter(c => !selfLoopIds.has(String(c.fromLink)) && !selfLoopIds.has(String(c.toLink)))
+        .map((c: any) => ({ ...c, coordinates: [] }));
+
+    const updatedNodes = network.nodes
+        .filter(n => String(n.id) !== String(removeNodeId))
+        .map(n => {
+            if (String(n.id) !== String(keepNodeId)) {
+                const np = n.ports.filter(p => !selfLoopIds.has(String(p.linkId)));
+                const nc = n.connections.filter(c => !selfLoopIds.has(String(c.fromLink)) && !selfLoopIds.has(String(c.toLink)));
+                return { ...n, ports: np, numPort: np.length, connections: nc, numConnection: nc.length };
+            }
+            return { ...n, ports: mergedPorts, numPort: mergedPorts.length, connections: mergedConns, numConnection: mergedConns.length };
+        });
+
+    return { ...network, nodes: updatedNodes, links: filteredLinks };
+}
+
+// ── 일괄 삭제 ──────────────────────────────────────────────────────
+export function batchDeleteLinksFromNetwork(network: Network, linkIds: (number | string)[]): Network {
+    return linkIds.reduce((net, id) => deleteLinkFromNetwork(net, id), network);
+}
+
+export function batchDeleteNodesFromNetwork(network: Network, nodeIds: (number | string)[]): Network {
+    return nodeIds.reduce((net, id) => deleteNodeFromNetwork(net, id), network);
+}
+
+export function batchUpdateLinksInNetwork(
+    network: Network,
+    linkIds: (number | string)[],
+    patch: Partial<Pick<Link, 'numLane' | 'width' | 'maxSpd'>>,
+): Network {
+    return linkIds.reduce((net, id) => updateLinkInNetwork(net, id, patch), network);
 }
 
 export function moveNode(network: Network, nodeId: number | string, newCoord: Coordinates): Network {
-    const updatedNodes = network.nodes.map(n =>
-        String(n.id) === String(nodeId) ? { ...n, coordinates: newCoord } : n
-    );
+    const updatedNodes = network.nodes.map(n => {
+        if (String(n.id) !== String(nodeId)) return n;
+        const deltaLat = newCoord.lat - n.coordinates.lat;
+        const deltaLng = newCoord.lng - n.coordinates.lng;
+        return {
+            ...n,
+            coordinates: newCoord,
+            connections: n.connections.map((c: any) => {
+                if (!c.coordinates?.length) return c;
+                return {
+                    ...c,
+                    coordinates: c.coordinates.map((pt: any) => ({
+                        ...pt,
+                        lat: pt.lat + deltaLat,
+                        lng: pt.lng + deltaLng,
+                    })),
+                };
+            }),
+        };
+    });
     const updatedLinks = network.links.map(l => {
         const isFrom = String(l.fromNode) === String(nodeId);
         const isTo   = String(l.toNode)   === String(nodeId);
         if (!isFrom && !isTo) return l;
         const coords = [...l.coordinates];
         if (isFrom) coords[0] = newCoord;
-        if (isTo)   coords[coords.length-1] = newCoord;
+        if (isTo)   coords[coords.length - 1] = newCoord;
         const length = calcPathLength(coords);
-        const from = coords[0]!, to = coords[coords.length-1]!;
-        return { ...l, coordinates: coords, length, lanes: l.lanes.map(lane => ({
-            ...lane, coordinates: [from, to],
-            segments: [{ ...lane.segments[0]!, initPoint: 0, endPoint: length }],
-        }))};
+        // 레인 coordinates는 link.coordinates를 따르므로 동일하게 업데이트
+        return {
+            ...l, coordinates: coords, length,
+            lanes: l.lanes.map((lane: any) => ({
+                ...lane,
+                coordinates: coords,
+                segments: [{ ...lane.segments[0], initPoint: 0, endPoint: length }],
+            })),
+        };
     });
     return { ...network, nodes: updatedNodes, links: updatedLinks };
 }
@@ -319,13 +543,29 @@ type DragState = {
 export const useNetworkSelect = () => {
     const olMap          = useOpenLayersStore(s => s.map);
     const viewer         = useCesiumStore(s => s.viewer);
-    const isSelectActive = useNetworkDrawStore(s => s.isSelectActive);
-    const selectedLinkId = useNetworkDrawStore(s => s.selectedLinkId);
-    const selectedNodeId = useNetworkDrawStore(s => s.selectedNodeId);
+    const isSelectActive  = useNetworkDrawStore(s => s.isSelectActive);
+    const selectedLinkId  = useNetworkDrawStore(s => s.selectedLinkId);
+    const selectedNodeId  = useNetworkDrawStore(s => s.selectedNodeId);
+    const selectedLinkIds = useNetworkDrawStore(s => s.selectedLinkIds);
+    const selectedNodeIds = useNetworkDrawStore(s => s.selectedNodeIds);
+
+    // 편집 모드 진입 시 2D 고정, 종료 시 split 복원
+    const prevMapViewModeRef = useRef<string>('split');
+    useEffect(() => {
+        const mapStore = useMapStore.getState();
+        if (isSelectActive) {
+            prevMapViewModeRef.current = mapStore.mapViewMode;
+            mapStore.setMapViewMode('2D');
+        } else {
+            mapStore.setMapViewMode(prevMapViewModeRef.current as any);
+        }
+    }, [isSelectActive]);
 
     const selSrcRef   = useRef<VectorSource | null>(null);
     const hoverSrcRef = useRef<VectorSource | null>(null);
     const editSrcRef  = useRef<VectorSource | null>(null);
+    const multiSrcRef = useRef<VectorSource | null>(null);
+    const boxSrcRef   = useRef<VectorSource | null>(null);
 
     const hoveredLinkIdRef = useRef<number | string | null>(null);
     const hoveredNodeIdRef = useRef<number | string | null>(null);
@@ -337,6 +577,10 @@ export const useNetworkSelect = () => {
     // 드래그 상태
     const dragStateRef = useRef<DragState | null>(null);
 
+    // 박스 드래그 상태
+    const boxStartRef  = useRef<Coordinate | null>(null);
+    const boxFtRef     = useRef<Feature | null>(null);
+
     // ── 레이어 생명주기 ──────────────────────────────────────────
     useEffect(() => {
         if (!olMap || !isSelectActive) return;
@@ -344,29 +588,46 @@ export const useNetworkSelect = () => {
         const selSrc   = new VectorSource();
         const hoverSrc = new VectorSource();
         const editSrc  = new VectorSource();
+        const multiSrc = new VectorSource();
+        const boxSrc   = new VectorSource();
         selSrcRef.current   = selSrc;
         hoverSrcRef.current = hoverSrc;
         editSrcRef.current  = editSrc;
+        multiSrcRef.current = multiSrc;
+        boxSrcRef.current   = boxSrc;
 
         const selLayer   = new VectorLayer({ source: selSrc,   zIndex: SEL_Z });
         const hoverLayer = new VectorLayer({ source: hoverSrc, zIndex: SEL_Z - 1 });
         const editLayer  = new VectorLayer({ source: editSrc,  zIndex: EDIT_Z });
+        const multiLayer = new VectorLayer({ source: multiSrc, zIndex: MULTI_Z });
+        const boxLayer   = new VectorLayer({ source: boxSrc,   zIndex: BOX_Z });
         olMap.addLayer(selLayer);
         olMap.addLayer(hoverLayer);
         olMap.addLayer(editLayer);
+        olMap.addLayer(multiLayer);
+        olMap.addLayer(boxLayer);
         olMap.getTargetElement().style.cursor = 'default';
+        setDragZoom(olMap, false);  // Shift+드래그 OL 기본 줌 비활성
 
         return () => {
             useNetworkDrawStore.getState().clearSelection();
             dragStateRef.current   = null;
             linkEditRef.current    = null;
             nodeEditRef.current    = null;
+            boxStartRef.current    = null;
+            boxFtRef.current       = null;
+            setDragPan(olMap, true);
+            setDragZoom(olMap, true);  // DragZoom 복원
             olMap.removeLayer(selLayer);
             olMap.removeLayer(hoverLayer);
             olMap.removeLayer(editLayer);
+            olMap.removeLayer(multiLayer);
+            olMap.removeLayer(boxLayer);
             selSrcRef.current   = null;
             hoverSrcRef.current = null;
             editSrcRef.current  = null;
+            multiSrcRef.current = null;
+            boxSrcRef.current   = null;
             olMap.getTargetElement().style.cursor = '';
         };
     }, [olMap, isSelectActive]);
@@ -399,7 +660,7 @@ export const useNetworkSelect = () => {
         }
     }, [selectedLinkId, selectedNodeId]);
 
-    // ── OL 포인터 이벤트 (선택 + 드래그 편집) ───────────────────
+    // ── OL 포인터 이벤트 (선택 + Ctrl+드래그 편집) ──────────────
     useEffect(() => {
         if (!olMap || !isSelectActive) return;
         const vp = olMap.getViewport();
@@ -410,9 +671,13 @@ export const useNetworkSelect = () => {
         // ──────────────────── pointerdown ──────────────────────
         const onPointerDown = (e: PointerEvent) => {
             if (e.button !== 0) return;
+
+            // Ctrl 없으면 지도 이동 허용 (드래그 편집 안 함)
+            if (!e.ctrlKey) return;
+
             const coord = olMap.getEventCoordinate(e);
             const res   = olMap.getView().getResolution() ?? 1;
-            const HANDLE_THRESH = res * 18;
+            const HANDLE_THRESH = res * 22;
             const network = useNetworkStore.getState().currentJsonData;
             const { selectedLinkId: sl, selectedNodeId: sn } = useNetworkDrawStore.getState();
 
@@ -431,7 +696,9 @@ export const useNetworkSelect = () => {
                             workingCoords: link.coordinates.map(c => ({ ...c })),
                             isEndpoint: hitIdx === 0 || hitIdx === link.coordinates.length - 1,
                         };
+                        setDragPan(olMap, false);
                         e.stopPropagation();
+                        e.stopImmediatePropagation();
                         olMap.getTargetElement().style.cursor = 'grabbing';
                         return;
                     }
@@ -448,10 +715,29 @@ export const useNetworkSelect = () => {
                             type: 'node', nodeId: sn,
                             workingCoord: { ...node.coordinates },
                         };
+                        setDragPan(olMap, false);
                         e.stopPropagation();
+                        e.stopImmediatePropagation();
                         olMap.getTargetElement().style.cursor = 'grabbing';
                         return;
                     }
+                }
+            }
+
+            // Ctrl + 빈 공간 → 박스 범위 선택
+            if (!e.shiftKey && network) {
+                const hitNode = findNearestNode(network.nodes, coord, res * 20);
+                const hitLink = !hitNode ? findNearestLink(network.links, coord, res * 15) : null;
+                if (!hitNode && !hitLink) {
+                    boxStartRef.current = coord;
+                    const boxFt = new Feature(new Polygon([[coord, coord, coord, coord, coord]]));
+                    boxFt.setStyle(boxSelectStyle);
+                    boxSrcRef.current?.addFeature(boxFt);
+                    boxFtRef.current = boxFt;
+                    setDragPan(olMap, false);
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
+                    olMap.getTargetElement().style.cursor = 'crosshair';
                 }
             }
         };
@@ -464,9 +750,22 @@ export const useNetworkSelect = () => {
             const drag  = dragStateRef.current;
             const network = useNetworkStore.getState().currentJsonData;
 
+            // 박스 드래그 중
+            if (boxStartRef.current && boxFtRef.current) {
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                const [x0, y0] = boxStartRef.current;
+                const [x1, y1] = coord;
+                (boxFtRef.current.getGeometry() as Polygon).setCoordinates([
+                    [[x0!, y0!], [x1!, y0!], [x1!, y1!], [x0!, y1!], [x0!, y0!]],
+                ]);
+                return;
+            }
+
             // 드래그 중
             if (drag) {
                 e.stopPropagation();
+                e.stopImmediatePropagation();
                 const ll = toLonLat(coord);
                 const newGeo: Coordinates = { lng: ll[0]!, lat: ll[1]! };
 
@@ -500,31 +799,36 @@ export const useNetworkSelect = () => {
                 return;
             }
 
-            // 드래그 아닌 hover — 핸들 위 커서 변경
+            // 드래그 아닌 hover — Ctrl 키 + 핸들 근처면 grab 커서
             const { selectedLinkId: sl, selectedNodeId: sn } = useNetworkDrawStore.getState();
 
-            if (sl !== null && linkEditRef.current && network) {
-                const link = network.links.find(l => String(l.id) === String(sl));
-                if (link) {
-                    const HANDLE_THRESH = res * 18;
-                    const onHandle = link.coordinates.some(
-                        c => olDist(fromLonLat([c.lng, c.lat]), coord) < HANDLE_THRESH
-                    );
-                    olMap.getTargetElement().style.cursor = onHandle ? 'grab' : 'default';
-                    return;
+            if (e.ctrlKey) {
+                if (sl !== null && linkEditRef.current && network) {
+                    const link = network.links.find(l => String(l.id) === String(sl));
+                    if (link) {
+                        const onHandle = link.coordinates.some(
+                            c => olDist(fromLonLat([c.lng, c.lat]), coord) < res * 22
+                        );
+                        olMap.getTargetElement().style.cursor = onHandle ? 'grab' : 'crosshair';
+                        return;
+                    }
                 }
-            }
-            if (sn !== null && nodeEditRef.current && network) {
-                const node = network.nodes.find(n => String(n.id) === String(sn));
-                if (node) {
-                    const HANDLE_THRESH = res * 18;
-                    const onHandle = olDist(fromLonLat([node.coordinates.lng, node.coordinates.lat]), coord) < HANDLE_THRESH;
-                    olMap.getTargetElement().style.cursor = onHandle ? 'grab' : 'default';
-                    return;
+                if (sn !== null && nodeEditRef.current && network) {
+                    const node = network.nodes.find(n => String(n.id) === String(sn));
+                    if (node) {
+                        const onHandle = olDist(fromLonLat([node.coordinates.lng, node.coordinates.lat]), coord) < res * 22;
+                        olMap.getTargetElement().style.cursor = onHandle ? 'grab' : 'crosshair';
+                        return;
+                    }
                 }
+                olMap.getTargetElement().style.cursor = 'crosshair';
+                return;
+            } else {
+                // Ctrl 없음: 기본 커서 (지도 이동 가능)
+                olMap.getTargetElement().style.cursor = 'default';
             }
 
-            // 아무것도 선택 안됐을 때 hover highlight
+            // hover highlight (선택 없을 때)
             if (sl === null && sn === null) {
                 const selSrc   = selSrcRef.current;
                 const hoverSrc = hoverSrcRef.current;
@@ -546,12 +850,57 @@ export const useNetworkSelect = () => {
 
         // ──────────────────── pointerup ───────────────────────
         const onPointerUp = (e: PointerEvent) => {
-            const drag = dragStateRef.current;
-            if (!drag) return;
+            // 어떤 경로로든 빠져나올 때 항상 DragPan 복원 + 커서 초기화
+            const hadBox  = !!(boxStartRef.current || boxFtRef.current);
+            const hadDrag = !!dragStateRef.current;
+            if (!hadBox && !hadDrag) return;
 
-            dragStateRef.current = null;
+            setDragPan(olMap, true);
             olMap.getTargetElement().style.cursor = 'default';
             e.stopPropagation();
+
+            // 박스 드래그 완료
+            if (hadBox) {
+                const boxFt  = boxFtRef.current;
+                boxFtRef.current    = null;
+                boxStartRef.current = null;
+                if (boxFt) boxSrcRef.current?.removeFeature(boxFt);
+
+                const network = useNetworkStore.getState().currentJsonData;
+                if (network && boxFt) {
+                    const extent = (boxFt.getGeometry() as Polygon).getExtent() as Extent;
+                    const w = Math.abs(extent[2]! - extent[0]!);
+                    const h = Math.abs(extent[3]! - extent[1]!);
+                    if (w > 5 && h > 5) {
+                        const hitLinkIds: string[] = [];
+                        const hitNodeIds: string[] = [];
+                        for (const n of network.nodes) {
+                            const pt = fromLonLat([n.coordinates.lng, n.coordinates.lat]);
+                            if (containsCoordinate(extent, pt)) hitNodeIds.push(String(n.id));
+                        }
+                        if (hitNodeIds.length === 0) {
+                            for (const l of network.links) {
+                                const anyInside = l.coordinates.some(c =>
+                                    containsCoordinate(extent, fromLonLat([c.lng, c.lat]))
+                                );
+                                if (anyInside) hitLinkIds.push(String(l.id));
+                            }
+                        }
+                        if (hitNodeIds.length > 0) {
+                            useNetworkDrawStore.getState().setSelectedNodeIds(hitNodeIds);
+                            useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${hitNodeIds.length}개 선택됨` });
+                        } else if (hitLinkIds.length > 0) {
+                            useNetworkDrawStore.getState().setSelectedLinkIds(hitLinkIds);
+                            useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${hitLinkIds.length}개 선택됨` });
+                        }
+                    }
+                }
+                return;
+            }
+
+            const drag = dragStateRef.current;
+            dragStateRef.current = null;
+            if (!drag) return;
 
             const cur = useNetworkStore.getState().currentJsonData;
             if (!cur) return;
@@ -620,8 +969,16 @@ export const useNetworkSelect = () => {
             }
 
             const node = findNearestNode(network.nodes, coord, res * 20);
+            const link = !node ? findNearestLink(network.links, coord, res * 15) : null;
+
+            if (e.shiftKey) {
+                // Shift+클릭: 멀티셀렉트 토글
+                if (node) { useNetworkDrawStore.getState().toggleSelectedNodeId(String(node.id)); return; }
+                if (link) { useNetworkDrawStore.getState().toggleSelectedLinkId(String(link.id)); return; }
+                return;
+            }
+
             if (node) { useNetworkDrawStore.getState().setSelectedNode(node.id); return; }
-            const link = findNearestLink(network.links, coord, res * 15);
             if (link) { useNetworkDrawStore.getState().setSelectedLink(link.id); return; }
             useNetworkDrawStore.getState().clearSelection();
         };
@@ -629,13 +986,23 @@ export const useNetworkSelect = () => {
 
         // ──────────────────── 키보드 ──────────────────────────
         const onKey = (e: KeyboardEvent) => {
-            const { selectedLinkId: sl, selectedNodeId: sn } = useNetworkDrawStore.getState();
+            const { selectedLinkId: sl, selectedNodeId: sn,
+                    selectedLinkIds, selectedNodeIds } = useNetworkDrawStore.getState();
             if (e.key === 'Escape') {
                 useNetworkDrawStore.getState().clearSelection();
             } else if (e.key === 'Delete' || e.key === 'Backspace') {
                 const network = useNetworkStore.getState().currentJsonData;
                 if (!network) return;
-                if (sl !== null) {
+                // 멀티셀렉트 일괄 삭제
+                if (selectedLinkIds.length > 0) {
+                    applyNetworkUpdate(batchDeleteLinksFromNetwork(network, selectedLinkIds));
+                    useNetworkDrawStore.getState().clearSelection();
+                    useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkIds.length}개 삭제됨` });
+                } else if (selectedNodeIds.length > 0) {
+                    applyNetworkUpdate(batchDeleteNodesFromNetwork(network, selectedNodeIds));
+                    useNetworkDrawStore.getState().clearSelection();
+                    useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${selectedNodeIds.length}개 삭제됨` });
+                } else if (sl !== null) {
                     applyNetworkUpdate(deleteLinkFromNetwork(network, sl));
                     useNetworkDrawStore.getState().clearSelection();
                     useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${sl} 삭제됨` });
@@ -659,20 +1026,137 @@ export const useNetworkSelect = () => {
         };
     }, [olMap, isSelectActive]);
 
-    // ── Cesium 클릭 선택 ────────────────────────────────────────
+    // ── 멀티셀렉트 하이라이트 렌더링 ────────────────────────────
+    useEffect(() => {
+        const multiSrc = multiSrcRef.current;
+        if (!multiSrc || !isSelectActive) return;
+        const network = useNetworkStore.getState().currentJsonData;
+        multiSrc.clear();
+        if (!network) return;
+
+        for (const lid of selectedLinkIds) {
+            const link = network.links.find(l => String(l.id) === lid);
+            if (!link) continue;
+            const ft = new Feature(new LineString(link.coordinates.map(c => fromLonLat([c.lng, c.lat]))));
+            ft.setStyle(multiSelectLinkStyle);
+            multiSrc.addFeature(ft);
+        }
+        for (const nid of selectedNodeIds) {
+            const node = network.nodes.find(n => String(n.id) === nid);
+            if (!node) continue;
+            const ft = new Feature(new Point(fromLonLat([node.coordinates.lng, node.coordinates.lat])));
+            ft.setStyle(multiSelectNodeStyle);
+            multiSrc.addFeature(ft);
+        }
+    }, [isSelectActive, selectedLinkIds, selectedNodeIds]);
+
+    // ── Cesium 편집 핸들 DataSource 참조 ───────────────────────────
+    const cesiumHandleDsRef = useRef<Cesium.CustomDataSource | null>(null);
+
+    // ── Cesium 편집 핸들 생성/갱신 (선택 변경 시) ──────────────────
+    useEffect(() => {
+        if (!viewer || !isSelectActive) return;
+
+        // DataSource 초기화 (처음 진입 시)
+        if (!cesiumHandleDsRef.current) {
+            const ds = new Cesium.CustomDataSource('networkEditHandles');
+            viewer.dataSources.add(ds);
+            cesiumHandleDsRef.current = ds;
+        }
+        const ds = cesiumHandleDsRef.current;
+        ds.entities.removeAll();
+
+        const network = useNetworkStore.getState().currentJsonData;
+        if (!network) return;
+
+        // 링크 선택: 꼭짓점 핸들 구체 표시
+        if (selectedLinkId !== null) {
+            const link = network.links.find(l => String(l.id) === String(selectedLinkId));
+            if (link) {
+                link.coordinates.forEach((c, i) => {
+                    const isEndpoint = i === 0 || i === link.coordinates.length - 1;
+                    ds.entities.add(new Cesium.Entity({
+                        position: Cesium.Cartesian3.fromDegrees(c.lng, c.lat),
+                        ellipsoid: {
+                            radii: new Cesium.Cartesian3(isEndpoint ? 4 : 2.5, isEndpoint ? 4 : 2.5, isEndpoint ? 4 : 2.5),
+                            material: isEndpoint
+                                ? Cesium.Color.fromCssColorString('#7aa2ff').withAlpha(0.95)
+                                : Cesium.Color.WHITE.withAlpha(0.9),
+                            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                        },
+                        properties: { handleType: 'vertex', vertexIdx: i },
+                    }));
+                });
+            }
+        }
+
+        // 노드 선택: 이동 핸들 표시
+        if (selectedNodeId !== null) {
+            const node = network.nodes.find(n => String(n.id) === String(selectedNodeId));
+            if (node) {
+                ds.entities.add(new Cesium.Entity({
+                    position: Cesium.Cartesian3.fromDegrees(node.coordinates.lng, node.coordinates.lat),
+                    ellipsoid: {
+                        radii: new Cesium.Cartesian3(5, 5, 5),
+                        material: Cesium.Color.fromCssColorString('#4080ff').withAlpha(0.9),
+                        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+                    },
+                    properties: { handleType: 'node' },
+                }));
+            }
+        }
+
+        try { viewer.scene.requestRender(); } catch (_) {}
+    }, [viewer, isSelectActive, selectedLinkId, selectedNodeId]);
+
+    // ── Cesium 편집 DataSource 해제 (선택 모드 종료 시) ────────────
+    useEffect(() => {
+        if (isSelectActive) return;
+        if (cesiumHandleDsRef.current && viewer) {
+            viewer.dataSources.remove(cesiumHandleDsRef.current, true);
+            cesiumHandleDsRef.current = null;
+        }
+    }, [isSelectActive, viewer]);
+
+    // ── Cesium 카메라: 선택 모드에서도 이동 허용 (Ctrl+drag만 편집) ─
+    // (별도 차단 없음 — Ctrl+drag 시에만 일시 차단)
+
+    // ── Cesium 클릭 선택 (LEFT_CLICK, 수식키 없음) ──────────────────
     useEffect(() => {
         if (!isSelectActive || !viewer) return;
-        const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+        const v       = viewer;
+        const handler = new Cesium.ScreenSpaceEventHandler(v.scene.canvas);
 
         handler.setInputAction((e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
             const network = useNetworkStore.getState().currentJsonData;
             if (!network) return;
-            const scene = viewer.scene;
+            const scene     = v.scene;
+            const drawStore = useNetworkDrawStore.getState();
+
+            // 1순위: scene.pick() — Entity(노드) 또는 Primitive(링크)
+            const picked = scene.pick(e.position);
+            if (Cesium.defined(picked)) {
+                if (picked.id instanceof Cesium.Entity) {
+                    const props = picked.id.properties?.getValue(Cesium.JulianDate.now());
+                    if (props?.featureType === 'nodes' && props?.id != null) {
+                        drawStore.setSelectedNode(String(props.id));
+                        return;
+                    }
+                } else if (typeof picked.id === 'string') {
+                    const data = networkPrimitivePropertiesMap.get(picked.id);
+                    if (data?.featureType === 'links' && data?.id != null) {
+                        drawStore.setSelectedLink(String(data.id));
+                        return;
+                    }
+                }
+            }
+
+            // 2순위: 화면거리 기반 fallback
             const node = findNearestNodeCesium(network.nodes, e.position, scene, 25);
-            if (node) { useNetworkDrawStore.getState().setSelectedNode(node.id); return; }
+            if (node) { drawStore.setSelectedNode(node.id); return; }
             const link = findNearestLinkCesium(network.links, e.position, scene, 15);
-            if (link) { useNetworkDrawStore.getState().setSelectedLink(link.id); return; }
-            useNetworkDrawStore.getState().clearSelection();
+            if (link) { drawStore.setSelectedLink(link.id); return; }
+            drawStore.clearSelection();
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
         return () => { handler.destroy(); };
@@ -683,6 +1167,8 @@ export const useNetworkSelect = () => {
 // 공통 업데이트
 // ══════════════════════════════════════════════════════════════════
 export function applyNetworkUpdate(network: Network) {
+    const current = useNetworkStore.getState().currentJsonData;
+    if (current) useNetworkUndoStore.getState().push(current);
     assignPropertyToResponseData(network as any);
     useNetworkStore.getState().setCurrentJsonData(network);
     useNetworkStore.getState().setChange(true);

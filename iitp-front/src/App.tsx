@@ -17,12 +17,14 @@ import { propertyFormSchema } from "@schema/propertyFormSchema";
 import Maps from "@component/map/Maps";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
 import OsmImportModal from "@component/modal/OsmImportModal";
+import SumoImportModal from "@component/modal/SumoImportModal";
 import NetworkImportModal from "@component/modal/NetworkImportModal";
 import OdMatrixModal from "@component/modal/OdMatrixModal";
 import Taskbar from "@component/panel/Taskbar";
 import DashboardLeft from "@component/panel/DashboardLeft";
 import DashboardRight from "@component/panel/DashboardRight";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
+import { ConsolePanel } from "@component/console/ConsolePanel";
 
 function VersionPopup({ scenarioId, onSelect }: { scenarioId: number; onSelect: (v: ScenarioVersions) => void }) {
     const [versions, setVersions] = useState<ScenarioVersions[] | null>(null);
@@ -66,48 +68,20 @@ function VersionPopup({ scenarioId, onSelect }: { scenarioId: number; onSelect: 
 }
 
 function InitGuideModal({ onClose }: { onClose: () => void }) {
-    const openSession = useWorkflowStore((s: any) => s.openSession);
-
-    const handleOsm = () => {
-        openSession({ menuCode: 'OSM_IMPORT', nameKor: 'OSM 가져오기' });
-        onClose();
-    };
-
-    const handleNetworkXml = () => {
-        openSession({ menuCode: 'NETWORK_IMPORT', nameKor: '네트워크 XML 임포트' });
-        onClose();
-    };
-
     return (
         <div style={initGuideOverlayStyle}>
             <div style={initGuidePanelStyle}>
                 <div style={initGuideHeaderStyle}>
-                    <span style={{ fontWeight: 600, fontSize: 14, color: '#e0e0e0' }}>네트워크 데이터 초기화</span>
+                    <span style={{ fontWeight: 600, fontSize: 14, color: '#e0e0e0' }}>네트워크 데이터 없음</span>
                 </div>
-                <div style={{ padding: '16px 20px' }}>
-                    <p style={{ fontSize: 12, color: '#888', margin: '0 0 16px 0', lineHeight: 1.6 }}>
+                <div style={{ padding: '20px 24px' }}>
+                    <p style={{ fontSize: 12, color: '#888', margin: 0, lineHeight: 1.8 }}>
                         이 버전에는 아직 네트워크 데이터가 없습니다.<br />
-                        아래 방법 중 하나를 선택해 데이터를 가져오세요.
+                        상단 메뉴 <span style={{ color: '#7aa2ff', fontWeight: 600 }}>파일 &rsaquo; 가져오기</span> 에서 데이터를 불러오세요.
                     </p>
-                    <div style={{ display: 'flex', gap: 12 }}>
-                        <button style={initGuideCardStyle} onClick={handleOsm}>
-                            <span style={{ fontSize: 22, marginBottom: 6 }}>🗺</span>
-                            <span style={{ fontWeight: 600, fontSize: 13 }}>OSM 가져오기</span>
-                            <span style={{ fontSize: 11, color: '#777', marginTop: 4, lineHeight: 1.4 }}>
-                                OpenStreetMap에서<br />도로 네트워크 변환
-                            </span>
-                        </button>
-                        <button style={initGuideCardStyle} onClick={handleNetworkXml}>
-                            <span style={{ fontSize: 22, marginBottom: 6 }}>📂</span>
-                            <span style={{ fontWeight: 600, fontSize: 13 }}>XML 임포트</span>
-                            <span style={{ fontSize: 11, color: '#777', marginTop: 4, lineHeight: 1.4 }}>
-                                기존 network.xml<br />파일 불러오기
-                            </span>
-                        </button>
-                    </div>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '10px 20px', borderTop: '1px solid rgba(255,255,255,0.07)' }}>
-                    <button style={initGuideLaterBtnStyle} onClick={onClose}>나중에</button>
+                    <button style={initGuideLaterBtnStyle} onClick={onClose}>확인</button>
                 </div>
             </div>
         </div>
@@ -132,17 +106,7 @@ const initGuideHeaderStyle: React.CSSProperties = {
     padding: '14px 20px',
     borderBottom: '1px solid rgba(255,255,255,0.07)',
 };
-const initGuideCardStyle: React.CSSProperties = {
-    flex: 1,
-    display: 'flex', flexDirection: 'column', alignItems: 'center',
-    padding: '16px 12px',
-    background: 'rgba(255,255,255,0.04)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 8,
-    color: '#ddd',
-    cursor: 'pointer',
-    transition: 'background 0.15s, border-color 0.15s',
-};
+
 const initGuideLaterBtnStyle: React.CSSProperties = {
     padding: '6px 16px', fontSize: 12, borderRadius: 5,
     border: '1px solid rgba(255,255,255,0.12)',
@@ -235,6 +199,10 @@ function App() {
                             <OsmImportModal/>
                         )}
 
+                        {!showDashboard && activeSession && activeSession.menuCode === 'SUMO_IMPORT' && (
+                            <SumoImportModal/>
+                        )}
+
                         {!showDashboard && activeSession && activeSession.menuCode === 'NETWORK_IMPORT' && (
                             <NetworkImportModal/>
                         )}
@@ -243,7 +211,7 @@ function App() {
                             <OdMatrixModal/>
                         )}
 
-                        {!showDashboard && activeSession && activeSession.menuCode !== 'OSM_IMPORT' && activeSession.menuCode !== 'NETWORK_IMPORT' && (
+                        {!showDashboard && activeSession && activeSession.menuCode !== 'OSM_IMPORT' && activeSession.menuCode !== 'SUMO_IMPORT' && activeSession.menuCode !== 'NETWORK_IMPORT' && (
                             isDescendantOf(menu, 'SCHEMA_SETTING', activeSession.menuCode) ? (
                                 <SchemaSetting/>
                             ) : activeSession.menuCode === 'VEHICLE_TYPE' ? (
@@ -272,6 +240,7 @@ function App() {
                     {showDashboard && <DashboardRight onClose={() => setShowDashboard(false)}/>}
 
                 </main>
+                <ConsolePanel />
             </div>
         )
     )
