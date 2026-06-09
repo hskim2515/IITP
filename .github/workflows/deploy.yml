@@ -70,6 +70,16 @@ jobs:
         run: |
           sshpass -p "$SSH_PASSWORD" ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" '/home/gaia3d/iitp/restart.sh'
 
+      - name: Sync DB tables (menu, layer_col_scheme)
+        env:
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
+        run: |
+          sshpass -p "$SSH_PASSWORD" ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
+            'docker compose -f /home/gaia3d/iitp/docker-compose.yml exec -T postgres psql -U postgres -d iitp -f /database/sync_tables.sql'
+
 #      - name: Set up Kubeconfig
 #        uses: azure/setup-kubectl@v3
 #        with:
