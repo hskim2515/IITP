@@ -4,13 +4,13 @@ RUN apk add --no-cache openjdk11
 
 WORKDIR /app
 
-COPY package.json ./
+COPY package.json yarn.lock ./
 
-RUN npm install --frozen-lockfile --online || npm install --frozen-lockfile
+RUN yarn install --frozen-lockfile
 
 COPY . .
 
-RUN npm run build:dev
+RUN yarn build:dev
 
 FROM nginx:alpine
 
