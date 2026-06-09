@@ -1,120 +1,83 @@
 -- ============================================================
--- CI/CD 동기화 스크립트: menu, layer_col_scheme
--- 매 배포 시 실행 — idempotent (반복 실행 안전)
+-- CI/CD 동기화 스크립트: menu, layer_schema_config, layer_schema_config_option
+-- 생성: 2026-06-09 13:30:11 (export_sync_tables.sh)
 -- ============================================================
 
 BEGIN;
 
--- ── menu ────────────────────────────────────────────────────
--- self-reference(parents_id, root_id)만 존재, 외부 FK 없음
+-- ── menu ────────────────────────────────────────────────────────
 TRUNCATE TABLE menu RESTART IDENTITY CASCADE;
 
-INSERT INTO menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES
-  (1,  'FILE',               'Y', null, 0, 'ko-KR', 'File',                          '파일',                     1,  null, null, 'system', now(), 'system', now()),
-  (2,  'EDIT',               'Y', null, 0, 'ko-KR', 'Edit',                          '편집',                     2,  null, null, 'system', now(), 'system', now()),
-  (3,  'SIMULATION',         'Y', null, 0, 'ko-KR', 'Simulation',                    '시뮬레이션',               3,  null, null, 'system', now(), 'system', now()),
-  (4,  'NETWORK',            'Y', null, 1, 'ko-KR', 'Network',                       '네트워크',                 1,  1,    1,    'system', now(), 'system', now()),
-  (5,  'SCENARIO',           'Y', null, 1, 'ko-KR', 'Scenario',                      '시나리오',                 2,  1,    1,    'system', now(), 'system', now()),
-  (6,  'FACILITY',           'Y', null, 1, 'ko-KR', 'Facility',                      '시설물',                   1,  2,    2,    'system', now(), 'system', now()),
-  (7,  'DEMAND',             'Y', null, 1, 'ko-KR', 'Demand',                        '수요',                     2,  2,    2,    'system', now(), 'system', now()),
-  (8,  'SCENARIO_EDIT',      'Y', null, 1, 'ko-KR', 'Scenario (Edit)',               '시나리오 (편집)',           3,  2,    2,    'system', now(), 'system', now()),
-  (9,  'VEHICLE',            'Y', null, 1, 'ko-KR', 'Vehicle',                       '교통수단',                 4,  2,    2,    'system', now(), 'system', now()),
-  (10, 'PT_LINE',            'Y', null, 1, 'ko-KR', 'Public Transport Line',         '대중교통 노선',             5,  2,    2,    'system', now(), 'system', now()),
-  (11, 'SIMULATION_CONFIG',  'Y', null, 1, 'ko-KR', 'Simulation Config',             '시뮬레이션 설정',           1,  3,    3,    'system', now(), 'system', now()),
-  (12, 'NETWORK_IMPORT',     'Y', null, 2, 'ko-KR', 'Network Import',                '네트워크 파일 가져오기',    1,  4,    1,    'system', now(), 'system', now()),
-  (13, 'DEMAND_IMPORT',      'Y', null, 2, 'ko-KR', 'Demand Import',                 '수요 파일 가져오기',        2,  4,    1,    'system', now(), 'system', now()),
-  (14, 'SIGNAL_IMPORT',      'Y', null, 2, 'ko-KR', 'Signal Import',                 '신호 파일 가져오기',        3,  4,    1,    'system', now(), 'system', now()),
-  (15, 'EXPORT',             'Y', null, 2, 'ko-KR', 'Export',                        '내보내기',                 4,  4,    1,    'system', now(), 'system', now()),
-  (16, 'NETWORK',            'Y', null, 2, 'ko-KR', 'Network',                       '도로',                     1,  6,    2,    'system', now(), 'system', now()),
-  (17, 'BUS_STATION',        'Y', null, 2, 'ko-KR', 'Public Transport Bus Station',  '대중교통(BUS) 정류장',      3,  6,    2,    'system', now(), 'system', now()),
-  (18, 'DRT_STATION',        'Y', null, 2, 'ko-KR', 'Public Transport DRT Station',  '대중교통(DRT) 정류장',      4,  6,    2,    'system', now(), 'system', now()),
-  (19, 'RAIL_STATION',       'Y', null, 2, 'ko-KR', 'Public Transport Rail Station', '대중교통(RAIL) 정류장',     5,  6,    2,    'system', now(), 'system', now()),
-  (20, 'TRAM_STATION',       'Y', null, 2, 'ko-KR', 'Public Transport TRAM Station', '대중교통(TRAM) 정류장',     6,  6,    2,    'system', now(), 'system', now()),
-  (21, 'BUS_GARAGE',         'Y', null, 2, 'ko-KR', 'Public Transport Bus Garage',   '대중교통(BUS) 차고지',      7,  6,    2,    'system', now(), 'system', now()),
-  (22, 'TRAM_GARAGE',        'Y', null, 2, 'ko-KR', 'Public Transport TRAM Garage',  '대중교통(TRAM) 차고지',     8,  6,    2,    'system', now(), 'system', now()),
-  (23, 'SIGNAL',             'Y', null, 2, 'ko-KR', 'Signal',                        '신호등',                   9,  6,    2,    'system', now(), 'system', now()),
-  (24, 'PAVEMENT_MARKING',   'Y', null, 2, 'ko-KR', 'Pavement Marking',              '노면표시',                 10, 6,    2,    'system', now(), 'system', now()),
-  (25, 'OD_MATRIX',          'Y', null, 2, 'ko-KR', 'OD Matrix',                     'OD Matrix 설정',            1,  7,    2,    'system', now(), 'system', now()),
-  (26, 'AGENT',              'Y', null, 2, 'ko-KR', 'Agent',                         'AGENT 설정',                2,  7,    2,    'system', now(), 'system', now()),
-  (27, 'PASSENGER',          'Y', null, 2, 'ko-KR', 'Passenger',                     'PASSENGER 설정',            3,  7,    2,    'system', now(), 'system', now()),
-  (28, 'SCENARIO_SETTINGS',  'Y', null, 2, 'ko-KR', 'Scenario Settings',             '시나리오 설정',             1,  8,    2,    'system', now(), 'system', now()),
-  (29, 'VEHICLE_TYPE',       'Y', null, 2, 'ko-KR', 'Vehicle Type',                  '교통수단 유형',             1,  9,    2,    'system', now(), 'system', now()),
-  (30, 'VEHICLE_MODEL',      'Y', null, 2, 'ko-KR', 'Vehicle Model',                 '교통수단 2D&3D 모델',        2,  9,    2,    'system', now(), 'system', now()),
-  (31, 'BUS_PT_LINE',        'Y', null, 2, 'ko-KR', 'Bus Public Transport Line',     '대중교통(BUS) 노선',         1,  10,   2,    'system', now(), 'system', now()),
-  (32, 'RAIL_PT_LINE',       'Y', null, 2, 'ko-KR', 'Rail Public Transport Line',    '대중교통(RAIL) 노선',        2,  10,   2,    'system', now(), 'system', now()),
-  (33, 'TRAM_PT_LINE',       'Y', null, 2, 'ko-KR', 'Tram Public Transport Line',    '대중교통(TRAM) 노선',        3,  10,   2,    'system', now(), 'system', now()),
-  (34, 'SIMULATION_LEVEL',   'Y', null, 2, 'ko-KR', 'Simulation Level',              '시뮬레이션 레벨 설정',       1,  11,   3,    'system', now(), 'system', now()),
-  (38, 'SCHEMA_SETTING',     'Y', null, 1, 'ko-KR', 'Schema Setting',                '스키마 설정',               1,  1,    1,    'system', now(), 'system', now()),
-  (39, 'SCHEMA_NETWORK',     'Y', null, 2, 'ko-KR', 'Network Schema',                '도로 스키마',               1,  38,   1,    'system', now(), 'system', now()),
-  (40, 'SCHEMA_BUS_STATION', 'Y', null, 2, 'ko-KR', 'Bus Station Schema',            'BUS 정류장 스키마',          2,  38,   1,    'system', now(), 'system', now()),
-  (41, 'SCHEMA_DRT_STATION', 'Y', null, 2, 'ko-KR', 'DRT Station Schema',            'DRT 정류장 스키마',          3,  38,   1,    'system', now(), 'system', now()),
-  (42, 'SCHEMA_RAIL_STATION','Y', null, 2, 'ko-KR', 'Rail Station Schema',           'RAIL 정류장 스키마',         4,  38,   1,    'system', now(), 'system', now()),
-  (43, 'SCHEMA_TRAM_STATION','Y', null, 2, 'ko-KR', 'Tram Station Schema',           'TRAM 정류장 스키마',         5,  38,   1,    'system', now(), 'system', now()),
-  (44, 'SCHEMA_PAVEMENT_MARKING','Y',null,2,'ko-KR','Pavement Marking Schema',       '노면표시 스키마',            6,  38,   1,    'system', now(), 'system', now());
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (1, 'FILE', 'Y', NULL, 0, 'ko-KR', 'File', '파일', 1, NULL, NULL, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (2, 'EDIT', 'Y', NULL, 0, 'ko-KR', 'Edit', '편집', 2, NULL, NULL, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (3, 'SIMULATION', 'Y', NULL, 0, 'ko-KR', 'Simulation', '시뮬레이션', 3, NULL, NULL, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (4, 'NETWORK', 'Y', NULL, 1, 'ko-KR', 'Network', '네트워크', 1, 1, 1, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (5, 'SCENARIO', 'Y', NULL, 1, 'ko-KR', 'Scenario', '시나리오', 2, 1, 1, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (6, 'FACILITY', 'Y', NULL, 1, 'ko-KR', 'Facility', '시설물', 1, 2, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (7, 'DEMAND', 'Y', NULL, 1, 'ko-KR', 'Demand', '수요', 2, 2, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (8, 'SCENARIO_EDIT', 'Y', NULL, 1, 'ko-KR', 'Scenario (Edit)', '시나리오 (편집)', 3, 2, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (9, 'VEHICLE', 'Y', NULL, 1, 'ko-KR', 'Vehicle', '교통수단', 4, 2, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (10, 'PT_LINE', 'Y', NULL, 1, 'ko-KR', 'Public Transport Line', '대중교통 노선', 5, 2, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (11, 'SIMULATION_CONFIG', 'Y', NULL, 1, 'ko-KR', 'Simulation Config', '시뮬레이션 설정', 1, 3, 3, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (12, 'NETWORK_IMPORT', 'Y', NULL, 2, 'ko-KR', 'Network Import', '네트워크 파일 가져오기', 1, 4, 1, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (13, 'DEMAND_IMPORT', 'Y', NULL, 2, 'ko-KR', 'Demand Import', '수요 파일 가져오기', 2, 4, 1, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (14, 'SIGNAL_IMPORT', 'Y', NULL, 2, 'ko-KR', 'Signal Import', '신호 파일 가져오기', 3, 4, 1, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (15, 'EXPORT', 'Y', NULL, 2, 'ko-KR', 'Export', '내보내기', 4, 4, 1, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (16, 'NETWORK', 'Y', NULL, 2, 'ko-KR', 'Network', '도로', 1, 6, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (17, 'BUS_STATION', 'Y', NULL, 2, 'ko-KR', 'Public Transport Bus Station', '대중교통(BUS) 정류장', 3, 6, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (18, 'DRT_STATION', 'Y', NULL, 2, 'ko-KR', 'Public Transport DRT Station', '대중교통(DRT) 정류장', 4, 6, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (19, 'RAIL_STATION', 'Y', NULL, 2, 'ko-KR', 'Public Transport Rail Station', '대중교통(RAIL) 정류장', 5, 6, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (20, 'TRAM_STATION', 'Y', NULL, 2, 'ko-KR', 'Public Transport TRAM Station', '대중교통(TRAM) 정류장', 6, 6, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (21, 'BUS_GARAGE', 'Y', NULL, 2, 'ko-KR', 'Public Transport Bus Garage', '대중교통(BUS) 차고지', 7, 6, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (22, 'TRAM_GARAGE', 'Y', NULL, 2, 'ko-KR', 'Public Transport TRAM Garage', '대중교통(TRAM) 차고지', 8, 6, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (23, 'SIGNAL', 'Y', NULL, 2, 'ko-KR', 'Signal', '신호등', 9, 6, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (24, 'PAVEMENT_MARKING', 'Y', NULL, 2, 'ko-KR', 'Pavement Marking', '노면표시', 10, 6, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (25, 'OD_MATRIX', 'Y', NULL, 2, 'ko-KR', 'OD Matrix', 'OD Matrix 설정', 1, 7, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (26, 'AGENT', 'Y', NULL, 2, 'ko-KR', 'Agent', 'AGENT 설정', 2, 7, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (27, 'PASSENGER', 'Y', NULL, 2, 'ko-KR', 'Passenger', 'PASSENGER 설정', 3, 7, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (28, 'SCENARIO_SETTINGS', 'Y', NULL, 2, 'ko-KR', 'Scenario Settings', '시나리오 설정', 1, 8, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (29, 'VEHICLE_TYPE', 'Y', NULL, 2, 'ko-KR', 'Vehicle Type', '교통수단 유형', 1, 9, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (30, 'VEHICLE_MODEL', 'Y', NULL, 2, 'ko-KR', 'Vehicle Model', '교통수단 2D&3D 모델', 2, 9, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (31, 'BUS_PT_LINE', 'Y', NULL, 2, 'ko-KR', 'Bus Public Transport Line', '대중교통(BUS) 노선', 1, 10, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (32, 'RAIL_PT_LINE', 'Y', NULL, 2, 'ko-KR', 'Rail Public Transport Line', '대중교통(RAIL) 노선', 2, 10, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (33, 'TRAM_PT_LINE', 'Y', NULL, 2, 'ko-KR', 'Tram Public Transport Line', '대중교통(TRAM) 노선', 3, 10, 2, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (34, 'SIMULATION_LEVEL', 'Y', NULL, 2, 'ko-KR', 'Simulation Level', '시뮬레이션 레벨 설정', 1, 11, 3, 'system', '2025-06-25 08:25:38.621705+00', 'system', '2025-06-25 08:25:38.621705+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (38, 'SCHEMA_SETTING', 'Y', NULL, 1, 'ko-KR', 'Schema Setting', '스키마 설정', 1, 1, 1, 'system', '2025-08-18 07:39:33.385584+00', 'system', '2025-08-18 07:39:33.385584+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (39, 'SCHEMA_NETWORK', 'Y', NULL, 2, 'ko-KR', 'Network Schema', '도로 스키마', 1, 38, 1, 'system', '2025-08-18 07:39:33.413311+00', 'system', '2025-08-18 07:39:33.413311+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (40, 'SCHEMA_BUS_STATION', 'Y', NULL, 2, 'ko-KR', 'Bus Station Schema', 'BUS 정류장 스키마', 2, 38, 1, 'system', '2025-08-18 07:39:33.441637+00', 'system', '2025-08-18 07:39:33.441637+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (41, 'SCHEMA_DRT_STATION', 'Y', NULL, 2, 'ko-KR', 'DRT Station Schema', 'DRT 정류장 스키마', 3, 38, 1, 'system', '2025-08-18 07:39:33.468989+00', 'system', '2025-08-18 07:39:33.468989+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (42, 'SCHEMA_RAIL_STATION', 'Y', NULL, 2, 'ko-KR', 'Rail Station Schema', 'RAIL 정류장 스키마', 4, 38, 1, 'system', '2025-08-18 07:39:33.494729+00', 'system', '2025-08-18 07:39:33.494729+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (43, 'SCHEMA_TRAM_STATION', 'Y', NULL, 2, 'ko-KR', 'Tram Station Schema', 'TRAM 정류장 스키마', 5, 38, 1, 'system', '2025-08-18 07:39:33.5214+00', 'system', '2025-08-18 07:39:33.5214+00');
+INSERT INTO public.menu (menu_id, menu_code, available, access_role, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date, last_modified_by, last_modified_date) VALUES (44, 'SCHEMA_PAVEMENT_MARKING', 'Y', NULL, 2, 'ko-KR', 'Pavement Marking Schema', '노면표시 스키마', 6, 38, 1, 'system', '2025-08-18 07:39:33.5214+00', 'system', '2025-08-18 07:39:33.5214+00');
 
--- identity sequence를 마지막 삽입 ID에 맞게 재설정
 SELECT setval(pg_get_serial_sequence('menu', 'menu_id'), MAX(menu_id)) FROM menu;
 
+-- ── layer_schema_config ──────────────────────────────────────────
+TRUNCATE TABLE layer_schema_config_option, layer_schema_config RESTART IDENTITY CASCADE;
 
--- ── layer_col_scheme ─────────────────────────────────────────
-TRUNCATE TABLE layer_col_scheme RESTART IDENTITY CASCADE;
+INSERT INTO public.layer_schema_config (id, config_key, input_type, sort_order) VALUES (1, 'name', 'text', 1);
+INSERT INTO public.layer_schema_config (id, config_key, input_type, sort_order) VALUES (2, 'inputType', 'select', 2);
+INSERT INTO public.layer_schema_config (id, config_key, input_type, sort_order) VALUES (3, 'readOnly', 'select', 3);
+INSERT INTO public.layer_schema_config (id, config_key, input_type, sort_order) VALUES (4, 'nullable', 'select', 4);
+INSERT INTO public.layer_schema_config (id, config_key, input_type, sort_order) VALUES (5, 'status', 'select', 5);
+INSERT INTO public.layer_schema_config (id, config_key, input_type, sort_order) VALUES (6, 'options', 'tags', 6);
+INSERT INTO public.layer_schema_config (id, config_key, input_type, sort_order) VALUES (7, 'defaultValue', 'text', 7);
 
-INSERT INTO layer_col_scheme (row_key, layer_key, key, readonly, type, options) VALUES
-  -- link
-  ('link', 'network', 'id',        true,  'number', NULL),
-  ('link', 'network', 'fromNode',  true,  'text',   NULL),
-  ('link', 'network', 'toNode',    true,  'text',   NULL),
-  ('link', 'network', 'ffSpd',     false, 'number', NULL),
-  ('link', 'network', 'maxSpd',    false, 'number', NULL),
-  ('link', 'network', 'minSpd',    false, 'number', NULL),
-  ('link', 'network', 'maxVeh',    false, 'number', NULL),
-  ('link', 'network', 'qmax',      false, 'number', NULL),
-  ('link', 'network', 'waveSpd',   false, 'number', NULL),
-  ('link', 'network', 'length',    false, 'number', NULL),
-  ('link', 'network', 'numLane',   true,  'number', NULL),
-  ('link', 'network', 'width',     false, 'number', NULL),
-  ('link', 'network', 'stopLine',  false, 'number', NULL),
-  ('link', 'network', 'type',      false, 'select', ARRAY['straight']),
-  ('link', 'network', 'simType',   false, 'number', NULL),
-  ('link', 'network', 'shape',     true,  'text',   NULL),
-  ('link', 'network', 'layer',     true,  'text',   NULL),
-  -- lane
-  ('lane', 'network', 'id',          true, 'text',   NULL),
-  ('lane', 'network', 'numCell',     true, 'number', NULL),
-  ('lane', 'network', 'leftLaneId',  true, 'text',   NULL),
-  ('lane', 'network', 'rightLaneId', true, 'text',   NULL),
-  ('lane', 'network', 'shape',       true, 'text',   NULL),
-  -- cell
-  ('cell', 'network', 'id',     true,  'text',   NULL),
-  ('cell', 'network', 'length', false, 'number', NULL),
-  ('cell', 'network', 'offset', false, 'number', NULL),
-  -- segment
-  ('segment', 'network', 'id',        true,  'text',    NULL),
-  ('segment', 'network', 'block',     false, 'boolean', NULL),
-  ('segment', 'network', 'initPoint', false, 'number',  NULL),
-  ('segment', 'network', 'endPoint',  false, 'number',  NULL),
-  ('segment', 'network', 'leftLc',    false, 'text',    NULL),
-  ('segment', 'network', 'rightLc',   false, 'text',    NULL),
-  -- nodes
-  ('nodes', 'network', 'id',            true,  'text',   NULL),
-  ('nodes', 'network', 'center',        true,  'text',   NULL),
-  ('nodes', 'network', 'numConnection', true,  'number', NULL),
-  ('nodes', 'network', 'numPort',       true,  'number', NULL),
-  ('nodes', 'network', 'type',          false, 'select', ARRAY['intersection','terminal','normal','merging','diverging','garage']),
-  -- connections
-  ('connections', 'network', 'id',       true,  'text',   NULL),
-  ('connections', 'network', 'fromLink', true,  'text',   NULL),
-  ('connections', 'network', 'fromLane', true,  'number', NULL),
-  ('connections', 'network', 'toLink',   true,  'text',   NULL),
-  ('connections', 'network', 'toLane',   true,  'number', NULL),
-  ('connections', 'network', 'ffSpd',    false, 'number', NULL),
-  ('connections', 'network', 'length',   true,  'number', NULL),
-  ('connections', 'network', 'width',    false, 'number', NULL),
-  ('connections', 'network', 'shape',    true,  'text',   NULL),
-  ('connections', 'network', 'turning',  false, 'select', ARRAY['S','L','R','U']),
-  -- ports
-  ('ports', 'network', 'linkId',    true, 'text',   NULL),
-  ('ports', 'network', 'type',      true, 'select', ARRAY['in','out']),
-  ('ports', 'network', 'direction', true, 'text',   NULL);
+SELECT setval(pg_get_serial_sequence('layer_schema_config', 'id'), MAX(id)) FROM layer_schema_config;
+
+-- ── layer_schema_config_option ───────────────────────────────────
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (1, 'true', 3);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (2, 'false', 3);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (3, 'true', 4);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (4, 'false', 4);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (5, 'ACTIVE', 5);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (6, 'INACTIVE', 5);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (7, 'text', 2);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (8, 'select', 2);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (9, 'number', 2);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (10, 'checkbox', 2);
+INSERT INTO public.layer_schema_config_option (id, value, definition_id) VALUES (11, 'textarea', 2);
+
+SELECT setval(pg_get_serial_sequence('layer_schema_config_option', 'id'), MAX(id)) FROM layer_schema_config_option;
 
 COMMIT;
