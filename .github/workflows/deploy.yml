@@ -88,7 +88,7 @@ jobs:
             cd /home/gaia3d/iitp
             docker compose pull
             docker compose down --remove-orphans
-            fuser -k 8080/tcp 2>/dev/null || true
+            fuser -k 48080/tcp 2>/dev/null || true
             fuser -k 49090/tcp 2>/dev/null || true
             docker container prune -f
             docker compose up -d

@@ -16,7 +16,7 @@ services:
   front:
     image: ${DOCKER_USERNAME}/iitp-front:latest
     ports:
-      - "8080:8080"
+      - "48080:8080"
     restart: unless-stopped
 
   rest:
