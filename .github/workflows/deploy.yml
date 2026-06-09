@@ -102,7 +102,10 @@ jobs:
           SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
         run: |
           sshpass -p "$SSH_PASSWORD" ssh -o StrictHostKeyChecking=no -p "$SSH_PORT" "$SSH_USER@$SSH_HOST" \
-            'cd /home/gaia3d/iitp && docker compose up -d postgres && timeout 60 bash -c "until docker compose exec -T postgres pg_isready -U postgres; do sleep 2; done" && docker compose exec -T postgres psql -U postgres -d iitp -f /database/sync_tables.sql'
+            'cd /home/gaia3d/iitp &&
+             timeout 60 bash -c "until docker compose exec -T postgres pg_isready -U postgres; do sleep 2; done" &&
+             timeout 120 bash -c "until docker compose exec -T postgres psql -U postgres -d iitp -c \"SELECT 1 FROM menu LIMIT 1\" > /dev/null 2>&1; do sleep 5; done" &&
+             docker compose exec -T postgres psql -U postgres -d iitp -f /database/sync_tables.sql'
 
 #      - name: Set up Kubeconfig
 #        uses: azure/setup-kubectl@v3
