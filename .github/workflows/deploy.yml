@@ -56,7 +56,7 @@ jobs:
           push: true
           tags: ${{ secrets.DOCKER_USERNAME }}/iitp-rest:latest
           build-args: |
-            SPRING_PROFILES_ACTIVE=stage
+            SPRING_PROFILES_ACTIVE=develop
 
       - name: Install sshpass
         run: sudo apt-get install -y sshpass
@@ -88,6 +88,8 @@ jobs:
             cd /home/gaia3d/iitp
             docker compose pull
             docker compose down --remove-orphans
+            docker stop $(docker ps -q --filter "publish=8080") 2>/dev/null || true
+            docker stop $(docker ps -q --filter "publish=49090") 2>/dev/null || true
             docker container prune -f
             docker compose up -d
           '
