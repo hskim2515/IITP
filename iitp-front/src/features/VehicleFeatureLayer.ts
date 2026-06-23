@@ -5,6 +5,8 @@ import { Point } from "ol/geom";
 import { fromLonLat } from "ol/proj";
 import { Cartographic, Ellipsoid } from "cesium";
 import * as Cesium from "cesium";
+import { buffer, containsXY, getHeight, getWidth, type Extent } from "ol/extent";
+import { VEHICLE_CULLING } from "@utils/lodConstants";
 
 const DEFAULT_VEHICLE_COLOR: [number, number, number] = [251, 188, 96];
 
@@ -25,6 +27,11 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private lerpStartTime: number = 0;
     private readonly LERP_DURATION = 50;
     public readonly vehicleType: string;
+
+    // viewport culling: 화면 밖 차량은 좌표 업데이트/렌더 건너뜀 (VEHICLE_CULLING.ENABLED)
+    private cullExtent: Extent | null = null;
+    private cullExtentAt = 0;
+    private hiddenIdx: Set<number> = new Set();
 
     constructor(vehicleRoute: any[], vectorSource: VectorSource, speed: number, running: boolean, vehicleType: string = 'default', modelColor?: string) {
         const [r, g, b] = (modelColor ? hexToRgb255(modelColor) : null) ?? DEFAULT_VEHICLE_COLOR;
@@ -107,22 +114,64 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
         }
     }
 
+    /** 현재 viewport extent(+margin) 갱신. 비활성/맵없음 시 null → culling 안 함 */
+    private refreshCullExtent(): void {
+        if (!VEHICLE_CULLING.ENABLED) { this.cullExtent = null; return; }
+        const now = performance.now();
+        if (now - this.cullExtentAt < 250 && this.cullExtent) return; // 짧은 throttle
+        this.cullExtentAt = now;
+        const map = this.getMapInternal();
+        const size = map?.getSize();
+        const view = map?.getView();
+        if (!map || !size || !view) { this.cullExtent = null; return; }
+        const raw = view.calculateExtent(size);
+        const margin = Math.max(getWidth(raw), getHeight(raw)) * VEHICLE_CULLING.MARGIN_RATIO;
+        this.cullExtent = buffer(raw, margin);
+    }
+
+    /** target 좌표가 viewport 밖이면 true (culling 대상). extent 없으면 항상 false */
+    private isCulled(target: number[]): boolean {
+        if (!this.cullExtent) return false;
+        return !containsXY(this.cullExtent, target[0]!, target[1]!);
+    }
+
     private _syncFeatures() {
+        this.refreshCullExtent();
         this.features.forEach((feature, index) => {
             const geom = feature.getGeometry() as Point;
             const target = this.positions[index];
             if (!geom || !target) return;
+            if (this.applyCull(feature, index, target)) return;
             geom.setCoordinates(target);
         });
     }
 
+    /** culling 적용: 화면 밖이면 feature 숨김(빈 geometry) 후 true. 화면 안이면 복원 후 false */
+    private applyCull(feature: Feature<Point>, index: number, target: number[]): boolean {
+        if (!this.cullExtent) {
+            if (this.hiddenIdx.size > 0) this.hiddenIdx.clear();
+            return false;
+        }
+        if (this.isCulled(target)) {
+            if (!this.hiddenIdx.has(index)) {
+                (feature.getGeometry() as Point)?.setCoordinates([]); // 빈 좌표 → 렌더 제외
+                this.hiddenIdx.add(index);
+            }
+            return true;
+        }
+        if (this.hiddenIdx.has(index)) this.hiddenIdx.delete(index);
+        return false;
+    }
+
     private updateAnimation = () => {
         const t = Math.min((performance.now() - this.lerpStartTime) / this.LERP_DURATION, 1.0);
+        this.refreshCullExtent();
 
         this.features.forEach((feature, index) => {
             const geom = feature.getGeometry() as Point;
             const target = this.positions[index];
             if (!geom || !target) return;
+            if (this.applyCull(feature, index, target)) return;
 
             const prev = this.prevPositions[index];
             if (prev && t < 1.0) {

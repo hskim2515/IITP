@@ -187,6 +187,18 @@ export const VEHICLE_AGGREGATION = {
     THROTTLE_MS: 1000,
 } as const;
 
+/**
+ * 차량 개별 렌더 viewport culling (near — 개별 차량 표시 시).
+ * worker는 인덱스 보존(trail[i]↔vehicle[i]) 때문에 전체 차량을 계산하지만,
+ * OL VehicleFeatureLayer 는 화면 밖 차량의 feature 좌표 업데이트/렌더를 건너뛴다.
+ * GPU instanced 인 Cesium 은 자동 frustum culling 으로 충분해 제외. 기본 off.
+ */
+export const VEHICLE_CULLING = {
+    ENABLED: false,
+    /** viewport extent 를 폭/높이의 이 비율만큼 확장 (경계 차량 깜빡임 방지) */
+    MARGIN_RATIO: 0.2,
+} as const;
+
 // ───────────────────────────────────────────────────────────────────────────
 // 시설물 LOD 단계 (Tier) — 점 시설물(버스/철도 정류장, 신호 등)의 표현 전환.
 // 네트워크 tier와 동일한 사고방식: 단계가 올라갈수록 더 근접·더 상세.
