@@ -14,11 +14,12 @@ import {JulianDate} from "cesium";
 import {useScenarioStore} from "@stores/useScenarioStore";
 import {useSignalTimelineStore} from "@stores/useSignalTimelineStore";
 import { useMessageStore } from "@stores/useMessageStore";
+import { useLogStore } from "@stores/useLogStore";
 import {getFeaturesByProperties} from "@utils/feature";
 import {Fill, Stroke, Style} from "ol/style";
 import {Feature} from "ol";
 import {applyCesiumSignalStyle, applyOlSignalStyle, updateSignalStyles} from "@utils/signal";
-import { useVehicleModelStore, resolveGlbUrl, resolveModelByVehicleType } from "@stores/useVehicleModelStore";
+import { useVehicleModelStore, resolveGlbUrl, resolveModelByVehicleType, DEFAULT_Z_OFFSET } from "@stores/useVehicleModelStore";
 import { useSimulationScenarioStore } from "@stores/useSimulationScenarioStore";
 import { useSignalTodStore } from "@stores/useSignalTodStore";
 import { computeTodPeriods, mergeSignalTimelines } from "@utils/tod";
@@ -104,7 +105,6 @@ async function applyTerrainHeightsToRoute(
         path[ref.offset + 3] = newPos.z;
     });
 
-    console.log(`[applyTerrainHeightsToRoute] ${uniqueCartos.length}개 격자점 샘플링 완료`);
     return adjusted;
 }
 
@@ -116,6 +116,7 @@ const useSimulation = () => {
 
     const numVehicle = useVehicleStore((state) => state.numVehicle);
     const speedFactor = useVehicleStore((state) => state.speedFactor);
+    const refetchTrigger = useVehicleStore((state) => state.refetchTrigger);
     const selectedVehicleModel = useVehicleModelStore((s) => s.selectedModel);
 
     const heatmapSetting = {
@@ -135,7 +136,7 @@ const useSimulation = () => {
     const viewerClockMultiplier = useRef(null);
 
     const viewer = useCesiumStore((state) => state.viewer);
-    const layerManager: LayerManager = useLayerStore((state) => state.layerManager);
+    const layerManager: LayerManager | null = useLayerStore((state) => state.layerManager);
     const czml = useVehicleStore((state) => state.czml);
     const czmlDataSourceRef = useRef(null);
     const vehicleDataRef = useRef(null);
@@ -278,7 +279,7 @@ const useSimulation = () => {
         if (!selectedScenario) return;
 
         const scenarioKey = selectedScenario.key;
-        const baseUrl = process.env.VITE_API_URL;
+        const baseUrl = import.meta.env.VITE_API_URL;
         const requestBody = JSON.stringify({ numVehicle, speedFactor, czml });
 
         /**
@@ -333,7 +334,9 @@ const useSimulation = () => {
         const applyRouteData = (data: any) => {
             if (!data || !data.czml) return;
             const { czml: czmlData, positions, features, signalTimeline } = data;
-            setVehicleRoute(positions);
+            const vehicleCount = Array.isArray(positions) ? positions.length : 0;
+            useLogStore.getState().addLog('info', `[차량 경로] 로드 완료 — 차량 ${vehicleCount}대`);
+            // czml을 먼저 세팅해야 useEffect([vehicleRoute]) 실행 시 czml 클로저가 최신값을 가짐
             setCzml(czmlData);
             setFeatures(features);
             setSignalTimeline(signalTimeline);
@@ -345,6 +348,8 @@ const useSimulation = () => {
             useSimulationStore.getState().setClock(start, end, current);
             // signalTOD 연동: TOD 기반 신호 타임라인으로 교체
             applyTodSignalTimeline(czmlData, scenarioKey);
+            // vehicleRoute를 마지막에 세팅 → useEffect([vehicleRoute]) 트리거 시 czml이 이미 준비됨
+            setVehicleRoute(positions);
         };
 
         const fetchWithRetry = (retryCount = 0) => {
@@ -354,12 +359,22 @@ const useSimulation = () => {
                 body: requestBody,
             }).then((r) => {
                 if (r.status === 202) {
-                    // 생성 중 → 10초 후 재시도 (최대 60회 = 10분)
-                    if (retryCount < 60) {
-                        console.log(`[useSimulation] 경로 생성 중... ${retryCount + 1}회 대기 후 재시도`);
-                        setTimeout(() => fetchWithRetry(retryCount + 1), 10000);
+                    // 최대 120회 = 10분 (초반 5s, 이후 3s 간격)
+                    if (retryCount < 120) {
+                        return r.json().then((body: any) => {
+                            const stage = body?.stage ?? '처리 중...';
+                            const elapsed = body?.elapsed ?? 0;
+                            const msg = `[차량 경로 생성 중] ${stage} (${elapsed}초 경과)`;
+                            useLogStore.getState().addLog('info', msg);
+                            console.log(`[useSimulation] ${msg}`);
+                            // 초반 10회는 3s, 이후 5s 간격으로 폴링
+                            const delay = retryCount < 10 ? 3000 : 5000;
+                            setTimeout(() => fetchWithRetry(retryCount + 1), delay);
+                        });
                     } else {
-                        console.warn(`[useSimulation] 경로 생성 대기 초과: ${scenarioKey}`);
+                        const msg = '차량 경로 생성 대기 시간 초과 (10분). 다시 시뮬레이션을 실행해 주세요.';
+                        useLogStore.getState().addLog('warn', msg);
+                        useMessageStore.getState().setMessage({ type: 'warn', text: msg });
                     }
                     return null;
                 }
@@ -380,8 +395,9 @@ const useSimulation = () => {
                 if (data) applyRouteData(data);
             });
         };
+        useLogStore.getState().addLog('info', `[차량 경로] ${scenarioKey} — 서버에서 데이터를 가져옵니다...`);
         fetchWithRetry();
-    }, [ numVehicle, speedFactor, selectedScenario?.key ]);
+    }, [ numVehicle, speedFactor, selectedScenario?.key, refetchTrigger ]);
 
     // Cesium과 OpenLayers 시뮬레이션 통합: 후처리 및 Cesium 관련 설정
     useEffect(() => {
@@ -502,6 +518,13 @@ const useSimulation = () => {
             });
             console.log('[setSimulation] vehicleRoute sample:', vehicleRoute[0], '| typeGroups:', [...typeGroups.entries()].map(([k, v]) => `${k}:${v.length}`));
 
+            // DB vehicle_type_model.color 기반 색상 맵 (vehicleType → hex)
+            const typeColorMap: Record<string, string> = {};
+            vehicleTypes.forEach(vt => {
+                const m = models.find(mo => mo.vehicleTypeId === vt.id);
+                if (m?.color) typeColorMap[vt.vehicleId.toUpperCase()] = m.color;
+            });
+
             const { correctionByType } = useVehicleModelStore.getState();
 
             const resolveCorrectionHpr = (vType: string, modelCfg?: string | { heading: number; pitch: number; roll: number }) => {
@@ -529,7 +552,7 @@ const useSimulation = () => {
             if (typeGroups.size === 0) {
                 // 구버전 fallback
                 const selModel = useVehicleModelStore.getState().selectedModel;
-                const glbUrl = resolveGlbUrl(selModel, 'CAR');
+                const glbUrl = resolveGlbUrl(selModel);
                 const modelCfg = selModel?.correctionHpr;
                 const zOffset = selModel?.zOffset ?? 0;
                 layerManager.addVehicleLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, glbUrl, resolveCorrectionHpr('default', modelCfg), 'default', zOffset);
@@ -537,15 +560,15 @@ const useSimulation = () => {
                 typeGroups.forEach((paths, vType) => {
                     const typeModel = resolveModelByVehicleType(vType, models, vehicleTypes);
                     console.log(`[setSimulation] type=${vType} typeModel=`, typeModel);
-                    const glbUrl = resolveGlbUrl(typeModel, vType);
-                    const zOffset = typeModel?.zOffset ?? 0;
+                    const glbUrl = resolveGlbUrl(typeModel);
+                    const zOffset = typeModel?.zOffset ?? DEFAULT_Z_OFFSET;
                     const scales = scaleGroups.get(vType);
-                    layerManager.addVehicleLayer(paths, vectorSource, speedFactor, isRunningRef.current, glbUrl, resolveCorrectionHpr(vType, typeModel?.correctionHpr), vType, zOffset, scales);
+                    layerManager.addVehicleLayer(paths, vectorSource, speedFactor, isRunningRef.current, glbUrl, resolveCorrectionHpr(vType, typeModel?.correctionHpr), vType, zOffset, scales, typeModel?.color);
                 });
             }
             layerManager.addHeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, heatmapSetting);
             layerManager.addODArrows(vehicleRoute, speedFactor, isRunningRef.current);
-            layerManager.addTripLayer(vehicleRoute, speedFactor, isRunningRef.current, typeGroups, vehicleTypeArray);
+            layerManager.addTripLayer(vehicleRoute, speedFactor, isRunningRef.current, typeGroups, vehicleTypeArray, typeColorMap);
             layerManager.addTrafficLayer();
 
             const VehicleModelData: { id: string; position: Cesium.Cartesian3; visible: boolean; model?: Cesium.Model }[] = [];
@@ -665,12 +688,18 @@ const useSimulation = () => {
                 }
 
                 // 지형이 있으면 모든 웨이포인트에 지형 고도를 주입한 뒤 워커 초기화
+                // [PERF 계측] 차량 데이터 임포트 병목 측정 (전체 차량 수, 지형 주입, worker init)
+                console.time('[PERF] applyTerrainHeightsToRoute');
                 applyTerrainHeightsToRoute(vehicleRoute, viewer.terrainProvider).then(adjustedRoute => {
+                    console.timeEnd('[PERF] applyTerrainHeightsToRoute');
+                    console.log(`[PERF] 차량 수: ${Array.isArray(adjustedRoute) ? adjustedRoute.length : '?'}`);
+                    console.time('[PERF] worker init postMessage');
                     czmlPositionWorkerRef.current?.postMessage({
                         type: 'init',
                         czmlPackets: adjustedRoute,
                         currentTime: Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime()
                     });
+                    console.timeEnd('[PERF] worker init postMessage');
                 });
 
                 viewer.scene.preRender.addEventListener(updateFrameFunc);

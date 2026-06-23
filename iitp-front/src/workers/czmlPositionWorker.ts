@@ -22,6 +22,7 @@ self.onmessage = function (e) {
         lastElapsed = 0;
         elapsed = 0;
 
+        const _perfInitStart = performance.now(); // [PERF] worker init 빌드 측정
         sampledPositionsList = czmlData.map((track, idx) => {
             // 신버전: {id, type, path:[...]}  구버전: [t, x, y, z, ...]
             const isLegacy = Array.isArray(track);
@@ -49,6 +50,7 @@ self.onmessage = function (e) {
             }
             return { vehicleType, sampled: extractSampledPositionsFromFlatArray(path) };
         });
+        console.log(`[PERF][worker] init 빌드: ${sampledPositionsList.length}대, ${(performance.now() - _perfInitStart).toFixed(0)}ms`);
 
         if (!sampledPositionsList || sampledPositionsList.length === 0) return;
 
@@ -102,6 +104,11 @@ self.onmessage = function (e) {
     }
 };
 
+// 백엔드 GAP_THRESHOLD(VehicleController)와 동일 — 이 이상 시간이 비면
+// 차량이 다른 위치로 "이동"한 것이 아니라 "사라졌다 다시 나타난" 구간이므로
+// 두 좌표 사이를 보간하면 차량이 순간이동/비행하는 것처럼 보인다.
+const GAP_THRESHOLD = 7.0;
+
 // 샘플 데이터 추출 (heading 사전 계산 포함)
 // 정지 구간(이동 거리 < 0.5m)은 마지막 유효 heading을 그대로 유지 → 교차로 대기 시 방향 깜빡임 방지
 function extractSampledPositionsFromFlatArray(flatArray) {
@@ -130,8 +137,9 @@ function extractSampledPositionsFromFlatArray(flatArray) {
         }
 
         const speed = duration > 0 ? dist / duration : 0;
+        const isGap = duration > GAP_THRESHOLD;
 
-        result.push({ startTime, endTime, startPos, endPos, heading, speed });
+        result.push({ startTime, endTime, startPos, endPos, heading, speed, isGap });
     }
 
     return result;
@@ -141,8 +149,11 @@ function extractSampledPositionsFromFlatArray(flatArray) {
 function interpolatePosition(sampled, t) {
     // 현재 시간에 해당하는 구간 탐색
     for (let i = 0; i < sampled.length; i++) {
-        const { startTime, endTime, startPos, endPos, heading, speed } = sampled[i];
+        const { startTime, endTime, startPos, endPos, heading, speed, isGap } = sampled[i];
         if (t >= startTime && t <= endTime) {
+            // gap 구간: 두 좌표를 잇는 보간이 순간이동/비행으로 보이므로 차량을 숨김
+            if (isGap) return null;
+
             const duration = endTime - startTime;
             const localT = duration > 0 ? (t - startTime) / duration : 0;
 
