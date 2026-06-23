@@ -4,7 +4,8 @@ import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { useScenarioStore } from "@stores/useScenarioStore";
 import { Network } from "@type/Network";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
-import { LOD_ALT, NETWORK_TILING, getNetworkLodTierByAltitude } from "@utils/lodConstants";
+import { LOD_ALT, NETWORK_TILING, NETWORK_LOD_TIER_ORDER, getNetworkLodTierByAltitude } from "@utils/lodConstants";
+import axiosInstance from "@api/axiosInstance";
 import { NetworkTileManager, type NetworkTilePayload } from "@managers/NetworkTileManager";
 import { assignTileGuids } from "@utils/tileGuid";
 
@@ -42,6 +43,9 @@ export default class NetworkDataSourceLayer {
     private tilePolylines: Map<string, Cesium.Polyline[]> = new Map(); // tileKey → overview 폴리라인
     private tileCameraTimer: ReturnType<typeof setTimeout> | null = null;
     private applyVisDebounce: ReturnType<typeof setTimeout> | null = null; // 타일 다중 로드 시 applyVisibility 1회로 합침
+    // 3D 줌아웃(overview/mid): 간선 중심선 폴리라인 1회 fetch (2D MVT 대응). near로 줌인하면 타일로 전환.
+    private overviewArterialsActive = false;
+    private overviewFetchSeq = 0;
 
     /** 청크 크기 (도) — 타일 격자와 단일 출처로 통일 (타일=청크 1:1 매핑 보장) */
     private static readonly CHUNK_DEG = NETWORK_TILING.TILE_DEG;
@@ -224,16 +228,47 @@ export default class NetworkDataSourceLayer {
         const north = Cesium.Math.toDegrees(rect.north);
         const altitude = this.viewer.camera.positionCartographic?.height ?? 0;
         const lod = getNetworkLodTierByAltitude(altitude);
+        const versionId = useScenarioStore.getState().selectedScenario?.key;
+        if (!versionId) return;
 
+        // 줌아웃(overview/mid): Cesium은 MVT를 못 쓰므로, viewport 간선 중심선을 1회 fetch해
+        // roadOverviewPolylines로 표시 (2D MVT 대응). 줌인(near 이상)하면 타일 청크로 전환.
+        const tierOrder = NETWORK_LOD_TIER_ORDER[lod as keyof typeof NETWORK_LOD_TIER_ORDER] ?? 99;
+        if (tierOrder < NETWORK_LOD_TIER_ORDER.near) {
+            this.tileManager?.clear();        // 타일 청크 evict (줌아웃)
+            this.fetchOverviewArterials(String(versionId), west, south, east, north);
+            return;
+        }
+
+        // near 이상: 간선 폴리라인 비우고 타일 청크로
+        if (this.overviewArterialsActive) {
+            this.overviewArterialsActive = false;
+            this.roadOverviewPolylines.removeAll();
+        }
         if (!this.tileManager) {
-            const versionId = useScenarioStore.getState().selectedScenario?.key;
-            if (!versionId) return;
             this.tileManager = new NetworkTileManager(String(versionId), {
                 onTileLoaded: (key, payload) => this.addTileChunk(key, payload),
                 onTileEvicted: (key) => this.removeTileChunk(key),
             });
         }
         this.tileManager.updateForBbox(west, south, east, north, lod);
+    }
+
+    /** 줌아웃 시 viewport 간선(overview lod) 중심선을 1회 fetch → roadOverviewPolylines */
+    private fetchOverviewArterials(versionId: string, w: number, s: number, e: number, n: number): void {
+        const seq = ++this.overviewFetchSeq;
+        axiosInstance.get(`/network/${versionId}/tiles`, { params: { bbox: `${w},${s},${e},${n}`, lod: 'overview' } })
+            .then((res) => {
+                if (seq !== this.overviewFetchSeq || this.destroyed) return; // 더 최신 요청이 있으면 폐기
+                const links = res.data?.links ?? [];
+                this.roadOverviewPolylines.removeAll();
+                for (const link of links) this.addRoadOverviewPolyline(link);
+                this.overviewArterialsActive = true;
+                this.scheduleApplyVisibility();
+            })
+            .catch((err) => {
+                if (err?.response?.status !== 404) console.warn('[NetworkDataSourceLayer] overview 간선 fetch 실패', err);
+            });
     }
 
     /** 타일 키와 일치하는(home) 링크/노드만 청크 프리미티브로 빌드 → 경계 중복 없음 */
@@ -365,8 +400,8 @@ export default class NetworkDataSourceLayer {
             if (chunk.lane)    chunk.lane.show    = layer && laneFT && lod === 'full' && inLaneRange;
         }
 
-        // overview 도로망 폴리라인: outline LOD(원거리)에서만 표시 — 코리도가 sub-pixel이 되는 구간 보강
-        this.roadOverviewPolylines.show = layer && linkFT && lod === 'outline';
+        // overview 도로망 폴리라인: 비타일 모드는 outline LOD(원거리), 타일 모드는 줌아웃 간선 fetch 활성 시.
+        this.roadOverviewPolylines.show = layer && linkFT && (lod === 'outline' || this.overviewArterialsActive);
 
         this.dataSource.show = layer && lod === 'full';
         this.viewer.scene.globe.depthTestAgainstTerrain = !layer;
