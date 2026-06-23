@@ -171,6 +171,22 @@ export const SIGNAL_TILING = {
     MIN_TIER: 'near' as NetworkLodTier,
 } as const;
 
+/**
+ * 차량 교통량 백엔드 집계 (멀리서 전체 교통량 — 개별 차량 대신 링크별 통계).
+ * ON 이면 TrafficHeatmapFeatureLayer 가 overview/mid 에서 개별 차량 대신
+ * `/analytics/link-traffic` 집계를 호출해 히트맵을 칠한다 (개별 차량 위치 무시).
+ * near(확대)에서는 기존 개별 차량 경로 유지. 기본 off — 기존 동작 무변화.
+ */
+export const VEHICLE_AGGREGATION = {
+    ENABLED: false,
+    /** 이 resolution 이상(멀리)에서 집계 모드 활성 — 미만(near)은 개별 차량 */
+    MIN_RESOLUTION: LOD_RES.NETWORK_LANE_DETAIL, // = 0.3 (near 이상)
+    /** 재생 현재 시각 기준 ± 집계 시간창 (초) */
+    TIME_WINDOW_SEC: 60,
+    /** moveend/재생 집계 호출 최소 간격 (ms, throttle) */
+    THROTTLE_MS: 1000,
+} as const;
+
 // ───────────────────────────────────────────────────────────────────────────
 // 시설물 LOD 단계 (Tier) — 점 시설물(버스/철도 정류장, 신호 등)의 표현 전환.
 // 네트워크 tier와 동일한 사고방식: 단계가 올라갈수록 더 근접·더 상세.
