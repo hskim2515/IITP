@@ -4,24 +4,46 @@ import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { useScenarioStore } from "@stores/useScenarioStore";
 import { Network } from "@type/Network";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
+import { LOD_ALT, NETWORK_TILING, getNetworkLodTierByAltitude } from "@utils/lodConstants";
+import { NetworkTileManager, type NetworkTilePayload } from "@managers/NetworkTileManager";
+import { assignTileGuids } from "@utils/tileGuid";
 
 // --- 이벤트 핸들러에서 Primitive 피킹/하이라이트에 사용 ---
 export const networkPrimitivePropertiesMap = new Map<string, any>();
 export let highlightNetworkPrimitive: ((guid: string | null) => void) | null = null;
 
+/** 공간 청크 단위 Primitive 묶음 (3종 → 3 draw call per chunk) */
+interface ChunkPrimitives {
+    outline: Cesium.Primitive | null;  // 외곽 그림자 — link/outline LOD에서 표시
+    link:    Cesium.Primitive | null;  // 아스팔트 링크 — link/full LOD에서 표시
+    lane:    Cesium.Primitive | null;  // 레인+구분선+중앙선 합산 — full LOD에서만 표시
+}
+
 export default class NetworkDataSourceLayer {
     private readonly LAYER_NAME = "network";
-    // 노드·포트·커넥션은 Entity (실린더/화살표 머티리얼, 수가 적음)
     private dataSource: Cesium.CustomDataSource;
-    // 링크 Primitive (featureType별 독립 on/off를 위해 분리)
-    private linkOutlinePrimitive: Cesium.Primitive | null = null;  // 외곽선(그림자 효과)
-    private linkPrimitive: Cesium.Primitive | null = null;
-    // 레인 Primitive
-    private lanePrimitive: Cesium.Primitive | null = null;
-    // 레인 경계선 Primitive
-    private laneDividerPrimitive: Cesium.Primitive | null = null;
-    // 중앙선 Primitive
-    private centerLinePrimitive: Cesium.Primitive | null = null;
+
+    /** 공간 청크 키(`lng_tile,lat_tile`) → Primitives */
+    private chunkPrimitives: Map<string, ChunkPrimitives> = new Map();
+    /** 청크 키 → 청크 중심 Cartesian3 (거리 컬링용) */
+    private chunkCenters: Map<string, Cesium.Cartesian3> = new Map();
+
+    /**
+     * overview(원거리) 도로망 폴리라인 — 픽셀 굵기라 고도 무관 항상 가시.
+     * 코리도(월드 폭)는 10km+ 고도에서 sub-pixel이 되어 안 보이므로,
+     * outline LOD에서 이 폴리라인이 "도로망 지도"를 그린다. (OL link-edit 도로선의 3D 대응)
+     */
+    private roadOverviewPolylines: Cesium.PolylineCollection;
+
+    // ── 타일링 상태 (NETWORK_TILING.ENABLED 일 때만; 읽기 전용 뷰) ──
+    // 타일 격자 == 청크 격자(TILE_DEG==CHUNK_DEG)이므로 타일=청크로 1:1 매핑.
+    // 각 링크/노드는 home 청크(첫 좌표 기준)에만 빌드 → 경계 중복 없음(refcount 불필요).
+    private tileManager: NetworkTileManager | null = null;
+    private tilePolylines: Map<string, Cesium.Polyline[]> = new Map(); // tileKey → overview 폴리라인
+    private tileCameraTimer: ReturnType<typeof setTimeout> | null = null;
+
+    /** 청크 크기 (도, ≈5km) */
+    private static readonly CHUNK_DEG = 0.05;
 
     // featureType별 가시성 상태
     private featureTypeVisible: Record<string, boolean> = {};
@@ -29,13 +51,13 @@ export default class NetworkDataSourceLayer {
 
     // ── 색상 팔레트 ─────────────────────────────────────────────
     // 아스팔트 도로 기본 (외곽 → 메인 순)
-    private static readonly COLOR_LINK_OUTLINE = Cesium.Color.fromBytes(15, 15, 15, 200);   // 외곽 그림자
-    private static readonly COLOR_LINK_BASE    = Cesium.Color.fromBytes(50, 52, 56, 245);   // 아스팔트 기본
+    private static readonly COLOR_LINK_OUTLINE = Cesium.Color.fromBytes(30, 30, 35, 200);   // 외곽 그림자
+    private static readonly COLOR_LINK_BASE    = Cesium.Color.fromBytes(72, 74, 80, 235);   // 도로 기본
 
     // 레인 교차 음영 (짝/홀)
     private static readonly LANE_COLORS = [
-        Cesium.Color.fromBytes(42, 44, 48, 255),
-        Cesium.Color.fromBytes(56, 58, 62, 255),
+        Cesium.Color.fromBytes(62, 64, 70, 255),
+        Cesium.Color.fromBytes(84, 86, 94, 255),
     ];
 
     // 도로 타입별 색조 (link.type 기준)
@@ -59,9 +81,8 @@ export default class NetworkDataSourceLayer {
     private static readonly EPSILON = 1e-9;
     private selectedScenario = useScenarioStore.getState().selectedScenario;
 
-    // LOD 고도 임계값 (미터, 카메라 타원체 기준)
-    private static readonly LOD_LINK_ONLY    = 3000;   // > 3km → 링크만 (레인 숨김)
-    private static readonly LOD_OUTLINE_ONLY = 10000;  // > 10km → 외곽선만
+    private static readonly LOD_LINK_ONLY    = LOD_ALT.NETWORK_LINK_ONLY;
+    private static readonly LOD_OUTLINE_ONLY = LOD_ALT.NETWORK_OUTLINE_ONLY;
     private _layerVisible: boolean = true;
     private currentLod: 'full' | 'link' | 'outline' = 'full';
     private cameraChangeUnsubscribe?: () => void;
@@ -109,6 +130,7 @@ export default class NetworkDataSourceLayer {
     // 증분 업데이트 상태
     private prevNetwork: Network | null = null;
     private lastImportEpoch = 0;
+    private fullBuildGeneration = 0;
     private cachedNodeMap: Map<string, any> = new Map();
     private cachedLinkMap: Map<string, any> = new Map();
     private lanePositionMap: Map<string, { source: Cesium.Cartesian3; target: Cesium.Cartesian3 }> = new Map();
@@ -120,9 +142,14 @@ export default class NetworkDataSourceLayer {
     private highlightedGuid: string | null = null;
     private originalHighlightColor: Uint8Array | null = null;
 
+    /** overview 도로망 폴리라인 색/굵기 */
+    private static readonly COLOR_ROAD_OVERVIEW = Cesium.Color.fromBytes(236, 238, 245, 230);
+
     constructor(private viewer: Viewer) {
         this.dataSource = new Cesium.CustomDataSource(this.LAYER_NAME);
         this.viewer.dataSources.add(this.dataSource);
+        this.roadOverviewPolylines = new Cesium.PolylineCollection();
+        this.viewer.scene.primitives.add(this.roadOverviewPolylines);
 
         highlightNetworkPrimitive = this.highlightInstance.bind(this);
 
@@ -168,25 +195,168 @@ export default class NetworkDataSourceLayer {
 
     private onCameraChange(): void {
         const newLod = this.calcLod();
-        if (newLod === this.currentLod) return;
         this.currentLod = newLod;
+        this.applyVisibility();
+        try { this.viewer.scene.requestRender(); } catch (_) {}
+
+        // 타일 모드: 카메라 정착 후(디바운스) viewport 타일 갱신
+        if (NETWORK_TILING.ENABLED) {
+            if (this.tileCameraTimer) return;
+            this.tileCameraTimer = setTimeout(() => {
+                this.tileCameraTimer = null;
+                this.updateTiles();
+            }, 200);
+        }
+    }
+
+    // ─────────────────────── 타일 모드 (읽기 전용, Cesium) ───────────────────────
+    // ⚠️ 편집은 전체-로드 경로 전제. 타일은 합성 guid 기반 뷰 전용.
+
+    /** 카메라 view rectangle + 고도 LOD → 타일 매니저 갱신 */
+    private updateTiles(): void {
+        if (!NETWORK_TILING.ENABLED) return;
+        const rect = this.viewer.camera.computeViewRectangle(this.viewer.scene.globe.ellipsoid);
+        if (!rect) return;
+        const west = Cesium.Math.toDegrees(rect.west);
+        const south = Cesium.Math.toDegrees(rect.south);
+        const east = Cesium.Math.toDegrees(rect.east);
+        const north = Cesium.Math.toDegrees(rect.north);
+        const altitude = this.viewer.camera.positionCartographic?.height ?? 0;
+        const lod = getNetworkLodTierByAltitude(altitude);
+
+        if (!this.tileManager) {
+            const versionId = useScenarioStore.getState().selectedScenario?.key;
+            if (!versionId) return;
+            this.tileManager = new NetworkTileManager(String(versionId), {
+                onTileLoaded: (key, payload) => this.addTileChunk(key, payload),
+                onTileEvicted: (key) => this.removeTileChunk(key),
+            });
+        }
+        this.tileManager.updateForBbox(west, south, east, north, lod);
+    }
+
+    /** 타일 키와 일치하는(home) 링크/노드만 청크 프리미티브로 빌드 → 경계 중복 없음 */
+    private addTileChunk(tileKey: string, payload: NetworkTilePayload): void {
+        if (this.chunkPrimitives.has(tileKey)) return; // 이미 빌드됨
+        assignTileGuids(payload);
+
+        // cached 맵 병합 (노드/링크 상호참조용)
+        for (const node of payload.nodes) this.cachedNodeMap.set(String(node.id), node);
+        for (const link of payload.links) this.cachedLinkMap.set(String(link.id), link);
+
+        // home 링크만(첫 좌표 기준 청크키 == 타일키) → 청크 인스턴스 빌드
+        const outlineInst: Cesium.GeometryInstance[] = [];
+        const linkInst: Cesium.GeometryInstance[] = [];
+        const laneInst: Cesium.GeometryInstance[] = [];
+        const polylines: Cesium.Polyline[] = [];
+        for (const link of payload.links) {
+            if (this.linkChunkKey(link) !== tileKey) continue;
+            this.buildLinkInstances(link, this.cachedNodeMap, outlineInst, linkInst, laneInst, laneInst, laneInst);
+            const pl = this.addRoadOverviewPolyline(link);
+            if (pl) polylines.push(pl);
+        }
+        this.buildChunkPrimitives(tileKey, outlineInst, linkInst, laneInst);
+        if (polylines.length > 0) this.tilePolylines.set(tileKey, polylines);
+
+        // home 노드만 엔티티 빌드
+        this.dataSource.entities.suspendEvents();
+        try {
+            for (const node of payload.nodes) {
+                if (this.nodeChunkKey(node) !== tileKey) continue;
+                try { this.buildNodeEntities(node, this.cachedLinkMap, this.cachedNodeMap); }
+                catch (e) { console.warn('[NetworkDataSourceLayer] 타일 노드 빌드 건너뜀', node?.id, e); }
+            }
+        } finally {
+            this.dataSource.entities.resumeEvents();
+        }
+
         this.applyVisibility();
         try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
-    private applyVisibility(): void {
-        const layer   = this._layerVisible;
-        const linkFT  = this.featureTypeVisible['links'] ?? true;
-        const laneFT  = this.featureTypeVisible['lanes'] ?? true;
-        const showLinks = layer && linkFT;
-        const showLanes = layer && laneFT && this.currentLod === 'full';
+    /** 타일 청크 evict → 프리미티브/폴리라인/노드 엔티티 제거 */
+    private removeTileChunk(tileKey: string): void {
+        const chunk = this.chunkPrimitives.get(tileKey);
+        if (chunk) {
+            if (chunk.outline) this.viewer.scene.primitives.remove(chunk.outline);
+            if (chunk.link)    this.viewer.scene.primitives.remove(chunk.link);
+            if (chunk.lane)    this.viewer.scene.primitives.remove(chunk.lane);
+            this.chunkPrimitives.delete(tileKey);
+            this.chunkCenters.delete(tileKey);
+        }
+        const pls = this.tilePolylines.get(tileKey);
+        if (pls) {
+            for (const pl of pls) { try { this.roadOverviewPolylines.remove(pl); } catch (_) {} }
+            this.tilePolylines.delete(tileKey);
+        }
+        // 이 타일에 home 인 노드 엔티티 제거
+        for (const [nodeId, ids] of [...this.nodeEntityIds]) {
+            const node = this.cachedNodeMap.get(nodeId);
+            if (node && this.nodeChunkKey(node) === tileKey) {
+                for (const id of ids) {
+                    const ent = this.dataSource.entities.getById(id);
+                    if (ent) this.dataSource.entities.remove(ent);
+                }
+                this.nodeEntityIds.delete(nodeId);
+                this.cachedNodeMap.delete(nodeId);
+            }
+        }
+        // home 링크 캐시 정리
+        for (const [linkId, link] of [...this.cachedLinkMap]) {
+            if (this.linkChunkKey(link) === tileKey) this.cachedLinkMap.delete(linkId);
+        }
+        try { this.viewer.scene.requestRender(); } catch (_) {}
+    }
 
-        if (this.linkOutlinePrimitive)  this.linkOutlinePrimitive.show  = showLinks;
-        if (this.linkPrimitive)         this.linkPrimitive.show         = showLinks && this.currentLod !== 'outline';
-        if (this.lanePrimitive)         this.lanePrimitive.show         = showLanes;
-        if (this.laneDividerPrimitive)  this.laneDividerPrimitive.show  = showLanes;
-        if (this.centerLinePrimitive)   this.centerLinePrimitive.show   = showLanes;
-        this.dataSource.show = layer && this.currentLod === 'full';
+    /** 노드 home 청크 키 (좌표 기준) */
+    private nodeChunkKey(node: any): string {
+        const c = node.coordinates;
+        if (!c || c.lng == null || c.lat == null) return '0,0';
+        return `${Math.floor(c.lng / NetworkDataSourceLayer.CHUNK_DEG)},${Math.floor(c.lat / NetworkDataSourceLayer.CHUNK_DEG)}`;
+    }
+
+    private applyVisibility(): void {
+        const layer  = this._layerVisible;
+        const linkFT = this.featureTypeVisible['links'] ?? true;
+        const laneFT = this.featureTypeVisible['lanes'] ?? true;
+        const lod    = this.currentLod;
+
+        const camPos = this.viewer.scene.camera.positionWC;
+
+        // 청크 컬링 반경 (LOD에 따라 다름)
+        // outline(고도 10km+): 전체 표시 — link primitive 숨겨져 있어 부하 작음
+        // link(3-10km): 링크만 25km 반경
+        // full(0-3km): 링크 15km / 레인 8km 반경
+        const LINK_R  = lod === 'outline' ? Infinity : (lod === 'link' ? 25000 : 15000);
+        const LANE_R  = 8000;
+        const LINK_R2 = LINK_R * LINK_R;
+        const LANE_R2 = LANE_R * LANE_R;
+
+        for (const [key, chunk] of this.chunkPrimitives) {
+            const center = this.chunkCenters.get(key);
+            let inLinkRange = true;
+            let inLaneRange = false;
+
+            if (center && isFinite(LINK_R)) {
+                const dx = camPos.x - center.x;
+                const dy = camPos.y - center.y;
+                const dz = camPos.z - center.z;
+                const d2 = dx*dx + dy*dy + dz*dz;
+                inLinkRange = d2 <= LINK_R2;
+                inLaneRange = d2 <= LANE_R2;
+            } else {
+                inLaneRange = true;
+            }
+
+            if (chunk.outline) chunk.outline.show = layer && linkFT && inLinkRange;
+            if (chunk.link)    chunk.link.show    = layer && linkFT && inLinkRange && lod !== 'outline';
+            if (chunk.lane)    chunk.lane.show    = layer && laneFT && lod === 'full' && inLaneRange;
+        }
+
+        // overview 도로망 폴리라인: outline LOD(원거리)에서만 표시 — 코리도가 sub-pixel이 되는 구간 보강
+        this.roadOverviewPolylines.show = layer && linkFT && lod === 'outline';
+
+        this.dataSource.show = layer && lod === 'full';
         this.viewer.scene.globe.depthTestAgainstTerrain = !layer;
     }
 
@@ -194,31 +364,39 @@ export default class NetworkDataSourceLayer {
     // Primitive 하이라이트 (이벤트 핸들러에서 호출)
     // ─────────────────────────────────────────────
     private highlightInstance(guid: string | null): void {
-        // 이전 하이라이트 복원 (링크 또는 레인 Primitive에서 찾아서 복원)
+        // 이전 하이라이트 복원 — 모든 청크의 link/lane Primitive에서 검색
         if (this.highlightedGuid && this.originalHighlightColor) {
-            for (const p of [this.linkPrimitive, this.lanePrimitive]) {
-                if (!p?.ready) continue;
-                try {
-                    const attrs = p.getGeometryInstanceAttributes(this.highlightedGuid);
-                    if (attrs) { attrs.color = this.originalHighlightColor; break; }
-                } catch (_) {}
+            const prevColor = this.originalHighlightColor;
+            const prevGuid  = this.highlightedGuid;
+            for (const chunk of this.chunkPrimitives.values()) {
+                let found = false;
+                for (const p of [chunk.link, chunk.lane]) {
+                    if (!p?.ready) continue;
+                    try {
+                        const attrs = p.getGeometryInstanceAttributes(prevGuid);
+                        if (attrs) { attrs.color = prevColor; found = true; break; }
+                    } catch (_) {}
+                }
+                if (found) break;
             }
         }
         this.highlightedGuid = null;
         this.originalHighlightColor = null;
 
         if (guid) {
-            for (const p of [this.linkPrimitive, this.lanePrimitive]) {
-                if (!p?.ready) continue;
-                try {
-                    const attrs = p.getGeometryInstanceAttributes(guid);
-                    if (attrs?.color) {
-                        this.originalHighlightColor = new Uint8Array(attrs.color);
-                        attrs.color = Cesium.ColorGeometryInstanceAttribute.toValue(Cesium.Color.YELLOW.withAlpha(0.9));
-                        try { this.viewer.scene.requestRender(); } catch (_) {}
-                        break;
-                    }
-                } catch (_) {}
+            outer: for (const chunk of this.chunkPrimitives.values()) {
+                for (const p of [chunk.link, chunk.lane]) {
+                    if (!p?.ready) continue;
+                    try {
+                        const attrs = p.getGeometryInstanceAttributes(guid);
+                        if (attrs?.color) {
+                            this.originalHighlightColor = new Uint8Array(attrs.color);
+                            attrs.color = Cesium.ColorGeometryInstanceAttribute.toValue(Cesium.Color.YELLOW.withAlpha(0.9));
+                            try { this.viewer.scene.requestRender(); } catch (_) {}
+                            break outer;
+                        }
+                    } catch (_) {}
+                }
             }
         }
         this.highlightedGuid = guid;
@@ -228,14 +406,16 @@ export default class NetworkDataSourceLayer {
     // 진입점
     // ─────────────────────────────────────────────
     public load(): void {
+        // 타일 모드: store 기반 전체 빌드를 하지 않는다 (타일 매니저가 viewport 청크만 빌드).
+        if (NETWORK_TILING.ENABLED) { this.updateTiles(); return; }
         const store = layerNameToStoreMap[this.LAYER_NAME];
-        const network: Network | undefined = store?.getState().currentJsonData;
+        let network: Network | undefined = store?.getState().currentJsonData;
         if (!network || !network.nodes || !network.links) {
             console.warn('[NetworkDataSourceLayer.load] 데이터 없음 또는 구조 불일치', network ? Object.keys(network) : 'null');
-            return;
+            // OL(NetworkFeatureLayer)과 동일하게 빈 네트워크로 취급하여
+            // fullBuild를 통해 이전 Primitive를 정리한다 (그렇지 않으면 구 네트워크가 화면에 잔존함)
+            network = { id: 0, name: null, nodes: [], links: [] };
         }
-
-        console.log(`[NetworkDataSourceLayer.load] nodes=${network.nodes.length}, links=${network.links.length}, dataSource.show=${this.dataSource.show}`);
 
         if (!this.prevNetwork || this.isFullReplace(this.prevNetwork, network)) {
             this.fullBuild(network).catch(e => console.error("NetworkDataSourceLayer.fullBuild 에러:", e));
@@ -268,9 +448,19 @@ export default class NetworkDataSourceLayer {
     // 전체 재빌드
     // ─────────────────────────────────────────────
     private async fullBuild(network: Network): Promise<void> {
+        const generation = ++this.fullBuildGeneration;
+
+        // 이전 네트워크를 즉시 제거 (지형 샘플링 전에 화면 클리어)
+        this.removeAllChunkPrimitives();
+        this.viewer.dataSources.remove(this.dataSource, true);
+        this.dataSource = new Cesium.CustomDataSource(this.LAYER_NAME);
+        this.viewer.dataSources.add(this.dataSource);
+
         // 지형 고도 샘플링 (지형 없으면 즉시 반환)
         await this.sampleTerrainHeights(network);
-        if (this.destroyed) return; // await 이후 destroy된 경우 중단
+
+        // await 이후 destroy되었거나 더 새로운 fullBuild가 시작된 경우 중단
+        if (this.destroyed || generation !== this.fullBuildGeneration) return;
 
         this.nodeEntityIds.clear();
         this.lanePositionMap.clear();
@@ -279,16 +469,25 @@ export default class NetworkDataSourceLayer {
         this.cachedNodeMap = new Map(network.nodes.map(n => [String(n.id), n]));
         this.cachedLinkMap = new Map(network.links.map(l => [String(l.id), l]));
 
-        // 링크·레인 → Primitive (featureType별 분리)
-        const linkOutlineInstances: Cesium.GeometryInstance[] = [];
-        const linkInstances: Cesium.GeometryInstance[] = [];
-        const laneInstances: Cesium.GeometryInstance[] = [];
-        const dividerInstances: Cesium.GeometryInstance[] = [];
-        const centerLineInstances: Cesium.GeometryInstance[] = [];
+        // 링크·레인 → 공간 청크별 Primitive
+        const chunkOutline = new Map<string, Cesium.GeometryInstance[]>();
+        const chunkLink    = new Map<string, Cesium.GeometryInstance[]>();
+        const chunkLane    = new Map<string, Cesium.GeometryInstance[]>(); // lane+divider+center 합산
+
+        this.roadOverviewPolylines.removeAll();
         for (const link of network.links) {
-            this.buildLinkInstances(link, this.cachedNodeMap, linkOutlineInstances, linkInstances, laneInstances, dividerInstances, centerLineInstances);
+            const key = this.linkChunkKey(link);
+            if (!chunkOutline.has(key)) {
+                chunkOutline.set(key, []); chunkLink.set(key, []); chunkLane.set(key, []);
+            }
+            const laneArr = chunkLane.get(key)!;
+            this.buildLinkInstances(link, this.cachedNodeMap,
+                chunkOutline.get(key)!, chunkLink.get(key)!, laneArr, laneArr, laneArr);
+            this.addRoadOverviewPolyline(link);
         }
-        this.rebuildPrimitives(linkOutlineInstances, linkInstances, laneInstances, dividerInstances, centerLineInstances);
+        for (const key of chunkOutline.keys()) {
+            this.buildChunkPrimitives(key, chunkOutline.get(key)!, chunkLink.get(key)!, chunkLane.get(key)!);
+        }
 
         // 노드·포트·커넥션 → DataSource Entity
         // suspendEvents()+removeAll()은 렌더 틱과 race를 일으켜
@@ -297,7 +496,11 @@ export default class NetworkDataSourceLayer {
         this.viewer.dataSources.remove(this.dataSource, true);
         this.dataSource = new Cesium.CustomDataSource(this.LAYER_NAME);
         for (const node of network.nodes) {
-            this.buildNodeEntities(node, this.cachedLinkMap, this.cachedNodeMap);
+            try {
+                this.buildNodeEntities(node, this.cachedLinkMap, this.cachedNodeMap);
+            } catch (e) {
+                console.warn('[NetworkDataSourceLayer] buildNodeEntities 건너뜀:', node?.id, e);
+            }
         }
         this.viewer.dataSources.add(this.dataSource);
         // LOD + 레이어 가시성 일괄 적용 (depthTestAgainstTerrain 포함)
@@ -305,90 +508,78 @@ export default class NetworkDataSourceLayer {
         try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
-    private rebuildPrimitives(
-        linkOutlineInstances: Cesium.GeometryInstance[],
-        linkInstances: Cesium.GeometryInstance[],
-        laneInstances: Cesium.GeometryInstance[],
-        dividerInstances: Cesium.GeometryInstance[],
-        centerLineInstances: Cesium.GeometryInstance[]
+    /** overview 도로망 폴리라인 1개 추가 (링크 중심선, 픽셀 굵기 + 차선수 비례). 생성된 Polyline 반환(타일 evict 추적용) */
+    private addRoadOverviewPolyline(link: any): Cesium.Polyline | null {
+        const coords = link.coordinates;
+        if (!coords || coords.length < 2) return null;
+        const positions = coords.map((c: any) => Cesium.Cartesian3.fromDegrees(c.lng, c.lat));
+        const laneCount = link.lanes?.length ?? 1;
+        // 간선(차선 多)일수록 굵게, 최소 1px ~ 최대 3px
+        const width = Math.max(1, Math.min(3, 0.8 + laneCount * 0.3));
+        return this.roadOverviewPolylines.add({
+            positions,
+            width,
+            material: Cesium.Material.fromType("Color", {
+                color: NetworkDataSourceLayer.COLOR_ROAD_OVERVIEW,
+            }),
+        });
+    }
+
+    /** 링크 중심 좌표를 기반으로 청크 키 계산 */
+    private linkChunkKey(link: any): string {
+        const c = link.coordinates?.[0];
+        if (!c) return '0,0';
+        const cx = Math.floor(c.lng / NetworkDataSourceLayer.CHUNK_DEG);
+        const cy = Math.floor(c.lat / NetworkDataSourceLayer.CHUNK_DEG);
+        return `${cx},${cy}`;
+    }
+
+    /** 청크 하나의 Primitives 생성·등록 */
+    private buildChunkPrimitives(
+        key: string,
+        outlineInst: Cesium.GeometryInstance[],
+        linkInst:    Cesium.GeometryInstance[],
+        laneInst:    Cesium.GeometryInstance[],
     ): void {
-        // 기존 Primitive 제거
-        if (this.linkOutlinePrimitive) {
-            this.viewer.scene.primitives.remove(this.linkOutlinePrimitive);
-            this.linkOutlinePrimitive = null;
-        }
-        if (this.linkPrimitive) {
-            this.viewer.scene.primitives.remove(this.linkPrimitive);
-            this.linkPrimitive = null;
-        }
-        if (this.lanePrimitive) {
-            this.viewer.scene.primitives.remove(this.lanePrimitive);
-            this.lanePrimitive = null;
-        }
-        if (this.laneDividerPrimitive) {
-            this.viewer.scene.primitives.remove(this.laneDividerPrimitive);
-            this.laneDividerPrimitive = null;
-        }
-        if (this.centerLinePrimitive) {
-            this.viewer.scene.primitives.remove(this.centerLinePrimitive);
-            this.centerLinePrimitive = null;
-        }
-        // 하이라이트 상태 초기화 (이전 primitive 참조 무효)
         this.highlightedGuid = null;
         this.originalHighlightColor = null;
 
         const appearance = () => new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true });
+        const chunk: ChunkPrimitives = { outline: null, link: null, lane: null };
 
-        // 외곽 그림자 (가장 먼저, 가장 아래)
-        if (linkOutlineInstances.length > 0) {
-            this.linkOutlinePrimitive = new Cesium.Primitive({
-                geometryInstances: linkOutlineInstances,
-                appearance: appearance(),
-                asynchronous: true,
-                show: true,
-            });
-            this.viewer.scene.primitives.add(this.linkOutlinePrimitive);
+        if (outlineInst.length > 0) {
+            chunk.outline = new Cesium.Primitive({ geometryInstances: outlineInst, appearance: appearance(), asynchronous: true });
+            this.viewer.scene.primitives.add(chunk.outline);
+        }
+        if (linkInst.length > 0) {
+            chunk.link = new Cesium.Primitive({ geometryInstances: linkInst, appearance: appearance(), asynchronous: true });
+            this.viewer.scene.primitives.add(chunk.link);
+        }
+        if (laneInst.length > 0) {
+            chunk.lane = new Cesium.Primitive({ geometryInstances: laneInst, appearance: appearance(), asynchronous: true });
+            this.viewer.scene.primitives.add(chunk.lane);
         }
 
-        if (linkInstances.length > 0) {
-            this.linkPrimitive = new Cesium.Primitive({
-                geometryInstances: linkInstances,
-                appearance: appearance(),
-                asynchronous: true,
-                show: true,
-            });
-            this.viewer.scene.primitives.add(this.linkPrimitive);
-        }
+        this.chunkPrimitives.set(key, chunk);
 
-        if (laneInstances.length > 0) {
-            this.lanePrimitive = new Cesium.Primitive({
-                geometryInstances: laneInstances,
-                appearance: appearance(),
-                asynchronous: true,
-                show: true,
-            });
-            this.viewer.scene.primitives.add(this.lanePrimitive);
-        }
+        // 청크 중심 좌표 계산
+        const [cx = 0, cy = 0] = key.split(',').map(Number);
+        const centerLng = (cx + 0.5) * NetworkDataSourceLayer.CHUNK_DEG;
+        const centerLat = (cy + 0.5) * NetworkDataSourceLayer.CHUNK_DEG;
+        this.chunkCenters.set(key, Cesium.Cartesian3.fromDegrees(centerLng, centerLat));
+    }
 
-        if (dividerInstances.length > 0) {
-            this.laneDividerPrimitive = new Cesium.Primitive({
-                geometryInstances: dividerInstances,
-                appearance: appearance(),
-                asynchronous: true,
-                show: true,
-            });
-            this.viewer.scene.primitives.add(this.laneDividerPrimitive);
+    /** 모든 청크 Primitive 제거 */
+    private removeAllChunkPrimitives(): void {
+        for (const chunk of this.chunkPrimitives.values()) {
+            if (chunk.outline) this.viewer.scene.primitives.remove(chunk.outline);
+            if (chunk.link)    this.viewer.scene.primitives.remove(chunk.link);
+            if (chunk.lane)    this.viewer.scene.primitives.remove(chunk.lane);
         }
-
-        if (centerLineInstances.length > 0) {
-            this.centerLinePrimitive = new Cesium.Primitive({
-                geometryInstances: centerLineInstances,
-                appearance: appearance(),
-                asynchronous: true,
-                show: true,
-            });
-            this.viewer.scene.primitives.add(this.centerLinePrimitive);
-        }
+        this.chunkPrimitives.clear();
+        this.chunkCenters.clear();
+        this.highlightedGuid = null;
+        this.originalHighlightColor = null;
     }
 
     /** 레이어 전체 on/off (DataSourceLayerManager에서 호출) */
@@ -452,20 +643,29 @@ export default class NetworkDataSourceLayer {
         for (const node of newNodes) this.cachedNodeMap.set(String(node.id), node);
         for (const link of newLinks) this.cachedLinkMap.set(String(link.id), link);
 
-        // 새 링크가 있으면 전체 링크 기준으로 Primitive 재빌드
-        // (Primitive는 인스턴스 추가가 불가하므로 전체 재생성)
+        // 새 링크가 있으면 청크별 Primitive 전체 재빌드
         if (newLinks.length > 0) {
             networkPrimitivePropertiesMap.clear();
             this.lanePositionMap.clear();
-            const linkOutlineInstances: Cesium.GeometryInstance[] = [];
-            const linkInstances: Cesium.GeometryInstance[] = [];
-            const laneInstances: Cesium.GeometryInstance[] = [];
-            const dividerInstances: Cesium.GeometryInstance[] = [];
-            const centerLineInstances: Cesium.GeometryInstance[] = [];
+
+            const chunkOutline = new Map<string, Cesium.GeometryInstance[]>();
+            const chunkLink    = new Map<string, Cesium.GeometryInstance[]>();
+            const chunkLane    = new Map<string, Cesium.GeometryInstance[]>();
+            this.roadOverviewPolylines.removeAll();
             for (const link of next.links) {
-                this.buildLinkInstances(link, this.cachedNodeMap, linkOutlineInstances, linkInstances, laneInstances, dividerInstances, centerLineInstances);
+                const key = this.linkChunkKey(link);
+                if (!chunkOutline.has(key)) {
+                    chunkOutline.set(key, []); chunkLink.set(key, []); chunkLane.set(key, []);
+                }
+                const laneArr = chunkLane.get(key)!;
+                this.buildLinkInstances(link, this.cachedNodeMap,
+                    chunkOutline.get(key)!, chunkLink.get(key)!, laneArr, laneArr, laneArr);
+                this.addRoadOverviewPolyline(link);
             }
-            this.rebuildPrimitives(linkOutlineInstances, linkInstances, laneInstances, dividerInstances, centerLineInstances);
+            this.removeAllChunkPrimitives();
+            for (const key of chunkOutline.keys()) {
+                this.buildChunkPrimitives(key, chunkOutline.get(key)!, chunkLink.get(key)!, chunkLane.get(key)!);
+            }
             this.applyVisibility();
         }
 
@@ -705,18 +905,19 @@ export default class NetworkDataSourceLayer {
             const prevPos = Cesium.Cartesian3.fromDegrees(prev.lng, prev.lat);
             const nextPos = Cesium.Cartesian3.fromDegrees(next.lng, next.lat);
 
-            // 로컬 접선 방향 (앞뒤 점의 평균)
-            const dir = Cesium.Cartesian3.normalize(
-                Cesium.Cartesian3.subtract(nextPos, prevPos, new Cesium.Cartesian3()),
-                new Cesium.Cartesian3()
-            );
+            // 로컬 접선 방향 — 중복 좌표(zero vector)이면 오프셋 포기
+            const diff = Cesium.Cartesian3.subtract(nextPos, prevPos, new Cesium.Cartesian3());
+            const diffMag = Cesium.Cartesian3.magnitude(diff);
+            if (diffMag < 1e-6) return curPos;
+            const dir = Cesium.Cartesian3.divideByScalar(diff, diffMag, new Cesium.Cartesian3());
+
             // 타원체 법선 (up 벡터)
             const up = Cesium.Cartesian3.normalize(curPos, new Cesium.Cartesian3());
-            // 수평면 내 right 벡터 = dir × up
-            const right = Cesium.Cartesian3.normalize(
-                Cesium.Cartesian3.cross(dir, up, new Cesium.Cartesian3()),
-                new Cesium.Cartesian3()
-            );
+            // 수평면 내 right 벡터 = dir × up — 평행한 경우 오프셋 포기
+            const rightRaw = Cesium.Cartesian3.cross(dir, up, new Cesium.Cartesian3());
+            const rightMag = Cesium.Cartesian3.magnitude(rightRaw);
+            if (rightMag < 1e-6) return curPos;
+            const right = Cesium.Cartesian3.divideByScalar(rightRaw, rightMag, new Cesium.Cartesian3());
 
             return Cesium.Cartesian3.add(
                 curPos,
@@ -730,6 +931,7 @@ export default class NetworkDataSourceLayer {
     // 노드·포트·커넥션 Entity 생성
     // ─────────────────────────────────────────────
     private buildNodeEntities(node: any, linkMap: Map<string, any>, nodeMap: Map<string, any>): void {
+        if (!node.coordinates?.lng || !node.coordinates?.lat) return;
         const ids: string[] = [];
         const position = Cesium.Cartesian3.fromDegrees(node.coordinates.lng, node.coordinates.lat);
 
@@ -803,13 +1005,12 @@ export default class NetworkDataSourceLayer {
             toPt = toPos.source;
         }
 
+        const ctrlPt = node.coordinates?.lng && node.coordinates?.lat
+            ? Cesium.Cartesian3.fromDegrees(node.coordinates.lng, node.coordinates.lat)
+            : Cesium.Cartesian3.midpoint(fromPt, toPt, new Cesium.Cartesian3());
         const positions = conn.turning === 'Straight'
             ? [fromPt, toPt]
-            : this.generateQuadraticBezierCurve(
-                fromPt,
-                Cesium.Cartesian3.fromDegrees(node.coordinates.lng, node.coordinates.lat),
-                toPt
-            );
+            : this.generateQuadraticBezierCurve(fromPt, ctrlPt, toPt);
 
         this.dataSource.entities.add({
             id: conn.__guid as string,
@@ -889,18 +1090,16 @@ export default class NetworkDataSourceLayer {
     public destroy(): void {
         this.destroyed = true;
         this.cameraChangeUnsubscribe?.();
+        if (this.tileCameraTimer) { clearTimeout(this.tileCameraTimer); this.tileCameraTimer = null; }
+        this.tileManager?.clear();
+        this.tileManager = null;
+        this.tilePolylines.clear();
         // 레이어 제거 시 지형 depth test 복원
         try { this.viewer.scene.globe.depthTestAgainstTerrain = true; } catch (_) {}
         this.unsubscribe?.();
         this.unsubscribeDraw?.();
-        for (const p of [this.linkOutlinePrimitive, this.linkPrimitive, this.lanePrimitive, this.laneDividerPrimitive, this.centerLinePrimitive]) {
-            if (p) this.viewer.scene.primitives.remove(p);
-        }
-        this.linkOutlinePrimitive = null;
-        this.linkPrimitive = null;
-        this.lanePrimitive = null;
-        this.laneDividerPrimitive = null;
-        this.centerLinePrimitive = null;
+        this.removeAllChunkPrimitives();
+        try { this.viewer.scene.primitives.remove(this.roadOverviewPolylines); } catch (_) {}
         if (this.dataSource) {
             this.viewer.dataSources.remove(this.dataSource, true);
         }

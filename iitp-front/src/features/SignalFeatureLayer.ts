@@ -16,6 +16,7 @@ import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import { Style, Icon, Circle as CircleStyle, Fill, Text, Stroke } from "ol/style";
 import { FeatureLike } from "ol/Feature";
 import { signalRenderState } from "@stores/signalRenderState";
+import { getSignalLodTierByResolution } from "@utils/lodConstants";
 
 /* ── 신호등 캔버스 아이콘 (정적) ── */
 function createTrafficLightIcon(): HTMLCanvasElement {
@@ -59,7 +60,11 @@ function utcHHMMSS(jd: JulianDate): string {
     return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
-function signalStyle(feature: FeatureLike): Style[] {
+function signalStyle(feature: FeatureLike, resolution: number): Style[] {
+    const tier = getSignalLodTierByResolution(resolution);
+    // cluster tier: 완전 숨김 (원거리)
+    if (tier === 'cluster') return [];
+
     const nodeId    = String(feature.get("nodeId") ?? "");
     const connGuids = (feature.get("connGuids") as string[]) ?? [];
     const connIds   = (feature.get("connIds")   as string[]) ?? [];
@@ -77,9 +82,15 @@ function signalStyle(feature: FeatureLike): Style[] {
         dotColor = "#ff0000";
     }
 
-    // anchor [0.5, 1.0] → feature 좌표가 아이콘 하단 중앙
-    // 초록 램프: 아이콘 H=34 기준 top에서 27px → 하단에서 7px 위
-    // 화살표는 초록 램프 위치에 오버레이 (offsetY = -7)
+    // marker tier(SIGNAL_DOT ~ SIGNAL_ICON): 컬러 dot만 표시
+    if (tier === 'marker') {
+        const dotR = Math.min(5, Math.max(2, 2.5 / resolution));
+        return [new Style({
+            image: new CircleStyle({ radius: dotR, fill: new Fill({ color: dotColor }) }),
+        })];
+    }
+
+    // 근거리(< SIGNAL_ICON): 신호등 아이콘 + 컬러 dot + 방향 화살표
     const arrowParts: string[] = [];
     if (turnings.includes("U_Turn") || turnings.includes("UTurn"))       arrowParts.push("↩");
     if (turnings.includes("Left_Turn") || turnings.includes("Left"))     arrowParts.push("←");
@@ -126,7 +137,7 @@ export class SignalFeatureLayer extends VectorLayer {
             zIndex: 400,
             updateWhileAnimating: true,
             updateWhileInteracting: true,
-            style: (feature: FeatureLike) => signalStyle(feature),
+            style: (feature: FeatureLike, resolution: number) => signalStyle(feature, resolution),
         });
 
         this.source = source;

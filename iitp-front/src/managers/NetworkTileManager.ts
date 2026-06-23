@@ -1,0 +1,199 @@
+import { toLonLat } from "ol/proj";
+import type { Extent } from "ol/extent";
+import { NETWORK_TILING, networkLodParam, NETWORK_LOD_TIER_ORDER, type NetworkLodTier } from "@utils/lodConstants";
+import axiosInstance from "@api/axiosInstance";
+
+/** 한 타일의 서버 응답 페이로드 (NetworkResponse 부분집합) */
+export interface NetworkTilePayload {
+    links: any[];
+    nodes: any[];
+}
+
+interface TileEntry {
+    payload: NetworkTilePayload;
+    lastUsed: number;
+}
+
+export interface NetworkTileManagerCallbacks {
+    /** 타일이 새로 로드됨 — 소비자(OL/Cesium)가 피처/프리미티브를 빌드 */
+    onTileLoaded: (tileKey: string, payload: NetworkTilePayload) => void;
+    /** 타일이 evict됨 — 소비자가 해당 타일 피처/프리미티브를 destroy (id 기준 refcount는 소비자 책임) */
+    onTileEvicted: (tileKey: string, payload: NetworkTilePayload) => void;
+}
+
+/**
+ * 네트워크 BBox 타일 매니저 (단계 2, 읽기 전용).
+ *
+ * <p>viewport(+prefetch ring) 와 겹치는 타일만 서버에서 fetch 하고, 벗어난 타일은 LRU 로 evict 한다.
+ * 클라이언트가 메모리에 들고 있는 데이터를 viewport 규모로 제한 → 광역권→전국 대응.
+ *
+ * <p><b>소비자 비의존</b>: 타일 키 계산·fetch·캐시·evict 만 담당하고, 실제 렌더링(피처/프리미티브 빌드)은
+ * 콜백으로 위임한다. 따라서 OL/Cesium 양쪽이 같은 매니저를 공유할 수 있다.
+ *
+ * <p>tile-key 는 WGS84 경위도 격자(TILE_DEG). 서버 API 는 `?bbox=west,south,east,north&lod=...`.
+ */
+export class NetworkTileManager {
+    /** 현재 메모리에 보유 중인 타일 (LRU) */
+    private tiles = new Map<string, TileEntry>();
+    /** in-flight fetch (중복 요청 방지) */
+    private inFlight = new Map<string, Promise<void>>();
+    private seq = 0;
+
+    constructor(
+        private versionId: string,
+        private callbacks: NetworkTileManagerCallbacks,
+    ) {}
+
+    /** "tx,ty" 타일 키 (경위도 격자 인덱스) */
+    private tileKey(tx: number, ty: number): string {
+        return `${tx},${ty}`;
+    }
+
+    /** EPSG:3857 extent → 겹치는 타일 인덱스 범위 (경위도 격자) */
+    private tilesForExtent(extent3857: Extent): { txMin: number; txMax: number; tyMin: number; tyMax: number } {
+        const minX = extent3857[0] ?? 0, minY = extent3857[1] ?? 0;
+        const maxX = extent3857[2] ?? 0, maxY = extent3857[3] ?? 0;
+        const sw = toLonLat([minX, minY]);
+        const ne = toLonLat([maxX, maxY]);
+        const west = sw[0] ?? 0, south = sw[1] ?? 0;
+        const east = ne[0] ?? 0, north = ne[1] ?? 0;
+        const D = NETWORK_TILING.TILE_DEG;
+        return {
+            txMin: Math.floor(west / D),
+            txMax: Math.floor(east / D),
+            tyMin: Math.floor(south / D),
+            tyMax: Math.floor(north / D),
+        };
+    }
+
+    /** 타일 인덱스 → 그 타일의 경위도 bbox "w,s,e,n" */
+    private tileBbox(tx: number, ty: number): string {
+        const D = NETWORK_TILING.TILE_DEG;
+        const w = tx * D, s = ty * D, e = (tx + 1) * D, n = (ty + 1) * D;
+        return `${w},${s},${e},${n}`;
+    }
+
+    /**
+     * viewport 변화 시 호출 (moveend). 필요한 타일을 fetch 하고 벗어난 타일을 evict 한다.
+     * @param extent3857 현재 뷰 extent (EPSG:3857)
+     * @param resolution m/px → lod 파라미터 결정
+     */
+    update(extent3857: Extent, resolution: number): void {
+        if (!NETWORK_TILING.ENABLED) return;
+        const r = this.tilesForExtent(extent3857);
+        this.updateForTileRange(r, networkLodParam(resolution));
+    }
+
+    /**
+     * 경위도 bbox 직접 지정 (Cesium 등 OL 비의존 소비자용).
+     * @param lod NetworkLodTier 또는 서버 lod 파라미터 문자열
+     */
+    updateForBbox(west: number, south: number, east: number, north: number, lod: string): void {
+        if (!NETWORK_TILING.ENABLED) return;
+        const D = NETWORK_TILING.TILE_DEG;
+        this.updateForTileRange({
+            txMin: Math.floor(west / D), txMax: Math.floor(east / D),
+            tyMin: Math.floor(south / D), tyMax: Math.floor(north / D),
+        }, lod);
+    }
+
+    private updateForTileRange(
+        r: { txMin: number; txMax: number; tyMin: number; tyMax: number },
+        lod: string,
+    ): void {
+        const ring = NETWORK_TILING.PREFETCH_RING;
+
+        // ── 가드 1: overview/mid(멀리)는 MVT 가 담당 → JSON 타일 매니저는 near 이상에서만 동작 ──
+        // (멀리서는 5km 타일이 수천 개가 되어 요청 폭주하므로 fetch 자체를 막는다)
+        const tierOrder = NETWORK_LOD_TIER_ORDER[lod as NetworkLodTier] ?? 99;
+        if (tierOrder < NETWORK_LOD_TIER_ORDER[NETWORK_TILING.JSON_MIN_TIER]) {
+            // 보유 타일은 모두 evict (멀어졌으므로 메모리 회수)
+            this.evictExtra(new Set());
+            return;
+        }
+
+        // ── 가드 2: 타일 수 상한 (안전장치 — 예상치 못한 거대 extent 폭주 방지) ──
+        const tileCount = (r.txMax - r.txMin + 1 + 2 * ring) * (r.tyMax - r.tyMin + 1 + 2 * ring);
+        if (tileCount > NETWORK_TILING.MAX_TILES_PER_UPDATE) {
+            return; // 다음 줌인까지 대기 (기존 타일 유지)
+        }
+
+        // 필요한 타일 키 집합 (viewport + prefetch ring)
+        const needed = new Set<string>();
+        for (let tx = r.txMin - ring; tx <= r.txMax + ring; tx++) {
+            for (let ty = r.tyMin - ring; ty <= r.tyMax + ring; ty++) {
+                needed.add(this.tileKey(tx, ty));
+            }
+        }
+
+        const now = ++this.seq;
+
+        // 1) 필요 타일 fetch (미보유 + 미요청만)
+        for (const key of needed) {
+            const entry = this.tiles.get(key);
+            if (entry) { entry.lastUsed = now; continue; }
+            if (this.inFlight.has(key)) continue;
+            this.fetchTile(key, lod, now);
+        }
+
+        // 2) evict: 필요하지 않으면서 LRU 한도 초과분 제거
+        this.evictExtra(needed);
+    }
+
+    private fetchTile(key: string, lod: string, stamp: number): void {
+        const [tx, ty] = key.split(",").map(Number);
+        const bbox = this.tileBbox(tx!, ty!);
+        const p = axiosInstance
+            .get(`/network/${this.versionId}/tiles`, { params: { bbox, lod } })
+            .then((res) => {
+                const payload: NetworkTilePayload = {
+                    links: res.data?.links ?? [],
+                    nodes: res.data?.nodes ?? [],
+                };
+                this.tiles.set(key, { payload, lastUsed: stamp });
+                this.callbacks.onTileLoaded(key, payload);
+            })
+            .catch((err) => {
+                // 404/네트워크 오류는 빈 타일로 간주 (재요청 가능하도록 캐시엔 넣지 않음)
+                if (err?.response?.status !== 404) {
+                    console.warn(`[NetworkTileManager] 타일 fetch 실패 ${key}`, err);
+                }
+            })
+            .finally(() => {
+                this.inFlight.delete(key);
+            });
+        this.inFlight.set(key, p);
+    }
+
+    /** 필요 집합 밖 + LRU 한도 초과 타일 evict */
+    private evictExtra(needed: Set<string>): void {
+        const max = NETWORK_TILING.LRU_MAX_TILES;
+        // 필요하지 않은 타일들을 lastUsed 오름차순(오래된 것 먼저)으로 정렬
+        const evictable = [...this.tiles.entries()]
+            .filter(([k]) => !needed.has(k))
+            .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+
+        // 보유 타일 수가 한도를 넘으면 초과분만큼 오래된 것부터 제거
+        let overBy = this.tiles.size - max;
+        for (const [key, entry] of evictable) {
+            if (overBy <= 0) break;
+            this.tiles.delete(key);
+            this.callbacks.onTileEvicted(key, entry.payload);
+            overBy--;
+        }
+    }
+
+    /** 보유 타일 수 (테스트/디버그용) */
+    get size(): number {
+        return this.tiles.size;
+    }
+
+    /** 전체 비우기 (레이어 dispose 시) */
+    clear(): void {
+        for (const [key, entry] of this.tiles) {
+            this.callbacks.onTileEvicted(key, entry.payload);
+        }
+        this.tiles.clear();
+        this.inFlight.clear();
+    }
+}

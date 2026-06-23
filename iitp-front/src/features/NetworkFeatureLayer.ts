@@ -9,6 +9,21 @@ import { Coordinate } from "ol/coordinate";
 import { Network } from "@type/Network";
 import { FeatureLike } from "ol/Feature";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
+import {
+    getNetworkLodTierByResolution,
+    isNetworkFeatureVisibleAtTier,
+    NETWORK_EXTENT_GATING,
+    type NetworkLodTier,
+} from "@utils/lodConstants";
+import { buffer, containsCoordinate, createEmpty, extend, getHeight, getWidth, intersects, type Extent } from "ol/extent";
+import { unByKey } from "ol/Observable";
+import type { EventsKey } from "ol/events";
+import type OLMap from "ol/Map";
+import { NETWORK_TILING } from "@utils/lodConstants";
+import { NetworkTileManager, type NetworkTilePayload } from "@managers/NetworkTileManager";
+import { useScenarioStore } from "@stores/useScenarioStore";
+import { assignTileGuids } from "@utils/tileGuid";
+import NetworkMvtLayer from "@features/NetworkMvtLayer";
 
 export default class NetworkFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -27,6 +42,25 @@ export default class NetworkFeatureLayer extends VectorLayer {
     private cachedNodeMap: Map<string, any> = new Map();
     private cachedLinkMap: Map<string, any> = new Map();
 
+    // ── Extent 게이팅 상태 ──
+    // linkFeaturesMap/nodeFeaturesMap은 "전체 빌드된 피처"의 메모리 캐시이고,
+    // 아래 구조는 그중 "현재 source(=화면)에 실제 올라가 있는 부분집합"을 추적한다.
+    private linkExtentMap: Map<string, Extent> = new Map();        // linkId → 링크 전체 bbox (3857)
+    private nodeCoordMap: Map<string, Coordinate> = new Map();     // nodeId → 노드 점 좌표 (3857)
+    private addedLinkFeatures: Map<string, Feature[]> = new Map(); // linkId → 현재 source에 올라간 피처
+    private addedNodeFeatures: Map<string, Feature[]> = new Map(); // nodeId → 현재 source에 올라간 피처
+    private lastTier: NetworkLodTier | null = null;
+    private moveEndKey: EventsKey | null = null;
+    private visChangeKey: EventsKey | null = null;
+
+    // ── 타일링 상태 (NETWORK_TILING.ENABLED 일 때만 사용; 읽기 전용 뷰) ──
+    // 타일 경계 링크/노드는 여러 타일에 중복 등장 → id별 refcount 로 마지막 타일 evict 시에만 destroy.
+    private tileManager: NetworkTileManager | null = null;
+    private linkRefCount: Map<string, number> = new Map();
+    private nodeRefCount: Map<string, number> = new Map();
+    // MVT 레이어 (overview/mid 2D 가속, NETWORK_TILING.MVT_ENABLED 일 때만)
+    private mvtLayer: NetworkMvtLayer | null = null;
+
     private readonly LAYER_NAME = "network";
 
     private static readonly CELL_WIDTH_RATIO = 0.25;
@@ -34,9 +68,6 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
     private static readonly EPS = 1e-9;
 
-    // LOD 해상도 임계값 (EPSG:3857 m/px 기준)
-    private static readonly LOD_RES_OUTLINE_ONLY = 8;  // > 8m/px → link-edit 중심선만
-    private static readonly LOD_RES_LINK_ONLY    = 2;  // > 2m/px → links + nodes만
     private static readonly PORT_ICON_SCALE = 2.0;
     private static readonly NODE_RADIUS_SCALE = 0.8;
     private static readonly NODE_STROKE_SCALE = 0.1;
@@ -86,6 +117,241 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 }
             }
         );
+
+        // 레이어가 숨김→표시로 바뀔 때 현재 화면에 맞춰 source를 채운다 (숨김 중엔 reconcile 생략)
+        // 타일 모드에서는 타일 매니저가 source를 관리하므로 extent 게이팅 구독은 생략.
+        if (NETWORK_EXTENT_GATING.ENABLED && !NETWORK_TILING.ENABLED) {
+            this.visChangeKey = this.on('change:visible', () => {
+                if (this.getVisible()) this.reconcile();
+            });
+        }
+    }
+
+    /** OL이 레이어를 map에 추가/제거할 때 호출. moveend 구독을 붙이고 초기 갱신 수행. */
+    override setMapInternal(map: OLMap | null): void {
+        if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
+        super.setMapInternal(map);
+        if (!map) {
+            this.tileManager?.clear();
+            this.tileManager = null;
+            if (this.mvtLayer) { try { this.mvtLayer.setMap(null); } catch (_) {} this.mvtLayer = null; }
+            return;
+        }
+        // MVT 레이어 부착 (overview/mid 2D 가속). 가시성은 네트워크 레이어와 동기화.
+        if (NETWORK_TILING.MVT_ENABLED && !this.mvtLayer) {
+            const versionId = useScenarioStore.getState().selectedScenario?.key;
+            const base = import.meta.env.VITE_API_URL ?? "";
+            if (versionId) {
+                this.mvtLayer = new NetworkMvtLayer(String(versionId), String(base));
+                this.mvtLayer.setVisible(this.getVisible());
+                map.addLayer(this.mvtLayer);
+                if (!this.visChangeKey) {
+                    this.visChangeKey = this.on('change:visible', () => this.mvtLayer?.setVisible(this.getVisible()));
+                }
+            }
+        }
+        if (NETWORK_TILING.ENABLED) {
+            // 타일 모드: viewport 단위 fetch + evict (광역권→전국, 읽기 전용)
+            this.moveEndKey = map.on('moveend', () => this.updateTiles(map));
+            this.updateTiles(map);
+        } else if (NETWORK_EXTENT_GATING.ENABLED) {
+            // 상호작용이 끝난 후(정착 시)에만 1회 실행 → pan/zoom 중 비용 0
+            this.moveEndKey = map.on('moveend', () => this.reconcile());
+            this.reconcile();
+        }
+    }
+
+    // ─────────────────────────── 타일 모드 (읽기 전용) ───────────────────────────
+    // ⚠️ 편집(선택/수정/삭제/추가)은 전체-로드 경로 전제. 타일 모드는 뷰 전용이며
+    //    feature 에 __guid 가 부여되지 않아 기본-모드 선택 대상이 아니다. (docs/network-bbox-tiling-design.md)
+
+    private updateTiles(map: OLMap): void {
+        const view = map.getView();
+        const size = map.getSize();
+        const resolution = view.getResolution();
+        if (!size || resolution == null) return;
+
+        if (!this.tileManager) {
+            const versionId = useScenarioStore.getState().selectedScenario?.key;
+            if (!versionId) return; // 시나리오 미선택 시 fetch 불가
+            this.tileManager = new NetworkTileManager(String(versionId), {
+                onTileLoaded: (_k, payload) => this.addTilePayload(payload),
+                onTileEvicted: (_k, payload) => this.removeTilePayload(payload),
+            });
+        }
+        this.tileManager.update(view.calculateExtent(size), resolution);
+    }
+
+    /** 타일 페이로드 → cached 맵 병합 + refcount + 신규 id만 피처 빌드 후 source 추가 */
+    private addTilePayload(payload: NetworkTilePayload): void {
+        assignTileGuids(payload); // 안정적 합성 guid (hover/select 가능, 읽기 전용)
+        // 1) 데이터 맵 먼저 병합 (링크 빌드는 nodeMap, 노드 빌드는 linkMap+laneMap 필요)
+        for (const node of payload.nodes) this.cachedNodeMap.set(String(node.id), node);
+        for (const link of payload.links) this.cachedLinkMap.set(String(link.id), link);
+
+        const addBuffer: Feature[] = [];
+
+        // 2) 링크: 신규 id(0→1)만 빌드 (laneMap 채워야 노드 conn 가능 → 링크 먼저)
+        for (const link of payload.links) {
+            const id = String(link.id);
+            const rc = (this.linkRefCount.get(id) ?? 0) + 1;
+            this.linkRefCount.set(id, rc);
+            if (rc === 1) {
+                const feats = this.buildLinkFeatures(link, this.cachedNodeMap);
+                if (feats.length > 0) {
+                    this.linkFeaturesMap.set(id, feats);
+                    addBuffer.push(...feats);
+                }
+            }
+        }
+        // 3) 노드: 신규 id(0→1)만 빌드
+        for (const node of payload.nodes) {
+            const id = String(node.id);
+            const rc = (this.nodeRefCount.get(id) ?? 0) + 1;
+            this.nodeRefCount.set(id, rc);
+            if (rc === 1) {
+                const feats = this.buildNodeFeatures(node, this.cachedLinkMap);
+                this.nodeFeaturesMap.set(id, feats);
+                addBuffer.push(...feats);
+            }
+        }
+
+        if (addBuffer.length > 0) {
+            this.source.addFeatures(addBuffer);
+            try { this.getMapInternal()?.render(); } catch (_) {}
+        }
+    }
+
+    /** 타일 evict → refcount 감소, 마지막 타일(1→0)에서만 피처/캐시 제거 */
+    private removeTilePayload(payload: NetworkTilePayload): void {
+        const rmBuffer: Feature[] = [];
+
+        for (const link of payload.links) {
+            const id = String(link.id);
+            const rc = (this.linkRefCount.get(id) ?? 0) - 1;
+            if (rc <= 0) {
+                this.linkRefCount.delete(id);
+                const feats = this.linkFeaturesMap.get(id);
+                if (feats) { rmBuffer.push(...feats); this.linkFeaturesMap.delete(id); }
+                this.cachedLinkMap.delete(id);
+                // laneMap 정리 (linkId_laneIdx 키)
+                for (const k of [...this.laneMap.keys()]) {
+                    if (k.startsWith(id + "_")) this.laneMap.delete(k);
+                }
+            } else {
+                this.linkRefCount.set(id, rc);
+            }
+        }
+        for (const node of payload.nodes) {
+            const id = String(node.id);
+            const rc = (this.nodeRefCount.get(id) ?? 0) - 1;
+            if (rc <= 0) {
+                this.nodeRefCount.delete(id);
+                const feats = this.nodeFeaturesMap.get(id);
+                if (feats) { rmBuffer.push(...feats); this.nodeFeaturesMap.delete(id); }
+                this.cachedNodeMap.delete(id);
+            } else {
+                this.nodeRefCount.set(id, rc);
+            }
+        }
+
+        if (rmBuffer.length > 0) {
+            for (const f of rmBuffer) {
+                if (this.source.hasFeature(f)) this.source.removeFeature(f);
+            }
+            try { this.getMapInternal()?.render(); } catch (_) {}
+        }
+    }
+
+    /**
+     * 현재 화면 extent + LOD tier 기준으로 source 멤버십을 동기화.
+     * - 빌드된 피처 캐시(linkFeaturesMap/nodeFeaturesMap)는 그대로 두고,
+     *   "화면 안 + 현재 tier에서 보이는" 피처만 source에 add/remove.
+     * - moveend(정착)·visibility 변경·fullBuild 직후에만 호출 (매 프레임 아님).
+     */
+    private reconcile(): void {
+        if (!NETWORK_EXTENT_GATING.ENABLED) return;
+        if (!this.getVisible()) return;
+
+        const map = this.getMapInternal();
+        const size = map?.getSize();
+        const view = map?.getView();
+        const resolution = view?.getResolution();
+        if (!map || !size || !view || resolution == null) return;
+
+        const tier = getNetworkLodTierByResolution(resolution);
+
+        // 뷰 extent를 폭/높이의 일정 비율만큼 확장 (팬 시 빈 영역 방지)
+        const raw = view.calculateExtent(size);
+        const margin = Math.max(getWidth(raw), getHeight(raw)) * NETWORK_EXTENT_GATING.RENDER_BUFFER_RATIO;
+        const ext = buffer(raw, margin);
+
+        const tierChanged = tier !== this.lastTier;
+
+        // 링크 그룹 (OL addFeatures/removeFeatures는 내부 배치 처리됨)
+        for (const [linkId, features] of this.linkFeaturesMap) {
+            const lext = this.linkExtentMap.get(linkId);
+            const inView = lext ? intersects(ext, lext) : true;
+            const desired = inView
+                ? features.filter(f => isNetworkFeatureVisibleAtTier(f.get("featureType"), tier))
+                : [];
+            this.syncGroup(this.addedLinkFeatures, linkId, desired, tierChanged);
+        }
+
+        // 노드 그룹
+        for (const [nodeId, features] of this.nodeFeaturesMap) {
+            const coord = this.nodeCoordMap.get(nodeId);
+            const inView = coord ? containsCoordinate(ext, coord) : true;
+            const desired = inView
+                ? features.filter(f => isNetworkFeatureVisibleAtTier(f.get("featureType"), tier))
+                : [];
+            this.syncGroup(this.addedNodeFeatures, nodeId, desired, tierChanged);
+        }
+
+        this.lastTier = tier;
+    }
+
+    /** 한 그룹(링크/노드)의 source 멤버십을 desired와 일치시킨다 (피처 단위 set-diff). */
+    private syncGroup(
+        bucket: Map<string, Feature[]>,
+        id: string,
+        desired: Feature[],
+        forceResync: boolean,
+    ): void {
+        const cur = bucket.get(id) ?? [];
+
+        if (desired.length === 0) {
+            if (cur.length > 0) {
+                this.source.removeFeatures(cur);
+                bucket.delete(id);
+            }
+            return;
+        }
+
+        // tier가 바뀌지 않았고 멤버십도 동일하면(개수+참조) 스킵 (대부분의 그룹은 변화 없음)
+        if (!forceResync && cur.length === desired.length) {
+            let same = true;
+            for (let i = 0; i < cur.length; i++) {
+                if (cur[i] !== desired[i]) { same = false; break; }
+            }
+            if (same) return;
+        }
+
+        const curSet = new Set(cur);
+        const desSet = new Set(desired);
+        const toRemove = cur.filter(f => !desSet.has(f));
+        const toAdd = desired.filter(f => !curSet.has(f));
+        if (toRemove.length > 0) this.source.removeFeatures(toRemove);
+        if (toAdd.length > 0) this.source.addFeatures(toAdd);
+        bucket.set(id, desired);
+    }
+
+    /** 링크/노드 공간 인덱스를 캐시 피처로부터 재구성 (fullBuild 후). */
+    private rebuildSpatialIndex(): void {
+        this.linkExtentMap.clear();
+        this.nodeCoordMap.clear();
+        for (const [linkId, features] of this.linkFeaturesMap) this.indexLink(linkId, features);
+        for (const [nodeId, features] of this.nodeFeaturesMap) this.indexNode(nodeId, features);
     }
 
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
@@ -95,14 +361,9 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
         const featureType = props.featureType ?? "";
 
-        // LOD 필터링: 원거리에서 불필요한 피처 타입 렌더링 생략
-        if (resolution > NetworkFeatureLayer.LOD_RES_OUTLINE_ONLY) {
-            // 매우 원거리: 링크 중심선만
-            if (featureType !== 'link-edit') return [];
-        } else if (resolution > NetworkFeatureLayer.LOD_RES_LINK_ONLY) {
-            // 중간 거리: 링크 폴리곤 + 노드만 (레인/커넥션/포트 생략)
-            if (!['links', 'link-edit', 'nodes'].includes(featureType)) return [];
-        }
+        // LOD 필터링: 현재 tier에서 표시 대상이 아닌 피처 타입은 렌더링 생략 (공통 tier 함수 사용)
+        const tier = getNetworkLodTierByResolution(resolution);
+        if (!isNetworkFeatureVisibleAtTier(featureType, tier)) return [];
 
         const zIndex = this.zIndexMap[featureType] ?? 0;
         const res = Math.max(resolution, NetworkFeatureLayer.EPS);
@@ -110,24 +371,40 @@ export default class NetworkFeatureLayer extends VectorLayer {
         // LINK (polygon)
         if (geom instanceof Polygon && featureType === "links") {
             styles.push(new Style({
-                fill: new Fill({ color: "rgb(255,255,255,0.7)" }),
+                fill: new Fill({ color: "rgba(72,74,80,0.92)" }),
                 zIndex
             }));
         }
 
         // LINK-EDIT (center line)
         if (geom instanceof LineString && featureType === "link-edit") {
-            styles.push(new Style({
-                stroke: new Stroke({ color: "rgba(200,0,0,0.75)", width: Math.min(2, 0.3 / res) }),
-                zIndex
-            }));
+            // overview/mid: 링크 폴리곤이 안 보이거나 sub-pixel이라 중심선이 사실상 유일한 도로 표현 →
+            //   최소 가시 픽셀 굵기 + 차선수 비례로 "도로망 지도"처럼 보이게 한다.
+            // near/detail: 폴리곤이 도로 본체를 그리므로 중심선은 기존 편집용 얇은 빨강선.
+            if (tier === 'overview' || tier === 'mid') {
+                // MVT 레이어가 이 구간 도로망을 담당하면 중복 렌더 생략 (양보)
+                if (NETWORK_TILING.MVT_ENABLED && this.mvtLayer) return [];
+                const laneCount = props.lanes?.length ?? 1;
+                // 간선(차선 多)일수록 굵게, 최소 0.8px ~ 최대 3px 보장
+                const width = Math.max(0.8, Math.min(3, 0.6 + laneCount * 0.3));
+                styles.push(new Style({
+                    stroke: new Stroke({ color: "rgba(236,238,245,0.9)", width }),
+                    zIndex
+                }));
+            } else {
+                styles.push(new Style({
+                    stroke: new Stroke({ color: "rgba(200,0,0,0.75)", width: Math.min(2, 0.3 / res) }),
+                    zIndex
+                }));
+            }
         }
 
         // LANE (polygon)
         if (geom instanceof Polygon && featureType === "lanes") {
+            const laneColor = (props.laneRef ?? 0) % 2 === 0 ? "rgba(62,64,70,1.0)" : "rgba(84,86,94,1.0)";
             styles.push(new Style({
-                fill: new Fill({ color: "rgb(100,100,100, 0.8)" }),
-                stroke: new Stroke({ color: "rgb(255,255,255,0.7)", width: Math.min(2, 0.5 / res) }),
+                fill: new Fill({ color: laneColor }),
+                stroke: new Stroke({ color: "rgba(30,30,35,0.78)", width: Math.min(2, 0.5 / res) }),
                 zIndex
             }));
         }
@@ -210,7 +487,6 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
         if (geom instanceof Point && featureType === "nodes") {
             const radius = NetworkFeatureLayer.NODE_RADIUS_SCALE / res;  // 무제한 확대
-            const strokeWidth = NetworkFeatureLayer.NODE_STROKE_SCALE / res;
             styles.push(new Style({
                 image: new CircleStyle({
                     radius,
@@ -358,6 +634,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
     }
 
     public async load(): Promise<void> {
+        // 타일 모드: store 기반 전체 빌드를 하지 않는다 (타일 매니저가 viewport 분만 빌드).
+        if (NETWORK_TILING.ENABLED) return;
         const store = layerNameToStoreMap[this.LAYER_NAME];
         try {
             const network: Network | undefined = store.getState().currentJsonData;
@@ -427,8 +705,21 @@ export default class NetworkFeatureLayer extends VectorLayer {
             featureBuffer.push(...features);
         }
 
+        // source/게이팅 상태 완전 초기화 (수정·삭제 후 stale 피처가 남지 않도록)
         this.source.clear();
-        this.source.addFeatures(featureBuffer);
+        this.addedLinkFeatures.clear();
+        this.addedNodeFeatures.clear();
+        this.lastTier = null;
+
+        if (!NETWORK_EXTENT_GATING.ENABLED) {
+            // 게이팅 비활성: 기존 동작 그대로 전체 추가
+            this.source.addFeatures(featureBuffer);
+            return;
+        }
+
+        // 게이팅 활성: 공간 인덱스 재구성 후 현재 화면분만 reconcile로 추가
+        this.rebuildSpatialIndex();
+        this.reconcile();
     }
 
     private incrementalUpdate(prev: Network, next: Network): void {
@@ -481,7 +772,9 @@ export default class NetworkFeatureLayer extends VectorLayer {
         for (const link of newLinks) {
             const features = this.buildLinkFeatures(link, this.cachedNodeMap);
             if (features.length > 0) {
-                this.linkFeaturesMap.set(String(link.id), features);
+                const id = String(link.id);
+                this.linkFeaturesMap.set(id, features);
+                this.indexLink(id, features); // 신규 링크 공간 인덱스 등록
                 addBuffer.push(...features);
             }
         }
@@ -568,13 +861,38 @@ export default class NetworkFeatureLayer extends VectorLayer {
         // 7. 신규 노드 피처 추가
         for (const node of newNodes) {
             const features = this.buildNodeFeatures(node, this.cachedLinkMap);
-            this.nodeFeaturesMap.set(String(node.id), features);
+            const id = String(node.id);
+            this.nodeFeaturesMap.set(id, features);
+            this.indexNode(id, features); // 신규 노드 공간 인덱스 등록
             addBuffer.push(...features);
         }
 
-        if (addBuffer.length > 0) {
+        if (addBuffer.length === 0) return;
+
+        if (!NETWORK_EXTENT_GATING.ENABLED) {
             this.source.addFeatures(addBuffer);
+            return;
         }
+        // 게이팅 활성: 캐시는 갱신됐으므로 reconcile이 화면분 멤버십을 정리한다.
+        // (변경된 노드의 delta 피처, 신규 링크/노드 모두 reconcile에서 일관되게 반영)
+        this.reconcile();
+    }
+
+    /** 한 링크의 bbox를 공간 인덱스에 등록 */
+    private indexLink(id: string, features: Feature[]): void {
+        const ext = createEmpty();
+        for (const f of features) {
+            const g = f.getGeometry();
+            if (g) extend(ext, g.getExtent());
+        }
+        this.linkExtentMap.set(id, ext);
+    }
+
+    /** 한 노드의 점 좌표를 공간 인덱스에 등록 */
+    private indexNode(id: string, features: Feature[]): void {
+        const nodeFeat = features.find(f => f.get("featureType") === "nodes");
+        const g = nodeFeat?.getGeometry();
+        if (g instanceof Point) this.nodeCoordMap.set(id, g.getCoordinates());
     }
 
     private buildLinkFeatures(link: any, nodeMap: Map<string, any>): Feature[] {
@@ -593,10 +911,16 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const p1b = allPts[1]!;
         if (!p1[0] || !p1[1] || !p2[0] || !p2[1]) return [];
 
-        // 시작 방향 기준 법선 (폴리곤/차선 오프셋용)
+        // 시작 방향 기준 법선 (laneSource 오프셋용)
         const dx = p1b[0] - p1[0], dy = p1b[1] - p1[1];
         const len = Math.hypot(dx, dy);
         const unitNormal: [number, number] = len > 0 ? [-dy / len, dx / len] : [0, 0];
+
+        // 끝점 방향 법선 (laneTarget 오프셋용 — 곡선 도로 대응)
+        const pLastB = allPts[allPts.length - 2]!;
+        const dxE = p2[0] - pLastB[0], dyE = p2[1] - pLastB[1];
+        const lenE = Math.hypot(dxE, dyE);
+        const endNormal: [number, number] = lenE > 0 ? [-dyE / lenE, dxE / lenE] : unitNormal;
 
         const features: Feature[] = [];
 
@@ -627,19 +951,19 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
         // lanes
         const laneCount = link.lanes.length;
-        const laneWidth = link.width / laneCount;
+        const laneWidth = (link.width ?? 7) / laneCount;
 
         for (let i = 0; i < laneCount; i++) {
             const lane = link.lanes[i];
             if (!lane) continue;
             const offsetCenter = ((laneCount - 1) / 2 - i) * laneWidth;
             const centerP1 = [p1[0] + unitNormal[0] * offsetCenter, p1[1] + unitNormal[1] * offsetCenter];
-            const centerP2 = [p2[0] + unitNormal[0] * offsetCenter, p2[1] + unitNormal[1] * offsetCenter];
+            const centerP2 = [p2[0] + endNormal[0]  * offsetCenter, p2[1] + endNormal[1]  * offsetCenter];
             const halfWidth = laneWidth / 2;
             const outerP1 = [centerP1[0] + unitNormal[0] * halfWidth, centerP1[1] + unitNormal[1] * halfWidth];
-            const outerP2 = [centerP2[0] + unitNormal[0] * halfWidth, centerP2[1] + unitNormal[1] * halfWidth];
+            const outerP2 = [centerP2[0] + endNormal[0]  * halfWidth, centerP2[1] + endNormal[1]  * halfWidth];
             const innerP1 = [centerP1[0] - unitNormal[0] * halfWidth, centerP1[1] - unitNormal[1] * halfWidth];
-            const innerP2 = [centerP2[0] - unitNormal[0] * halfWidth, centerP2[1] - unitNormal[1] * halfWidth];
+            const innerP2 = [centerP2[0] - endNormal[0]  * halfWidth, centerP2[1] - endNormal[1]  * halfWidth];
 
             const laneProps = {
                 ...lane, linkRef: link.id, featureType: "lanes",
@@ -825,6 +1149,11 @@ export default class NetworkFeatureLayer extends VectorLayer {
     public dispose(): void {
         this.unsubscribe?.();
         this.unsubscribeDraw?.();
+        if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
+        if (this.visChangeKey) { unByKey(this.visChangeKey); this.visChangeKey = null; }
+        this.tileManager?.clear();
+        this.tileManager = null;
+        if (this.mvtLayer) { try { this.mvtLayer.setMap(null); } catch (_) {} this.mvtLayer = null; }
         super.dispose();
     }
 }

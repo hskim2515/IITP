@@ -109,6 +109,13 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
         cesiumViewer.scene.globe.baseColor = Cesium.Color.DARKGRAY;
         cesiumViewer.scene.globe.enableLighting = false;
 
+        // ── 렌더 경량화: 매 프레임 안티앨리어싱/안개 패스 비용 절감 (이 스케일에선 화질 영향 미미) ──
+        cesiumViewer.scene.msaaSamples = 1;                       // MSAA 비활성 (기본 4 → 1): 풀스크린 멀티샘플 패스 제거
+        if (cesiumViewer.scene.postProcessStages.fxaa) {
+            cesiumViewer.scene.postProcessStages.fxaa.enabled = false; // FXAA 포스트프로세스 패스 제거
+        }
+        cesiumViewer.scene.fog.enabled = false;                   // 거리 안개 계산 제거
+
         // cesiumViewer.scene.light = new Cesium.DirectionalLight({
         //     direction: new Cesium.Cartesian3(0.0, 0.0, 0.0) // 빛 없음
         // });

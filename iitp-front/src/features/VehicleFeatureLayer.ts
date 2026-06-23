@@ -6,14 +6,13 @@ import { fromLonLat } from "ol/proj";
 import { Cartographic, Ellipsoid } from "cesium";
 import * as Cesium from "cesium";
 
-const TYPE_COLORS: Record<string, [number, number, number]> = {
-    'CAR':     [100, 160, 255],
-    'TAXI':    [255, 220,   0],
-    'BUS':     [255,  90,  90],
-    'TRUCK':   [180, 120,  60],
-    'MOTO':    [ 80, 220, 130],
-    'default': [251, 188,  96],
-};
+const DEFAULT_VEHICLE_COLOR: [number, number, number] = [251, 188, 96];
+
+function hexToRgb255(hex: string): [number, number, number] | null {
+    const m = hex.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    if (!m || !m[1] || !m[2] || !m[3]) return null;
+    return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+}
 
 export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private source: VectorSource;
@@ -27,8 +26,8 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private readonly LERP_DURATION = 50;
     public readonly vehicleType: string;
 
-    constructor(vehicleRoute: any[], vectorSource: VectorSource, speed: number, running: boolean, vehicleType: string = 'default') {
-        const [r, g, b] = TYPE_COLORS[vehicleType] ?? TYPE_COLORS['default']!;
+    constructor(vehicleRoute: any[], vectorSource: VectorSource, speed: number, running: boolean, vehicleType: string = 'default', modelColor?: string) {
+        const [r, g, b] = (modelColor ? hexToRgb255(modelColor) : null) ?? DEFAULT_VEHICLE_COLOR;
 
         super({
             source: vectorSource,
@@ -139,7 +138,9 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
             }
         });
 
-        if (this.running) {
+        // 보간이 완료(t>=1.0)되면 다음 위치가 도착(setLatestPositions)할 때까지 루프를 멈춘다.
+        // 같은 좌표를 매 프레임 재설정/재렌더하던 idle 스핀을 제거 (양쪽 지도 공통 절감).
+        if (this.running && t < 1.0) {
             this.animationId = requestAnimationFrame(this.updateAnimation);
         } else {
             this.animationId = null;

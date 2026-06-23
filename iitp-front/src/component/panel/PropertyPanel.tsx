@@ -22,6 +22,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useEventStore } from "@stores/useEventStore";
 import { modifyFeatureEventHandlers } from "@handler/modifyFeatureEventHandlers";
 import { extractFeatureTypeFromGuid } from "@utils/guid";
+import { computeNetworkDiff, isNetworkDiffEmpty } from "@utils/networkDiff";
 import { MenuTreeResponse } from "@type/openapi.gen";
 import styles from "@css/PropertyPanel.module.css";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
@@ -149,12 +150,42 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         const payloadData = submenu.item?.fullData ? currentJson : Object.values(currentJson)[0];
         const payload = { data: payloadData, logs: mergedLog };
         try {
-            await axiosInstance({ method: api.method, url: api.url + '/' + versionKey, data: payload });
+            // 네트워크는 도메인 id 기반 diff 저장 시도 (전국 규모 대비 payload 축소).
+            // 실패 시 기존 전체 저장으로 안전하게 폴백.
+            const savedByDiff = activeSubmenu.menuCode === 'NETWORK'
+                ? await trySaveNetworkDiff(versionKey)
+                : false;
+            if (!savedByDiff) {
+                await axiosInstance({ method: api.method, url: api.url + '/' + versionKey, data: payload });
+            }
             historyStore.getState().resetUpdateLogs();
             setReloadFlag(prev => !prev);
             setMessage({ type: 'info', text: '저장 완료' });
         } catch (error) {
             setMessage({ type: 'error', text: '저장 실패: ' + error });
+        }
+    };
+
+    /**
+     * 네트워크 diff 저장 시도. 성공 시 true, 미적용/실패 시 false(→ 호출측이 전체 저장 폴백).
+     * originData(서버 원본) vs currentJsonData(편집본)를 id로 비교한 변경분만 전송.
+     */
+    const trySaveNetworkDiff = async (versionKey: string): Promise<boolean> => {
+        try {
+            const origin = store.getState().originData as any;
+            const current = store.getState().currentJsonData as any;
+            if (!origin || !current) return false; // 원본 없으면 폴백
+            const diff = computeNetworkDiff(origin, current);
+            if (isNetworkDiffEmpty(diff)) return true; // 변경 없음 → 저장할 것 없음(성공 취급)
+            await axiosInstance({
+                method: 'POST',
+                url: `/network/${versionKey}/diff`,
+                data: diff,
+            });
+            return true;
+        } catch (e) {
+            console.warn('[PropertyPanel] diff 저장 실패 → 전체 저장 폴백', e);
+            return false;
         }
     };
 

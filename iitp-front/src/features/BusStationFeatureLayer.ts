@@ -5,6 +5,9 @@ import { Feature } from "ol";
 import { LineString, Point } from "ol/geom";
 import { Circle as CircleStyle, Fill, Stroke, Style } from "ol/style";
 import { fromLonLat } from "ol/proj";
+import { getFacilityLodTierByResolution } from "@utils/lodConstants";
+import { FacilityClusterOverlay } from "@features/facilityCluster";
+import type OLMap from "ol/Map";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 
 import { BusPublicStationResponse } from "@type/Station";
@@ -24,6 +27,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
     private readonly LAYER_NAME = "busStation";
     private unsubscribe: (() => void) | undefined;
     private needsReload = false;
+    private clusterOverlay: FacilityClusterOverlay;
 
     constructor() {
         const source = new VectorSource();
@@ -35,6 +39,11 @@ export default class BusStationFeatureLayer extends VectorLayer {
         });
 
         this.source = source;
+        // overview 클러스터 오버레이 (정류장 점 전체 군집)
+        this.clusterOverlay = new FacilityClusterOverlay(source, {
+            color: "rgb(255,0,0)",
+            zIndex: 409,
+        });
 
         this.load();
         const store = layerNameToStoreMap[this.LAYER_NAME];
@@ -60,34 +69,55 @@ export default class BusStationFeatureLayer extends VectorLayer {
 
     override setVisible(visible: boolean): void {
         super.setVisible(visible);
+        this.clusterOverlay.setVisible(visible);
         if (visible && this.needsReload) this.load();
     }
 
+    override setMapInternal(map: OLMap | null): void {
+        super.setMapInternal(map);
+        if (map) {
+            this.clusterOverlay.attach(map);
+            this.clusterOverlay.setVisible(this.getVisible());
+        } else {
+            this.clusterOverlay.detach();
+        }
+    }
+
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
+        const tier = getFacilityLodTierByResolution(resolution);
+        // cluster tier: 개별 마커 숨김 (원거리 — Cesium 아이콘/클러스터가 담당)
+        if (tier === 'cluster') return [];
+
         const geom = feature.getGeometry();
         const styles: Style[] = [];
         if (!(geom instanceof Point)) return styles;
 
+        // 해상도에 비례한 마커 크기 (정류장 물리폭 ~3m 기준, 최소 3px ↔ 최대 6px)
+        const radius = Math.min(6, Math.max(3, 3 / resolution));
+        const opacity = tier === 'detail' ? 1.0 : 0.75;
+
         styles.push(
             new Style({
                 image: new CircleStyle({
-                    radius: 4,
-                    fill: new Fill({color: "rgb(255,0,0)"}),
-                    stroke: new Stroke({color: "rgba(0,0,0,0)", width: 0}),
+                    radius,
+                    fill: new Fill({ color: `rgba(255,0,0,${opacity})` }),
+                    stroke: new Stroke({ color: "rgba(0,0,0,0)", width: 0 }),
                 }),
             })
         );
 
-        const lineStart = feature.get('__lineStart') as Coordinate | undefined;
-        const lineEnd = feature.get('__lineEnd') as Coordinate | undefined;
-
-        if (lineStart && lineEnd) {
-            styles.push(
-                new Style({
-                    geometry: new LineString([lineStart, lineEnd]),
-                    stroke: new Stroke({color: "rgb(255,0,0)", width: 4}),
-                })
-            );
+        // 주차선(접근 레인): 완전 근접(detail)에서만 표시
+        if (tier === 'detail') {
+            const lineStart = feature.get('__lineStart') as Coordinate | undefined;
+            const lineEnd   = feature.get('__lineEnd')   as Coordinate | undefined;
+            if (lineStart && lineEnd) {
+                styles.push(
+                    new Style({
+                        geometry: new LineString([lineStart, lineEnd]),
+                        stroke: new Stroke({ color: "rgb(255,0,0)", width: 4 }),
+                    })
+                );
+            }
         }
 
         return styles;
@@ -204,6 +234,7 @@ export default class BusStationFeatureLayer extends VectorLayer {
         if (this.unsubscribe) {
             this.unsubscribe();
         }
+        this.clusterOverlay.dispose();
         super.dispose();
     }
 }
