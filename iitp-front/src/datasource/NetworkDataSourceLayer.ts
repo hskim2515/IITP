@@ -41,6 +41,7 @@ export default class NetworkDataSourceLayer {
     private tileManager: NetworkTileManager | null = null;
     private tilePolylines: Map<string, Cesium.Polyline[]> = new Map(); // tileKey → overview 폴리라인
     private tileCameraTimer: ReturnType<typeof setTimeout> | null = null;
+    private applyVisDebounce: ReturnType<typeof setTimeout> | null = null; // 타일 다중 로드 시 applyVisibility 1회로 합침
 
     /** 청크 크기 (도, ≈5km) */
     private static readonly CHUNK_DEG = 0.05;
@@ -270,8 +271,19 @@ export default class NetworkDataSourceLayer {
             this.dataSource.entities.resumeEvents();
         }
 
-        this.applyVisibility();
-        try { this.viewer.scene.requestRender(); } catch (_) {}
+        // applyVisibility 는 전체 청크 순회(거리 컬링)라 타일마다 호출하면 O(N²) → 끊김.
+        // 여러 타일이 동시에 로드될 때 debounce 로 1회만 실행.
+        this.scheduleApplyVisibility();
+    }
+
+    /** applyVisibility 를 debounce (다중 타일 로드를 1회로 합쳐 3D 끊김 완화) */
+    private scheduleApplyVisibility(): void {
+        if (this.applyVisDebounce) return;
+        this.applyVisDebounce = setTimeout(() => {
+            this.applyVisDebounce = null;
+            this.applyVisibility();
+            try { this.viewer.scene.requestRender(); } catch (_) {}
+        }, 80);
     }
 
     /** 타일 청크 evict → 프리미티브/폴리라인/노드 엔티티 제거 */
@@ -1091,6 +1103,7 @@ export default class NetworkDataSourceLayer {
         this.destroyed = true;
         this.cameraChangeUnsubscribe?.();
         if (this.tileCameraTimer) { clearTimeout(this.tileCameraTimer); this.tileCameraTimer = null; }
+        if (this.applyVisDebounce) { clearTimeout(this.applyVisDebounce); this.applyVisDebounce = null; }
         this.tileManager?.clear();
         this.tileManager = null;
         this.tilePolylines.clear();
