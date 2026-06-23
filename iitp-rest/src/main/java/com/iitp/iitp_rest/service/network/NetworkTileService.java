@@ -72,7 +72,9 @@ public class NetworkTileService {
             case MID      -> 1;   // + 집산
             default       -> 2;   // 전체
         };
-        boolean stripDetail = (lod == Lod.OVERVIEW || lod == Lod.MID); // 차선/구간 제거 → payload 축소
+        // 차선/구간은 클라 LOD상 detail(완전 근접)에서만 표시되므로 near 이하는 제거 → payload·빌드 대폭 축소.
+        // (near 타일이 차선 포함 시 detail과 동일 1.6MB/차선1161/셀3096이었으나, 화면엔 안 보였음)
+        boolean stripDetail = (lod != Lod.DETAIL);
 
         NetworkResponse out = new NetworkResponse();
         List<LinkResponse> links = new ArrayList<>();
