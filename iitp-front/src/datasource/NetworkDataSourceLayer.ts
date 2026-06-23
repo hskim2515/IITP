@@ -43,8 +43,8 @@ export default class NetworkDataSourceLayer {
     private tileCameraTimer: ReturnType<typeof setTimeout> | null = null;
     private applyVisDebounce: ReturnType<typeof setTimeout> | null = null; // 타일 다중 로드 시 applyVisibility 1회로 합침
 
-    /** 청크 크기 (도, ≈5km) */
-    private static readonly CHUNK_DEG = 0.05;
+    /** 청크 크기 (도) — 타일 격자와 단일 출처로 통일 (타일=청크 1:1 매핑 보장) */
+    private static readonly CHUNK_DEG = NETWORK_TILING.TILE_DEG;
 
     // featureType별 가시성 상태
     private featureTypeVisible: Record<string, boolean> = {};
