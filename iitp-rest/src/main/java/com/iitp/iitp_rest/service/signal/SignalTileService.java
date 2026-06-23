@@ -96,20 +96,26 @@ public class SignalTileService {
             } catch (Exception e) {
                 throw new IOException("signal.xml 로드 실패: " + versionId, e);
             }
-
-            // 2) 네트워크 노드 좌표 맵 (nodeId → [lng,lat]) — 신호 bbox 의 출처
-            Map<String, double[]> nodeCoord = loadNodeCoords(versionId);
-
-            File db = Files.createTempFile("signal_tile_" + sanitize(versionId) + "_", ".db").toFile();
-            db.deleteOnExit();
-            buildDb(db, signals, nodeCoord);
-            dbCache.put(versionId, db);
-            log.info("[SignalTileService] SQLite 빌드 완료 {} ({} signals) → {}",
-                    versionId, signals.size(), db.getAbsolutePath());
-            return db;
+            return ingest(versionId, signals);
         } finally {
             lock.unlock();
         }
+    }
+
+    /**
+     * 주어진 신호 목록으로 versionId 의 SQLite(.db) 를 빌드·캐시 (signal.xml 재파싱 없이).
+     * saveSignal 시점에 첫 타일 요청의 lazy 빌드(~3s)를 저장 처리 시간으로 옮긴다.
+     * 네트워크 노드 좌표는 내부에서 로드(신호 bbox 의 출처).
+     */
+    public File ingest(String versionId, List<SignalResponse> signals) throws IOException {
+        Map<String, double[]> nodeCoord = loadNodeCoords(versionId);
+        File db = Files.createTempFile("signal_tile_" + sanitize(versionId) + "_", ".db").toFile();
+        db.deleteOnExit();
+        buildDb(db, signals, nodeCoord);
+        dbCache.put(versionId, db);
+        log.info("[SignalTileService] SQLite 빌드 완료 {} ({} signals) → {}",
+                versionId, signals.size(), db.getAbsolutePath());
+        return db;
     }
 
     /** 네트워크 노드 좌표 맵 (신호 좌표의 출처). 네트워크 없으면 빈 맵. */

@@ -336,6 +336,15 @@ public class NetworkController {
                 response.getNodes() != null ? response.getNodes().size() : 0,
                 response.getLinks() != null ? response.getLinks().size() : 0);
 
+        // 타일 캐시 무효화 + 즉시 재빌드 (방금 만든 response 재사용 → network.xml 재다운로드/재파싱 없이).
+        // 첫 타일 요청이 캐시 히트가 되어 "지도 반영 순간 멈춤"을 import 처리 시간에 흡수.
+        try {
+            networkTileService.invalidate(versionId);
+            networkTileService.ingest(versionId, response);
+        } catch (Exception e) {
+            log.warn("[importNetworkXml] 타일 사전 빌드 실패 (첫 요청 시 lazy 빌드로 폴백): {}", e.getMessage());
+        }
+
         return ResponseEntity.ok(new OsmSaveResponse(response, validation.warnings(), validation.errors()));
     }
 

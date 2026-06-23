@@ -114,8 +114,6 @@ public ResponseEntity<SignalNodeResponseData> getSignal(@PathVariable String ver
         logger.info("[saveSignal] versionId={} signals={}", versionId, request.getData() != null ? request.getData().size() : 0);
         try {
             signalService.saveSignal(request, versionId);
-            // 편집 저장 시 신호 타일 캐시 무효화 → 다음 타일 요청에서 재빌드
-            signalTileService.invalidate(versionId);
             // DB 저장과 동시에 signal.xml 파일도 동기화
             try {
                 SignalXml xml = signalService.toSignalXml(request.getData() != null ? request.getData() : List.of());
@@ -124,6 +122,14 @@ public ResponseEntity<SignalNodeResponseData> getSignal(@PathVariable String ver
                 logger.info("[saveSignal] signal.xml 저장 완료: {}/signal.xml", versionId);
             } catch (Exception e) {
                 logger.warn("[saveSignal] signal.xml 파일 저장 실패 (DB는 정상 저장됨): {}", e.getMessage());
+            }
+            // 타일 캐시 무효화 + 즉시 재빌드 (방금 받은 신호 목록 재사용 → signal.xml 재파싱 없이).
+            // 첫 신호 타일 요청(~3s lazy 빌드)을 저장 처리 시간으로 흡수.
+            try {
+                signalTileService.invalidate(versionId);
+                signalTileService.ingest(versionId, request.getData() != null ? request.getData() : List.of());
+            } catch (Exception e) {
+                logger.warn("[saveSignal] 신호 타일 사전 빌드 실패 (lazy 빌드로 폴백): {}", e.getMessage());
             }
             return ResponseEntity.ok().build();
         } catch (Exception e) {

@@ -60,6 +60,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
     private nodeRefCount: Map<string, number> = new Map();
     // MVT 레이어 (overview/mid 2D 가속, NETWORK_TILING.MVT_ENABLED 일 때만)
     private mvtLayer: NetworkMvtLayer | null = null;
+    // 타일 모드 store 동기화 debounce 타이머
+    private storeSyncTimer: ReturnType<typeof setTimeout> | null = null;
 
     private readonly LAYER_NAME = "network";
 
@@ -220,6 +222,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
             this.source.addFeatures(addBuffer);
             try { this.getMapInternal()?.render(); } catch (_) {}
         }
+        this.scheduleStoreSync();
     }
 
     /** 타일 evict → refcount 감소, 마지막 타일(1→0)에서만 피처/캐시 제거 */
@@ -261,6 +264,29 @@ export default class NetworkFeatureLayer extends VectorLayer {
             }
             try { this.getMapInternal()?.render(); } catch (_) {}
         }
+        this.scheduleStoreSync();
+    }
+
+    /**
+     * 타일 모드에서 viewport 네트워크(cachedLinkMap/cachedNodeMap)를 store.currentJsonData 로 동기화.
+     * 의존 레이어(신호·버스·철도·히트맵 등 9개)가 코드 변경 없이 viewport 네트워크를 참조 →
+     * store 메모리도 viewport 규모로 제한. debounce 로 다중 타일 로드 후 1회만 set.
+     */
+    private scheduleStoreSync(): void {
+        if (!NETWORK_TILING.ENABLED) return;
+        if (this.storeSyncTimer) return;
+        this.storeSyncTimer = setTimeout(() => {
+            this.storeSyncTimer = null;
+            const store = layerNameToStoreMap[this.LAYER_NAME];
+            const prev = store.getState().currentJsonData ?? {};
+            const next = {
+                ...prev,                                  // id/name 등 메타 보존
+                links: [...this.cachedLinkMap.values()],  // viewport 링크
+                nodes: [...this.cachedNodeMap.values()],  // viewport 노드
+            };
+            // setCurrentJsonData 는 구독 트리거 → 의존 레이어 재로드 (자기 load()는 타일모드 가드로 no-op)
+            store.getState().setCurrentJsonData(next as Network);
+        }, 150);
     }
 
     /**
@@ -1153,6 +1179,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         if (this.visChangeKey) { unByKey(this.visChangeKey); this.visChangeKey = null; }
         this.tileManager?.clear();
         this.tileManager = null;
+        if (this.storeSyncTimer) { clearTimeout(this.storeSyncTimer); this.storeSyncTimer = null; }
         if (this.mvtLayer) { try { this.mvtLayer.setMap(null); } catch (_) {} this.mvtLayer = null; }
         super.dispose();
     }

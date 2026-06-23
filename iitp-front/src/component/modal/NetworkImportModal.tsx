@@ -5,6 +5,11 @@ import { useScenarioStore } from '@stores/useScenarioStore';
 import { assignPropertyToResponseData } from '@utils/guid';
 import { useOnboardingStore } from '@stores/useOnboardingStore';
 import { useLogStore } from '@stores/useLogStore';
+import { confirmAndDownloadBackup } from '@utils/autoSave';
+import { flyToNetworkExtent } from '@hooks/useLayerInit';
+import { NETWORK_TILING } from '@utils/lodConstants';
+import { useCesiumStore } from '@stores/useCesiumStore';
+import { useOpenLayersStore } from '@stores/useOpenLayersStore';
 
 const MENU_CODE = 'NETWORK_IMPORT';
 
@@ -42,27 +47,19 @@ const NetworkImportModal: React.FC = () => {
         if (file) handleFile(file);
     };
 
-    const handleDownloadBackup = async () => {
-        if (!versionId) return;
-        const url = `${import.meta.env.VITE_API_URL}/network/${versionId}/backup`;
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `network_backup_${versionId}.xml`;
-        a.click();
-    };
-
     const handleImport = async () => {
         if (!selectedFile) {
             setError('파일을 선택하세요.');
             return;
         }
         setError(null);
+
+        // 백업 여부 확인 후 다운로드
+        if (versionId) await confirmAndDownloadBackup(versionId);
+
         setLoading(true);
         try {
-            // 1. 백업 다운로드 (저장 전)
-            if (versionId) await handleDownloadBackup();
-
-            // 2. 업로드 및 저장
+            // 업로드 및 저장
             const formData = new FormData();
             formData.append('file', selectedFile);
 
@@ -72,8 +69,11 @@ const NetworkImportModal: React.FC = () => {
             );
             const data = await res.json();
             if (!res.ok) {
-                const msgs: string[] = data?.warnings ?? [`서버 오류 ${res.status}`];
-                throw new Error(msgs.join('\n'));
+                if (data?.errors?.includes('MISSING_COORDINATES')) {
+                    throw new Error('이 시나리오에 기준 좌표(위/경도)가 설정되지 않았습니다.\n시나리오 설정에서 기준 좌표를 먼저 입력하세요.');
+                }
+                const msgs: string[] = [...(data?.errors ?? []), ...(data?.warnings ?? [])];
+                throw new Error(msgs.length ? msgs.join('\n') : `서버 오류 ${res.status}`);
             }
             setPendingData(data.network);
             setWarnings(data.warnings ?? []);
@@ -87,13 +87,25 @@ const NetworkImportModal: React.FC = () => {
     const handleConfirmReplace = () => {
         if (!pendingData) return;
         assignPropertyToResponseData(pendingData);
-        useNetworkStore.getState().setCurrentJsonDataWithFullBuild(pendingData);
+        if (NETWORK_TILING.ENABLED) {
+            // 타일 모드: 전체를 store 에 적재하지 않음 (메모리를 viewport 로 제한).
+            // 메타(id/name)만 둔 빈 네트워크로 시작 → 타일 매니저가 viewport 네트워크를 동기화.
+            useNetworkStore.getState().setCurrentJsonDataWithFullBuild({
+                ...pendingData, links: [], nodes: [],
+            } as any);
+        } else {
+            useNetworkStore.getState().setCurrentJsonDataWithFullBuild(pendingData);
+        }
         useNetworkStore.getState().setChange(true);
         const nodeCount = pendingData.nodes?.length ?? 0;
         const linkCount = pendingData.links?.length ?? 0;
         useLogStore.getState().addLog('info', `네트워크 반영 완료 (노드 ${nodeCount}개, 링크 ${linkCount}개)`);
         useOnboardingStore.getState().setStep('need-dummy');
         handleClose();
+        // 임포트 후 네트워크 위치로 카메라 이동
+        const viewer = useCesiumStore.getState().viewer;
+        const olMap = useOpenLayersStore.state.map();
+        flyToNetworkExtent(viewer, olMap);
     };
 
     // ── 저장 완료 확인 다이얼로그 ─────────────────────────────────────────────
@@ -112,9 +124,6 @@ const NetworkImportModal: React.FC = () => {
                         </p>
                         <p style={{ fontSize: 11, color: '#888', margin: 0 }}>
                             노드 {nodeCount}개 · 링크 {linkCount}개
-                        </p>
-                        <p style={{ fontSize: 10, color: '#4ecb8d', margin: 0 }}>
-                            ✓ 기존 파일 백업이 자동으로 다운로드되었습니다.
                         </p>
                         {warnings.length > 0 && (
                             <div style={warningBoxStyle}>
@@ -151,8 +160,7 @@ const NetworkImportModal: React.FC = () => {
 
                 <div style={bodyStyle}>
                     <p style={descStyle}>
-                        network.xml 파일을 업로드하여 서버에 저장하고 지도에 반영합니다.<br />
-                        기존 파일은 자동으로 백업 다운로드됩니다.
+                        network.xml 파일을 업로드하여 서버에 저장하고 지도에 반영합니다.
                     </p>
 
                     {/* 드래그 앤 드롭 영역 */}
@@ -192,9 +200,6 @@ const NetworkImportModal: React.FC = () => {
 
                     {error && <div style={errorStyle}>{error}</div>}
 
-                    <div style={noteStyle}>
-                        ※ 업로드 전 현재 네트워크 파일이 자동으로 백업 다운로드됩니다.
-                    </div>
                 </div>
 
                 <div style={footerStyle}>
