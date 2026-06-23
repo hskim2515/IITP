@@ -46,6 +46,9 @@ export default class NetworkDataSourceLayer {
     // 3D 줌아웃(overview/mid): 간선 중심선 폴리라인 1회 fetch (2D MVT 대응). near로 줌인하면 타일로 전환.
     private overviewArterialsActive = false;
     private overviewFetchSeq = 0;
+    // 노드 엔티티(폴/표지판) 빌드 큐 — 타일당 ~40ms 동기 빌드를 rAF로 프레임당 1타일 분산(줌/pan 끊김 방지)
+    private nodeBuildQueue = new Map<string, any[]>();
+    private nodeBuildRaf: number | null = null;
 
     /** 청크 크기 (도) — 타일 격자와 단일 출처로 통일 (타일=청크 1:1 매핑 보장) */
     private static readonly CHUNK_DEG = NETWORK_TILING.TILE_DEG;
@@ -293,22 +296,45 @@ export default class NetworkDataSourceLayer {
         }
         this.buildChunkPrimitives(tileKey, outlineInst, linkInst, laneInst);
         if (polylines.length > 0) this.tilePolylines.set(tileKey, polylines);
-
-        // home 노드만 엔티티 빌드
-        this.dataSource.entities.suspendEvents();
-        try {
-            for (const node of payload.nodes) {
-                if (this.nodeChunkKey(node) !== tileKey) continue;
-                try { this.buildNodeEntities(node, this.cachedLinkMap, this.cachedNodeMap); }
-                catch (e) { console.warn('[NetworkDataSourceLayer] 타일 노드 빌드 건너뜀', node?.id, e); }
-            }
-        } finally {
-            this.dataSource.entities.resumeEvents();
+        // 노드 엔티티(폴/표지판)는 타일당 ~40ms 동기 빌드라 여러 타일 동시 로드 시 끊김.
+        // 큐에 등록해 rAF로 프레임당 1타일씩 분산 (도로/차선은 위에서 즉시, 노드는 점진적).
+        const homeNodes = payload.nodes.filter(nd => this.nodeChunkKey(nd) === tileKey);
+        if (homeNodes.length > 0) {
+            this.nodeBuildQueue.set(tileKey, homeNodes);
+            this.scheduleNodeBuild();
         }
 
         // applyVisibility 는 전체 청크 순회(거리 컬링)라 타일마다 호출하면 O(N²) → 끊김.
         // 여러 타일이 동시에 로드될 때 debounce 로 1회만 실행.
         this.scheduleApplyVisibility();
+    }
+
+    /** 노드 엔티티 빌드를 rAF로 프레임당 1타일씩 처리 (메인스레드 양보 → 줌/pan 부드럽게) */
+    private scheduleNodeBuild(): void {
+        if (this.nodeBuildRaf != null) return;
+        this.nodeBuildRaf = requestAnimationFrame(() => {
+            this.nodeBuildRaf = null;
+            const next = this.nodeBuildQueue.entries().next();
+            if (!next.done) {
+                const [tileKey, nodes] = next.value;
+                this.nodeBuildQueue.delete(tileKey);
+                // 청크가 아직 살아있을 때만 빌드 (그 사이 evict됐으면 스킵)
+                if (this.chunkPrimitives.has(tileKey)) {
+                    this.dataSource.entities.suspendEvents();
+                    try {
+                        for (const nd of nodes) {
+                            try { this.buildNodeEntities(nd, this.cachedLinkMap, this.cachedNodeMap); }
+                            catch (e) { console.warn('[NetworkDataSourceLayer] 타일 노드 빌드 건너뜀', nd?.id, e); }
+                        }
+                    } finally {
+                        this.dataSource.entities.resumeEvents();
+                    }
+                    this.scheduleApplyVisibility();
+                    try { this.viewer.scene.requestRender(); } catch (_) {}
+                }
+            }
+            if (this.nodeBuildQueue.size > 0) this.scheduleNodeBuild();
+        });
     }
 
     /** applyVisibility 를 debounce (다중 타일 로드를 1회로 합쳐 3D 끊김 완화) */
@@ -323,6 +349,7 @@ export default class NetworkDataSourceLayer {
 
     /** 타일 청크 evict → 프리미티브/폴리라인/노드 엔티티 제거 */
     private removeTileChunk(tileKey: string, payload?: NetworkTilePayload): void {
+        this.nodeBuildQueue.delete(tileKey); // 빌드 대기 중이던 노드 취소
         const chunk = this.chunkPrimitives.get(tileKey);
         if (chunk) {
             if (chunk.outline) this.viewer.scene.primitives.remove(chunk.outline);
@@ -1142,6 +1169,8 @@ export default class NetworkDataSourceLayer {
         this.cameraChangeUnsubscribe?.();
         if (this.tileCameraTimer) { clearTimeout(this.tileCameraTimer); this.tileCameraTimer = null; }
         if (this.applyVisDebounce) { clearTimeout(this.applyVisDebounce); this.applyVisDebounce = null; }
+        if (this.nodeBuildRaf != null) { cancelAnimationFrame(this.nodeBuildRaf); this.nodeBuildRaf = null; }
+        this.nodeBuildQueue.clear();
         this.tileManager?.clear();
         this.tileManager = null;
         this.tilePolylines.clear();

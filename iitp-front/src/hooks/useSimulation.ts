@@ -65,7 +65,7 @@ async function applyTerrainHeightsToRoute(
     const uniqueKeys   = Array.from(uniqueCartoMap.keys());
     const uniqueCartos = uniqueKeys.map(k => uniqueCartoMap.get(k)!);
 
-    // 2. 지형 고도 일괄 샘플링
+    // 2. 지형 고도 일괄 샘플링 (원격 지형 타일 다운로드 — unique 격자 수에 비례)
     try {
         await Cesium.sampleTerrainMostDetailed(terrainProvider, uniqueCartos);
     } catch (e) {
@@ -688,18 +688,12 @@ const useSimulation = () => {
                 }
 
                 // 지형이 있으면 모든 웨이포인트에 지형 고도를 주입한 뒤 워커 초기화
-                // [PERF 계측] 차량 데이터 임포트 병목 측정 (전체 차량 수, 지형 주입, worker init)
-                console.time('[PERF] applyTerrainHeightsToRoute');
                 applyTerrainHeightsToRoute(vehicleRoute, viewer.terrainProvider).then(adjustedRoute => {
-                    console.timeEnd('[PERF] applyTerrainHeightsToRoute');
-                    console.log(`[PERF] 차량 수: ${Array.isArray(adjustedRoute) ? adjustedRoute.length : '?'}`);
-                    console.time('[PERF] worker init postMessage');
                     czmlPositionWorkerRef.current?.postMessage({
                         type: 'init',
                         czmlPackets: adjustedRoute,
                         currentTime: Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime()
                     });
-                    console.timeEnd('[PERF] worker init postMessage');
                 });
 
                 viewer.scene.preRender.addEventListener(updateFrameFunc);

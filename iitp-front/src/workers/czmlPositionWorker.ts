@@ -22,7 +22,6 @@ self.onmessage = function (e) {
         lastElapsed = 0;
         elapsed = 0;
 
-        const _perfInitStart = performance.now(); // [PERF] worker init 빌드 측정
         sampledPositionsList = czmlData.map((track, idx) => {
             // 신버전: {id, type, path:[...]}  구버전: [t, x, y, z, ...]
             const isLegacy = Array.isArray(track);
@@ -50,7 +49,6 @@ self.onmessage = function (e) {
             }
             return { vehicleType, sampled: extractSampledPositionsFromFlatArray(path) };
         });
-        console.log(`[PERF][worker] init 빌드: ${sampledPositionsList.length}대, ${(performance.now() - _perfInitStart).toFixed(0)}ms`);
 
         if (!sampledPositionsList || sampledPositionsList.length === 0) return;
 
