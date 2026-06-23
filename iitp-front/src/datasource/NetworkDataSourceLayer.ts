@@ -248,7 +248,7 @@ export default class NetworkDataSourceLayer {
         if (!this.tileManager) {
             this.tileManager = new NetworkTileManager(String(versionId), {
                 onTileLoaded: (key, payload) => this.addTileChunk(key, payload),
-                onTileEvicted: (key) => this.removeTileChunk(key),
+                onTileEvicted: (key, payload) => this.removeTileChunk(key, payload),
             });
         }
         this.tileManager.updateForBbox(west, south, east, north, lod);
@@ -322,7 +322,7 @@ export default class NetworkDataSourceLayer {
     }
 
     /** 타일 청크 evict → 프리미티브/폴리라인/노드 엔티티 제거 */
-    private removeTileChunk(tileKey: string): void {
+    private removeTileChunk(tileKey: string, payload?: NetworkTilePayload): void {
         const chunk = this.chunkPrimitives.get(tileKey);
         if (chunk) {
             if (chunk.outline) this.viewer.scene.primitives.remove(chunk.outline);
@@ -336,21 +336,24 @@ export default class NetworkDataSourceLayer {
             for (const pl of pls) { try { this.roadOverviewPolylines.remove(pl); } catch (_) {} }
             this.tilePolylines.delete(tileKey);
         }
-        // 이 타일에 home 인 노드 엔티티 제거
-        for (const [nodeId, ids] of [...this.nodeEntityIds]) {
-            const node = this.cachedNodeMap.get(nodeId);
-            if (node && this.nodeChunkKey(node) === tileKey) {
+        // 노드 엔티티 제거: payload.nodes 의 home 노드를 id로 직접 제거 (cachedNodeMap 역추적 의존 X).
+        // 역추적은 cachedNodeMap에서 node가 사라졌으면 매칭 실패 → 좀비 엔티티 누적 위험이 있었음.
+        const homeNodes = payload?.nodes?.filter(nd => this.nodeChunkKey(nd) === tileKey) ?? [];
+        for (const nd of homeNodes) {
+            const nodeId = String(nd.id);
+            const ids = this.nodeEntityIds.get(nodeId);
+            if (ids) {
                 for (const id of ids) {
                     const ent = this.dataSource.entities.getById(id);
                     if (ent) this.dataSource.entities.remove(ent);
                 }
                 this.nodeEntityIds.delete(nodeId);
-                this.cachedNodeMap.delete(nodeId);
             }
+            this.cachedNodeMap.delete(nodeId);
         }
-        // home 링크 캐시 정리
-        for (const [linkId, link] of [...this.cachedLinkMap]) {
-            if (this.linkChunkKey(link) === tileKey) this.cachedLinkMap.delete(linkId);
+        // home 링크 캐시 정리 (payload 기준)
+        for (const link of payload?.links ?? []) {
+            if (this.linkChunkKey(link) === tileKey) this.cachedLinkMap.delete(String(link.id));
         }
         try { this.viewer.scene.requestRender(); } catch (_) {}
     }
