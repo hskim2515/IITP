@@ -23,6 +23,7 @@ import { useEventStore } from "@stores/useEventStore";
 import { modifyFeatureEventHandlers } from "@handler/modifyFeatureEventHandlers";
 import { extractFeatureTypeFromGuid } from "@utils/guid";
 import { computeNetworkDiff, isNetworkDiffEmpty } from "@utils/networkDiff";
+import { NETWORK_TILING } from "@utils/lodConstants";
 import { MenuTreeResponse } from "@type/openapi.gen";
 import styles from "@css/PropertyPanel.module.css";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
@@ -172,16 +173,34 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
      */
     const trySaveNetworkDiff = async (versionKey: string): Promise<boolean> => {
         try {
-            const origin = store.getState().originData as any;
             const current = store.getState().currentJsonData as any;
-            if (!origin || !current) return false; // 원본 없으면 폴백
-            const diff = computeNetworkDiff(origin, current);
-            if (isNetworkDiffEmpty(diff)) return true; // 변경 없음 → 저장할 것 없음(성공 취급)
+            if (!current) return false;
+
+            let diff;
+            if (NETWORK_TILING.ENABLED) {
+                // 타일 모드: originData(빈)와 비교 불가. viewport 링크/노드를 upsert(편집 안 한 것도
+                // 동일값 upsert = 백엔드 id 교체라 무해), 삭제는 누적된 deletedRecords에서 id 추출.
+                const deleted = (store.getState() as any).deletedRecords ?? [];
+                diff = {
+                    upsertLinks: current.links ?? [],
+                    upsertNodes: current.nodes ?? [],
+                    deleteLinkIds: deleted.filter((r: any) => r.featureType === 'links' && r.id != null).map((r: any) => r.id),
+                    deleteNodeIds: deleted.filter((r: any) => r.featureType === 'nodes' && r.id != null).map((r: any) => r.id),
+                };
+                if (isNetworkDiffEmpty(diff)) return true;
+            } else {
+                // 비-타일 모드: originData vs current 전체 비교 (기존)
+                const origin = store.getState().originData as any;
+                if (!origin) return false;
+                diff = computeNetworkDiff(origin, current);
+                if (isNetworkDiffEmpty(diff)) return true;
+            }
             await axiosInstance({
                 method: 'POST',
                 url: `/network/${versionKey}/diff`,
                 data: diff,
             });
+            (store.getState() as any).clearDeletedRecords?.(); // 저장 성공 → 삭제 누적 초기화
             return true;
         } catch (e) {
             console.warn('[PropertyPanel] diff 저장 실패 → 전체 저장 폴백', e);

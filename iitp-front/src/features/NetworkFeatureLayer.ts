@@ -168,6 +168,11 @@ export default class NetworkFeatureLayer extends VectorLayer {
     //    feature 에 __guid 가 부여되지 않아 기본-모드 선택 대상이 아니다. (docs/network-bbox-tiling-design.md)
 
     private updateTiles(map: OLMap): void {
+        // 편집 중에는 타일 갱신(fetch/evict) 동결 — 편집 대상이 viewport 이동으로 evict되어
+        // 사라지거나 store 동기화로 편집 내용이 덮어써지는 것을 방지.
+        const draw = useNetworkDrawStore.getState();
+        if (draw.isActive || draw.isConnectionActive || draw.isSelectActive || draw.placementMode !== 'none') return;
+
         const view = map.getView();
         const size = map.getSize();
         const resolution = view.getResolution();
@@ -277,6 +282,9 @@ export default class NetworkFeatureLayer extends VectorLayer {
         if (this.storeSyncTimer) return;
         this.storeSyncTimer = setTimeout(() => {
             this.storeSyncTimer = null;
+            // 편집 중에는 store 동기화 동결 — viewport 네트워크로 덮어쓰면 편집 내용이 사라진다.
+            const draw = useNetworkDrawStore.getState();
+            if (draw.isActive || draw.isConnectionActive || draw.isSelectActive || draw.placementMode !== 'none') return;
             const store = layerNameToStoreMap[this.LAYER_NAME];
             const prev = store.getState().currentJsonData ?? {};
             const next = {

@@ -20,6 +20,9 @@ export interface State<T> {
     // 파일 가져오기, OSM 가져오기 등 전체 교체 시마다 증가하는 카운터
     // 각 레이어 인스턴스가 자신이 마지막으로 본 값과 비교해 전체 재빌드 여부를 독립 판단
     importEpoch: number
+    // 타일 모드 diff 저장용: 삭제된 레코드 누적 (viewport evict와 무관하게 보존).
+    // currentJsonData(viewport)에서 빠진 것을 추적할 수 없으므로 삭제 시점에 명시 기록.
+    deletedRecords: any[]
 }
 
 export interface Actions<T> {
@@ -32,6 +35,10 @@ export interface Actions<T> {
     removeRecordsByGuid: (guids: (string | number)[], historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
     setChange: (changed: boolean) => void;
     initCurrentData: () => void;
+    // 네트워크 교체 시 의존 레이어 초기화용: 데이터/변경플래그 모두 지우고 레이어 재빌드 트리거
+    resetData: () => void;
+    // 타일 모드 diff 저장 후 삭제 누적 초기화
+    clearDeletedRecords: () => void;
 }
 
 
@@ -43,6 +50,7 @@ const createFeatureStore = <T>() => {
         currentJsonData: undefined,
         isChanged: false,
         importEpoch: 0,
+        deletedRecords: [],
     };
     return createSelectors(
         create(
@@ -215,6 +223,8 @@ const createFeatureStore = <T>() => {
                             set({
                                 currentJsonData: updated,
                                 isChanged: true,
+                                // 타일 모드 diff 저장용: 삭제 레코드 누적 (id 포함 전체 객체)
+                                deletedRecords: [...get().deletedRecords, ...deletedItems],
                             });
 
                             if (historyStore && deletedItems.length > 0) {
@@ -237,12 +247,17 @@ const createFeatureStore = <T>() => {
                         }
                     },
                         setChange: (changed: boolean) => set({isChanged: changed}),
+                        clearDeletedRecords: () => set({ deletedRecords: [] }),
                         initCurrentData: () => {
                             const originData = get().originData;
                             if (originData) set({
                                 currentJsonData: originData,
                             });
-                        }
+                        },
+                        resetData: () => {
+                            const currentEpoch = (get() as unknown as State<T>).importEpoch;
+                            set({ originData: undefined, currentJsonData: undefined, isChanged: false, importEpoch: currentEpoch + 1 });
+                        },
                     })
                 )
             )
