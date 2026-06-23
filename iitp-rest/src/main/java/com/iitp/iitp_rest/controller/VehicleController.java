@@ -5,35 +5,49 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.iitp.iitp_rest.model.*;
 import com.iitp.iitp_rest.model.VehicleInfo;
 import com.iitp.iitp_rest.model.network.NetworkXml;
+import com.iitp.iitp_rest.model.network.connection.ConnectionXml;
+import com.iitp.iitp_rest.model.network.link.LinkXml;
+import com.iitp.iitp_rest.model.network.node.NodeXml;
 import com.iitp.iitp_rest.model.network.road.RoadResponse;
 import com.iitp.iitp_rest.model.geometry.Cartesian3;
 import com.iitp.iitp_rest.model.vehicle.route.VehicleRequest;
 import com.iitp.iitp_rest.model.scenario.Scenario;
 import com.iitp.iitp_rest.model.signal.SignalTimelineResponse;
 import com.iitp.iitp_rest.service.network.NetworkService;
-import com.iitp.iitp_rest.util.SftpFileManager;
+import com.iitp.iitp_rest.util.FileStorageService;
 import com.iitp.iitp_rest.service.scenario.ScenarioService;
 import com.iitp.iitp_rest.service.signal.SignalTimelineService;
+import com.iitp.iitp_rest.service.vehicle.DummySignalGenerator;
 import com.iitp.iitp_rest.service.vehicle.DummyVehicleGenerator;
 import com.iitp.iitp_rest.service.vehicle.VehicleRouteService;
 import com.iitp.iitp_rest.util.CoordinateConverter;
 import com.iitp.iitp_rest.util.GeoJsonUtils;
 import com.iitp.iitp_rest.util.VehicleDataReader;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
+import javax.xml.parsers.DocumentBuilderFactory;
 import lombok.RequiredArgsConstructor;
-import org.apache.commons.math3.complex.Quaternion;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.apache.commons.math3.geometry.euclidean.threed.Vector3D;
 import org.locationtech.proj4j.ProjCoordinate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
-import java.time.Duration;
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
@@ -54,12 +68,17 @@ public class VehicleController {
     private final SignalTimelineService signalTimelineService;
     private final NetworkService networkService;
     private final DummyVehicleGenerator dummyVehicleGenerator;
-    private final SftpFileManager sftpFileManager;
+    private final DummySignalGenerator dummySignalGenerator;
+    private final FileStorageService fileStorage;
 
     /** 현재 비동기 생성 중인 scenarioKey 집합 */
     private final java.util.concurrent.ConcurrentHashMap<String, Boolean> generatingSet = new java.util.concurrent.ConcurrentHashMap<>();
     /** 마지막 생성 실패 메시지 (scenarioKey → 에러메시지) */
     private final java.util.concurrent.ConcurrentHashMap<String, String> failedSet = new java.util.concurrent.ConcurrentHashMap<>();
+    /** 현재 생성 단계 메시지 (scenarioKey → 단계 설명) */
+    private final java.util.concurrent.ConcurrentHashMap<String, String> stageMap = new java.util.concurrent.ConcurrentHashMap<>();
+    /** 생성 시작 시각 (scenarioKey → System.currentTimeMillis()) */
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> startTimeMap = new java.util.concurrent.ConcurrentHashMap<>();
 
     @Value("${database.vehicle_sim.remoteUrl}")
     private String remoteUrl;
@@ -80,16 +99,24 @@ public class VehicleController {
         String networkXmlUrl = remoteUrl + scenarioKey + "/network.xml";
         logger.info("[generateVehicleRoute] scenarioKey={}, networkXmlUrl={}", scenarioKey, networkXmlUrl);
 
-        InputStream is;
-        try {
-            is = new URL(networkXmlUrl).openStream();
+        // [PERF] network.xml 원격 다운로드 (openStream은 lazy → 전체 바이트를 먼저 받아 시간 분리 측정)
+        stageMap.put(scenarioKey, "네트워크 XML 다운로드 중...");
+        long _tDl = System.currentTimeMillis();
+        byte[] networkBytes;
+        try (InputStream raw = new URL(networkXmlUrl).openStream()) {
+            networkBytes = raw.readAllBytes();
         } catch (java.io.FileNotFoundException e) {
-            logger.warn("[generateVehicleRoute] 원격 데이터 없음: {}", networkXmlUrl);
+            logger.warn("[generateVehicleRoute] network.xml 없음: {}", networkXmlUrl);
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                    .body(Map.of("error", "데이터가 없습니다: " + scenarioKey));
+                    .body(Map.of("error", "network.xml 파일이 없습니다. 네트워크를 먼저 저장하세요: " + scenarioKey));
         }
+        logger.info("[PERF] network.xml 다운로드: {}ms, {}KB", System.currentTimeMillis() - _tDl, networkBytes.length / 1024);
+        InputStream is = new ByteArrayInputStream(networkBytes);
 
+        stageMap.put(scenarioKey, "네트워크 XML 파싱 중...");
+        long _tParse = System.currentTimeMillis();
         List<RoadResponse.Road> roadEntities = GeoJsonUtils.parseXmlToRoads(is);
+        logger.info("[PERF] parseXmlToRoads: {}ms, {} roads", System.currentTimeMillis() - _tParse, roadEntities.size());
 
         // pos_x/pos_y가 링크 기준 좌표계이므로 linkId로만 키잉
         Map<String, RoadResponse.Road> roadMap = roadEntities.stream().collect(Collectors.toMap(
@@ -99,6 +126,7 @@ public class VehicleController {
         ));
 
         // CoordinateConverter 사전 생성
+        long _tConv = System.currentTimeMillis();
         Map<String, CoordinateConverter> converterCache = new ConcurrentHashMap<>();
         roadMap.forEach((key, road) -> {
             CoordinateConverter converter = new CoordinateConverter();
@@ -106,17 +134,41 @@ public class VehicleController {
             converter.setRoadPoint(road.getBaseEasting(), road.getBaseNorthing(), road.getTargetEasting(), road.getTargetNorthing(), road.getHalfWidth());
             converterCache.put(key, converter);
         });
+        logger.info("[PERF] CoordinateConverter 생성: {}ms, {} converters", System.currentTimeMillis() - _tConv, converterCache.size());
 
+        stageMap.put(scenarioKey, "시뮬레이션 데이터 로드 중...");
+        long _tRead = System.currentTimeMillis();
         List<VehicleEvent> vehicleEvents = vehicleDataReader.readVehicleEvent(scenarioKey);
+        logger.info("[PERF] readVehicleEvent: {}ms, {} events", System.currentTimeMillis() - _tRead, vehicleEvents.size());
         if (vehicleEvents.isEmpty()) {
             logger.info("[generateVehicleRoute] {} vehicle_sim.db 없음 — 네트워크 기반 더미 데이터 생성 후 SFTP 저장", scenarioKey);
             try {
                 NetworkXml networkXml = networkService.getNetworkXmlByVersionId(scenarioKey);
-                int numVehicles = request.getNumVehicle() > 0 ? request.getNumVehicle() : 100;
-                vehicleEvents = dummyVehicleGenerator.generate(networkXml, roadMap, numVehicles, 600, 42L);
+                int numVehicles;
+                if (request.getNumVehicle() > 0) {
+                    numVehicles = request.getNumVehicle();
+                } else {
+                    // 도로 총 연장(km) 기반 자동 계산: 15대/km
+                    double totalLengthM = roadMap.values().stream()
+                            .filter(r -> r.getBaseEasting() != null && r.getTargetEasting() != null)
+                            .mapToDouble(r -> {
+                                double dx = r.getTargetEasting() - r.getBaseEasting();
+                                double dy = r.getTargetNorthing() - r.getBaseNorthing();
+                                return Math.sqrt(dx * dx + dy * dy);
+                            })
+                            .sum();
+                    numVehicles = Math.max(50, (int) (totalLengthM / 1000.0 * 15.0));
+                    logger.info("[generateVehicleRoute] {} 면적 기반 차량 수 자동 계산: 도로 연장 {}km → {}대",
+                            scenarioKey, String.format("%.1f", totalLengthM / 1000.0), numVehicles);
+                }
+                stageMap.put(scenarioKey, "더미 차량 경로 생성 중... (차량 " + numVehicles + "대)");
+                DummyVehicleGenerator.SignalContext signalCtx =
+                        buildSignalContext(networkXml, remoteUrl + scenarioKey + "/signal.xml");
+                vehicleEvents = dummyVehicleGenerator.generate(networkXml, roadMap, numVehicles, 600, 42L, signalCtx);
                 if (!vehicleEvents.isEmpty()) {
+                    stageMap.put(scenarioKey, "SQLite 파일 생성 및 서버 업로드 중... (이벤트 " + vehicleEvents.size() + "건)");
                     try (java.io.InputStream dbStream = dummyVehicleGenerator.writeToSqlite(vehicleEvents)) {
-                        sftpFileManager.uploadFile(dbStream, scenarioKey, "vehicle_sim.db");
+                        fileStorage.uploadFile(dbStream, scenarioKey, "vehicle_sim.db");
                         logger.info("[generateVehicleRoute] {} vehicle_sim.db SFTP 업로드 완료", scenarioKey);
                     }
                 }
@@ -128,6 +180,7 @@ public class VehicleController {
             }
         }
 
+        stageMap.put(scenarioKey, "차량 이벤트 그룹화 중... (" + vehicleEvents.size() + "건)");
         Map<String, List<VehicleEvent>> grouped = vehicleEvents.stream()
                 .collect(Collectors.groupingBy(VehicleEvent::getId));
 
@@ -154,6 +207,7 @@ public class VehicleController {
         // 사이클 커버 범위: t=0 ~ simMaxTime
         int simulationDuration = (int) Math.ceil(simMaxTime) + 10; // 여유 10초
 
+        stageMap.put(scenarioKey, "CZML 좌표 변환 중... (차량 " + grouped.size() + "대)");
         List<SignalTimelineResponse> signalTimeline = signalTimelineService.generateSignalTimeline(baseEpoch, "0", scenarioKey, simulationDuration);
 
         AtomicReference<Instant> earliestStartRef = new AtomicReference<>(null);
@@ -180,41 +234,42 @@ public class VehicleController {
 
             List<Map.Entry<Double, Cartesian3>> path = new ArrayList<>();
             List<Cartesian3> path2d = new ArrayList<>();
-            Cartesian3 lastValidPos = null;
 
             for (VehicleEvent vehicle : vehicles) {
                 String key = vehicle.getLinkId();
 
                 // 교차로 구간: DB link_id가 node_id인 경우 "nodeId_laneId" 키로 조회
+                boolean isConnection = false;
                 if (!roadMap.containsKey(key)) {
                     key = vehicle.getLinkId() + "_" + vehicle.getLaneId();
+                    isConnection = true;
                 }
 
                 RoadResponse.Road baseRoad = roadMap.get(key);
                 if (baseRoad == null) {
-                    // 네트워크에 없는 링크(교차로 내부 등): 마지막 유효 위치를 유지하여
-                    // 보간 시 차량이 멈춰 있도록 처리
-                    if (lastValidPos != null) {
-                        path.add(Map.entry(vehicle.getTimestep(), lastValidPos));
-                        path2d.add(lastValidPos);
-                    }
+                    // 네트워크에 없는 링크: 스킵 (GAP_THRESHOLD 초과 시 차량이 사라졌다 나타남)
                     continue;
                 }
 
                 ProjCoordinate actualCoord;
                 if (baseRoad.getLaneShape() != null) {
-                    // non-straight connection: bezier 곡선 위에서 posX 거리만큼 보간
-                    actualCoord = CoordinateConverter.interpolateAlongLane(
-                            baseRoad.getLaneShape(), vehicle.getPosX(),
-                            scenario.getLongitude(), scenario.getLatitude());
+                    if (isConnection) {
+                        // connection: bezier 곡선이 차선 중심선 → posY 오프셋 불필요
+                        actualCoord = CoordinateConverter.interpolateAlongLane(
+                                baseRoad.getLaneShape(), vehicle.getPosX(),
+                                scenario.getLongitude(), scenario.getLatitude());
+                    } else {
+                        // regular link: shape 폴리라인을 따르되 posY 횡방향 오프셋 적용
+                        actualCoord = CoordinateConverter.interpolateAlongShapeWithOffset(
+                                baseRoad.getLaneShape(), vehicle.getPosX(), vehicle.getPosY(), baseRoad.getHalfWidth(),
+                                scenario.getLongitude(), scenario.getLatitude());
+                    }
                     if (actualCoord == null) actualCoord = converterCache.get(key).toAbsolute(vehicle.getPosX(), vehicle.getPosY());
                 } else {
-                    CoordinateConverter converter = converterCache.get(key);
-                    actualCoord = converter.toAbsolute(vehicle.getPosX(), vehicle.getPosY());
+                    actualCoord = converterCache.get(key).toAbsolute(vehicle.getPosX(), vehicle.getPosY());
                 }
 
                 Cartesian3 pos = Cartesian3.fromDegrees(actualCoord.x, actualCoord.y, 0);
-                lastValidPos = pos;
 
                 path.add(Map.entry(vehicle.getTimestep(), pos));
                 path2d.add(pos);  // 재사용
@@ -253,53 +308,6 @@ public class VehicleController {
                 cartesianArray.add(p.getValue().getX());
                 cartesianArray.add(p.getValue().getY());
                 cartesianArray.add(p.getValue().getZ());
-            }
-
-            List<Object> unitQuaternionArray = new ArrayList<>();
-
-            Quaternion prevQuaternion = null;
-
-
-            Cartesian3 first = path2d.getFirst();
-            Cartesian3 last = path2d.get(path.size()-1);
-
-            Vector3D initDirection = new Vector3D(
-                    last.getX() - first.getX(),
-                    last.getY() - first.getY(),
-                    last.getZ() - first.getZ()
-            );
-
-            for (int i = 1; i < path.size(); i++) {
-                double timeOffsetSeconds = path.get(i).getKey(); // Double형 초
-
-                // 기준 시간에 timeOffsetSeconds 만큼 더한 Instant 계산
-                Instant time = startTime.plus(Duration.ofNanos((long)(timeOffsetSeconds * 1_000_000_000L)));
-
-                Cartesian3 prev = path2d.get(i - 1);
-                Cartesian3 curr = path2d.get(i);
-
-                // 방향 벡터 계산
-                Vector3D direction = new Vector3D(
-                        curr.getX() - prev.getX(),
-                        curr.getY() - prev.getY(),
-                        curr.getZ() - prev.getZ()
-                );
-
-                Quaternion q;
-                if (direction.getNorm() < 1e-2) {  // 방향 없음 또는 매우 작을 때
-                    q = prevQuaternion != null ? prevQuaternion : getQuaternionFromDirection(initDirection);
-                } else {
-                    q = getQuaternionFromDirection(direction);
-                }
-
-                prevQuaternion = q;
-
-                // 단위 quaternion = [time, x, y, z, w]
-                unitQuaternionArray.add(Duration.between(startTime, time).getSeconds());  // czml용 offset 시간 값
-                unitQuaternionArray.add(q.getQ1()); // x
-                unitQuaternionArray.add(q.getQ2()); // y
-                unitQuaternionArray.add(q.getQ3()); // z
-                unitQuaternionArray.add(q.getQ0()); // w
             }
 
             List<List<Double>> lineCoordinates = path2d.stream()
@@ -356,7 +364,12 @@ public class VehicleController {
         });
 
         Instant globalStart = earliestStartRef.get();
-        Instant globalStop = latestStopRef.get();
+        Instant globalStop  = latestStopRef.get();
+
+        if (globalStart == null || globalStop == null) {
+            throw new java.io.FileNotFoundException(
+                "차량 경로 생성 실패: 유효한 좌표가 없습니다 (roadMap에 링크가 없거나 vehicle_sim.db가 비어있음) — scenarioKey=" + scenarioKey);
+        }
 
         Map<String, Object> documentPacket = Map.of(
                 "id", "document",
@@ -372,7 +385,9 @@ public class VehicleController {
         );
         czml.addFirst(documentPacket);
 
+        stageMap.put(scenarioKey, "DB 저장 중...");
         vehicleRouteService.saveRoute(scenarioKey, czml, featureList, vehiclePathList, baseEpoch, scenarioKey);
+        stageMap.remove(scenarioKey);
 
         Map<String, Object> response = new HashMap<>();
         response.put("czml", czml);
@@ -400,10 +415,145 @@ public class VehicleController {
         }
     }
 
+    /** VehicleDataReader가 지원하는 테이블별 필수 컬럼 (하나라도 매칭되면 유효한 vehicle_sim.db) */
+    private static final Map<String, List<String>> VEHICLE_DB_REQUIRED_COLUMNS = Map.of(
+            "VehicleEvent", List.of("veh_id", "timestep", "link_id", "lane_id", "pos_x", "pos_y"),
+            "VehicleEventDebugging", List.of("veh_id", "type", "timestep", "link_id", "lane_id", "pos_x", "pos_y", "spd", "acc", "spacing", "mode", "leader_id", "target_lane_id"),
+            "vehicle_sim", List.of("id", "timestep", "pos_x", "pos_y", "link_id")
+    );
+
+    /** 시뮬레이션 결과 SQLite 파일(vehicle_sim.db) 업로드 — SFTP 저장 후 캐시된 경로 데이터 삭제 */
+    @PostMapping("/upload-db/{versionId}")
+    public ResponseEntity<Map<String, Object>> uploadVehicleSimDb(
+            @PathVariable String versionId,
+            @RequestParam("file") MultipartFile file) throws IOException {
+        logger.info("[uploadVehicleSimDb] versionId={}, filename={}, size={}bytes", versionId, file.getOriginalFilename(), file.getSize());
+
+        if (file.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "파일이 비어 있습니다."));
+        }
+
+        byte[] header = new byte[16];
+        try (InputStream is = file.getInputStream()) {
+            int read = is.readNBytes(header, 0, 16);
+            if (read < 15 || !"SQLite format 3".equals(new String(header, 0, 15, StandardCharsets.US_ASCII))) {
+                return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                        .body(Map.of("error", "유효한 SQLite(.db) 파일이 아닙니다. (SQLite 헤더 불일치)"));
+            }
+        }
+
+        File tempFile = File.createTempFile("vehicle_sim_upload_", ".db");
+        try {
+            file.transferTo(tempFile);
+
+            String schemaError = validateVehicleSimDbSchema(tempFile);
+            if (schemaError != null) {
+                logger.warn("[uploadVehicleSimDb] 스키마 검증 실패 versionId={}: {}", versionId, schemaError);
+                return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                        .body(Map.of("error", schemaError));
+            }
+
+            try (InputStream is = new FileInputStream(tempFile)) {
+                fileStorage.uploadFile(is, versionId, "vehicle_sim.db");
+            }
+        } finally {
+            tempFile.delete();
+        }
+        logger.info("[uploadVehicleSimDb] {} vehicle_sim.db SFTP 업로드 완료", versionId);
+
+        // 캐시된 차량 경로 데이터 삭제 → 다음 재생 시 새 DB로 재생성
+        vehicleRouteService.getByVersionId(versionId).ifPresent(vehicleRouteService::deleteRoute);
+
+        return ResponseEntity.ok(Map.of("status", "ok"));
+    }
+
+    /**
+     * 업로드된 SQLite 파일이 VehicleDataReader가 읽을 수 있는 스키마인지 검사한다.
+     * VehicleEvent / VehicleEventDebugging / vehicle_sim 테이블 중 하나가 필요한 컬럼을 모두 갖춰야 한다.
+     * @return 문제 없으면 null, 문제가 있으면 사용자에게 보여줄 에러 메시지
+     */
+    private String validateVehicleSimDbSchema(File dbFile) {
+        try (Connection conn = DriverManager.getConnection("jdbc:sqlite:" + dbFile.getAbsolutePath())) {
+            Set<String> tableNames = new HashSet<>();
+            try (ResultSet rs = conn.getMetaData().getTables(null, null, "%", new String[]{"TABLE"})) {
+                while (rs.next()) tableNames.add(rs.getString("TABLE_NAME"));
+            }
+
+            String matchedKey = null;
+            String matchedTable = null;
+            for (String candidate : VEHICLE_DB_REQUIRED_COLUMNS.keySet()) {
+                String found = tableNames.stream().filter(candidate::equalsIgnoreCase).findFirst().orElse(null);
+                if (found != null) {
+                    matchedKey = candidate;
+                    matchedTable = found;
+                    break;
+                }
+            }
+
+            if (matchedTable == null) {
+                return String.format(
+                        "차량 시뮬레이션 데이터 테이블(VehicleEvent, VehicleEventDebugging, vehicle_sim)을 찾을 수 없습니다. "
+                                + "이 DB에 있는 테이블: %s",
+                        tableNames.isEmpty() ? "없음" : String.join(", ", tableNames));
+            }
+
+            Set<String> columns = new HashSet<>();
+            try (ResultSet rs = conn.getMetaData().getColumns(null, null, matchedTable, "%")) {
+                while (rs.next()) columns.add(rs.getString("COLUMN_NAME").toLowerCase());
+            }
+
+            List<String> missing = VEHICLE_DB_REQUIRED_COLUMNS.get(matchedKey).stream()
+                    .filter(col -> !columns.contains(col.toLowerCase()))
+                    .toList();
+
+            if (!missing.isEmpty()) {
+                return String.format(
+                        "%s 테이블에 필요한 컬럼이 없습니다: %s (현재 컬럼: %s)",
+                        matchedTable, String.join(", ", missing), String.join(", ", columns));
+            }
+
+            return null;
+        } catch (SQLException e) {
+            return "SQLite 파일을 읽을 수 없습니다: " + e.getMessage();
+        }
+    }
+
+    @GetMapping("/vehicle-route/{scenarioKey}/exists")
+    public ResponseEntity<Map<String, Object>> checkVehicleRouteExists(@PathVariable String scenarioKey) {
+        boolean exists = vehicleRouteService.getByVersionId(scenarioKey).isPresent();
+        boolean generating = generatingSet.containsKey(scenarioKey);
+        return ResponseEntity.ok(Map.of("exists", exists, "generating", generating));
+    }
+
+    @DeleteMapping("/vehicle-route/{scenarioKey}")
+    public ResponseEntity<Void> deleteVehicleRoute(@PathVariable String scenarioKey) {
+        generatingSet.remove(scenarioKey);
+        vehicleRouteService.getByVersionId(scenarioKey).ifPresent(vehicleRouteService::deleteRoute);
+        try {
+            fileStorage.deleteFile(scenarioKey + "/vehicle_sim.db");
+        } catch (Exception e) {
+            logger.warn("[vehicle-route] {} vehicle_sim.db 삭제 실패(무시): {}", scenarioKey, e.getMessage());
+        }
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/vehicle-route/{scenarioKey}")
     public ResponseEntity<Map<String, Object>> getVehicleRoute(
             @RequestBody VehicleRequest request,
             @PathVariable String scenarioKey) throws IOException {
+
+        // regenerate=true이면 캐시 강제 삭제 후 처음부터 재생성
+        if (request.isRegenerate()) {
+            logger.info("[vehicle-route] {} 강제 재생성 요청 — CZML 캐시 및 vehicle_sim.db 삭제", scenarioKey);
+            vehicleRouteService.getByVersionId(scenarioKey).ifPresent(vehicleRouteService::deleteRoute);
+            failedSet.remove(scenarioKey);
+            try {
+                fileStorage.deleteFile(scenarioKey + "/vehicle_sim.db");
+                logger.info("[vehicle-route] {} vehicle_sim.db 삭제 완료", scenarioKey);
+            } catch (Exception e) {
+                logger.warn("[vehicle-route] {} vehicle_sim.db 삭제 실패(무시): {}", scenarioKey, e.getMessage());
+            }
+        }
 
         Optional<VehicleRoute> optional = vehicleRouteService.getByVersionId(scenarioKey);
 
@@ -415,33 +565,98 @@ public class VehicleController {
                 return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
                         .body(Map.of("status", "failed", "message", failMsg));
             }
-            // 이미 생성 중이면 202 반환
+            // 이미 생성 중이면 202 반환 (현재 단계 포함)
             if (generatingSet.containsKey(scenarioKey)) {
-                logger.info("[vehicle-route] {} 생성 중, 202 반환", scenarioKey);
+                String stage = stageMap.getOrDefault(scenarioKey, "처리 중...");
+                long elapsedSec = startTimeMap.containsKey(scenarioKey)
+                        ? (System.currentTimeMillis() - startTimeMap.get(scenarioKey)) / 1000
+                        : 0;
+                logger.info("[vehicle-route] {} 생성 중 [{}] {}초 경과", scenarioKey, stage, elapsedSec);
                 return ResponseEntity.status(HttpStatus.ACCEPTED)
-                        .body(Map.of("status", "generating", "message", "경로 데이터 생성 중입니다. 잠시 후 다시 시도하세요."));
+                        .body(Map.of("status", "generating",
+                                "stage", stage,
+                                "elapsed", elapsedSec,
+                                "message", stage));
             }
             // 비동기 생성 시작 후 202 반환
             generatingSet.put(scenarioKey, true);
+            startTimeMap.put(scenarioKey, System.currentTimeMillis());
+            stageMap.put(scenarioKey, "초기화 중...");
             logger.info("[vehicle-route] {} 비동기 생성 시작", scenarioKey);
             final VehicleRequest req = request;
             new Thread(() -> {
                 try {
-                    generateVehicleRoute(req, scenarioKey);
+                    ResponseEntity<Map<String, Object>> result = generateVehicleRoute(req, scenarioKey);
+                    if (!result.getStatusCode().is2xxSuccessful()) {
+                        // 반환된 에러 ResponseEntity → 예외로 변환하여 failedSet에 등록
+                        Object body = result.getBody();
+                        String errMsg = "알 수 없는 오류";
+                        if (body instanceof Map<?, ?> m) {
+                            Object e = m.get("error");
+                            if (e != null) errMsg = e.toString();
+                        }
+                        throw new RuntimeException(errMsg);
+                    }
                     logger.info("[vehicle-route] {} 생성 완료", scenarioKey);
                 } catch (Exception e) {
                     logger.error("[vehicle-route] {} 생성 실패: {}", scenarioKey, e.getMessage());
                     failedSet.put(scenarioKey, e.getMessage() != null ? e.getMessage() : "알 수 없는 오류");
                 } finally {
                     generatingSet.remove(scenarioKey);
+                    startTimeMap.remove(scenarioKey);
+                    stageMap.remove(scenarioKey);
                 }
             }, "vehicle-gen-" + scenarioKey).start();
 
             return ResponseEntity.status(HttpStatus.ACCEPTED)
-                    .body(Map.of("status", "generating", "message", "경로 데이터 생성을 시작했습니다. 잠시 후 다시 시도하세요."));
+                    .body(Map.of("status", "generating",
+                            "stage", "초기화 중...",
+                            "elapsed", 0,
+                            "message", "차량 경로 데이터 생성을 시작했습니다."));
         }
 
         VehicleRoute route = optional.get();
+
+        // czml이 null이면 스테일 레코드 — 삭제 후 재생성
+        if (route.getCzml() == null) {
+            logger.warn("[vehicle-route] {} DB 레코드는 있으나 czml null — 삭제 후 재생성", scenarioKey);
+            vehicleRouteService.deleteRoute(route);
+            // 재귀 호출 없이 즉시 비동기 생성 시작
+            if (!generatingSet.containsKey(scenarioKey)) {
+                generatingSet.put(scenarioKey, true);
+                startTimeMap.put(scenarioKey, System.currentTimeMillis());
+                stageMap.put(scenarioKey, "초기화 중...");
+                final VehicleRequest req = request;
+                new Thread(() -> {
+                    try {
+                        ResponseEntity<Map<String, Object>> result = generateVehicleRoute(req, scenarioKey);
+                        if (!result.getStatusCode().is2xxSuccessful()) {
+                            Object body = result.getBody();
+                            String errMsg = "알 수 없는 오류";
+                            if (body instanceof Map<?, ?> m) {
+                                Object e = m.get("error");
+                                if (e != null) errMsg = e.toString();
+                            }
+                            throw new RuntimeException(errMsg);
+                        }
+                        logger.info("[vehicle-route] {} 재생성 완료", scenarioKey);
+                    } catch (Exception e) {
+                        logger.error("[vehicle-route] {} 재생성 실패: {}", scenarioKey, e.getMessage());
+                        failedSet.put(scenarioKey, e.getMessage() != null ? e.getMessage() : "알 수 없는 오류");
+                    } finally {
+                        generatingSet.remove(scenarioKey);
+                        startTimeMap.remove(scenarioKey);
+                        stageMap.remove(scenarioKey);
+                    }
+                }, "vehicle-gen-" + scenarioKey).start();
+            }
+            return ResponseEntity.status(HttpStatus.ACCEPTED)
+                    .body(Map.of("status", "generating",
+                            "stage", "초기화 중...",
+                            "elapsed", 0,
+                            "message", "경로 데이터 재생성 중입니다."));
+        }
+
         ObjectMapper mapper = new ObjectMapper();
 
         String dataPath = route.getDataPath() != null ? route.getDataPath() : scenarioKey;
@@ -450,13 +665,15 @@ public class VehicleController {
         try {
             Map<String, Object> response = new HashMap<>();
             response.put("czml", mapper.readValue(route.getCzml(), Object.class));
-            response.put("features", mapper.readValue(route.getFeatures(), Object.class));
-            response.put("positions", mapper.readValue(route.getPositions(), Object.class));
+            response.put("features", route.getFeatures() != null ? mapper.readValue(route.getFeatures(), Object.class) : List.of());
+            response.put("positions", route.getPositions() != null ? mapper.readValue(route.getPositions(), Object.class) : List.of());
             response.put("signalTimeline", signalTimeline);
             return ResponseEntity.ok(response);
-        } catch (JsonProcessingException e) {
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Map.of("error", "Failed to parse JSON"));
+        } catch (Exception e) {
+            logger.warn("[vehicle-route] {} JSON 파싱 실패 — 삭제 후 재생성: {}", scenarioKey, e.getMessage());
+            vehicleRouteService.deleteRoute(route);
+            return ResponseEntity.status(HttpStatus.ACCEPTED)
+                    .body(Map.of("status", "generating", "message", "경로 데이터가 손상되어 재생성합니다."));
         }
     }
 
@@ -483,53 +700,134 @@ public class VehicleController {
         }
     }
 
-    // 단위 벡터 a를 기준으로 z축을 회전시켜 맞추는 쿼터니언 반환
-    public Quaternion getQuaternionFromDirection(Vector3D direction) {
-        Vector3D forward = direction.normalize(); // Z축 대체
-        Vector3D up = new Vector3D(0, 0, 1); // 기본 Y축
-        Vector3D right = Vector3D.crossProduct(up, forward).normalize(); // X축 방향
-        up = Vector3D.crossProduct(forward, right); // 새로운 up 벡터
+    /**
+     * signal.xml + NetworkXml을 파싱해 DummyVehicleGenerator.SignalContext를 생성한다.
+     * signal.xml이 없거나 파싱 실패 시 빈 컨텍스트를 반환 (신호 무시).
+     */
+    private DummyVehicleGenerator.SignalContext buildSignalContext(NetworkXml networkXml, String signalXmlUrl) {
+        // ── linkId → toNodeId ──────────────────────────────────────────
+        Map<String, String> linkToNode = new HashMap<>();
+        if (networkXml.getLinks() != null) {
+            for (LinkXml link : networkXml.getLinks()) {
+                if (link.getId() != null && link.getToNode() != null) {
+                    linkToNode.put(String.valueOf(link.getId()), String.valueOf(link.getToNode()));
+                }
+            }
+        }
 
-        // 회전 행렬 생성
-        double[][] rot = new double[][]{
-                {right.getX(), up.getX(), forward.getX()},
-                {right.getY(), up.getY(), forward.getY()},
-                {right.getZ(), up.getZ(), forward.getZ()}
-        };
+        // ── "nodeId_connId" → {fromLinkId, toLinkId} ───────────────────
+        // network.xml의 connection id는 노드별 로컬 ID(0,1,2,...)이므로
+        // connId 단독을 전역 키로 쓰면 서로 다른 노드의 connection이 충돌한다.
+        Map<String, String[]> connIdToMeta = new HashMap<>();
+        if (networkXml.getNodes() != null) {
+            for (NodeXml node : networkXml.getNodes()) {
+                if (node.getConnections() == null) continue;
+                String nodeId = String.valueOf(node.getId());
+                for (ConnectionXml conn : node.getConnections()) {
+                    if (conn.getId() == null || conn.getFromLink() == null || conn.getToLink() == null) continue;
+                    connIdToMeta.put(nodeId + "_" + conn.getId(), new String[]{
+                        String.valueOf(conn.getFromLink()),
+                        String.valueOf(conn.getToLink())
+                    });
+                }
+            }
+        }
 
-        // 회전 행렬을 쿼터니언으로 변환
-        return rotationMatrixToQuaternion(rot);
+        // ── signal.xml 파싱 ───────────────────────────────────────────
+        Map<String, DummyVehicleGenerator.NodeSignalInfo> nodeSignals = new HashMap<>();
+        Map<String, String> connKeyToTurn = new HashMap<>();
+
+        try (InputStream signalIs = new URL(signalXmlUrl).openStream()) {
+            Document doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(signalIs);
+            NodeList signalNodes = doc.getElementsByTagName("node");
+
+            for (int i = 0; i < signalNodes.getLength(); i++) {
+                Element nodeEl = (Element) signalNodes.item(i);
+                String nodeId = nodeEl.getAttribute("id");
+
+                // turn 파싱: connId → turnId, RTOR 여부
+                Map<String, String> connIdStrToTurnId = new HashMap<>();
+                Set<String> rtorTurns = new HashSet<>();
+
+                NodeList turns = nodeEl.getElementsByTagName("turn");
+                for (int t = 0; t < turns.getLength(); t++) {
+                    Element turnEl = (Element) turns.item(t);
+                    String turnId = turnEl.getAttribute("id");
+                    String type   = turnEl.getAttribute("type");
+
+                    if ("RTOR".equalsIgnoreCase(type)) rtorTurns.add(turnId);
+
+                    // connList 또는 conn_list 속성
+                    String connListStr = turnEl.getAttribute("connList");
+                    if (connListStr.isEmpty()) connListStr = turnEl.getAttribute("conn_list");
+
+                    for (String cid : connListStr.trim().split("\\s+")) {
+                        if (!cid.isEmpty()) connIdStrToTurnId.put(cid, turnId);
+                    }
+                }
+
+                // connKey 매핑 구성
+                for (Map.Entry<String, String> entry : connIdStrToTurnId.entrySet()) {
+                    String[] meta = connIdToMeta.get(nodeId + "_" + entry.getKey());
+                    if (meta == null) continue;
+                    String key    = nodeId + "_" + meta[0] + "_" + meta[1];
+                    String turnId = entry.getValue();
+                    // RTOR → 빈 문자열(항상 통과)
+                    connKeyToTurn.put(key, rtorTurns.contains(turnId) ? "" : turnId);
+                }
+
+                // plan 파싱 (plan id="0" 우선, 없으면 첫 번째)
+                Element planListEl = firstElement(nodeEl, "planList", "plan_list");
+                if (planListEl == null) continue;
+
+                NodeList plans = planListEl.getElementsByTagName("plan");
+                Element selectedPlan = null;
+                for (int p = 0; p < plans.getLength(); p++) {
+                    Element plan = (Element) plans.item(p);
+                    if ("0".equals(plan.getAttribute("id"))) { selectedPlan = plan; break; }
+                }
+                if (selectedPlan == null && plans.getLength() > 0) selectedPlan = (Element) plans.item(0);
+                if (selectedPlan == null) continue;
+
+                int cycle  = Integer.parseInt(selectedPlan.getAttribute("cycle"));
+                int offset = Integer.parseInt(selectedPlan.getAttribute("offset"));
+
+                NodeList phases = selectedPlan.getElementsByTagName("phase");
+                List<DummyVehicleGenerator.PhaseInfo> phaseList = new ArrayList<>();
+                for (int ph = 0; ph < phases.getLength(); ph++) {
+                    Element phaseEl  = (Element) phases.item(ph);
+                    int duration = Integer.parseInt(phaseEl.getAttribute("duration"));
+                    String tList = phaseEl.getAttribute("turnList");
+                    if (tList.isEmpty()) tList = phaseEl.getAttribute("turn_list");
+
+                    Set<String> activeTurns = new HashSet<>(Arrays.asList(tList.trim().split("\\s+")));
+                    activeTurns.remove("");
+                    phaseList.add(new DummyVehicleGenerator.PhaseInfo(duration, activeTurns));
+                }
+
+                nodeSignals.put(nodeId, new DummyVehicleGenerator.NodeSignalInfo(cycle, offset, phaseList));
+            }
+
+            logger.info("[buildSignalContext] signal.xml 파싱 완료: 신호 노드 {}개, connKey 매핑 {}개",
+                    nodeSignals.size(), connKeyToTurn.size());
+
+        } catch (java.io.FileNotFoundException e) {
+            logger.warn("[buildSignalContext] signal.xml 없음 — 네트워크 구조 기반 더미 신호 생성: {}", signalXmlUrl);
+            return dummySignalGenerator.generate(networkXml, linkToNode);
+        } catch (Exception e) {
+            logger.warn("[buildSignalContext] signal.xml 파싱 실패 — 더미 신호로 대체: {}", e.getMessage());
+            return dummySignalGenerator.generate(networkXml, linkToNode);
+        }
+
+        return new DummyVehicleGenerator.SignalContext(nodeSignals, linkToNode, connKeyToTurn);
     }
 
-    // 3x3 회전 행렬을 쿼터니언으로 변환
-    private Quaternion rotationMatrixToQuaternion(double[][] m) {
-        double t = m[0][0] + m[1][1] + m[2][2];
-        double x, y, z, w;
-        if (t > 0) {
-            double s = Math.sqrt(t + 1.0) * 2;
-            w = 0.25 * s;
-            x = (m[2][1] - m[1][2]) / s;
-            y = (m[0][2] - m[2][0]) / s;
-            z = (m[1][0] - m[0][1]) / s;
-        } else if ((m[0][0] > m[1][1]) & (m[0][0] > m[2][2])) {
-            double s = Math.sqrt(1.0 + m[0][0] - m[1][1] - m[2][2]) * 2;
-            w = (m[2][1] - m[1][2]) / s;
-            x = 0.25 * s;
-            y = (m[0][1] + m[1][0]) / s;
-            z = (m[0][2] + m[2][0]) / s;
-        } else if (m[1][1] > m[2][2]) {
-            double s = Math.sqrt(1.0 + m[1][1] - m[0][0] - m[2][2]) * 2;
-            w = (m[0][2] - m[2][0]) / s;
-            x = (m[0][1] + m[1][0]) / s;
-            y = 0.25 * s;
-            z = (m[1][2] + m[2][1]) / s;
-        } else {
-            double s = Math.sqrt(1.0 + m[2][2] - m[0][0] - m[1][1]) * 2;
-            w = (m[1][0] - m[0][1]) / s;
-            x = (m[0][2] + m[2][0]) / s;
-            y = (m[1][2] + m[2][1]) / s;
-            z = 0.25 * s;
+    /** tagNames 중 첫 번째로 존재하는 Element를 반환한다 (대소문자/언더스코어 변형 처리). */
+    private Element firstElement(Element parent, String... tagNames) {
+        for (String tag : tagNames) {
+            NodeList nl = parent.getElementsByTagName(tag);
+            if (nl.getLength() > 0) return (Element) nl.item(0);
         }
-        return new Quaternion(w, x, y, z); // Cesium은 w,x,y,z 순서
+        return null;
     }
 }
