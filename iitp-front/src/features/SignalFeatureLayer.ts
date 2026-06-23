@@ -16,7 +16,13 @@ import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import { Style, Icon, Circle as CircleStyle, Fill, Text, Stroke } from "ol/style";
 import { FeatureLike } from "ol/Feature";
 import { signalRenderState } from "@stores/signalRenderState";
-import { getSignalLodTierByResolution } from "@utils/lodConstants";
+import { getSignalLodTierByResolution, SIGNAL_TILING } from "@utils/lodConstants";
+import { SignalTileManager } from "@managers/SignalTileManager";
+import { SignalTileMembership } from "@managers/signalTileMembership";
+import { useScenarioStore } from "@stores/useScenarioStore";
+import { unByKey } from "ol/Observable";
+import type { EventsKey } from "ol/events";
+import type OLMap from "ol/Map";
 
 /* ── 신호등 캔버스 아이콘 (정적) ── */
 function createTrafficLightIcon(): HTMLCanvasElement {
@@ -129,6 +135,12 @@ export class SignalFeatureLayer extends VectorLayer {
     private colorInterval: ReturnType<typeof setInterval> | null = null;
     private lastWallClock = "";
 
+    // ── 신호 타일링 (SIGNAL_TILING.ENABLED 일 때만; 읽기 전용) ──
+    // viewport 신호 데이터(nodeId → signal)만 메모리 보유. feature 위치는 네트워크 링크에서 파생.
+    private tileManager: SignalTileManager | null = null;
+    private membership = new SignalTileMembership();
+    private moveEndKey: EventsKey | null = null;
+
     constructor() {
         const source = new VectorSource();
         super({
@@ -212,7 +224,10 @@ export class SignalFeatureLayer extends VectorLayer {
         this.source.clear();
         if (!currentJsonData) return;
 
-        const { signals } = currentJsonData;
+        // 타일 모드: viewport 신호만 사용. 비-타일 모드: store 전체 신호 사용.
+        const signals: any[] = SIGNAL_TILING.ENABLED
+            ? this.membership.values()
+            : (currentJsonData.signals ?? []);
         if (!signals?.length) return;
 
         const networkData = useNetworkStore.getState().currentJsonData;
@@ -303,11 +318,43 @@ export class SignalFeatureLayer extends VectorLayer {
         return FEATURE_TYPE.SIGNAL;
     }
 
+    /** OL이 레이어를 map에 추가/제거할 때 — 타일 모드면 moveend 구독 + 초기 갱신 */
+    override setMapInternal(map: OLMap | null): void {
+        if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
+        super.setMapInternal(map);
+        if (map && SIGNAL_TILING.ENABLED) {
+            this.moveEndKey = map.on('moveend', () => this.updateTiles(map));
+            this.updateTiles(map);
+        } else if (!map) {
+            this.tileManager?.clear();
+            this.tileManager = null;
+        }
+    }
+
+    private updateTiles(map: OLMap): void {
+        const view = map.getView();
+        const size = map.getSize();
+        const resolution = view.getResolution();
+        if (!size || resolution == null) return;
+        if (!this.tileManager) {
+            const versionId = useScenarioStore.getState().selectedScenario?.key;
+            if (!versionId) return;
+            this.tileManager = new SignalTileManager(String(versionId), {
+                onTileLoaded: (_k, payload) => { if (this.membership.add(payload)) this.load(); },
+                onTileEvicted: (_k, payload) => { if (this.membership.remove(payload)) this.load(); },
+            });
+        }
+        this.tileManager.update(view.calculateExtent(size), resolution);
+    }
+
     public destroy() {
         if (this.colorInterval !== null) {
             clearInterval(this.colorInterval);
             this.colorInterval = null;
         }
+        if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
+        this.tileManager?.clear();
+        this.tileManager = null;
         this.unsubscribes.forEach(u => u());
         this.unsubscribes = [];
     }

@@ -5,6 +5,8 @@ import com.iitp.iitp_rest.model.signal.*;
 import com.iitp.iitp_rest.repository.SignalVersionsRepository;
 import com.iitp.iitp_rest.service.signal.SignalJaxbParser;
 import com.iitp.iitp_rest.service.signal.SignalService;
+import com.iitp.iitp_rest.service.signal.SignalTileService;
+import com.iitp.iitp_rest.util.FileStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -13,6 +15,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.ByteArrayInputStream;
 import java.util.*;
 
 @RestController
@@ -20,14 +23,48 @@ import java.util.*;
 public class SignalController {
     private final Logger logger = LoggerFactory.getLogger(this.getClass());
     private final SignalService signalService;
+    private final SignalTileService signalTileService;
     private final SignalVersionsRepository signalVersionsRepository;
     private final SignalJaxbParser signalJaxbParser;
+    private final FileStorageService fileStorage;
 
-    public SignalController(SignalService signalService, SignalVersionsRepository signalVersionsRepository,
-                            SignalJaxbParser signalJaxbParser) {
+    public SignalController(SignalService signalService, SignalTileService signalTileService,
+                            SignalVersionsRepository signalVersionsRepository,
+                            SignalJaxbParser signalJaxbParser, FileStorageService fileStorage) {
         this.signalService = signalService;
+        this.signalTileService = signalTileService;
         this.signalVersionsRepository = signalVersionsRepository;
         this.signalJaxbParser = signalJaxbParser;
+        this.fileStorage = fileStorage;
+    }
+
+    /**
+     * 신호 BBox 타일링 조회 (읽기 전용) — viewport 와 교차하는 신호만 반환.
+     * 신호는 네트워크 노드에 종속 → 네트워크 노드 좌표로 bbox 산정. 기존 {@code GET /{versionId}} 와 병존.
+     */
+    @GetMapping("/{versionId}/tiles")
+    public ResponseEntity<SignalNodeResponseData> getSignalTiles(
+            @PathVariable String versionId,
+            @RequestParam String bbox) {
+        try {
+            String[] p = bbox.split(",");
+            if (p.length != 4) return ResponseEntity.badRequest().build();
+            double west  = Double.parseDouble(p[0].trim());
+            double south = Double.parseDouble(p[1].trim());
+            double east  = Double.parseDouble(p[2].trim());
+            double north = Double.parseDouble(p[3].trim());
+
+            SignalNodeResponseData result = new SignalNodeResponseData();
+            result.setSignals(signalTileService.queryByBbox(versionId, west, south, east, north));
+            return ResponseEntity.ok(result);
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().build();
+        } catch (java.io.FileNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            logger.error("[SignalController] 타일 조회 오류 versionId={}", versionId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 
 @GetMapping("/{versionId}")
@@ -51,7 +88,7 @@ public ResponseEntity<SignalNodeResponseData> getSignal(@PathVariable String ver
         }
         return ResponseEntity.ok(result);
 
-    } catch (java.io.FileNotFoundException e) {
+    } catch (java.io.IOException e) {
         logger.warn("[getSignal] 원격 데이터 없음: {}", versionId);
         return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
     } catch (Exception e) {
@@ -73,10 +110,21 @@ public ResponseEntity<SignalNodeResponseData> getSignal(@PathVariable String ver
     }
 
     @PostMapping("/{versionId}")
-    public ResponseEntity<Void> saveSignal (@RequestBody SignalSaveRequest request, @PathVariable String versionId) {
-        logger.info("[saveSignal] request: {}", request);
+    public ResponseEntity<Void> saveSignal(@RequestBody SignalSaveRequest request, @PathVariable String versionId) {
+        logger.info("[saveSignal] versionId={} signals={}", versionId, request.getData() != null ? request.getData().size() : 0);
         try {
             signalService.saveSignal(request, versionId);
+            // 편집 저장 시 신호 타일 캐시 무효화 → 다음 타일 요청에서 재빌드
+            signalTileService.invalidate(versionId);
+            // DB 저장과 동시에 signal.xml 파일도 동기화
+            try {
+                SignalXml xml = signalService.toSignalXml(request.getData() != null ? request.getData() : List.of());
+                byte[] xmlBytes = signalJaxbParser.marshal(xml);
+                fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "signal.xml");
+                logger.info("[saveSignal] signal.xml 저장 완료: {}/signal.xml", versionId);
+            } catch (Exception e) {
+                logger.warn("[saveSignal] signal.xml 파일 저장 실패 (DB는 정상 저장됨): {}", e.getMessage());
+            }
             return ResponseEntity.ok().build();
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();

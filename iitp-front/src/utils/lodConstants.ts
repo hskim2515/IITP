@@ -158,6 +158,19 @@ export function networkLodParam(resolution: number): NetworkLodTier {
     return getNetworkLodTierByResolution(resolution);
 }
 
+/**
+ * 신호 BBox 타일링 (네트워크와 동일 격자/패턴, 별도 플래그).
+ * 신호는 네트워크 노드에 종속 → 같은 TILE_DEG 격자. viewport 신호 데이터만 메모리 보유.
+ * ⚠️ 신호 feature는 네트워크 링크에서 위치가 파생되므로, 네트워크가 메모리에 있을 때 의미가 있다.
+ *   기본 off. 자세한 설계: docs/data-scaling-strategy.md
+ */
+export const SIGNAL_TILING = {
+    /** 신호 타일링 활성화 (기본 off) */
+    ENABLED: false,
+    /** near tier 이상(확대)에서만 신호 타일 fetch — 멀리선 신호 자체가 dot/숨김이라 불필요 */
+    MIN_TIER: 'near' as NetworkLodTier,
+} as const;
+
 // ───────────────────────────────────────────────────────────────────────────
 // 시설물 LOD 단계 (Tier) — 점 시설물(버스/철도 정류장, 신호 등)의 표현 전환.
 // 네트워크 tier와 동일한 사고방식: 단계가 올라갈수록 더 근접·더 상세.

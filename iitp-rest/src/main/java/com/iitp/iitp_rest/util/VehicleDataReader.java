@@ -3,6 +3,7 @@ package com.iitp.iitp_rest.util;
 import com.iitp.iitp_rest.model.VehicleEvent;
 import com.iitp.iitp_rest.model.VehicleInfo;
 import com.iitp.iitp_rest.model.analytics.LinkStatsResponse;
+import com.iitp.iitp_rest.model.analytics.LinkTrafficResponse;
 import com.iitp.iitp_rest.model.analytics.OverallSummaryResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -176,10 +177,70 @@ public class VehicleDataReader {
                     }
                 }
             }
-        } catch (SQLException | IOException e) {
+        } catch (SQLException e) {
+            // VehicleInfo 테이블이 없는 더미 DB에서는 정상 — 빈 map 반환
+            if (e.getMessage() != null && e.getMessage().contains("no such table")) {
+                logger.debug("VehicleInfo 테이블 없음 (더미 DB): {}", versionId);
+            } else {
+                logger.error("Error while reading VehicleInfo", e);
+            }
+        } catch (IOException e) {
             logger.error("Error while reading VehicleInfo", e);
         }
         return map;
+    }
+
+    /**
+     * 주어진 링크 집합 + 시간창에 대한 링크별 교통량 집계 (차량 overview LOD).
+     * bbox 내 링크 id 는 호출측(네트워크 RTree)에서 구해 전달한다 → 두 SQLite 협업.
+     * 개별 차량 이벤트를 로드하지 않고 SQLite GROUP BY 로 집계해 메모리 무관.
+     *
+     * @param linkIds  집계 대상 링크 id (비면 빈 결과)
+     * @param fromTime 시간창 시작(초), toTime 끝(초). 둘 다 0 이면 전체 시간.
+     */
+    public LinkTrafficResponse readLinkTraffic(String versionId, List<String> linkIds, int fromTime, int toTime) {
+        LinkTrafficResponse out = new LinkTrafficResponse();
+        out.setFromTime(fromTime);
+        out.setToTime(toTime);
+        if (linkIds == null || linkIds.isEmpty()) return out;
+
+        try {
+            File tempDbFile = prepareDbFile(versionId);
+            String memoryUrl = "jdbc:sqlite::memory:";
+            try (Connection conn = DriverManager.getConnection(memoryUrl);
+                 Statement stmt = conn.createStatement()) {
+                stmt.execute("ATTACH DATABASE '" + tempDbFile.getAbsolutePath() + "' AS vehicle_sim_db");
+
+                boolean hasDebugging = tableExists(conn, "vehicle_sim_db", "VehicleEventDebugging");
+                boolean hasEvent = !hasDebugging && tableExists(conn, "vehicle_sim_db", "VehicleEvent");
+                if (!hasDebugging && !hasEvent) return out; // vehicle_sim 테이블 형식은 미지원(좌표 기반) → 빈 결과
+                String tableName = hasEvent ? "VehicleEvent" : "VehicleEventDebugging";
+                boolean hasSpd = hasDebugging;
+
+                String inClause = String.join(",", Collections.nCopies(linkIds.size(), "?"));
+                boolean useTimeWindow = !(fromTime == 0 && toTime == 0);
+                String timeFilter = useTimeWindow ? " AND timestep >= ? AND timestep < ? " : " ";
+                String speedExpr = hasSpd ? "ROUND(AVG(spd) * 3.6, 2)" : "0.0";
+                String sql = "SELECT link_id, COUNT(DISTINCT veh_id) AS volume, " + speedExpr + " AS avg_speed "
+                        + "FROM vehicle_sim_db." + tableName + " WHERE link_id IN (" + inClause + ")"
+                        + timeFilter + "GROUP BY link_id";
+
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    int idx = 1;
+                    for (String id : linkIds) ps.setString(idx++, id);
+                    if (useTimeWindow) { ps.setInt(idx++, fromTime); ps.setInt(idx++, toTime); }
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            out.getLinks().add(new LinkTrafficResponse.LinkTraffic(
+                                    rs.getString("link_id"), rs.getInt("volume"), rs.getDouble("avg_speed")));
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error("[readLinkTraffic] 집계 실패 versionId={}", versionId, e);
+        }
+        return out;
     }
 
     // 링크별 교통량 통계 집계 (SQLite GROUP BY 활용 - 전체 이벤트 로드 없이 효율적으로 처리)
