@@ -101,16 +101,19 @@ export class NetworkTileManager {
         r: { txMin: number; txMax: number; tyMin: number; tyMax: number },
         lod: string,
     ): void {
-        const ring = NETWORK_TILING.PREFETCH_RING;
+        const tierOrder = NETWORK_LOD_TIER_ORDER[lod as NetworkLodTier] ?? 99;
 
         // ── 가드 1: overview/mid(멀리)는 MVT 가 담당 → JSON 타일 매니저는 near 이상에서만 동작 ──
         // (멀리서는 5km 타일이 수천 개가 되어 요청 폭주하므로 fetch 자체를 막는다)
-        const tierOrder = NETWORK_LOD_TIER_ORDER[lod as NetworkLodTier] ?? 99;
         if (tierOrder < NETWORK_LOD_TIER_ORDER[NETWORK_TILING.JSON_MIN_TIER]) {
             // 보유 타일은 모두 evict (멀어졌으므로 메모리 회수)
             this.evictExtra(new Set());
             return;
         }
+
+        // detail(완전 근접)은 viewport 가 좁아 5km 타일 1~몇 개에 다 들어가므로 선읽기 불필요.
+        // ring=1 이면 주변 8개(각 ~6.8MB)를 미리 받아 줌인이 느려짐 → detail 은 ring=0.
+        const ring = tierOrder >= NETWORK_LOD_TIER_ORDER.detail ? 0 : NETWORK_TILING.PREFETCH_RING;
 
         // ── 가드 2: 타일 수 상한 (안전장치 — 예상치 못한 거대 extent 폭주 방지) ──
         const tileCount = (r.txMax - r.txMin + 1 + 2 * ring) * (r.tyMax - r.tyMin + 1 + 2 * ring);
