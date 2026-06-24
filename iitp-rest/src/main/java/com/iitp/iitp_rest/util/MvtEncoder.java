@@ -5,7 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 최소 MVT(Mapbox Vector Tile, PBF) 인코더 — Point / LineString 만 지원, 의존성 0.
+ * 최소 MVT(Mapbox Vector Tile, PBF) 인코더 — Point / LineString / Polygon 지원, 의존성 0.
  *
  * <p>SQLite 에는 PostGIS 의 {@code ST_AsMVT} 가 없어, 네트워크 overview/mid 타일을 직접
  * MVT 바이트로 인코딩한다. 단일 레이어, 속성(tags) 없이 feature id + geometry 만 담아
@@ -30,6 +30,17 @@ public final class MvtEncoder {
         if (coords == null || coords.length < 2) return;
         List<Integer> geom = encodeLine(coords);
         writeFeature(id, 2 /*LINESTRING*/, geom);
+    }
+
+    /**
+     * Polygon feature 추가 (단일 exterior ring). ring: [[x,y],...] 타일-로컬 정수.
+     * <p>MVT spec v2: exterior ring 은 타일 좌표(y-down) 기준 시계방향(CW). winding 자동 보정.
+     * 도로 폭 폴리곤처럼 hole 없는 단순 폴리곤용.
+     */
+    public void addPolygon(long id, int[][] ring) {
+        List<Integer> geom = encodePolygonRing(ring);
+        if (geom.isEmpty()) return;
+        writeFeature(id, 3 /*POLYGON*/, geom);
     }
 
     /** Point feature 추가. (x,y) 타일-로컬 정수 */
@@ -89,6 +100,44 @@ public final class MvtEncoder {
             g.add(zigzag(dx)); g.add(zigzag(dy));
             cx = coords[i][0]; cy = coords[i][1];
         }
+        return g;
+    }
+
+    /** 단일 ring 을 폴리곤 geometry 커맨드로 인코딩 (MoveTo + LineTo + ClosePath). */
+    private List<Integer> encodePolygonRing(int[][] ringIn) {
+        if (ringIn == null || ringIn.length < 3) return new ArrayList<>();
+        // 닫힌 ring(마지막==첫점)이면 마지막 점 제거 — ClosePath 가 자동으로 닫는다
+        int n = ringIn.length;
+        if (n >= 2 && ringIn[0][0] == ringIn[n - 1][0] && ringIn[0][1] == ringIn[n - 1][1]) n--;
+        if (n < 3) return new ArrayList<>();
+
+        // winding 보정: shoelace 부호로 방향 판정. 타일 좌표(y-down)에서 exterior 는 CW.
+        // 표준 shoelace(area2)는 y-up 기준 CCW 가 양수 → y-down 에서는 area2<0 이 CW(원하는 방향).
+        long area2 = 0;
+        for (int i = 0; i < n; i++) {
+            int[] a = ringIn[i], b = ringIn[(i + 1) % n];
+            area2 += (long) a[0] * b[1] - (long) b[0] * a[1];
+        }
+        boolean reverse = area2 > 0; // CCW → 뒤집어 CW 로
+
+        List<Integer> g = new ArrayList<>();
+        int cx = 0, cy = 0;
+        // MoveTo 첫 점
+        int firstIdx = 0;
+        int fx = ringIn[firstIdx][0], fy = ringIn[firstIdx][1];
+        g.add(command(1, 1));
+        g.add(zigzag(fx - cx)); g.add(zigzag(fy - cy));
+        cx = fx; cy = fy;
+        // LineTo 나머지 (winding 방향대로 순회)
+        g.add(command(2, n - 1));
+        for (int k = 1; k < n; k++) {
+            int idx = reverse ? (n - k) : k;
+            int px = ringIn[idx][0], py = ringIn[idx][1];
+            g.add(zigzag(px - cx)); g.add(zigzag(py - cy));
+            cx = px; cy = py;
+        }
+        // ClosePath (command 7, count 1)
+        g.add(command(7, 1));
         return g;
     }
 
