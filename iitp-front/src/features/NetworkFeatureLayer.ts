@@ -168,6 +168,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
     //    feature 에 __guid 가 부여되지 않아 기본-모드 선택 대상이 아니다. (docs/network-bbox-tiling-design.md)
 
     private updateTiles(map: OLMap): void {
+        // [PoC] 전 줌 MVT 검증: 커스텀 JSON 타일 fetch 끔 (MVT가 전담)
+        if (NETWORK_TILING.POC_MVT_ALL_ZOOM) return;
         // 편집 중에는 타일 갱신(fetch/evict) 동결 — 편집 대상이 viewport 이동으로 evict되어
         // 사라지거나 store 동기화로 편집 내용이 덮어써지는 것을 방지.
         const draw = useNetworkDrawStore.getState();
@@ -389,6 +391,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
     }
 
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
+        // [PoC] 전 줌 MVT 검증: 커스텀 벡터 네트워크 렌더 끔 → 순수 MVT 성능 측정
+        if (NETWORK_TILING.POC_MVT_ALL_ZOOM) return [];
         const props: any = feature.getProperties() ?? {};
         const geom = feature.getGeometry();
         const styles: Style[] = [];

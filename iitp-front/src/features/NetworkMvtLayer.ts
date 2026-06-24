@@ -28,7 +28,13 @@ export default class NetworkMvtLayer extends VectorTileLayer {
                 const z = tileCoord[0] ?? 0;
                 const x = tileCoord[1] ?? 0;
                 const y = tileCoord[2] ?? 0;
-                const lod = z >= 12 ? "mid" : "overview";
+                // [PoC] 전 줌 MVT: z 높을수록 더 많은 도로 등급 (z>=15 detail 전체)
+                let lod: string;
+                if (NETWORK_TILING.POC_MVT_ALL_ZOOM) {
+                    lod = z >= 15 ? "near" : z >= 12 ? "mid" : "overview";
+                } else {
+                    lod = z >= 12 ? "mid" : "overview";
+                }
                 return `${apiBaseUrl}/network/${versionId}/tiles.mvt?z=${z}&x=${x}&y=${y}&lod=${lod}`;
             },
             // 빈 타일(204)도 정상 처리되도록 — OL 은 빈 응답을 빈 타일로 취급
@@ -46,8 +52,8 @@ export default class NetworkMvtLayer extends VectorTileLayer {
     }
 
     private styleFunction(_feature: FeatureLike, resolution: number): Style | undefined {
-        // near/detail(확대)에서는 렌더 생략 → 기존 벡터/타일 레이어에 양보
-        if (resolution < NETWORK_TILING.MVT_MAX_RESOLUTION) return undefined;
+        // [PoC] POC_MVT_ALL_ZOOM 이면 전 줌 표시. 아니면 near/detail(확대)에서 렌더 생략(기존 벡터에 양보)
+        if (!NETWORK_TILING.POC_MVT_ALL_ZOOM && resolution < NETWORK_TILING.MVT_MAX_RESOLUTION) return undefined;
         const tier = getNetworkLodTierByResolution(resolution);
         // 간선일수록(차선 多) 굵게 — 도로망 지도 느낌. 차선수는 MVT 속성 미포함이라 고정폭.
         const width = tier === "overview" ? 1.2 : 1.6;

@@ -152,6 +152,12 @@ export const NETWORK_TILING = {
     JSON_MIN_TIER: 'near' as NetworkLodTier,
     /** 한 번에 요청 가능한 최대 타일 수 (안전장치 — 초과 시 fetch 전체 skip) */
     MAX_TILES_PER_UPDATE: 36,
+    /**
+     * [PoC] 전 줌 MVT 검증 플래그. ON 이면 MVT 를 detail 까지 표시하고(중심선만),
+     * 커스텀 JSON 타일/벡터 네트워크 렌더는 끈다 → 순수 MVT 줌/팬 부드러움 측정용.
+     * 검증 후 결과에 따라 본격 재설계(Phase A) 또는 폐기.
+     */
+    POC_MVT_ALL_ZOOM: true,
 } as const;
 
 /** resolution(m/px) → 서버 tiles API lod 파라미터 (네트워크 tier와 동일 경계) */
