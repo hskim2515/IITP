@@ -1,7 +1,7 @@
 import VectorTileLayer from "ol/layer/VectorTile";
 import VectorTileSource from "ol/source/VectorTile";
 import MVT from "ol/format/MVT";
-import { Stroke, Style } from "ol/style";
+import { Fill, Stroke, Style } from "ol/style";
 import type { FeatureLike } from "ol/Feature";
 import { createXYZ } from "ol/tilegrid";
 import { NETWORK_TILING, getNetworkLodTierByResolution } from "@utils/lodConstants";
@@ -17,6 +17,15 @@ import { NETWORK_TILING, getNetworkLodTierByResolution } from "@utils/lodConstan
  * (또는 타일 모드)가 풍부한 geometry(폴리곤·차선)를 담당한다.
  */
 export default class NetworkMvtLayer extends VectorTileLayer {
+    // 스타일 캐시 (feature·렌더마다 new Style 생성하던 안티패턴 제거 → 줌/팬 버벅임 완화)
+    private static readonly STYLE_OVERVIEW = new Style({ stroke: new Stroke({ color: "rgba(236,238,245,0.9)", width: 1.2 }) });
+    private static readonly STYLE_LINE     = new Style({ stroke: new Stroke({ color: "rgba(236,238,245,0.9)", width: 1.6 }) });
+    // near 도로 폭 폴리곤: 면 채움 + 외곽선 (실제 도로 모양)
+    private static readonly STYLE_POLYGON  = new Style({
+        fill: new Fill({ color: "rgba(120,124,140,0.55)" }),
+        stroke: new Stroke({ color: "rgba(236,238,245,0.85)", width: 0.8 }),
+    });
+
     constructor(versionId: string, apiBaseUrl: string) {
         const source = new VectorTileSource({
             format: new MVT(),
@@ -51,14 +60,14 @@ export default class NetworkMvtLayer extends VectorTileLayer {
         });
     }
 
-    private styleFunction(_feature: FeatureLike, resolution: number): Style | undefined {
+    private styleFunction(feature: FeatureLike, resolution: number): Style | undefined {
         // [PoC] POC_MVT_ALL_ZOOM 이면 전 줌 표시. 아니면 near/detail(확대)에서 렌더 생략(기존 벡터에 양보)
         if (!NETWORK_TILING.POC_MVT_ALL_ZOOM && resolution < NETWORK_TILING.MVT_MAX_RESOLUTION) return undefined;
+        // near 도로 폭 폴리곤은 면 채움, overview/mid 중심선은 stroke. 캐시된 스타일 재사용.
+        // MVT RenderFeature 는 getType()이 있으나 FeatureLike 타입엔 없어 any 캐스팅.
+        const geomType = (feature as any).getType?.();
+        if (geomType === "Polygon") return NetworkMvtLayer.STYLE_POLYGON;
         const tier = getNetworkLodTierByResolution(resolution);
-        // 간선일수록(차선 多) 굵게 — 도로망 지도 느낌. 차선수는 MVT 속성 미포함이라 고정폭.
-        const width = tier === "overview" ? 1.2 : 1.6;
-        return new Style({
-            stroke: new Stroke({ color: "rgba(236,238,245,0.9)", width }),
-        });
+        return tier === "overview" ? NetworkMvtLayer.STYLE_OVERVIEW : NetworkMvtLayer.STYLE_LINE;
     }
 }

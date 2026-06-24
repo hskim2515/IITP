@@ -163,6 +163,10 @@ public class NetworkTileService {
         double north = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))));
         double south = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / n))));
 
+        // near(확대)에서는 도로 폭 폴리곤으로 인코딩 → 줌인 시 실제 도로 모양. 멀리선 중심선(가벼움).
+        boolean usePolygon = (lod == Lod.NEAR);
+        double tileCenterLat = (north + south) / 2.0;
+
         MvtEncoder enc = new MvtEncoder("network", MVT_EXTENT);
         String url = "jdbc:sqlite:" + db.getAbsolutePath();
         try (Connection conn = DriverManager.getConnection(url)) {
@@ -178,7 +182,15 @@ public class NetworkTileService {
                         long id = rs.getLong(1);
                         LinkResponse link = objectMapper.readValue(rs.getString(2), LinkResponse.class);
                         int[][] tileCoords = toTileCoords(link.getCoordinates(), z, x, y);
-                        if (tileCoords != null) enc.addLineString(id, tileCoords);
+                        if (tileCoords == null) continue;
+                        if (usePolygon && link.getWidth() > 0) {
+                            double hwTile = metersToTile(link.getWidth() / 2.0, z, tileCenterLat);
+                            int[][] poly = buildRoadPolygon(tileCoords, hwTile);
+                            if (poly != null) enc.addPolygon(id, poly);
+                            else enc.addLineString(id, tileCoords);
+                        } else {
+                            enc.addLineString(id, tileCoords);
+                        }
                     }
                 }
             }
@@ -186,6 +198,36 @@ public class NetworkTileService {
             throw new IOException("MVT 쿼리 실패: " + versionId, e);
         }
         return enc.isEmpty() ? new byte[0] : enc.finish();
+    }
+
+    /** 미터 → 타일-로컬 단위 (MVT_EXTENT 기준). 타일 폭(m) = 적도둘레/2^z × cos(lat) */
+    private double metersToTile(double meters, int z, double lat) {
+        double tileWidthMeters = 40075016.686 / Math.pow(2, z) * Math.cos(Math.toRadians(lat));
+        if (tileWidthMeters <= 0) return 0;
+        return meters * MVT_EXTENT / tileWidthMeters;
+    }
+
+    /** 중심선(타일-로컬) 을 도로 폭(halfWidth) 만큼 양쪽 offset 한 닫힌 폴리곤 ring 으로 변환. */
+    private int[][] buildRoadPolygon(int[][] cl, double hw) {
+        int m = cl.length;
+        if (m < 2 || hw <= 0) return null;
+        int[][] left = new int[m][], right = new int[m][];
+        for (int i = 0; i < m; i++) {
+            double dx, dy;
+            if (i == 0)            { dx = cl[1][0] - cl[0][0];     dy = cl[1][1] - cl[0][1]; }
+            else if (i == m - 1)   { dx = cl[i][0] - cl[i-1][0];   dy = cl[i][1] - cl[i-1][1]; }
+            else                   { dx = cl[i+1][0] - cl[i-1][0]; dy = cl[i+1][1] - cl[i-1][1]; }
+            double len = Math.hypot(dx, dy);
+            if (len < 1e-9) { dx = 1; dy = 0; len = 1; }
+            double nx = -dy / len, ny = dx / len; // 단위 법선
+            left[i]  = new int[]{ (int) Math.round(cl[i][0] + nx * hw), (int) Math.round(cl[i][1] + ny * hw) };
+            right[i] = new int[]{ (int) Math.round(cl[i][0] - nx * hw), (int) Math.round(cl[i][1] - ny * hw) };
+        }
+        // ring = left 순방향 + right 역방향 (닫힌 도로 폴리곤). winding 은 addPolygon 이 보정.
+        int[][] ring = new int[2 * m][];
+        for (int i = 0; i < m; i++) ring[i] = left[i];
+        for (int i = 0; i < m; i++) ring[m + i] = right[m - 1 - i];
+        return ring;
     }
 
     /** 링크 경위도 좌표 → 타일-로컬 정수 좌표 (0..MVT_EXTENT, y top-down) */
