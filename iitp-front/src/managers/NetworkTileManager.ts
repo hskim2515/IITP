@@ -106,8 +106,9 @@ export class NetworkTileManager {
         // ── 가드 1: overview/mid(멀리)는 MVT 가 담당 → JSON 타일 매니저는 near 이상에서만 동작 ──
         // (멀리서는 5km 타일이 수천 개가 되어 요청 폭주하므로 fetch 자체를 막는다)
         if (tierOrder < NETWORK_LOD_TIER_ORDER[NETWORK_TILING.JSON_MIN_TIER]) {
-            // 보유 타일은 모두 evict (멀어졌으므로 메모리 회수)
-            this.evictExtra(new Set());
+            // 멀어졌으므로 보유 타일을 전부 회수 (메모리 부담 0). evictExtra(LRU 한도 초과분만)는
+            // 64개 이하면 안 비워 viewport 타일이 남던 버그 → clear()로 전부 비운다.
+            this.clear();
             return;
         }
 
@@ -193,6 +194,9 @@ export class NetworkTileManager {
 
     /** 전체 비우기 (레이어 dispose 시) */
     clear(): void {
+        if (this.tiles.size > 0 && import.meta.env?.DEV) {
+            console.log(`[mem] 네트워크 타일 ${this.tiles.size}개 전부 evict (메모리 회수)`);
+        }
         for (const [key, entry] of this.tiles) {
             this.callbacks.onTileEvicted(key, entry.payload);
         }
