@@ -129,7 +129,7 @@ export const NETWORK_EXTENT_GATING = {
  */
 export const NETWORK_TILING = {
     /** 타일링 활성화 (기본 off — 단계적 도입) */
-    ENABLED: true,
+    ENABLED: false,
     /** 타일 격자 크기(도) ≈ 2.5km. 고밀도 도시 detail 타일이 5km면 ~6.8MB/3천링크라 커서 축소.
      *  (CHUNK_DEG가 이 값을 참조 → Cesium 청크도 함께 작아짐) */
     TILE_DEG: 0.025,
@@ -141,7 +141,7 @@ export const NETWORK_TILING = {
      * MVT(PBF) 레이어 활성화 (단계 3) — overview/mid 2D 를 OL VectorTile 로 가속.
      * ON 이면 NetworkFeatureLayer 는 overview/mid 에서 링크 중심선 렌더를 MVT 에 양보한다.
      */
-    MVT_ENABLED: true,
+    MVT_ENABLED: false,
     /** MVT 가 담당하는 최대 OL resolution (이보다 가까우면 = near/detail → 기존 벡터 레이어) */
     MVT_MAX_RESOLUTION: LOD_RES.NETWORK_LINK_ONLY, // = 2 (mid/overview 구간)
     /**
@@ -167,7 +167,7 @@ export function networkLodParam(resolution: number): NetworkLodTier {
  */
 export const SIGNAL_TILING = {
     /** 신호 타일링 활성화 (기본 off) */
-    ENABLED: true,
+    ENABLED: false,
     /** near tier 이상(확대)에서만 신호 타일 fetch — 멀리선 신호 자체가 dot/숨김이라 불필요 */
     MIN_TIER: 'near' as NetworkLodTier,
 } as const;
@@ -179,7 +179,7 @@ export const SIGNAL_TILING = {
  * near(확대)에서는 기존 개별 차량 경로 유지. 기본 off — 기존 동작 무변화.
  */
 export const VEHICLE_AGGREGATION = {
-    ENABLED: true,
+    ENABLED: false,
     /** 이 resolution 이상(멀리)에서 집계 모드 활성 — 미만(near)은 개별 차량 */
     MIN_RESOLUTION: LOD_RES.NETWORK_LANE_DETAIL, // = 0.3 (near 이상)
     /** 재생 현재 시각 기준 ± 집계 시간창 (초) */
@@ -195,7 +195,7 @@ export const VEHICLE_AGGREGATION = {
  * GPU instanced 인 Cesium 은 자동 frustum culling 으로 충분해 제외. 기본 off.
  */
 export const VEHICLE_CULLING = {
-    ENABLED: true,
+    ENABLED: false,
     /** viewport extent 를 폭/높이의 이 비율만큼 확장 (경계 차량 깜빡임 방지) */
     MARGIN_RATIO: 0.2,
 } as const;
