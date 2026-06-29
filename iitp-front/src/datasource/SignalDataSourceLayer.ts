@@ -5,7 +5,7 @@ import { useNetworkStore } from "@stores/useNetworkStore";
 import { useSignalTimelineStore, SignalTimelineResponse } from "@stores/useSignalTimelineStore";
 import { signalRenderState } from "@stores/signalRenderState";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
-import { LOD_ALT, SIGNAL_TILING, getNetworkLodTierByAltitude } from "@utils/lodConstants";
+import { LOD_ALT, SIGNAL_TILING } from "@utils/lodConstants";
 import { SignalTileManager } from "@managers/SignalTileManager";
 import { SignalTileMembership } from "@managers/signalTileMembership";
 import { useScenarioStore } from "@stores/useScenarioStore";
@@ -529,7 +529,6 @@ export default class SignalDataSourceLayer {
         const south = Cesium.Math.toDegrees(rect.south);
         const east = Cesium.Math.toDegrees(rect.east);
         const north = Cesium.Math.toDegrees(rect.north);
-        const altitude = this.viewer.camera.positionCartographic?.height ?? 0;
         if (!this.tileManager) {
             const versionId = useScenarioStore.getState().selectedScenario?.key;
             if (!versionId) return;
@@ -538,7 +537,7 @@ export default class SignalDataSourceLayer {
                 onTileEvicted: (_k, payload) => { if (this.membership.remove(payload)) this.load(); },
             });
         }
-        this.tileManager.updateForBbox(west, south, east, north, altitude);
+        this.tileManager.updateForBbox(west, south, east, north);
     }
 
     /**

@@ -18,8 +18,8 @@ export const LOD_ALT = {
     FACILITY_LABEL:       120,
     /** 시설물 아이콘(빌보드) 표시 최대 고도                  ↔ OL ~10 m/px */
     FACILITY_ICON:       10000,
-    /** 네트워크: 레인 숨기고 링크만 표시하는 고도             ↔ OL ~3 m/px */
-    NETWORK_LINK_ONLY:   3000,
+    /** 네트워크 표출 시작 고도(near 진입). 낮출수록 더 가까이서만 표시 → 메모리 구간 축소 ↔ OL ~1.5 m/px */
+    NETWORK_LINK_ONLY:   1500,
     /** 네트워크: 외곽선만 표시하는 고도                      ↔ OL ~10 m/px */
     NETWORK_OUTLINE_ONLY: 10000,
     /** 신호: 빌보드 표시 최대 고도                          ↔ OL ~1.2 m/px */
@@ -38,8 +38,8 @@ export const LOD_RES = {
     FACILITY_HIDDEN:       10.0,
     /** 네트워크: 레인/셀/세그먼트 등 차선 디테일 표시 (완전 근접) ↔ Cesium ~310m */
     NETWORK_LANE_DETAIL:    0.3,
-    /** 네트워크: 레인 숨기고 링크만                         ↔ Cesium ~2000m */
-    NETWORK_LINK_ONLY:      2,
+    /** 네트워크 표출 시작 해상도(near 진입). 낮출수록 더 가까이서만 표시 → 메모리 구간 축소 ↔ Cesium ~1500m */
+    NETWORK_LINK_ONLY:      1.5,
     /** 네트워크: 외곽선만                                   ↔ Cesium ~8000m */
     NETWORK_OUTLINE_ONLY:   8,
     /** 신호: 전체 아이콘 표시                               ↔ Cesium ~1300m */
@@ -99,6 +99,19 @@ export function getNetworkLodTierByAltitude(altitude: number): NetworkLodTier {
     if (altitude > LOD_ALT.NETWORK_LINK_ONLY)    return 'mid';
     // 고도 기반에는 아직 별도 차선 디테일 임계값이 없으므로 LINK_ONLY 이하를 detail로 본다.
     return 'detail';
+}
+
+/**
+ * 화면이 실제로 덮는 지표 영역의 폭(m) → 네트워크 LOD tier.
+ * 카메라 고도가 아니라 "얼마나 넓은 영역을 보는가"로 판단 → 고도가 낮아도 비스듬히 멀리 보면
+ * 영역이 넓어 표출 안 함(메모리 보호). 저각/조감 모두에서 viewport 규모와 일치.
+ *
+ * 임계 폭(m) = 화면 가로 픽셀 추정 × 해상도 임계값(m/px). 1200px 기준으로 LOD_RES 환산.
+ */
+const VIEW_PX = 1200; // 기준 가로 픽셀 (해상도 임계값 → 영역 폭 환산용)
+export function getNetworkLodTierByViewWidth(widthMeters: number): NetworkLodTier {
+    const mPerPx = widthMeters / VIEW_PX;
+    return getNetworkLodTierByResolution(mPerPx);
 }
 
 /** 주어진 tier에서 해당 featureType을 그려야 하는가 */

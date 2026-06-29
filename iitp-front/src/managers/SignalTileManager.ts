@@ -1,6 +1,6 @@
 import { toLonLat } from "ol/proj";
 import type { Extent } from "ol/extent";
-import { NETWORK_TILING, SIGNAL_TILING, NETWORK_LOD_TIER_ORDER, getNetworkLodTierByResolution, getNetworkLodTierByAltitude } from "@utils/lodConstants";
+import { NETWORK_TILING, SIGNAL_TILING, NETWORK_LOD_TIER_ORDER, getNetworkLodTierByResolution, getNetworkLodTierByViewWidth } from "@utils/lodConstants";
 import axiosInstance from "@api/axiosInstance";
 
 /** 신호 타일 페이로드 (SignalNodeResponseData.signals 부분집합) */
@@ -43,7 +43,7 @@ export class SignalTileManager {
         // near tier 이상(확대)에서만. 멀리선 신호 자체가 숨김/dot이라 fetch 불필요 → 전부 evict.
         const tier = getNetworkLodTierByResolution(resolution);
         if (NETWORK_LOD_TIER_ORDER[tier] < NETWORK_LOD_TIER_ORDER[SIGNAL_TILING.MIN_TIER]) {
-            this.evictExtra(new Set());
+            this.clear(); // 멀어졌으므로 전부 회수 (evictExtra는 LRU 초과분만이라 메모리 잔존)
             return;
         }
 
@@ -54,12 +54,15 @@ export class SignalTileManager {
         this.updateForLngLat(sw[0] ?? 0, sw[1] ?? 0, ne[0] ?? 0, ne[1] ?? 0);
     }
 
-    /** 경위도 bbox + 고도(LOD) 직접 지정 (Cesium 등 OL 비의존 소비자용) */
-    updateForBbox(west: number, south: number, east: number, north: number, altitude: number): void {
+    /** 경위도 bbox (Cesium 등 OL 비의존 소비자용). tier는 카메라 고도가 아니라
+     *  실제로 보는 지표 영역 폭(m)으로 판단 — 저각으로 멀리 봐도 영역 넓으면 숨김(메모리 보호). */
+    updateForBbox(west: number, south: number, east: number, north: number): void {
         if (!SIGNAL_TILING.ENABLED) return;
-        const tier = getNetworkLodTierByAltitude(altitude);
+        const midLat = (north + south) / 2;
+        const viewWidthM = (east - west) * Math.PI / 180 * 6378137 * Math.cos(midLat * Math.PI / 180);
+        const tier = getNetworkLodTierByViewWidth(viewWidthM);
         if (NETWORK_LOD_TIER_ORDER[tier] < NETWORK_LOD_TIER_ORDER[SIGNAL_TILING.MIN_TIER]) {
-            this.evictExtra(new Set());
+            this.clear(); // 멀어졌으므로 전부 회수 (evictExtra는 LRU 초과분만이라 메모리 잔존)
             return;
         }
         this.updateForLngLat(west, south, east, north);
