@@ -183,7 +183,17 @@ public class NetworkTileService {
                         LinkResponse link = objectMapper.readValue(rs.getString(2), LinkResponse.class);
                         int[][] tileCoords = toTileCoords(link.getCoordinates(), z, x, y);
                         if (tileCoords == null) continue;
-                        if (usePolygon && link.getWidth() > 0) {
+                        int numLane = link.getNumLane();
+                        if (lod == Lod.DETAIL && link.getWidth() > 0 && numLane > 0) {
+                            // 최근접(detail): 차선별 폴리곤 → 3D 차선 표현과 일치. 차선 폭의 94%로 사이 틈.
+                            double laneW = metersToTile(link.getWidth() / (double) numLane, z, tileCenterLat);
+                            double laneHw = laneW / 2.0 * 0.94;
+                            for (int li = 0; li < numLane; li++) {
+                                double lateral = ((numLane - 1) / 2.0 - li) * laneW;
+                                int[][] lanePoly = buildOffsetPolygon(tileCoords, lateral - laneHw, lateral + laneHw);
+                                if (lanePoly != null) enc.addPolygon(id * 100 + li, lanePoly);
+                            }
+                        } else if (usePolygon && link.getWidth() > 0) {
                             double hwTile = metersToTile(link.getWidth() / 2.0, z, tileCenterLat);
                             int[][] poly = buildRoadPolygon(tileCoords, hwTile);
                             if (poly != null) enc.addPolygon(id, poly);
@@ -209,8 +219,16 @@ public class NetworkTileService {
 
     /** 중심선(타일-로컬) 을 도로 폭(halfWidth) 만큼 양쪽 offset 한 닫힌 폴리곤 ring 으로 변환. */
     private int[][] buildRoadPolygon(int[][] cl, double hw) {
+        return buildOffsetPolygon(cl, -hw, hw); // 중심선 양쪽 ±hw (도로 폭)
+    }
+
+    /**
+     * 중심선 cl 을 법선 방향 [offLo, offHi] 구간으로 offset 한 닫힌 폴리곤 ring.
+     * 도로: [-hw, hw]. 차선 i: [lateral-laneHw, lateral+laneHw] (lateral=차선 중심 offset).
+     */
+    private int[][] buildOffsetPolygon(int[][] cl, double offLo, double offHi) {
         int m = cl.length;
-        if (m < 2 || hw <= 0) return null;
+        if (m < 2) return null;
         int[][] left = new int[m][], right = new int[m][];
         for (int i = 0; i < m; i++) {
             double dx, dy;
@@ -220,10 +238,10 @@ public class NetworkTileService {
             double len = Math.hypot(dx, dy);
             if (len < 1e-9) { dx = 1; dy = 0; len = 1; }
             double nx = -dy / len, ny = dx / len; // 단위 법선
-            left[i]  = new int[]{ (int) Math.round(cl[i][0] + nx * hw), (int) Math.round(cl[i][1] + ny * hw) };
-            right[i] = new int[]{ (int) Math.round(cl[i][0] - nx * hw), (int) Math.round(cl[i][1] - ny * hw) };
+            left[i]  = new int[]{ (int) Math.round(cl[i][0] + nx * offHi), (int) Math.round(cl[i][1] + ny * offHi) };
+            right[i] = new int[]{ (int) Math.round(cl[i][0] + nx * offLo), (int) Math.round(cl[i][1] + ny * offLo) };
         }
-        // ring = left 순방향 + right 역방향 (닫힌 도로 폴리곤). winding 은 addPolygon 이 보정.
+        // ring = left 순방향 + right 역방향 (닫힌 폴리곤). winding 은 addPolygon 이 보정.
         int[][] ring = new int[2 * m][];
         for (int i = 0; i < m; i++) ring[i] = left[i];
         for (int i = 0; i < m; i++) ring[m + i] = right[m - 1 - i];
