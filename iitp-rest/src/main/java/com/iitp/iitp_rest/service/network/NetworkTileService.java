@@ -164,7 +164,7 @@ public class NetworkTileService {
         double south = Math.toDegrees(Math.atan(Math.sinh(Math.PI * (1 - 2 * (y + 1) / n))));
 
         // near(확대)에서는 도로 폭 폴리곤으로 인코딩 → 줌인 시 실제 도로 모양. 멀리선 중심선(가벼움).
-        boolean usePolygon = (lod == Lod.NEAR);
+        boolean usePolygon = (lod == Lod.NEAR || lod == Lod.DETAIL); // near 이상(확대)은 도로 폭 폴리곤
         double tileCenterLat = (north + south) / 2.0;
 
         MvtEncoder enc = new MvtEncoder("network", MVT_EXTENT);

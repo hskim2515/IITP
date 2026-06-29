@@ -27,23 +27,18 @@ export default class NetworkMvtLayer extends VectorTileLayer {
     });
 
     constructor(versionId: string, apiBaseUrl: string) {
+        const tileGrid = createXYZ({ maxZoom: 22 });
         const source = new VectorTileSource({
             format: new MVT(),
-            tileGrid: createXYZ({ maxZoom: 22 }),
-            // 줌 레벨별 가변 lod: 줌인할수록 더 많은 도로 등급 포함
-            //   z<12  → overview (간선만)   |   z>=12 → mid (간선+집산)
-            // (near/detail 전체 도로는 확대 시 JSON 타일 매니저가 담당)
+            tileGrid,
+            // lod 를 z(zoom) 가 아니라 resolution 기반 tier 로 결정 → 3D(pixelSize→tier)와 동일 기준.
+            // (이전엔 z>=15 near 처럼 zoom 임계라 같은 화면에서 3D(res 임계)와 tier 가 어긋났음)
             tileUrlFunction: (tileCoord) => {
                 const z = tileCoord[0] ?? 0;
                 const x = tileCoord[1] ?? 0;
                 const y = tileCoord[2] ?? 0;
-                // [PoC] 전 줌 MVT: z 높을수록 더 많은 도로 등급 (z>=15 detail 전체)
-                let lod: string;
-                if (NETWORK_TILING.POC_MVT_ALL_ZOOM) {
-                    lod = z >= 15 ? "near" : z >= 12 ? "mid" : "overview";
-                } else {
-                    lod = z >= 12 ? "mid" : "overview";
-                }
+                const res = tileGrid.getResolution(z);
+                const lod = getNetworkLodTierByResolution(res); // overview/mid/near (3D와 동일 함수)
                 return `${apiBaseUrl}/network/${versionId}/tiles.mvt?z=${z}&x=${x}&y=${y}&lod=${lod}`;
             },
             // 빈 타일(204)도 정상 처리되도록 — OL 은 빈 응답을 빈 타일로 취급

@@ -4,7 +4,7 @@ import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { useScenarioStore } from "@stores/useScenarioStore";
 import { Network } from "@type/Network";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
-import { LOD_ALT, NETWORK_TILING, NETWORK_LOD_TIER_ORDER, getNetworkLodTierByAltitude } from "@utils/lodConstants";
+import { LOD_ALT, NETWORK_TILING, NETWORK_LOD_TIER_ORDER, getNetworkLodTierByResolution } from "@utils/lodConstants";
 import axiosInstance from "@api/axiosInstance";
 import { NetworkTileManager, type NetworkTilePayload } from "@managers/NetworkTileManager";
 import { assignTileGuids } from "@utils/tileGuid";
@@ -220,17 +220,46 @@ export default class NetworkDataSourceLayer {
     // ─────────────────────── 타일 모드 (읽기 전용, Cesium) ───────────────────────
     // ⚠️ 편집은 전체-로드 경로 전제. 타일은 합성 guid 기반 뷰 전용.
 
-    /** 카메라 view rectangle + 고도 LOD → 타일 매니저 갱신 */
+    /** 화면 중앙 지면점 기준 거리 LOD + 그 주변 bbox → 타일 매니저 갱신.
+     *  computeViewRectangle 은 카메라를 기울이면 지평선까지 포함해 폭이 폭발(→ tier 오판/거대 bbox)하므로
+     *  사용하지 않는다. 대신 "화면 중앙에서 보는 지점까지 거리"로 판단해 기울임에 강건하게. */
     private updateTiles(): void {
         if (!NETWORK_TILING.ENABLED) return;
-        const rect = this.viewer.camera.computeViewRectangle(this.viewer.scene.globe.ellipsoid);
-        if (!rect) return;
-        const west = Cesium.Math.toDegrees(rect.west);
-        const south = Cesium.Math.toDegrees(rect.south);
-        const east = Cesium.Math.toDegrees(rect.east);
-        const north = Cesium.Math.toDegrees(rect.north);
-        const altitude = this.viewer.camera.positionCartographic?.height ?? 0;
-        const lod = getNetworkLodTierByAltitude(altitude);
+        const scene = this.viewer.scene;
+        const camera = this.viewer.camera;
+        const canvas = scene.canvas;
+
+        // 화면 중앙 ray → 지면(globe) 교차점. 하늘을 보면(교차 없음) 네트워크 숨김 + 회수.
+        const center = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
+        const ray = camera.getPickRay(center);
+        const ground = ray ? scene.globe.pick(ray, scene) : undefined;
+        if (!ground) {
+            this.tileManager?.clear();
+            if (this.overviewArterialsActive) { this.overviewArterialsActive = false; this.roadOverviewPolylines.removeAll(); }
+            return;
+        }
+
+        // 화면 중앙 1px이 덮는 지면 거리(m/px) = 2D OL resolution 과 동일 단위 → tier 기준 일치.
+        //   pixelSize = (2·d·tan(fovy/2)) / canvasHeight
+        const groundDist = Cesium.Cartesian3.distance(camera.positionWC, ground);
+        const frustum: any = camera.frustum;
+        const fovy = frustum.fovy ?? frustum.fov ?? Cesium.Math.toRadians(60);
+        const canvasH = canvas.clientHeight || 900;
+        const canvasW = canvas.clientWidth || 1200;
+        const pixelSizeM = (2 * groundDist * Math.tan(fovy / 2)) / canvasH;
+        const lod = getNetworkLodTierByResolution(pixelSizeM);
+
+        // bbox: 화면 중앙 지면점 ± (실제 화면이 덮는 지면 절반) — 가로/세로 픽셀 반영, 거대 bbox 방지.
+        const halfHeightM = pixelSizeM * canvasH / 2;
+        const halfWidthM  = pixelSizeM * canvasW / 2;
+        const carto = Cesium.Cartographic.fromCartesian(ground);
+        const centerLng = Cesium.Math.toDegrees(carto.longitude);
+        const centerLat = Cesium.Math.toDegrees(carto.latitude);
+        const halfLatDeg = halfHeightM / 111320;
+        const halfLngDeg = (halfWidthM / 111320) / Math.max(Math.cos(carto.latitude), 0.01);
+        const west = centerLng - halfLngDeg, east = centerLng + halfLngDeg;
+        const south = centerLat - halfLatDeg, north = centerLat + halfLatDeg;
+
         const versionId = useScenarioStore.getState().selectedScenario?.key;
         if (!versionId) return;
 
