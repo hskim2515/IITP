@@ -88,11 +88,17 @@ function computeODMatrix(
     const odArray = Array.from(odMap.values());
     const maxCount = Math.max(...odArray.map((item) => item.count), 1); // 0 방지
 
-    return odArray.map(item => ({
+    const result = odArray.map(item => ({
         ...item,
         density: item.count / maxCount,
     }));
+    // 누적 상한: 통행량(count) 많은 상위 OD_MAX개만 표시 → 시뮬 진행해도 렌더 비용 일정.
+    // (OD 쌍이 수백 개로 늘면 매 프레임 렌더가 선형으로 무거워져 끊김 — 측정으로 확인)
+    result.sort((a, b) => b.count - a.count);
+    return result.slice(0, OD_MAX);
 }
+
+const OD_MAX = 100; // 표시 OD 쌍 상한 (통행량 상위)
 function ecefToLonLatHeight(x: number, y: number, z: number): { lon: number; lat: number; height: number } {
     const a = 6378137.0; // WGS84 semi-major axis (in meters)
     const e2 = 6.69437999014e-3; // first eccentricity squared
