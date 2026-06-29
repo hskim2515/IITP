@@ -94,12 +94,17 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
     }
 
     setLatestPositions(latestPositions: { positions: (number[] | undefined)[]; headings?: (number | null)[] }) {
+        // 화면 밖 차량은 좌표 변환(convertToEPSG3857: 측지 연산, 1000대면 16ms) 자체를 스킵 →
+        // 줌인 시 화면 내 소수만 변환. 이전 3857 위치로 화면 판정(margin 포함 cullExtent).
+        this.refreshCullExtent();
         const converted = latestPositions.positions.map((pos, idx) => {
             if (!pos) return this.positions[idx] ?? null;
+            const prev = this.positions[idx];
+            if (prev && this.isCulled(prev)) return prev; // 화면 밖: 변환 생략, 이전 위치 유지
             try {
                 return this.convertToEPSG3857(pos);
             } catch {
-                return this.positions[idx] ?? null;
+                return prev ?? null;
             }
         });
 

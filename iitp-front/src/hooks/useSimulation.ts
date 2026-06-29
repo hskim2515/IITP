@@ -641,7 +641,6 @@ const useSimulation = () => {
 
             makeOdDataWorkerRef.current.onmessage = (e) => {
                 const { odData } = e.data;
-                console.log('[OD] worker result odData.length:', odData?.length);
                 if (odData) {
                     // getLayer()는 레이어가 1개면 단일 객체, 2개 이상이면 배열을 반환하므로 항상 배열로 처리
                     const odLayers = layerManager.getLayer("analyze", "od");
