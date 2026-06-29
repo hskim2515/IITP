@@ -192,6 +192,11 @@ export class NetworkTileManager {
         return this.tiles.size;
     }
 
+    /** 해당 타일을 아직 보유 중인가 (비동기 빌드 중 evict race 방어용) */
+    hasTile(key: string): boolean {
+        return this.tiles.has(key);
+    }
+
     /** 전체 비우기 (레이어 dispose 시) */
     clear(): void {
         if (this.tiles.size > 0 && import.meta.env?.DEV) {

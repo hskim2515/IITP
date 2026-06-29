@@ -303,14 +303,47 @@ export default class NetworkDataSourceLayer {
             });
     }
 
+    /**
+     * 타일 좌표의 지형 고도만 샘플링해 terrainHeightMap 에 누적(clear 없음).
+     * 전체 로드용 sampleTerrainHeights 는 매번 clear 라 타일 모드엔 부적합 → 타일별 누적 버전.
+     * 이미 캐시된 좌표는 재요청 안 함 → 점진적으로 채워짐(원격 요청 최소화).
+     */
+    private async sampleTerrainForTile(links: any[]): Promise<void> {
+        if (!this.hasRealTerrain()) return;
+        const coordMap = new Map<string, Cesium.Cartographic>();
+        for (const link of links) {
+            if (!link.coordinates) continue;
+            for (const c of link.coordinates) {
+                const key = this.terrainKey(c.lng, c.lat);
+                if (!this.terrainHeightMap.has(key) && !coordMap.has(key)) {
+                    coordMap.set(key, Cesium.Cartographic.fromDegrees(c.lng, c.lat));
+                }
+            }
+        }
+        if (coordMap.size === 0) return;
+        const keys = Array.from(coordMap.keys());
+        const cartos = Array.from(coordMap.values());
+        try {
+            await Cesium.sampleTerrainMostDetailed(this.viewer.terrainProvider, cartos);
+            for (let i = 0; i < keys.length; i++) this.terrainHeightMap.set(keys[i]!, cartos[i]!.height ?? 0);
+        } catch (e) {
+            console.warn('[NetworkDataSourceLayer] 타일 지형 샘플링 실패', e);
+        }
+    }
+
     /** 타일 키와 일치하는(home) 링크/노드만 청크 프리미티브로 빌드 → 경계 중복 없음 */
-    private addTileChunk(tileKey: string, payload: NetworkTilePayload): void {
+    private async addTileChunk(tileKey: string, payload: NetworkTilePayload): Promise<void> {
         if (this.chunkPrimitives.has(tileKey)) return; // 이미 빌드됨
         assignTileGuids(payload);
 
         // cached 맵 병합 (노드/링크 상호참조용)
         for (const node of payload.nodes) this.cachedNodeMap.set(String(node.id), node);
         for (const link of payload.links) this.cachedLinkMap.set(String(link.id), link);
+
+        // 빌드 전 지형 고도 샘플링(누적) → 도로가 고도 0이 아닌 실제 지형 위에 그려짐(지면 관통 방지).
+        await this.sampleTerrainForTile(payload.links);
+        if (this.chunkPrimitives.has(tileKey)) return;        // await 중 다른 경로가 이미 빌드
+        if (this.tileManager && !this.tileManager.hasTile(tileKey)) return; // await 중 evict됨 → 좀비 방지
 
         // home 링크만(첫 좌표 기준 청크키 == 타일키) → 청크 인스턴스 빌드
         const outlineInst: Cesium.GeometryInstance[] = [];
