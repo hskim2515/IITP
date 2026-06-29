@@ -168,17 +168,22 @@ export default class NetworkFeatureLayer extends VectorLayer {
     //    feature 에 __guid 가 부여되지 않아 기본-모드 선택 대상이 아니다. (docs/network-bbox-tiling-design.md)
 
     private updateTiles(map: OLMap): void {
-        // [PoC] 전 줌 MVT 검증: 커스텀 JSON 타일 fetch 끔 (MVT가 전담)
-        if (NETWORK_TILING.POC_MVT_ALL_ZOOM) return;
-        // 편집 중에는 타일 갱신(fetch/evict) 동결 — 편집 대상이 viewport 이동으로 evict되어
-        // 사라지거나 store 동기화로 편집 내용이 덮어써지는 것을 방지.
-        const draw = useNetworkDrawStore.getState();
-        if (draw.isActive || draw.isConnectionActive || draw.isSelectActive || draw.placementMode !== 'none') return;
-
         const view = map.getView();
         const size = map.getSize();
         const resolution = view.getResolution();
         if (!size || resolution == null) return;
+
+        // [PoC] MVT 모드: detail(충분히 확대)에서만 viewport 타일 fetch — 노드/커넥션/포트 등
+        //   편집요소 데이터 확보용(도로/차선은 MVT 전담). detail 벗어나면 회수.
+        if (NETWORK_TILING.POC_MVT_ALL_ZOOM && getNetworkLodTierByResolution(resolution) !== 'detail') {
+            this.tileManager?.clear();
+            return;
+        }
+
+        // 편집 중에는 타일 갱신(fetch/evict) 동결 — 편집 대상이 viewport 이동으로 evict되어
+        // 사라지거나 store 동기화로 편집 내용이 덮어써지는 것을 방지.
+        const draw = useNetworkDrawStore.getState();
+        if (draw.isActive || draw.isConnectionActive || draw.isSelectActive || draw.placementMode !== 'none') return;
 
         if (!this.tileManager) {
             const versionId = useScenarioStore.getState().selectedScenario?.key;
@@ -391,13 +396,19 @@ export default class NetworkFeatureLayer extends VectorLayer {
     }
 
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
-        // [PoC] 전 줌 MVT 검증: 커스텀 벡터 네트워크 렌더 끔 → 순수 MVT 성능 측정
-        if (NETWORK_TILING.POC_MVT_ALL_ZOOM) return [];
         const props: any = feature.getProperties() ?? {};
         const geom = feature.getGeometry();
         const styles: Style[] = [];
 
         const featureType = props.featureType ?? "";
+
+        // [PoC] MVT 모드: 도로/차선은 MVT가 그림. detail(충분히 확대)에서만 MVT가 안 그리는
+        //   편집요소(노드/커넥션/포트 등)를 벡터로 표시(3D 와 동일). detail 미만은 전부 MVT 양보.
+        if (NETWORK_TILING.POC_MVT_ALL_ZOOM) {
+            if (getNetworkLodTierByResolution(resolution) !== 'detail') return [];
+            if (featureType === 'links' || featureType === 'lanes') return []; // MVT 담당 → 양보
+            // 나머지(nodes/connections/ports/link-edit/cells/segments)는 아래 정상 렌더
+        }
 
         // LOD 필터링: 현재 tier에서 표시 대상이 아닌 피처 타입은 렌더링 생략 (공통 tier 함수 사용)
         const tier = getNetworkLodTierByResolution(resolution);
