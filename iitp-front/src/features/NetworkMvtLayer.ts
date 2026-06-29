@@ -20,10 +20,19 @@ export default class NetworkMvtLayer extends VectorTileLayer {
     // 스타일 캐시 (feature·렌더마다 new Style 생성하던 안티패턴 제거 → 줌/팬 버벅임 완화)
     private static readonly STYLE_OVERVIEW = new Style({ stroke: new Stroke({ color: "rgba(236,238,245,0.9)", width: 1.2 }) });
     private static readonly STYLE_LINE     = new Style({ stroke: new Stroke({ color: "rgba(236,238,245,0.9)", width: 1.6 }) });
-    // near 도로 폭 폴리곤: 면 채움 + 외곽선 (실제 도로 모양)
-    private static readonly STYLE_POLYGON  = new Style({
-        fill: new Fill({ color: "rgba(120,124,140,0.55)" }),
-        stroke: new Stroke({ color: "rgba(236,238,245,0.85)", width: 0.8 }),
+    // near 도로 폭 폴리곤: 3D COLOR_LINK_BASE(72,74,80) 불투명 + 어두운 외곽(30,30,35)으로 입체감.
+    private static readonly STYLE_ROAD = new Style({
+        fill: new Fill({ color: "rgb(72,74,80)" }),
+        stroke: new Stroke({ color: "rgba(30,30,35,0.85)", width: 1.0 }),
+    });
+    // detail 차선 폴리곤: 3D LANE_COLORS 짝/홀 음영 번갈아 (62,64,70)/(84,86,94) + 얇은 어두운 경계.
+    private static readonly STYLE_LANE_A = new Style({
+        fill: new Fill({ color: "rgb(62,64,70)" }),
+        stroke: new Stroke({ color: "rgba(30,30,35,0.6)", width: 0.4 }),
+    });
+    private static readonly STYLE_LANE_B = new Style({
+        fill: new Fill({ color: "rgb(84,86,94)" }),
+        stroke: new Stroke({ color: "rgba(30,30,35,0.6)", width: 0.4 }),
     });
 
     constructor(versionId: string, apiBaseUrl: string) {
@@ -58,11 +67,18 @@ export default class NetworkMvtLayer extends VectorTileLayer {
     private styleFunction(feature: FeatureLike, resolution: number): Style | undefined {
         // [PoC] POC_MVT_ALL_ZOOM 이면 전 줌 표시. 아니면 near/detail(확대)에서 렌더 생략(기존 벡터에 양보)
         if (!NETWORK_TILING.POC_MVT_ALL_ZOOM && resolution < NETWORK_TILING.MVT_MAX_RESOLUTION) return undefined;
-        // near 도로 폭 폴리곤은 면 채움, overview/mid 중심선은 stroke. 캐시된 스타일 재사용.
-        // MVT RenderFeature 는 getType()이 있으나 FeatureLike 타입엔 없어 any 캐스팅.
-        const geomType = (feature as any).getType?.();
-        if (geomType === "Polygon") return NetworkMvtLayer.STYLE_POLYGON;
+        // 폴리곤은 면 채움(near=도로, detail=차선 음영), 중심선은 stroke. 캐시된 스타일 재사용.
+        // MVT RenderFeature 는 getType()/getId() 가 있으나 FeatureLike 타입엔 없어 any 캐스팅.
+        const f = feature as any;
         const tier = getNetworkLodTierByResolution(resolution);
+        if (f.getType?.() === "Polygon") {
+            if (tier === "detail") {
+                // 차선 id = link*100 + laneIdx → laneIdx 짝/홀로 음영 번갈아 (3D LANE_COLORS 일치)
+                const li = Number(f.getId?.() ?? 0) % 100;
+                return li % 2 === 0 ? NetworkMvtLayer.STYLE_LANE_A : NetworkMvtLayer.STYLE_LANE_B;
+            }
+            return NetworkMvtLayer.STYLE_ROAD; // near 도로 폭 폴리곤
+        }
         return tier === "overview" ? NetworkMvtLayer.STYLE_OVERVIEW : NetworkMvtLayer.STYLE_LINE;
     }
 }
