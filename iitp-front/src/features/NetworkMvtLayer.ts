@@ -65,8 +65,8 @@ export default class NetworkMvtLayer extends VectorTileLayer {
     }
 
     private styleFunction(feature: FeatureLike, resolution: number): Style | undefined {
-        // [PoC] POC_MVT_ALL_ZOOM 이면 전 줌 표시. 아니면 near/detail(확대)에서 렌더 생략(기존 벡터에 양보)
-        if (!NETWORK_TILING.POC_MVT_ALL_ZOOM && resolution < NETWORK_TILING.MVT_MAX_RESOLUTION) return undefined;
+        // USE_MVT_2D(정식)면 전 줌 표시. 아니면 near/detail(확대)에서 렌더 생략(기존 벡터에 양보)
+        if (!NETWORK_TILING.USE_MVT_2D && resolution < NETWORK_TILING.MVT_MAX_RESOLUTION) return undefined;
         // 폴리곤은 면 채움(near=도로, detail=차선 음영), 중심선은 stroke. 캐시된 스타일 재사용.
         // MVT RenderFeature 는 getType()/getId() 가 있으나 FeatureLike 타입엔 없어 any 캐스팅.
         const f = feature as any;

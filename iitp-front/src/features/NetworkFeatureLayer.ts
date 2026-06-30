@@ -58,7 +58,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
     private tileManager: NetworkTileManager | null = null;
     private linkRefCount: Map<string, number> = new Map();
     private nodeRefCount: Map<string, number> = new Map();
-    // MVT 레이어 (overview/mid 2D 가속, NETWORK_TILING.MVT_ENABLED 일 때만)
+    // MVT 레이어 (2D 네트워크 도로/차선, NETWORK_TILING.USE_MVT_2D 일 때)
     private mvtLayer: NetworkMvtLayer | null = null;
     // 타일 모드 store 동기화 debounce 타이머
     private storeSyncTimer: ReturnType<typeof setTimeout> | null = null;
@@ -139,8 +139,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
             if (this.mvtLayer) { try { this.mvtLayer.setMap(null); } catch (_) {} this.mvtLayer = null; }
             return;
         }
-        // MVT 레이어 부착 (overview/mid 2D 가속). 가시성은 네트워크 레이어와 동기화.
-        if (NETWORK_TILING.MVT_ENABLED && !this.mvtLayer) {
+        // MVT 레이어 부착 (2D 네트워크 도로/차선, 전 줌 LOD). 가시성은 네트워크 레이어와 동기화.
+        if (NETWORK_TILING.USE_MVT_2D && !this.mvtLayer) {
             const versionId = useScenarioStore.getState().selectedScenario?.key;
             const base = import.meta.env.VITE_API_URL ?? "";
             if (versionId) {
@@ -175,7 +175,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
         // [PoC] MVT 모드: detail(충분히 확대)에서만 viewport 타일 fetch — 노드/커넥션/포트 등
         //   편집요소 데이터 확보용(도로/차선은 MVT 전담). detail 벗어나면 회수.
-        if (NETWORK_TILING.POC_MVT_ALL_ZOOM && getNetworkLodTierByResolution(resolution) !== 'detail') {
+        if (NETWORK_TILING.USE_MVT_2D && getNetworkLodTierByResolution(resolution) !== 'detail') {
             this.tileManager?.clear();
             return;
         }
@@ -402,12 +402,12 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
         const featureType = props.featureType ?? "";
 
-        // [PoC] MVT 모드: 도로/차선은 MVT가 그림. detail(충분히 확대)에서만 MVT가 안 그리는
-        //   편집요소(노드/커넥션/포트 등)를 벡터로 표시(3D 와 동일). detail 미만은 전부 MVT 양보.
-        if (NETWORK_TILING.POC_MVT_ALL_ZOOM) {
+        // MVT 모드: 도로/차선/중심선은 MVT(NetworkMvtLayer)가 그림. NetworkFeatureLayer 벡터는
+        //   detail(충분히 확대)에서 편집요소(노드/커넥션/포트)만 그린다. detail 미만은 전부 MVT 양보.
+        if (NETWORK_TILING.USE_MVT_2D) {
             if (getNetworkLodTierByResolution(resolution) !== 'detail') return [];
-            if (featureType === 'links' || featureType === 'lanes') return []; // MVT 담당 → 양보
-            // 나머지(nodes/connections/ports/link-edit/cells/segments)는 아래 정상 렌더
+            if (featureType !== 'nodes' && featureType !== 'connections' && featureType !== 'ports') return [];
+            // 노드/커넥션/포트만 아래 정상 렌더 (links/lanes/link-edit/cells/segments는 MVT 담당)
         }
 
         // LOD 필터링: 현재 tier에서 표시 대상이 아닌 피처 타입은 렌더링 생략 (공통 tier 함수 사용)
@@ -432,7 +432,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
             // near/detail: 폴리곤이 도로 본체를 그리므로 중심선은 기존 편집용 얇은 빨강선.
             if (tier === 'overview' || tier === 'mid') {
                 // MVT 레이어가 이 구간 도로망을 담당하면 중복 렌더 생략 (양보)
-                if (NETWORK_TILING.MVT_ENABLED && this.mvtLayer) return [];
+                if (NETWORK_TILING.USE_MVT_2D && this.mvtLayer) return [];
                 const laneCount = props.lanes?.length ?? 1;
                 // 간선(차선 多)일수록 굵게, 최소 0.8px ~ 최대 3px 보장
                 const width = Math.max(0.8, Math.min(3, 0.6 + laneCount * 0.3));
