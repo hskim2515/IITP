@@ -741,11 +741,16 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const linkMap = this.cachedLinkMap;
         const featureBuffer: Feature[] = [];
 
-        for (const link of links) {
-            const features = this.buildLinkFeatures(link, nodeMap);
-            if (features.length > 0) {
-                this.linkFeaturesMap.set(String(link.id), features);
-                featureBuffer.push(...features);
+        // MVT 모드: 도로/차선/중심선/셀/세그먼트는 MVT가 그리므로(styleFunction이 return []) 링크
+        //   feature를 만들지 않는다 → 41k링크 × 차선/셀 feature 빌드 제거(초기 로딩 대폭 경량화).
+        //   노드/커넥션/포트(편집요소)만 빌드. cachedLinkMap(데이터)은 유지해 커넥션이 링크 좌표 참조 가능.
+        if (!NETWORK_TILING.USE_MVT_2D) {
+            for (const link of links) {
+                const features = this.buildLinkFeatures(link, nodeMap);
+                if (features.length > 0) {
+                    this.linkFeaturesMap.set(String(link.id), features);
+                    featureBuffer.push(...features);
+                }
             }
         }
         for (const node of nodes) {
