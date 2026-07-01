@@ -9,6 +9,7 @@ import PropertyPanel from "@component/panel/PropertyPanel";
 import { isDescendantOf, useMenuStore } from "@stores/useMenuStore";
 import { usePropertyStore } from "@stores/usePropertyStore";
 import { MessagePopup } from "@component/message/MessagePopup";
+import PerformancePanel from "@component/util/PerformancePanel";
 import { useSchemaStore } from "@stores/useSchemaStore";
 import SchemaSetting from "@component/schema/SchemaSetting";
 import ScenarioSelector from "@component/scenario/ScenarioSelector";
@@ -16,23 +17,31 @@ import PropertyForm from "@component/popup/PropertyPopup";
 import { propertyFormSchema } from "@schema/propertyFormSchema";
 import Maps from "@component/map/Maps";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
+import KtdbImportModal from "@component/modal/KtdbImportModal";
 import OsmImportModal from "@component/modal/OsmImportModal";
-import SumoImportModal from "@component/modal/SumoImportModal";
 import NetworkImportModal from "@component/modal/NetworkImportModal";
 import OdMatrixModal from "@component/modal/OdMatrixModal";
 import Taskbar from "@component/panel/Taskbar";
 import DashboardLeft from "@component/panel/DashboardLeft";
 import DashboardRight from "@component/panel/DashboardRight";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
-import { ConsolePanel } from "@component/console/ConsolePanel";
 import { useOnboardingStore } from "@stores/useOnboardingStore";
 import { useLogStore } from "@stores/useLogStore";
+import { useVehicleStore } from "@stores/useVehicleStore";
+import FileImportModal from "@component/modal/FileImportModal";
+import { useSignalStore } from "@stores/useSignalStore";
+import { useNetworkStore } from "@stores/useNetworkStore";
+import { assignPropertyToResponseData } from "@utils/guid";
+import { generateDummySignals } from "@utils/signal";
+import { generateDummyPavementMarkings } from "@utils/pavementMarking";
+import { usePavementMarkingStore } from "@stores/usePavementMarkingStore";
+import { autoSaveChangedLayers } from "@utils/autoSave";
 
 function VersionPopup({ scenarioId, onSelect }: { scenarioId: number; onSelect: (v: ScenarioVersions) => void }) {
     const [versions, setVersions] = useState<ScenarioVersions[] | null>(null);
 
     useEffect(() => {
-        fetch(process.env.VITE_API_URL + `/scenario/${scenarioId}/versions`, {
+        fetch(import.meta.env.VITE_API_URL + `/scenario/${scenarioId}/versions`, {
             method: "GET",
             headers: { "Content-Type": "application/json" },
         }).then((r) => r.json()).then((data: ScenarioVersions[]) => {
@@ -69,59 +78,155 @@ function VersionPopup({ scenarioId, onSelect }: { scenarioId: number; onSelect: 
     );
 }
 
-function OnboardingGuide() {
+function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const step = useOnboardingStore((s) => s.step);
     const setStep = useOnboardingStore((s) => s.setStep);
+    const missingSignal = useOnboardingStore((s) => s.missingSignal);
+    const missingVehicle = useOnboardingStore((s) => s.missingVehicle);
     const scenarioKey = useScenarioStore.getState().selectedScenario?.key ?? '';
-    const [generating, setGenerating] = useState(false);
+    const [generatingVehicle, setGeneratingVehicle] = useState(false);
+    const [signalDone, setSignalDone] = useState(false);
+    const [vehicleDone, setVehicleDone] = useState(false);
 
     if (step === 'idle') return null;
 
     const handleDismiss = () => setStep('idle');
 
-    const handleGenerateDummy = async () => {
-        setGenerating(true);
-        useLogStore.getState().addLog('info', '더미 시뮬레이션 데이터 생성 시작...');
-        try {
-            const res = await fetch(
-                `${import.meta.env.VITE_API_URL}/vehicle/vehicle-route/${scenarioKey}`,
-                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ numVehicle: 100 }) }
-            );
-            if (res.status === 202 || res.ok) {
-                useLogStore.getState().addLog('info', '더미 시뮬레이션 데이터 생성 완료 — 시뮬레이션 재생으로 확인하세요.');
-                setStep('idle');
-            } else {
-                const body = await res.json().catch(() => ({}));
-                const msg = body?.error ?? `서버 오류 (${res.status})`;
-                useLogStore.getState().addLog('error', `더미 데이터 생성 실패: ${msg}`);
-            }
-        } catch (e) {
-            useLogStore.getState().addLog('error', '더미 데이터 생성 중 오류 발생');
-        } finally {
-            setGenerating(false);
+    const handleGeneratePavementMarking = async () => {
+        const network = useNetworkStore.getState().currentJsonData as any;
+        if (!network?.nodes?.length) {
+            useLogStore.getState().addLog('warn', '네트워크 데이터가 없어 노면 표시 더미를 생성할 수 없습니다.');
+            return;
         }
+        const pavementMarkings = generateDummyPavementMarkings(network);
+        if (pavementMarkings.length === 0) {
+            useLogStore.getState().addLog('warn', 'intersection 노드가 없어 노면 표시 더미를 생성할 수 없습니다.');
+            return;
+        }
+        const pavementMarkingData = { pavementMarkings };
+        assignPropertyToResponseData(pavementMarkingData);
+        usePavementMarkingStore.getState().setCurrentJsonData(pavementMarkingData);
+        usePavementMarkingStore.getState().setChange(true);
+        const versionKey = useScenarioStore.getState().selectedScenarioVersion?.key;
+        if (versionKey) await autoSaveChangedLayers(versionKey);
+        useLogStore.getState().addLog('info', `노면 표시 더미 생성 완료 (${pavementMarkings.length}개)`);
     };
+
+    const handleGenerateDummy = async () => {
+        setGeneratingVehicle(true);
+        await handleGenerateSignal();
+        await handleGeneratePavementMarking();
+        handleGenerateVehicle();
+    };
+
+    const handleGenerateVehicle = () => {
+        const signalData = useSignalStore.getState().currentJsonData as any;
+        const hasSignal = Array.isArray(signalData?.signals) && signalData.signals.length > 0;
+        setGeneratingVehicle(true);
+        useLogStore.getState().addLog('info', hasSignal
+            ? '더미 차량 시뮬레이션 데이터 생성 시작...'
+            : '더미 차량 시뮬레이션 데이터 생성 시작 (신호 데이터 없음 — 신호 패턴 자동 추정)...'
+        );
+
+        const poll = (retryCount: number) => {
+            fetch(
+                `${import.meta.env.VITE_API_URL}/vehicle/vehicle-route/${scenarioKey}`,
+                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ numVehicle: 0, regenerate: retryCount === 0 }) }
+            )
+            .then((res) => {
+                if (res.status === 202) {
+                    return res.json().then((body: any) => {
+                        const stage = body?.stage ?? '처리 중...';
+                        const elapsed = body?.elapsed ?? 0;
+                        useLogStore.getState().addLog('info', `[차량 경로 생성 중] ${stage} (${elapsed}초 경과)`);
+                        if (retryCount < 120) {
+                            const delay = retryCount < 10 ? 3000 : 5000;
+                            setTimeout(() => poll(retryCount + 1), delay);
+                        } else {
+                            useLogStore.getState().addLog('warn', '더미 차량 데이터 생성 대기 시간 초과');
+                            setGeneratingVehicle(false);
+                        }
+                    });
+                } else if (res.ok) {
+                    useLogStore.getState().addLog('info', '더미 차량 데이터 생성 완료 — 시뮬레이션 재생을 시작합니다...');
+                    setVehicleDone(true);
+                    setGeneratingVehicle(false);
+                    useVehicleStore.getState().triggerRefetch();
+                    // need-dummy: 즉시 닫기 / need-simulation: 필요한 항목 모두 완료 시 닫기
+                    if (step === 'need-dummy') {
+                        setStep('idle');
+                    } else if (step === 'need-simulation') {
+                        const allDone = (!missingSignal || signalDone) && true; // vehicleDone just set
+                        if (allDone) setStep('idle');
+                    }
+                } else {
+                    res.json().catch(() => ({})).then((body: any) => {
+                        const msg = body?.error ?? `서버 오류 (${res.status})`;
+                        useLogStore.getState().addLog('error', `더미 차량 데이터 생성 실패: ${msg}`);
+                        setGeneratingVehicle(false);
+                    });
+                }
+            })
+            .catch(() => {
+                useLogStore.getState().addLog('error', '더미 차량 데이터 생성 중 오류 발생');
+                setGeneratingVehicle(false);
+            });
+        };
+
+        poll(0);
+    };
+
+    const handleGenerateSignal = async () => {
+        const network = useNetworkStore.getState().currentJsonData as any;
+        if (!network?.nodes?.length) {
+            useLogStore.getState().addLog('warn', '네트워크 데이터가 없어 신호 더미를 생성할 수 없습니다.');
+            return;
+        }
+        const signals = generateDummySignals(network);
+        if (signals.length === 0) {
+            useLogStore.getState().addLog('warn', 'intersection 노드가 없어 신호 더미를 생성할 수 없습니다.');
+            return;
+        }
+        const signalData = { signals };
+        assignPropertyToResponseData(signalData);
+        useSignalStore.getState().setCurrentJsonData(signalData);
+        useSignalStore.getState().setChange(true);
+
+        // 자동 저장
+        const versionKey = useScenarioStore.getState().selectedScenarioVersion?.key;
+        if (versionKey) {
+            await autoSaveChangedLayers(versionKey);
+            useLogStore.getState().addLog('info', `신호 더미 생성 완료 (${signals.length}개)`);
+        } else {
+            useLogStore.getState().addLog('info', `신호 더미 생성 완료 (${signals.length}개) — 버전 미선택, DataIOPanel에서 저장 필요`);
+        }
+        setSignalDone(true);
+    };
+
+    const isWizard = step === 'need-network' || step === 'need-dummy';
 
     return (
         <div style={obOverlayStyle}>
             <div style={obPanelStyle}>
-                {/* 단계 표시 */}
-                <div style={obStepRowStyle}>
-                    <StepDot active={step === 'need-network'} done={step === 'need-dummy'} label="1" />
-                    <div style={obStepLineStyle} />
-                    <StepDot active={step === 'need-dummy'} done={false} label="2" />
-                </div>
+                {/* 네트워크 임포트 마법사 단계 표시 */}
+                {isWizard && (
+                    <div style={obStepRowStyle}>
+                        <StepDot active={step === 'need-network'} done={step === 'need-dummy'} label="1" />
+                        <div style={obStepLineStyle} />
+                        <StepDot active={step === 'need-dummy'} done={false} label="2" />
+                    </div>
+                )}
 
                 {step === 'need-network' && (
                     <>
                         <div style={obTitleStyle}>네트워크 데이터 없음</div>
                         <p style={obDescStyle}>
                             이 버전에는 아직 도로 네트워크 데이터가 없습니다.<br />
-                            상단 메뉴 <span style={obHighlight}>파일 › 가져오기 › 네트워크 XML</span> 에서<br />
-                            network.xml 파일을 불러오세요.
+                            OSM, KTDB 또는 XML 파일로 네트워크를 가져오세요.
                         </p>
                         <div style={obFooterStyle}>
                             <button style={obDismissBtn} onClick={handleDismiss}>나중에</button>
+                            <button style={obPrimaryBtn} onClick={() => { handleDismiss(); onOpenImport(); }}>가져오기</button>
                         </div>
                     </>
                 )}
@@ -131,18 +236,74 @@ function OnboardingGuide() {
                         <div style={obTitleStyle}>시뮬레이션 더미 데이터 생성</div>
                         <p style={obDescStyle}>
                             네트워크 반영이 완료됐습니다.<br />
-                            생성된 네트워크를 기반으로 더미 차량 시뮬레이션 데이터를 만들어<br />
+                            신호 더미 생성 후 차량 시뮬레이션 데이터를 순서대로 만들어<br />
                             시뮬레이션 재생을 미리 확인할 수 있습니다.
                         </p>
                         <div style={obFooterStyle}>
-                            <button style={obDismissBtn} onClick={handleDismiss} disabled={generating}>건너뛰기</button>
+                            <button style={obDismissBtn} onClick={handleDismiss} disabled={generatingVehicle}>건너뛰기</button>
                             <button
-                                style={generating ? { ...obPrimaryBtn, opacity: 0.6 } : obPrimaryBtn}
+                                style={generatingVehicle ? { ...obPrimaryBtn, opacity: 0.6 } : obPrimaryBtn}
                                 onClick={handleGenerateDummy}
-                                disabled={generating}
+                                disabled={generatingVehicle}
                             >
-                                {generating ? '생성 중...' : '더미 데이터 생성'}
+                                {generatingVehicle ? '생성 중...' : '더미 데이터 생성'}
                             </button>
+                        </div>
+                    </>
+                )}
+
+                {step === 'need-simulation' && (
+                    <>
+                        <div style={obTitleStyle}>시뮬레이션 데이터 없음</div>
+                        <p style={obDescStyle}>
+                            {missingSignal && missingVehicle
+                                ? <>차량 시뮬레이션과 신호 데이터가 없습니다.</>
+                                : missingSignal
+                                ? <>신호 데이터가 없습니다.</>
+                                : <>차량 시뮬레이션 데이터가 없습니다.</>
+                            }<br />
+                            더미 데이터를 생성하거나 <span style={obHighlight}>가져오기</span>로 추가하세요.
+                        </p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
+                            {missingSignal && (
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: 6 }}>
+                                    <span style={{ fontSize: 12, color: '#ccc' }}>🚦 신호 데이터</span>
+                                    <button
+                                        style={signalDone ? { ...obPrimaryBtn, fontSize: 11, background: 'rgba(78,203,141,0.15)', borderColor: 'rgba(78,203,141,0.4)', color: '#4ecb8d' } : { ...obPrimaryBtn, fontSize: 11 }}
+                                        onClick={handleGenerateSignal}
+                                        disabled={signalDone}
+                                    >
+                                        {signalDone ? '생성 완료 ✓' : '더미 생성'}
+                                    </button>
+                                </div>
+                            )}
+                            {missingVehicle && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: 6 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <span style={{ fontSize: 12, color: '#ccc' }}>🚗 차량 시뮬레이션</span>
+                                        <button
+                                            style={vehicleDone
+                                                ? { ...obPrimaryBtn, fontSize: 11, background: 'rgba(78,203,141,0.15)', borderColor: 'rgba(78,203,141,0.4)', color: '#4ecb8d' }
+                                                : generatingVehicle
+                                                ? { ...obPrimaryBtn, opacity: 0.6, fontSize: 11 }
+                                                : { ...obPrimaryBtn, fontSize: 11 }}
+                                            onClick={handleGenerateVehicle}
+                                            disabled={vehicleDone || generatingVehicle}
+                                        >
+                                            {vehicleDone ? '생성 완료 ✓' : generatingVehicle ? '생성 중...' : '더미 생성'}
+                                        </button>
+                                    </div>
+                                    {missingSignal && !signalDone && !vehicleDone && (
+                                        <span style={{ fontSize: 10, color: '#666' }}>
+                                            신호 데이터 없이 생성 시 신호 패턴이 자동 추정됩니다.
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                        <div style={{ ...obFooterStyle, marginTop: 8 }}>
+                            <button style={obDismissBtn} onClick={handleDismiss}>나중에</button>
+                            <button style={obPrimaryBtn} onClick={() => { handleDismiss(); onOpenImport(); }}>가져오기</button>
                         </div>
                     </>
                 )}
@@ -206,6 +367,7 @@ const obPrimaryBtn: React.CSSProperties = {
 function App() {
 
     const [showDashboard, setShowDashboard] = useState(false);
+    const [showFileImport, setShowFileImport] = useState(false);
 
     const selectedScenario = useScenarioStore((state) => state.selectedScenario);
     const selectedScenarioVersion = useScenarioStore((state) => state.selectedScenarioVersion);
@@ -250,9 +412,11 @@ function App() {
                         onSelect={handleVersionSelect}
                     />
                 )}
-                <OnboardingGuide />
+                {selectedScenarioVersion && <OnboardingGuide onOpenImport={() => setShowFileImport(true)} />}
+                {showFileImport && <FileImportModal onClose={() => setShowFileImport(false)} />}
                 <Header onDashboard={() => setShowDashboard(prev => !prev)} isDashboardOpen={showDashboard} dashboardMode={showDashboard}/>
                 <MessagePopup/>
+                <PerformancePanel/>
                 <PropertyModal/>
                 <main
                     style={{
@@ -281,12 +445,12 @@ function App() {
 
                         {!showDashboard && <Taskbar/>}
 
-                        {!showDashboard && activeSession && activeSession.menuCode === 'OSM_IMPORT' && (
-                            <OsmImportModal/>
+                        {!showDashboard && activeSession && activeSession.menuCode === 'KTDB_IMPORT' && (
+                            <KtdbImportModal/>
                         )}
 
-                        {!showDashboard && activeSession && activeSession.menuCode === 'SUMO_IMPORT' && (
-                            <SumoImportModal/>
+                        {!showDashboard && activeSession && activeSession.menuCode === 'OSM_IMPORT' && (
+                            <OsmImportModal/>
                         )}
 
                         {!showDashboard && activeSession && activeSession.menuCode === 'NETWORK_IMPORT' && (
@@ -297,7 +461,7 @@ function App() {
                             <OdMatrixModal/>
                         )}
 
-                        {!showDashboard && activeSession && activeSession.menuCode !== 'OSM_IMPORT' && activeSession.menuCode !== 'SUMO_IMPORT' && activeSession.menuCode !== 'NETWORK_IMPORT' && (
+                        {!showDashboard && activeSession && activeSession.menuCode !== 'KTDB_IMPORT' && activeSession.menuCode !== 'OSM_IMPORT' && activeSession.menuCode !== 'NETWORK_IMPORT' && (
                             isDescendantOf(menu, 'SCHEMA_SETTING', activeSession.menuCode) ? (
                                 <SchemaSetting/>
                             ) : activeSession.menuCode === 'VEHICLE_TYPE' ? (
@@ -326,7 +490,6 @@ function App() {
                     {showDashboard && <DashboardRight onClose={() => setShowDashboard(false)}/>}
 
                 </main>
-                <ConsolePanel />
             </div>
         )
     )

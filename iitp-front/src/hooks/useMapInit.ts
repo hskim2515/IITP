@@ -100,6 +100,9 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
 
         cesiumViewer.cesiumWidget.creditDisplay.container.style.display = "none";
 
+        // 지형 LOD: 기본(2)은 매우 정밀 → 줌아웃 시 넓은 영역을 고해상도 메시로 그려 부하 폭증.
+        //   줌아웃이 더 느린 역설의 유력 원인. 16은 시뮬 가시화에 충분한 품질/성능 균형.
+        cesiumViewer.scene.globe.maximumScreenSpaceError = 16;
         cesiumViewer.scene.globe.depthTestAgainstTerrain = true;
         cesiumViewer.scene.useDepthPicking = true
 

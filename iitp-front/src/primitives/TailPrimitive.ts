@@ -37,16 +37,16 @@ interface TrailResources {
 }
 
 // ──────────────────────────────────────────────
-// 차종별 색상 (VehicleFeatureLayer / TrailFeatureLayer 와 동일한 값 유지)
-// ──────────────────────────────────────────────
-const TYPE_COLORS: Record<string, [number, number, number, number]> = {
-    'CAR':     [100, 160, 255, 0.92],
-    'TAXI':    [255, 220,   0, 0.92],
-    'BUS':     [255,  90,  90, 0.92],
-    'TRUCK':   [180, 120,  60, 0.92],
-    'MOTO':    [ 80, 220, 130, 0.92],
+// 차종별 기본 색상 (DB에서 가져오지 못할 경우의 fallback)
+const DEFAULT_TYPE_COLORS: Record<string, [number, number, number, number]> = {
     'default': [251, 188,  96, 0.92],
 };
+
+function hexToRgba(hex: string, alpha = 0.92): [number, number, number, number] | null {
+    const m = hex.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    if (!m || !m[1] || !m[2] || !m[3]) return null;
+    return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16), alpha];
+}
 
 // ──────────────────────────────────────────────
 // TailPrimitive
@@ -71,7 +71,8 @@ export default class TailPrimitive {
         context:      any,
         speed:        number,
         status:       string,
-        vehicleTypes: string[] = []
+        vehicleTypes: string[] = [],
+        typeColorMap: Record<string, string> = {}
     ) {
         this.positions    = positions;
         this.context      = context;
@@ -90,7 +91,10 @@ export default class TailPrimitive {
             );
             // 차종별 색상을 drawCommand.uniformMap에 주입 (0-255 → 0-1 정규화)
             const vType = vehicleTypes[i] ?? 'default';
-            const [r, g, b, a] = TYPE_COLORS[vType] ?? TYPE_COLORS['default']!;
+            const hexColor = typeColorMap[vType];
+            const [r, g, b, a] = (hexColor ? hexToRgba(hexColor) : null)
+                ?? DEFAULT_TYPE_COLORS[vType]
+                ?? DEFAULT_TYPE_COLORS['default']!;
             const color = new Cesium.Cartesian4(r / 255, g / 255, b / 255, a);
             resources.drawCommand.uniformMap = {
                 ...resources.drawCommand.uniformMap,
@@ -312,12 +316,20 @@ export default class TailPrimitive {
             }
         }
 
-        for (const trail of this.trails) {
-            if (trail.buffer.count >= 2) {
-                frameState.commandList.push(trail.drawCommand);
+        // 멀리(줌아웃)서는 trail(차량 꼬리)이 sub-pixel이라 안 보이는데도 5024개 draw command를
+        // 매 프레임 push해 줌아웃 시 부하 폭증(차량 trail은 culling 없음). 카메라 고도가 높으면 생략.
+        const camHeight = frameState.camera?.positionCartographic?.height ?? 0;
+        if (camHeight <= TailPrimitive.MAX_VISIBLE_HEIGHT) {
+            for (const trail of this.trails) {
+                if (trail.buffer.count >= 2) {
+                    frameState.commandList.push(trail.drawCommand);
+                }
             }
         }
     }
+
+    /** 이 카메라 고도(m) 초과 시 trail 숨김 — 멀리선 차량 꼬리가 안 보여 렌더 불필요 */
+    private static readonly MAX_VISIBLE_HEIGHT = 3000;
 
     /**
      * 허용 ECEF 이동 거리² — 이 이상이면 순간이동(시뮬 재시작 등)으로 간주해 trail 초기화.
