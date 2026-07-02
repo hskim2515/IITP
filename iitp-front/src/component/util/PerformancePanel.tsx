@@ -16,7 +16,20 @@ interface Stats {
     maxFrameMs: number;
     camAlt: number;
     memMB: number;
-    primitives: number;
+    primitives: number; // scene.primitives 재귀(중첩 collection 포함)
+    entities: number;   // dataSources 엔티티 총합 (노드/포트/시설물)
+}
+
+/** PrimitiveCollection 재귀 카운트 (중첩 collection 내부까지) */
+function countPrimitives(col: any): number {
+    if (!col || typeof col.length !== 'number' || typeof col.get !== 'function') return 0;
+    let n = 0;
+    for (let i = 0; i < col.length; i++) {
+        const p = col.get(i);
+        n++;
+        if (p && typeof p.length === 'number' && typeof p.get === 'function') n += countPrimitives(p);
+    }
+    return n;
 }
 
 export default function PerformancePanel() {
@@ -24,7 +37,7 @@ export default function PerformancePanel() {
     const isRunning = useSimulationStore((s) => s.isRunning);
     const speed = useSimulationStore((s) => s.speed);
     const [show, setShow] = useState(true);
-    const [stats, setStats] = useState<Stats>({ fps: 0, maxFrameMs: 0, camAlt: 0, memMB: 0, primitives: 0 });
+    const [stats, setStats] = useState<Stats>({ fps: 0, maxFrameMs: 0, camAlt: 0, memMB: 0, primitives: 0, entities: 0 });
 
     const framesRef = useRef(0);
     const lastFrameRef = useRef(performance.now());
@@ -50,8 +63,16 @@ export default function PerformancePanel() {
             const camAlt = (() => { try { return viewer.camera.positionCartographic?.height ?? 0; } catch { return 0; } })();
             const mem = (performance as any).memory;
             const memMB = mem ? mem.usedJSHeapSize / 1048576 : 0;
-            const primitives = (() => { try { return viewer.scene.primitives.length; } catch { return 0; } })();
-            setStats({ fps, maxFrameMs, camAlt, memMB, primitives });
+            const primitives = (() => { try { return countPrimitives(viewer.scene.primitives); } catch { return 0; } })();
+            const entities = (() => {
+                try {
+                    let n = 0;
+                    const ds = viewer.dataSources;
+                    for (let i = 0; i < ds.length; i++) n += ds.get(i).entities.values.length;
+                    return n;
+                } catch { return 0; }
+            })();
+            setStats({ fps, maxFrameMs, camAlt, memMB, primitives, entities });
         }, 1000);
 
         return () => {
@@ -101,6 +122,7 @@ export default function PerformancePanel() {
             {row('sim', isRunning ? `▶ ${speed}x` : '⏸')}
             {row('JS heap', stats.memMB > 0 ? `${stats.memMB.toFixed(0)} MB` : 'n/a')}
             {row('primitives', String(stats.primitives))}
+            {row('entities', stats.entities.toLocaleString())}
             <div style={{ marginTop: 4, color: '#667', fontSize: 10 }}>Ctrl+Shift+P</div>
         </div>
     );
