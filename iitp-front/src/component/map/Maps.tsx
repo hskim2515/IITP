@@ -54,9 +54,10 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     const containerRef = useRef<HTMLDivElement | null>(null);
     const openlayersMapRef = useRef<HTMLDivElement | undefined>(undefined);
     const cesiumMapRef = useRef<Element | null>(null);
-    // 네이버 배경 지도 (읽기 전용, OL 아래 겹침). 키 설정 시 활성.
+    // 네이버 배경 지도 (읽기 전용, OL 아래 겹침). 배경지도로 '네이버' 선택 + 키 설정 시 활성.
     const naverMapRef = useRef<HTMLDivElement | null>(null);
-    const naverEnabled = !!process.env.REACT_APP_NAVER_MAP_CLIENT_ID;
+    const currentBaseMap = useMapStore((s) => s.currentBaseMap);
+    const naverEnabled = !!process.env.REACT_APP_NAVER_MAP_CLIENT_ID && currentBaseMap === 'naver';
     const isResizing = useRef(false);
 
     const [dividerX, setDividerX] = useState<number | null>(null);
@@ -292,11 +293,18 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
                 </div>
             )}
 
-            {/* 네이버 배경 지도 (읽기 전용): OL 바로 아래에 겹쳐 깔림. OL 배경타일을 끄면 비쳐 보인다. */}
+            {/* 네이버 배경 지도 (읽기 전용): OL 영역에 정확히 겹쳐 깔림(절대위치). OL 배경타일을 끄면 비쳐 보인다.
+                분할 모드에서 OL 은 좌측 leftWidth 를 차지하므로 네이버도 그 폭에 맞춘다. */}
             {!ONLY_3D && naverEnabled && (
                 <div
                     ref={naverMapRef}
-                    style={{ ...olStyle, zIndex: 0, pointerEvents: 'none' as const }}
+                    style={{
+                        position: 'absolute' as const,
+                        top: 0, left: 0, bottom: 0,
+                        width: useStackedLayout ? '100%' : leftWidth,
+                        zIndex: 0,
+                        pointerEvents: 'none' as const,
+                    }}
                 />
             )}
 
