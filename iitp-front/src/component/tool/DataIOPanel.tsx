@@ -1,4 +1,5 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
+import { getActiveVersionId } from "@utils/versionId";
 import { useStore } from 'zustand';
 import { useMessageStore } from '@stores/useMessageStore';
 import styles from '@css/ToolsPanel.module.css';
@@ -14,6 +15,9 @@ import { useBusPtLineStore, useBusPtLineWeekdayStore, useBusPtLineWeekendStore,
          useBusPtLineHistoryStore, useBusPtLineWeekdayHistoryStore, useBusPtLineWeekendHistoryStore } from '@stores/useBusPtLineStore';
 import { useRailPtLineStore, useRailPtLineHistoryStore } from '@stores/useRailPtLineStore';
 import { useSimulationScenarioStore, useSimulationScenarioHistoryStore } from '@stores/useSimulationScenarioStore';
+import { useVehicleStore } from '@stores/useVehicleStore';
+import { useSimulationStore } from '@stores/useSimulationStore';
+import { useSignalTimelineStore } from '@stores/useSignalTimelineStore';
 import { apiConfig, ApiMenuKey } from '@config/apiConfig';
 import axiosInstance from '@api/axiosInstance';
 import { useScenarioStore } from '@stores/useScenarioStore';
@@ -21,11 +25,12 @@ import { mergeUpdateLogs } from '@utils/history';
 import SaveVersionModal from '@component/modal/SaveVersionModal';
 import { useImportProgress, OSM_STEPS } from '@hooks/useImportProgress';
 import ImportProgressBar from '@component/util/ImportProgressBar';
+import { useMapStore } from '@stores/useMapStore';
 
 // ── 레이어 설정 ─────────────────────────────────────────────────
 // xmlExportUrl: XML export/import 엔드포인트 베이스 경로 (null이면 XML 미지원)
 // filenameHints: XML 파일명 자동 감지용 키워드
-const LAYER_CONFIG = [
+export const LAYER_CONFIG = [
     { key: 'network',            menuCode: 'NETWORK',             label: '네트워크',           store: useNetworkStore,            historyStore: useNetworkHistoryStore,            fullData: true,  xmlExportUrl: '/network',                        filenameHints: ['network', '네트워크'] },
     { key: 'busStation',         menuCode: 'BUS_STATION',         label: '버스 정류장',         store: useBusStationStore,         historyStore: useBusStationHistoryStore,         fullData: false, xmlExportUrl: '/public-transit/station/bus',     filenameHints: ['bus_station', 'busstation', '버스정류장', 'bus-station'] },
     { key: 'railStation',        menuCode: 'RAIL_STATION',        label: '철도 정류장',         store: useRailStationStore,        historyStore: useRailStationHistoryStore,        fullData: false, xmlExportUrl: '/public-transit/station/rail',    filenameHints: ['rail_station', 'railstation', '철도정류장', 'rail-station'] },
@@ -43,7 +48,7 @@ type LayerKey = (typeof LAYER_CONFIG)[number]['key'];
 type LayerCfg = (typeof LAYER_CONFIG)[number];
 
 // ── XML 파일명으로 레이어 자동 감지 ─────────────────────────────
-function detectLayerFromFilename(filename: string): LayerCfg | null {
+export function detectLayerFromFilename(filename: string): LayerCfg | null {
     const lower = filename.toLowerCase().replace(/\s/g, '_');
     for (const cfg of LAYER_CONFIG) {
         if (!cfg.xmlExportUrl) continue;
@@ -92,8 +97,25 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
     const [xmlImport, setXmlImport] = useState<XmlImportState | null>(null);
     const [xmlImporting, setXmlImporting] = useState(false);
 
-    // 좌표 입력 상태 (MISSING_COORDINATES 에러 시)
+    // 시뮬레이션 결과(vehicle_sim.db) 가져오기 상태
+    const [dbUploading, setDbUploading] = useState(false);
+
+    // 좌표 입력 상태 (network XML 가져오기 시 기준점 지정)
     const [coordInput, setCoordInput] = useState<{ latitude: string; longitude: string } | null>(null);
+
+    // network 레이어 선택 시 시나리오 기준 좌표로 coordInput 초기화
+    const xmlTargetKey = xmlImport ? (xmlImport.selectedKey || xmlImport.detectedLayer?.key || '') : null;
+    useEffect(() => {
+        if (xmlTargetKey === 'network') {
+            const scen = useScenarioStore.getState().selectedScenario;
+            setCoordInput({
+                latitude:  scen?.latitude  != null ? String(scen.latitude)  : '',
+                longitude: scen?.longitude != null ? String(scen.longitude) : '',
+            });
+        } else {
+            setCoordInput(null);
+        }
+    }, [xmlTargetKey]);
 
     const setMessage = useMessageStore.getState().setMessage;
 
@@ -193,13 +215,13 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
         }
         setExportingXmlKey(cfg.key);
         try {
-            const url = `${cfg.xmlExportUrl}/${selectedScenarioVersion.key}/export`;
+            const url = `${cfg.xmlExportUrl}/${getActiveVersionId()}/export`;
             const response = await axiosInstance({ method: 'GET', url, responseType: 'blob' });
             const blob = new Blob([response.data], { type: 'application/xml' });
             const href = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = href;
-            a.download = `${cfg.key}_${selectedScenarioVersion.key}_${dateTag()}.xml`;
+            a.download = `${cfg.key}_${getActiveVersionId()}_${dateTag()}.xml`;
             a.click();
             URL.revokeObjectURL(href);
             setImportStatus({ type: 'ok', text: `${cfg.label} XML 내보내기 완료` });
@@ -249,16 +271,16 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
         try {
             const formData = new FormData();
             formData.append('file', xmlImport.file);
-            let url = `${import.meta.env.VITE_API_URL}${cfg.xmlExportUrl}/${selectedScenarioVersion.key}/import`;
+            let url = `${import.meta.env.VITE_API_URL}${cfg.xmlExportUrl}/${getActiveVersionId()}/import`;
             if (coords) {
                 url += `?latitude=${coords.latitude}&longitude=${coords.longitude}`;
             }
             const res = await fetch(url, { method: 'POST', body: formData });
             const data = await res.json();
 
-            // 좌표 미설정 → 입력 요청
+            // 좌표 미설정 → 입력 요청 (기준점 미리 초기화된 경우는 빈 값으로 유지)
             if (!res.ok && data?.errors?.includes('MISSING_COORDINATES')) {
-                setCoordInput({ latitude: '', longitude: '' });
+                setCoordInput(prev => prev ?? { latitude: '', longitude: '' });
                 setXmlImporting(false);
                 return;
             }
@@ -289,21 +311,18 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
             setImportStatus({ type: 'error', text: '가져올 레이어를 선택해주세요.' });
             return;
         }
-        confirmAndImport(() => doXmlImport(cfg));
-    };
-
-    const handleCoordSubmit = () => {
-        if (!coordInput || !xmlImport) return;
-        const lat = parseFloat(coordInput.latitude);
-        const lon = parseFloat(coordInput.longitude);
-        if (isNaN(lat) || isNaN(lon)) {
-            setImportStatus({ type: 'error', text: '올바른 위경도 값을 입력해주세요.' });
-            return;
+        if (coordInput) {
+            // network 레이어: 좌표 유효성 검사 후 전달
+            const lat = parseFloat(coordInput.latitude);
+            const lon = parseFloat(coordInput.longitude);
+            if (isNaN(lat) || isNaN(lon)) {
+                setImportStatus({ type: 'error', text: '기준점 좌표를 입력하거나 지도에서 선택하세요.' });
+                return;
+            }
+            confirmAndImport(() => doXmlImport(cfg, { latitude: lat, longitude: lon }));
+        } else {
+            confirmAndImport(() => doXmlImport(cfg));
         }
-        const targetKey = xmlImport.selectedKey || xmlImport.detectedLayer?.key;
-        const cfg = LAYER_CONFIG.find(l => l.key === targetKey);
-        if (!cfg) return;
-        doXmlImport(cfg, { latitude: lat, longitude: lon });
     };
 
     // ── JSON 가져오기 ─────────────────────────────────────────────
@@ -357,6 +376,47 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
         reader.readAsText(file);
     };
 
+    // ── 시뮬레이션 결과(vehicle_sim.db) 가져오기 ───────────────────
+    const doDbImport = async (file: File, versionKey: string) => {
+        setDbUploading(true);
+        setImportStatus(null);
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const url = `${import.meta.env.VITE_API_URL}/vehicle/upload-db/${versionKey}`;
+            const res = await fetch(url, { method: 'POST', body: formData });
+            const data = await res.json().catch(() => null);
+            if (!res.ok) {
+                throw new Error(data?.error ?? `서버 오류 ${res.status}`);
+            }
+
+            // 캐시된 시뮬레이션 결과 초기화 → 다음 재생 시 새 DB로 재생성
+            useVehicleStore.setState({ czml: '', vehicleRoute: '', features: '' });
+            useSimulationStore.getState().reset();
+            useSignalTimelineStore.getState().setSignalTimeline([]);
+
+            setImportStatus({ type: 'ok', text: '시뮬레이션 결과(vehicle_sim.db) 가져오기 완료' });
+        } catch (e: unknown) {
+            setImportStatus({ type: 'error', text: e instanceof Error ? e.message : 'DB 가져오기 실패' });
+        } finally {
+            setDbUploading(false);
+        }
+    };
+
+    const processDbFile = (file: File) => {
+        const { selectedScenarioVersion } = useScenarioStore.getState();
+        if (!selectedScenarioVersion) {
+            setImportStatus({ type: 'error', text: '시나리오 버전을 먼저 선택해주세요.' });
+            return;
+        }
+        setMessage({
+            type: 'confirm',
+            text: '시뮬레이션 결과 파일(vehicle_sim.db)을 교체합니다.\n기존 차량 경로 데이터는 삭제되고 다음 재생 시 새 파일로 다시 생성됩니다.\n계속할까요?',
+            onConfirm: () => doDbImport(file, getActiveVersionId() ?? ""),
+            onCancel: () => {},
+        });
+    };
+
     // ── 파일 드롭/선택 처리 ───────────────────────────────────────
     const processFile = (file: File) => {
         setImportStatus(null);
@@ -369,8 +429,10 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
                 detectedLayer: detected,
                 selectedKey: detected?.key ?? '',
             });
+        } else if (file.name.endsWith('.db')) {
+            processDbFile(file);
         } else {
-            setImportStatus({ type: 'error', text: 'JSON 또는 XML 파일만 지원합니다.' });
+            setImportStatus({ type: 'error', text: 'JSON, XML 또는 DB 파일만 지원합니다.' });
         }
     };
 
@@ -462,6 +524,8 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
                             ...dropZoneStyle,
                             borderColor: isDragging ? 'rgba(65,105,225,0.7)' : 'rgba(255,255,255,0.12)',
                             background: isDragging ? 'rgba(65,105,225,0.08)' : 'rgba(255,255,255,0.03)',
+                            opacity: dbUploading ? 0.6 : 1,
+                            pointerEvents: dbUploading ? 'none' : undefined,
                         }}
                         onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
                         onDragLeave={() => setIsDragging(false)}
@@ -469,12 +533,14 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
                         onClick={() => fileInputRef.current?.click()}
                     >
                         <div style={{ fontSize: 20, marginBottom: 4, opacity: 0.6 }}>⬆</div>
-                        <div style={{ fontSize: 11, color: '#888' }}>JSON 또는 XML 파일을 끌어오거나</div>
+                        <div style={{ fontSize: 11, color: '#888' }}>
+                            {dbUploading ? 'vehicle_sim.db 업로드 중…' : 'JSON, XML 또는 DB 파일을 끌어오거나'}
+                        </div>
                         <div style={{ fontSize: 11, color: '#7aa2ff', cursor: 'pointer' }}>클릭하여 선택</div>
                         <input
                             ref={fileInputRef}
                             type="file"
-                            accept=".json,.xml"
+                            accept=".json,.xml,.db"
                             style={{ display: 'none' }}
                             onChange={handleFileChange}
                         />
@@ -506,12 +572,30 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
                                 ))}
                             </select>
 
-                            {/* 좌표 입력 (MISSING_COORDINATES 에러 시) */}
+                            {/* 좌표 입력 (network XML 가져오기 시 기준점 지정) */}
                             {coordInput && (
-                                <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 6, background: 'rgba(245,166,35,0.08)', border: '1px solid rgba(245,166,35,0.3)' }}>
-                                    <div style={{ fontSize: 11, color: '#f5a623', marginBottom: 8 }}>
-                                        ⚠ 시나리오 기준 좌표가 없습니다. 네트워크 좌표 변환을 위해 입력해주세요.
+                                <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 6, background: 'rgba(80,120,255,0.06)', border: '1px solid rgba(80,120,255,0.25)' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                                        <div style={{ fontSize: 11, color: '#8aaaee' }}>기준점 좌표 (배치 위치)</div>
+                                        <button
+                                            style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', background: 'rgba(80,140,255,0.15)', border: '1px solid rgba(80,140,255,0.4)', color: '#7ab0ff', lineHeight: 1.6 }}
+                                            onClick={() => {
+                                                useMapStore.getState().startCoordPick((lat, lng) => {
+                                                    setCoordInput({
+                                                        latitude:  lat.toFixed(7),
+                                                        longitude: lng.toFixed(7),
+                                                    });
+                                                });
+                                            }}
+                                        >
+                                            지도에서 선택
+                                        </button>
                                     </div>
+                                    {!coordInput.latitude && !coordInput.longitude && (
+                                        <div style={{ fontSize: 10, color: '#f5a623', marginBottom: 6 }}>
+                                            ⚠ 시나리오 기준 좌표가 없습니다. 직접 입력하거나 지도에서 선택하세요.
+                                        </div>
+                                    )}
                                     <div style={{ display: 'flex', gap: 6 }}>
                                         <div style={{ flex: 1 }}>
                                             <div style={{ fontSize: 10, color: '#888', marginBottom: 3 }}>위도 (Latitude)</div>
@@ -551,10 +635,10 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
                                         ...importSmallBtnStyle,
                                         opacity: (!xmlImport.selectedKey && !xmlImport.detectedLayer) || xmlImporting ? 0.5 : 1,
                                     }}
-                                    onClick={coordInput ? handleCoordSubmit : handleXmlImport}
+                                    onClick={handleXmlImport}
                                     disabled={(!xmlImport.selectedKey && !xmlImport.detectedLayer) || xmlImporting}
                                 >
-                                    {xmlImporting ? '가져오는 중…' : coordInput ? '좌표로 가져오기' : 'XML 가져오기'}
+                                    {xmlImporting ? '가져오는 중…' : 'XML 가져오기'}
                                 </button>
                             </div>
                         </div>
@@ -808,7 +892,7 @@ const OsmNetworkSection: React.FC<{
         startProgress();
         onStatus(null);
         try {
-            const versionId = selectedScenario?.key ?? '';
+            const versionId = getActiveVersionId() ?? '';
             const formData = new FormData();
             formData.append('south', south);
             formData.append('west',  west);
@@ -822,7 +906,8 @@ const OsmNetworkSection: React.FC<{
             if (!res.ok) throw new Error(await res.text().catch(() => `HTTP ${res.status}`));
 
             const data = await res.json();
-            const networkData = data.network ?? data;
+            const networkData = data.network;
+            if (!networkData) throw new Error('네트워크 데이터를 받지 못했습니다.');
             assignPropertyToResponseData(networkData);
             useNetworkStore.getState().setCurrentJsonDataWithFullBuild(networkData);
             useNetworkStore.getState().setChange(true);
@@ -974,7 +1059,7 @@ const SumoNetworkSection: React.FC<{
         startSumoProgress();
         onStatus(null);
         try {
-            const versionId = selectedScenario?.key ?? '';
+            const versionId = getActiveVersionId() ?? '';
             const params = new URLSearchParams({ south, west, north, east });
             const scenLat = selectedScenario?.latitude;
             const scenLon = selectedScenario?.longitude;
@@ -989,7 +1074,8 @@ const SumoNetworkSection: React.FC<{
                 throw new Error(body || `서버 오류 ${res.status}`);
             }
             const data = await res.json();
-            const networkData = data.network ?? data;
+            const networkData = data.network;
+            if (!networkData) throw new Error('네트워크 데이터를 받지 못했습니다.');
             assignPropertyToResponseData(networkData);
             useNetworkStore.getState().setCurrentJsonDataWithFullBuild(networkData);
             useNetworkStore.getState().setChange(true);

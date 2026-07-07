@@ -1,4 +1,5 @@
 import VectorLayer from "ol/layer/Vector";
+import { getActiveVersionId } from "@utils/versionId";
 import VectorSource from "ol/source/Vector";
 import { Feature } from "ol";
 import { LineString } from "ol/geom";
@@ -6,10 +7,10 @@ import { Stroke, Style } from "ol/style";
 import { fromLonLat, toLonLat } from "ol/proj";
 import { Cartographic, Ellipsoid, Math as CesiumMath } from "cesium";
 import { useNetworkStore } from "@stores/useNetworkStore";
+import { useVehicleStore } from "@stores/useVehicleStore";
 import { useHeatmapSettingStore } from "@stores/useHeatmapSettingStore";
 import { Link } from "@type/Network";
 import { VEHICLE_AGGREGATION } from "@utils/lodConstants";
-import { useScenarioStore } from "@stores/useScenarioStore";
 import { useSimulationStore } from "@stores/useSimulationStore";
 import axiosInstance from "@api/axiosInstance";
 import { unByKey } from "ol/Observable";
@@ -232,15 +233,17 @@ export default class TrafficHeatmapFeatureLayer extends VectorLayer<VectorSource
         const resolution = view.getResolution();
         if (!size || resolution == null) return;
 
-        // near(확대)에서는 집계 비활성 → 개별 차량 경로 복귀
-        this.aggregationActive = resolution >= VEHICLE_AGGREGATION.MIN_RESOLUTION;
+        // near(확대)에서는 집계 비활성 → 개별 차량 경로 복귀.
+        // 단 denseViewport(viewport 차량 상한 초과)면 줌 무관 집계 유지 — 개별 차량 대체 가시화.
+        const dense = (useVehicleStore.getState() as any).denseViewport === true;
+        this.aggregationActive = dense || resolution >= VEHICLE_AGGREGATION.MIN_RESOLUTION;
         if (!this.aggregationActive) return;
 
         const now = performance.now();
         if (now - this.lastAggregateAt < VEHICLE_AGGREGATION.THROTTLE_MS) return;
         this.lastAggregateAt = now;
 
-        const versionId = useScenarioStore.getState().selectedScenario?.key;
+        const versionId = getActiveVersionId();
         if (!versionId) return;
         if (this.linkSegments.length === 0) this._buildFromStore();
 
@@ -260,7 +263,18 @@ export default class TrafficHeatmapFeatureLayer extends VectorLayer<VectorSource
             for (const [id] of this.emaByLink) this.emaByLink.set(id, 0);
             for (const lt of links) {
                 const id = Number(lt.linkId);
-                if (this.emaByLink.has(id)) this.emaByLink.set(id, lt.volume ?? 0);
+                if (this.emaByLink.has(id)) {
+                    this.emaByLink.set(id, lt.volume ?? 0);
+                } else if (Array.isArray(lt.coordinates) && lt.coordinates.length >= 2) {
+                    // 네트워크 타일 모드: 스토어에 링크 지오메트리가 없음 → 집계 응답의 좌표로 feature 생성
+                    this.emaByLink.set(id, lt.volume ?? 0);
+                    const coords = lt.coordinates.map((c: any) => fromLonLat([c.lng, c.lat]));
+                    const feature = new Feature<LineString>(new LineString(coords));
+                    feature.setId(`traf-${id}`);
+                    feature.set("linkId", id);
+                    this.featureByLink.set(id, feature);
+                    this.trafficSource.addFeature(feature);
+                }
             }
             this.trafficSource.changed();
         }).catch((err) => {

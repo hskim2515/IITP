@@ -1,4 +1,5 @@
 import VectorSource from "ol/source/Vector";
+import { getActiveVersionId } from "@utils/versionId";
 import VectorLayer from "ol/layer/Vector";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { Feature } from "ol";
@@ -19,7 +20,6 @@ import { signalRenderState } from "@stores/signalRenderState";
 import { getSignalLodTierByResolution, SIGNAL_TILING } from "@utils/lodConstants";
 import { SignalTileManager } from "@managers/SignalTileManager";
 import { SignalTileMembership } from "@managers/signalTileMembership";
-import { useScenarioStore } from "@stores/useScenarioStore";
 import { unByKey } from "ol/Observable";
 import type { EventsKey } from "ol/events";
 import type OLMap from "ol/Map";
@@ -337,7 +337,7 @@ export class SignalFeatureLayer extends VectorLayer {
         const resolution = view.getResolution();
         if (!size || resolution == null) return;
         if (!this.tileManager) {
-            const versionId = useScenarioStore.getState().selectedScenario?.key;
+            const versionId = getActiveVersionId();
             if (!versionId) return;
             this.tileManager = new SignalTileManager(String(versionId), {
                 onTileLoaded: (_k, payload) => { if (this.membership.add(payload)) this.load(); },

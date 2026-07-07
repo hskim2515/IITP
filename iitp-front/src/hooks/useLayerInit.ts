@@ -22,6 +22,7 @@ import LayerManager from "@managers/LayerManager";
 import {useLayerSchemaStore} from "@stores/useLayerSchemaStore";
 import {assignPropertyToResponseData} from "@utils/guid";
 import { NETWORK_TILING } from "@utils/lodConstants";
+import { getActiveVersionId } from "@utils/versionId";
 import {usePavementMarkingStore} from "@stores/usePavementMarkingStore";
 import { useBusStationStore } from "@stores/useBusStationStore";
 import { useRailStationStore } from "@stores/useRailStationStore";
@@ -33,6 +34,7 @@ import { useSimulationScenarioStore } from "@stores/useSimulationScenarioStore";
 import { useBusPtLineStore, useBusPtLineWeekdayStore, useBusPtLineWeekendStore } from "@stores/useBusPtLineStore";
 import { useRailPtLineStore } from "@stores/useRailPtLineStore";
 import { useOnboardingStore } from "@stores/useOnboardingStore";
+import { useNetworkTileStore } from "@stores/useNetworkTileStore";
 
 const LAYER_LABELS: Record<string, string> = {
     NETWORK:               '도로',
@@ -79,20 +81,35 @@ export const layerNameToStoreMap: Record<string, FeatureStoreFactoryType<any>> =
     simulationScenario: useSimulationScenarioStore,
 }
 
-export function flyToNetworkExtent(cesiumViewer: any, olMap: any): void {
+export async function flyToNetworkExtent(cesiumViewer: any, olMap: any): Promise<void> {
     const network = useNetworkStore.getState().currentJsonData as any;
-    if (!network?.links?.length) return;
 
     let minLat =  Infinity, maxLat = -Infinity;
     let minLng =  Infinity, maxLng = -Infinity;
 
-    for (const link of network.links) {
-        if (!Array.isArray(link.coordinates)) continue;
-        for (const c of link.coordinates) {
-            if (c.lat < minLat) minLat = c.lat;
-            if (c.lat > maxLat) maxLat = c.lat;
-            if (c.lng < minLng) minLng = c.lng;
-            if (c.lng > maxLng) maxLng = c.lng;
+    if (network?.links?.length) {
+        for (const link of network.links) {
+            if (!Array.isArray(link.coordinates)) continue;
+            for (const c of link.coordinates) {
+                if (c.lat < minLat) minLat = c.lat;
+                if (c.lat > maxLat) maxLat = c.lat;
+                if (c.lng < minLng) minLng = c.lng;
+                if (c.lng > maxLng) maxLng = c.lng;
+            }
+        }
+    } else {
+        // 타일 모드: 클라이언트에 링크 데이터가 없음 → 서버 extent API (SQLite RTree bbox).
+        // 시나리오 origin 좌표는 네트워크 위치와 다를 수 있어(부천 origin + 대전 네트워크) 신뢰 불가.
+        const versionId = getActiveVersionId();
+        if (!versionId) return;
+        try {
+            const res = await axiosInstance.get(`/network/${versionId}/extent`);
+            const e = res.data;
+            if (e && isFinite(e.west)) {
+                minLng = e.west; maxLng = e.east; minLat = e.south; maxLat = e.north;
+            }
+        } catch {
+            return; // 네트워크 없음 — 이동 생략
         }
     }
 
@@ -131,7 +148,7 @@ const useLayerInit = (): void => {
     const cesiumViewer = useCesiumStore.state.viewer();
     const setLayerManager = useLayerStore.getState().setLayerManager;
 
-    const selectedScenario = useScenarioStore.getState().selectedScenario;
+    const activeVersionId = getActiveVersionId();
     const menuCodes = Object.keys(propertyFormSchema as Record<string, PropertyFormSchemaProps>);
     const layerGroups = useLayerSchemaStore.state.groups();
 
@@ -152,6 +169,11 @@ const useLayerInit = (): void => {
         useLayerStore.getState().setInitialized(false);
 
         try {
+            // 시나리오별 tileMode 복원 — 대형(KTDB) 시나리오만 타일 모드, 소형은 전체 로드(편집 가능)
+            if (activeVersionId) {
+                useNetworkTileStore.getState().hydrateForVersion(activeVersionId);
+            }
+
             // 1단계: 모든 데이터를 fetch하여 originData 세팅
             for (const menuCode of menuCodes) {
                 const store = menuCodeToStoreMap[menuCode];
@@ -159,8 +181,9 @@ const useLayerInit = (): void => {
 
                 try {
                     // 타일 모드: 네트워크는 전체(수십 MB)를 받지 않고 빈 채로 시작 → 타일 매니저가
-                    // viewport 분만 동기화. 시나리오 열 때 87MB 다운로드+파싱+빌드로 화면 멈추던 문제 회피.
-                    if (NETWORK_TILING.ENABLED && menuCode === 'NETWORK') {
+                    // viewport 분만 동기화. ENABLED=true 정적 플래그 또는 이전 세션에서 tileMode가
+                    // localStorage에 영속되어 있으면 전체 다운로드 없이 시작한다.
+                    if ((NETWORK_TILING.ENABLED || useNetworkTileStore.getState().tileMode) && menuCode === 'NETWORK') {
                         store.getState().setOriginData({ id: 0, name: null, links: [], nodes: [] } as any);
                         useLogStore.getState().addLog('info', `${LAYER_LABELS[menuCode] ?? menuCode} 타일 모드 (viewport 로드)`);
                         continue;
@@ -169,17 +192,32 @@ const useLayerInit = (): void => {
                     const api = apiConfig[menuCode as ApiMenuKey].list;
                     const response = await axiosInstance({
                         method: api.method,
-                        url: api.url + '/' + selectedScenario.key,
+                        url: api.url + '/' + activeVersionId,
                     });
 
                     store.getState().setOriginData(response.data);
                     assignPropertyToResponseData(response.data);
                     const label = LAYER_LABELS[menuCode] ?? menuCode;
                     useLogStore.getState().addLog('info', `${label} 데이터 로드 완료`);
+
+                    // 대용량 네트워크(KTDB 등: 노드 10,000개 초과) → 타일 모드 자동 전환.
+                    // 새로고침 후에도 tileMode가 복원되어 fullBuild 트리거를 차단한다.
+                    if (menuCode === 'NETWORK' && (response.data?.nodes?.length ?? 0) > 10000) {
+                        useNetworkTileStore.getState().setTileMode(true, activeVersionId);
+                        useLogStore.getState().addLog('info', `네트워크 타일 모드 자동 전환 (${response.data.nodes.length}개 노드)`);
+                    }
                 } catch (err) {
                     if (err instanceof AxiosError && err.response?.status === 404) {
                         const label = LAYER_LABELS[menuCode] ?? menuCode;
                         useLogStore.getState().addLog('warn', `${label} 데이터 없음`);
+                        continue;
+                    }
+                    // 네트워크 전체 fetch 실패(대용량 타임아웃 등) → 타일 모드 fallback.
+                    // 타일 API는 서버가 SQLite에서 viewport 분만 응답하므로 대용량이어도 동작한다.
+                    if (menuCode === 'NETWORK') {
+                        useNetworkTileStore.getState().setTileMode(true, activeVersionId);
+                        store.getState().setOriginData({ id: 0, name: null, links: [], nodes: [] } as any);
+                        useLogStore.getState().addLog('warn', '네트워크 전체 로드 실패 → 타일 모드로 전환 (viewport 로드)');
                         continue;
                     }
                     console.error(`[${menuCode}] 데이터 불러오기 실패`, err);
@@ -216,6 +254,12 @@ const useLayerInit = (): void => {
             for (const menuCode of menuCodes) {
                 const store = menuCodeToStoreMap[menuCode];
                 if (!store) continue;
+                // 타일 모드 네트워크: 67K 노드를 currentJsonData에 올리면 fullBuild 트리거 → 엔티티 폭증.
+                // 빈 마커만 설정 → Facility.tsx visibleFields 필터 통과(레이어 목록 유지) + fullBuild 차단.
+                if (menuCode === 'NETWORK' && useNetworkTileStore.getState().tileMode) {
+                    store.getState().setCurrentJsonData({ id: 0, name: null, nodes: [], links: [] } as any);
+                    continue;
+                }
                 try {
                     store.getState().initCurrentData();
                 } catch (err) {
@@ -226,12 +270,23 @@ const useLayerInit = (): void => {
             isInitializedRef.current = true;
             useLayerStore.getState().setInitialized(true);
 
-            // 네트워크 범위로 지도 이동
+            // 네트워크 범위로 지도 이동 (타일 모드는 서버 extent API 사용)
             flyToNetworkExtent(cesiumViewer, olMap);
 
-            // 네트워크 데이터가 없으면 가져오기 유도
-            const networkData = useNetworkStore.getState().originData;
-            if (!networkData) {
+            // 네트워크 데이터가 없으면 가져오기 유도.
+            // 타일 모드에서는 originData가 항상 빈 마커(truthy)라 로컬 검사 불가 → 서버 extent로 판단.
+            let hasNetwork = false;
+            if (NETWORK_TILING.ENABLED || useNetworkTileStore.getState().tileMode) {
+                try {
+                    const res = await axiosInstance.get(`/network/${getActiveVersionId()}/extent`);
+                    hasNetwork = !!res.data && isFinite(res.data.west);
+                } catch {
+                    hasNetwork = false;
+                }
+            } else {
+                hasNetwork = !!useNetworkStore.getState().originData;
+            }
+            if (!hasNetwork) {
                 useOnboardingStore.getState().setStep('need-network');
                 return;
             }
@@ -241,7 +296,7 @@ const useLayerInit = (): void => {
             const hasSignal = Array.isArray(signalOrigin?.signals) && signalOrigin.signals.length > 0;
             try {
                 const base = import.meta.env.VITE_API_URL;
-                const res = await fetch(`${base}/vehicle/vehicle-route/${selectedScenario.key}/exists`);
+                const res = await fetch(`${base}/vehicle/vehicle-route/${getActiveVersionId()}/exists`);
                 if (res.ok) {
                     const { exists: hasVehicleRoute } = await res.json();
                     if (!hasVehicleRoute || !hasSignal) {

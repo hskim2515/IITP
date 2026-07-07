@@ -1,23 +1,105 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { getActiveVersionId } from "@utils/versionId";
 import { useNetworkDrawStore } from '@stores/useNetworkDrawStore';
 import { useNetworkStore } from '@stores/useNetworkStore';
+import { useSignalStore } from '@stores/useSignalStore';
+import { useBusStationStore } from '@stores/useBusStationStore';
+import { useRailStationStore } from '@stores/useRailStationStore';
+import { useScenarioStore } from '@stores/useScenarioStore';
 import { useMessageStore } from '@stores/useMessageStore';
 import { createIntersectionAtNode, autoGenerateAllIntersections, detectAndSplitIntersections } from '@hooks/useNetworkDraw';
+import { assignPropertyToResponseData, generateGUIDWithType } from '@utils/guid';
+import { autoSaveChangedLayers } from '@utils/autoSave';
+import { generateDummySignals } from '@utils/signal';
+import { createEventHandlers } from '@handler/createEventHandlers';
+import { useMapStore } from '@stores/useMapStore';
 import NetworkSelectPanel from './NetworkSelectPanel';
 import styles from '@css/ToolsPanel.module.css';
 
 const NetworkDrawPanel: React.FC = () => {
     const {
-        isActive, isSelectActive,
+        isActive, isSelectActive, placementMode,
         laneCount, linkWidth, maxSpd, isBidirectional,
-        setActive, setSelectActive,
+        setActive, setSelectActive, setPlacementMode,
         setLaneCount, setLinkWidth, setMaxSpd, setBidirectional,
     } = useNetworkDrawStore();
 
     const [showShortcuts, setShowShortcuts] = useState(false);
+    const cleanupRef = useRef<(() => void) | null>(null);
+    const prevMapViewModeRef = useRef<string>('split');
 
     const toggle       = () => setActive(!isActive);
     const toggleSelect = () => setSelectActive(!isSelectActive);
+
+    // isActive / placementMode 진입 시 2D 고정, 종료 시 복원
+    // (isSelectActive 는 useNetworkSelect.ts 에서 동일하게 처리)
+    const isDrawEditActive = isActive || placementMode !== 'none';
+    useEffect(() => {
+        const mapStore = useMapStore.getState();
+        if (isDrawEditActive) {
+            prevMapViewModeRef.current = mapStore.mapViewMode;
+            mapStore.setMapViewMode('2D');
+        } else {
+            mapStore.setMapViewMode(prevMapViewModeRef.current as any);
+        }
+    }, [isDrawEditActive]);
+
+    // 시설물 배치 모드 활성화: createEventHandlers 등록 + 완료 시 자동 해제
+    useEffect(() => {
+        if (placementMode === 'none') {
+            cleanupRef.current?.();
+            cleanupRef.current = null;
+            return;
+        }
+
+        const featureTypeMap = {
+            busStation: 'busStations',
+            railStation: 'railStations',
+            signal: 'signals',
+        } as const;
+        const featureType = featureTypeMap[placementMode];
+        const guid = generateGUIDWithType(featureType);
+
+        const record: Record<string, any> = { featureType, __guid: guid, id: Date.now() };
+        if (placementMode === 'signal') {
+            record.turning = 'Straight';
+            record.type = 'TrafficLight';
+        }
+
+        // createEventHandlers 등록 (one-shot)
+        const handlerCleanup = createEventHandlers(record);
+
+        // 대상 스토어 구독: 새 항목이 추가되면 배치 모드 종료
+        const targetStore = { busStation: useBusStationStore, railStation: useRailStationStore, signal: useSignalStore }[placementMode];
+        const getCount = (data: any) => Object.values(data ?? {}).flat().length;
+        const prevCount = getCount(targetStore.getState().currentJsonData);
+        const unsubscribe = (targetStore as any).subscribe(
+            (state: any) => state.currentJsonData,
+            (data: any) => {
+                if (getCount(data) > prevCount) setPlacementMode('none');
+            },
+            { equalityFn: (a: any, b: any) => a === b }
+        );
+
+        cleanupRef.current = () => {
+            handlerCleanup?.();
+            unsubscribe();
+        };
+
+        return () => {
+            cleanupRef.current?.();
+            cleanupRef.current = null;
+        };
+    }, [placementMode]);
+
+    // ESC 키로 배치 모드 취소
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && placementMode !== 'none') setPlacementMode('none');
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [placementMode]);
 
     const handleAutoAllIntersections = () => {
         const count = autoGenerateAllIntersections();
@@ -32,6 +114,29 @@ const NetworkDrawPanel: React.FC = () => {
         useMessageStore.getState().setMessage({
             type: 'info',
             text: count > 0 ? `교차 감지 → ${count}개 교차로 자동 생성됨` : '교차 지점 없음',
+        });
+    };
+
+    const handleGenerateDummySignals = async () => {
+        const network = useNetworkStore.getState().currentJsonData;
+        if (!network?.nodes?.length) {
+            useMessageStore.getState().setMessage({ type: 'warn', text: '네트워크 데이터가 없습니다.' });
+            return;
+        }
+
+        const signals = generateDummySignals(network);
+        const signalData = { signals };
+        assignPropertyToResponseData(signalData);
+        useSignalStore.getState().setCurrentJsonData(signalData);
+        useSignalStore.getState().setChange(true);
+
+        // 자동 저장
+        const versionKey = getActiveVersionId();
+        if (versionKey) await autoSaveChangedLayers(versionKey);
+
+        useMessageStore.getState().setMessage({
+            type: 'info',
+            text: `더미 신호 생성 완료 (${signals.length}개)`,
         });
     };
 
@@ -137,6 +242,56 @@ const NetworkDrawPanel: React.FC = () => {
 
                 <div className={styles.sectionDivider} />
 
+                {/* ── 시설물 배치 ────────────────────────────── */}
+                <div style={{ fontSize: 10, color: '#555', marginBottom: 4, padding: '0 2px' }}>시설물 배치</div>
+
+                <button
+                    className={placementMode === 'busStation' ? styles.measureBtnActive : styles.measureBtn}
+                    onClick={() => setPlacementMode(placementMode === 'busStation' ? 'none' : 'busStation')}
+                    title="차선(노란 면)을 클릭하여 버스정류장 배치"
+                >
+                    <span className={styles.measureIcon}>{placementMode === 'busStation' ? '■' : '🚌'}</span>
+                    {placementMode === 'busStation' ? '배치 중지' : '버스정류장 배치'}
+                </button>
+                {placementMode === 'busStation' && (
+                    <HintBox color="orange">
+                        차선(노란 면)을 클릭 → 정류장 배치<br />
+                        <span style={{ color: '#aaa' }}>ESC 또는 버튼 재클릭 → 취소</span>
+                    </HintBox>
+                )}
+
+                <button
+                    className={placementMode === 'railStation' ? styles.measureBtnActive : styles.measureBtn}
+                    onClick={() => setPlacementMode(placementMode === 'railStation' ? 'none' : 'railStation')}
+                    title="지도를 클릭하여 지하철 정류장 배치"
+                >
+                    <span className={styles.measureIcon}>{placementMode === 'railStation' ? '■' : '🚇'}</span>
+                    {placementMode === 'railStation' ? '배치 중지' : '지하철정류장 배치'}
+                </button>
+                {placementMode === 'railStation' && (
+                    <HintBox color="orange">
+                        지도 위 원하는 위치 클릭 → 정류장 배치<br />
+                        <span style={{ color: '#aaa' }}>ESC 또는 버튼 재클릭 → 취소</span>
+                    </HintBox>
+                )}
+
+                <button
+                    className={placementMode === 'signal' ? styles.measureBtnActive : styles.measureBtn}
+                    onClick={() => setPlacementMode(placementMode === 'signal' ? 'none' : 'signal')}
+                    title="교차로 노드를 클릭하여 신호 배치"
+                >
+                    <span className={styles.measureIcon}>{placementMode === 'signal' ? '■' : '🚦'}</span>
+                    {placementMode === 'signal' ? '배치 중지' : '신호 배치'}
+                </button>
+                {placementMode === 'signal' && (
+                    <HintBox color="orange">
+                        교차로 정지선(in 포트)을 클릭 → 신호 배치<br />
+                        <span style={{ color: '#aaa' }}>노드 클릭도 가능 · ESC → 취소</span>
+                    </HintBox>
+                )}
+
+                <div className={styles.sectionDivider} />
+
                 {/* ── 교차로 일괄 처리 ───────────────────────── */}
                 <div style={{ fontSize: 10, color: '#555', marginBottom: 4, padding: '0 2px' }}>교차로 자동 처리</div>
 
@@ -149,6 +304,12 @@ const NetworkDrawPanel: React.FC = () => {
                     onClick={handleDetectSplit}
                     title="겹치는 도로 선분을 감지하여 교차로를 자동으로 분할·생성">
                     ✂ 교차 감지 → 교차로 분할
+                </button>
+
+                <button style={{ ...utilBtnStyle, marginTop: 4, color: '#a0d8a0', borderColor: 'rgba(100,200,100,0.3)', background: 'rgba(100,200,100,0.06)' }}
+                    onClick={handleGenerateDummySignals}
+                    title="intersection 노드의 connection 기반으로 더미 신호 데이터 생성">
+                    🚦 더미 신호 자동 생성
                 </button>
 
                 <div className={styles.sectionDivider} />

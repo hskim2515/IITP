@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { getActiveVersionId } from "@utils/versionId";
 import { useVehicleStore } from "@stores/useVehicleStore";
 import { useCesiumStore } from "@stores/useCesiumStore";
 import { useSimulationStore } from "@stores/useSimulationStore";
@@ -23,6 +24,9 @@ import { useVehicleModelStore, resolveGlbUrl, resolveModelByVehicleType, DEFAULT
 import { useSimulationScenarioStore } from "@stores/useSimulationScenarioStore";
 import { useSignalTodStore } from "@stores/useSignalTodStore";
 import { computeTodPeriods, mergeSignalTimelines } from "@utils/tod";
+import { useBackgroundTaskStore } from "@stores/useBackgroundTaskStore";
+import { useNetworkTileStore } from "@stores/useNetworkTileStore";
+import { VEHICLE_STREAMING, NETWORK_TILING } from "@utils/lodConstants";
 
 /**
  * vehicleRoute 내 모든 ECEF 웨이포인트에 지형 고도를 적용합니다.
@@ -278,7 +282,7 @@ const useSimulation = () => {
     useEffect(() => {
         if (!selectedScenario) return;
 
-        const scenarioKey = selectedScenario.key;
+        const scenarioKey = getActiveVersionId() ?? selectedScenario.key;
         const baseUrl = import.meta.env.VITE_API_URL;
         const requestBody = JSON.stringify({ numVehicle, speedFactor, czml });
 
@@ -331,7 +335,7 @@ const useSimulation = () => {
             }
         };
 
-        const applyRouteData = (data: any) => {
+        const applyRouteData = (data: any, opts?: { preserveClock?: boolean }) => {
             if (!data || !data.czml) return;
             const { czml: czmlData, positions, features, signalTimeline } = data;
             const vehicleCount = Array.isArray(positions) ? positions.length : 0;
@@ -339,18 +343,25 @@ const useSimulation = () => {
             // czml을 먼저 세팅해야 useEffect([vehicleRoute]) 실행 시 czml 클로저가 최신값을 가짐
             setCzml(czmlData);
             setFeatures(features);
-            setSignalTimeline(signalTimeline);
-            const clock = czmlData[0].clock;
-            const [startTime, endTime] = czmlData[0].clock.interval.split('/');
-            const start = JulianDate.fromIso8601(startTime);
-            const end = JulianDate.fromIso8601(endTime);
-            const current = JulianDate.fromIso8601(clock.currentTime);
-            useSimulationStore.getState().setClock(start, end, current);
-            // signalTOD 연동: TOD 기반 신호 타임라인으로 교체
-            applyTodSignalTimeline(czmlData, scenarioKey);
+            // viewport 스트리밍 응답에는 signalTimeline 이 없음 → 기존 타임라인 유지
+            if (signalTimeline) setSignalTimeline(signalTimeline);
+            // 스트리밍 재로드 시(preserveClock) 재생 위치/clock 을 건드리지 않음 → 끊김 없는 이어재생
+            if (!opts?.preserveClock) {
+                const clock = czmlData[0].clock;
+                const [startTime, endTime] = czmlData[0].clock.interval.split('/');
+                const start = JulianDate.fromIso8601(startTime);
+                const end = JulianDate.fromIso8601(endTime);
+                const current = JulianDate.fromIso8601(clock.currentTime);
+                useSimulationStore.getState().setClock(start, end, current);
+                // signalTOD 연동: TOD 기반 신호 타임라인으로 교체
+                applyTodSignalTimeline(czmlData, scenarioKey);
+            }
             // vehicleRoute를 마지막에 세팅 → useEffect([vehicleRoute]) 트리거 시 czml이 이미 준비됨
             setVehicleRoute(positions);
         };
+
+        const setVehicleTask = (label: string | null) =>
+            useBackgroundTaskStore.getState().setTask('vehicle-route', label);
 
         const fetchWithRetry = (retryCount = 0) => {
             fetch(`${baseUrl}/vehicle/vehicle-route/${scenarioKey}`, {
@@ -366,6 +377,7 @@ const useSimulation = () => {
                             const elapsed = body?.elapsed ?? 0;
                             const msg = `[차량 경로 생성 중] ${stage} (${elapsed}초 경과)`;
                             useLogStore.getState().addLog('info', msg);
+                            setVehicleTask(`차량 경로 생성 중 — ${stage} (${elapsed}초)`);
                             console.log(`[useSimulation] ${msg}`);
                             // 초반 10회는 3s, 이후 5s 간격으로 폴링
                             const delay = retryCount < 10 ? 3000 : 5000;
@@ -375,6 +387,7 @@ const useSimulation = () => {
                         const msg = '차량 경로 생성 대기 시간 초과 (10분). 다시 시뮬레이션을 실행해 주세요.';
                         useLogStore.getState().addLog('warn', msg);
                         useMessageStore.getState().setMessage({ type: 'warn', text: msg });
+                        setVehicleTask(null);
                     }
                     return null;
                 }
@@ -383,20 +396,224 @@ const useSimulation = () => {
                         const msg = body?.message ?? '시뮬레이션 결과 데이터가 없습니다.';
                         console.warn(`[useSimulation] 경로 생성 실패: ${msg}`);
                         useMessageStore.getState().setMessage({ type: 'error', text: msg });
+                        setVehicleTask(null);
                         return null;
                     });
                 }
                 if (!r.ok) {
                     console.warn(`[useSimulation] 차량 경로 로드 실패 (${r.status}):`, scenarioKey);
+                    setVehicleTask(null);
                     return null;
                 }
+                setVehicleTask(null);
                 return r.json();
             }).then((data) => {
                 if (data) applyRouteData(data);
+            }).catch(() => {
+                setVehicleTask(null);
             });
         };
-        useLogStore.getState().addLog('info', `[차량 경로] ${scenarioKey} — 서버에서 데이터를 가져옵니다...`);
-        fetchWithRetry();
+        // ─────────── viewport+시간창 스트리밍 (대용량 시나리오, 개별 차량 near LOD) ───────────
+        // 전체 czml(수백MB~GB) 대신 카메라 viewport + 재생 시간창의 차량만 로드.
+        // 카메라 정착/재생 창 경계 접근 시 재요청, clock 은 첫 로드에만 설정(이어재생).
+        const startViewportStreaming = (): (() => void) => {
+            useLogStore.getState().addLog('info', '[차량 경로] viewport 스트리밍 모드 (대용량)');
+            let firstLoad = true;
+            let lastBboxKey = '';
+            let windowFrom = 0, windowTo = -1; // 로드된 시간창 (버퍼 제외, 시뮬 초)
+            let simMin = 0;
+            let fetching = false;
+            let timer: ReturnType<typeof setTimeout> | null = null;
+            let lastModeSwitchAt = 0; // 밀집↔개별 마지막 전환 시각 (연속 전환 방지)
+
+            // 카메라 viewport bbox (한 변 MAX_BBOX_DEG 초과 시 null → fetch 생략)
+            const computeBbox = (): { w: number; s: number; e: number; n: number } | null => {
+                const v = useCesiumStore.getState().viewer;
+                if (!v) return null;
+                const rect = v.camera.computeViewRectangle(v.scene.globe.ellipsoid);
+                if (!rect) return null;
+                let w = Cesium.Math.toDegrees(rect.west), e = Cesium.Math.toDegrees(rect.east);
+                let s = Cesium.Math.toDegrees(rect.south), n = Cesium.Math.toDegrees(rect.north);
+                const MAX = VEHICLE_STREAMING.MAX_BBOX_DEG;
+                if (e - w > MAX * 2 || n - s > MAX * 2) return null; // 줌아웃 → 집계 히트맵 담당
+                // 소폭 초과는 중앙 기준으로 절삭
+                if (e - w > MAX) { const c = (w + e) / 2; w = c - MAX / 2; e = c + MAX / 2; }
+                if (n - s > MAX) { const c = (s + n) / 2; s = c - MAX / 2; n = c + MAX / 2; }
+                return { w, s, e, n };
+            };
+
+            // 현재 재생 경과 초 (clock 시작 기준)
+            const currentElapsed = (): number => {
+                const sim = useSimulationStore.getState() as any;
+                const cur = sim.currentTime;
+                const start = sim.startTime ?? sim.simStartTime;
+                if (!cur || !start) return 0;
+                try { return Math.max(0, JulianDate.secondsDifference(cur, start)); } catch { return 0; }
+            };
+
+            let lastFetchWall = 0;
+            let simMax = Infinity;
+
+            const doFetch = (force = false) => {
+                if (fetching) return;
+                const bbox = computeBbox();
+                if (!bbox) return;
+                const bboxKey = `${bbox.w.toFixed(4)},${bbox.s.toFixed(4)},${bbox.e.toFixed(4)},${bbox.n.toFixed(4)}`;
+                const cur = simMin + currentElapsed();
+                const windowOk = windowTo > 0 && cur >= windowFrom && cur < windowTo - VEHICLE_STREAMING.REFETCH_REMAIN_SEC;
+                if (!force && bboxKey === lastBboxKey && windowOk) return; // 같은 bbox + 창 여유 → 스킵
+                // 벽시계 최소 간격 — 재로드는 32MB fetch + 전체 시뮬 레이어 재구성이라, 재생 배속으로
+                // 시간창이 빨리 소진되어도 수 초마다 반복되면 시뮬/타일 렌더가 전부 굶는다.
+                if (!force && performance.now() - lastFetchWall < 8000) return;
+
+                // 시간창을 재생 배속에 비례해 확장 — 배속 30x면 시뮬시간 창이 벽시계로 순식간에
+                // 소진되므로(120s÷30 = 4s) 창을 곱해 재로드 주기를 벽시계 기준으로 되돌린다.
+                const mult = Math.max(1, (useVehicleStore.getState() as any).speedFactor || 1);
+                const windowSec = Math.min(
+                    VEHICLE_STREAMING.TIME_WINDOW_SEC * mult,
+                    Math.max(600, simMax - simMin), // 최소 600s, simRange 전체 초과 불필요
+                );
+                const from = Math.max(0, Math.floor(cur));
+                const to = from + windowSec;
+                fetching = true;
+                lastFetchWall = performance.now();
+                fetch(`${baseUrl}/vehicle/vehicle-route/${scenarioKey}/viewport`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bbox: `${bbox.w},${bbox.s},${bbox.e},${bbox.n}`,
+                        fromTime: from, toTime: to,
+                        bufferSec: VEHICLE_STREAMING.BUFFER_SEC,
+                        numVehicle: VEHICLE_STREAMING.MAX_VEHICLES, // 상한 (초과 시 체류시간 우선 선별)
+                    }),
+                })
+                    .then((r) => (r.ok ? r.json() : null))
+                    .then((data) => {
+                        if (!data) return;
+                        simMin = Array.isArray(data.simRange) ? (data.simRange[0] ?? 0) : 0;
+                        simMax = Array.isArray(data.simRange) ? (data.simRange[1] ?? Infinity) : Infinity;
+                        windowFrom = from; windowTo = to;
+                        lastBboxKey = bboxKey;
+
+                        // ── 밀집 전환: viewport 차량이 상한 초과 → 개별 차량 대신 집계 히트맵 ──
+                        // 히스테리시스: 진입 = truncated(total > MAX), 해제 = total < MAX×EXIT_RATIO.
+                        // 경계값 부근에서 팬마다 왕복 진동 방지 + 최소 전환 간격으로 깜빡임 억제.
+                        const total = Number(data.totalVehicles ?? 0);
+                        const shown = Array.isArray(data.positions) ? data.positions.length : 0;
+                        const wasDense = (useVehicleStore.getState() as any).denseViewport === true;
+                        const exitThreshold = VEHICLE_STREAMING.MAX_VEHICLES * VEHICLE_STREAMING.DENSE_EXIT_RATIO;
+                        let dense = wasDense ? total >= exitThreshold : data.truncated === true;
+                        if (dense !== wasDense) {
+                            const nowMs = performance.now();
+                            if (nowMs - lastModeSwitchAt < VEHICLE_STREAMING.MODE_SWITCH_MIN_MS) {
+                                dense = wasDense; // 너무 잦은 전환 → 현 모드 유지 (다음 fetch에서 재평가)
+                            } else {
+                                lastModeSwitchAt = nowMs;
+                            }
+                        }
+                        (useVehicleStore.getState() as any).setDenseViewport(dense);
+                        (useVehicleStore.getState() as any).setViewportVehicleInfo(
+                            { shown: dense ? 0 : shown, total, dense });
+
+                        if (dense) {
+                            if (!wasDense) {
+                                useLogStore.getState().addLog('info',
+                                    `[차량] viewport 차량 ${total.toLocaleString()}대 — 상한 초과, 교통량 히트맵으로 전환`);
+                                layerManager?.hideLayer('analyze', 'vehicle');
+                                layerManager?.showLayer('analyze', 'traffic');
+                            }
+                            if (firstLoad) {
+                                // 재생 clock 초기화는 필요 (document packet만 적용, 차량은 비움)
+                                applyRouteData({ ...data, czml: [data.czml[0]], positions: [], features: [] });
+                            }
+                            // 개별 차량 데이터는 적용하지 않음 (worker 재빌드 비용 절약, 히트맵이 대체)
+                            firstLoad = false;
+                            return;
+                        }
+                        if (wasDense) {
+                            // 밀집 해제 (줌인 등) → 개별 차량 복귀
+                            layerManager?.showLayer('analyze', 'vehicle');
+                            layerManager?.hideLayer('analyze', 'traffic');
+                        }
+                        applyRouteData(data, { preserveClock: !firstLoad });
+                        firstLoad = false;
+                    })
+                    .catch((e) => console.warn('[useSimulation] viewport 스트리밍 실패:', e))
+                    .finally(() => { fetching = false; });
+            };
+
+            const schedule = () => {
+                if (timer) clearTimeout(timer);
+                timer = setTimeout(() => { timer = null; doFetch(); }, VEHICLE_STREAMING.DEBOUNCE_MS);
+            };
+
+            // 카메라 정착 → bbox 변경 감지.
+            // ⚠️ 이 useEffect 는 Cesium viewer 생성 이전에 실행될 수 있다(시나리오 선택 직후 vs Maps 마운트).
+            // viewer 없이 등록을 건너뛰면 스트리밍이 영영 시작 안 됨 → viewer 준비까지 폴링 후 초기화.
+            const camHandler = () => schedule();
+            let camViewer: any = null;
+            let viewerWaitTimer: ReturnType<typeof setInterval> | null = null;
+            const initWithViewer = () => {
+                const v = useCesiumStore.getState().viewer;
+                if (!v) return false;
+                camViewer = v;
+                v.camera.changed.addEventListener(camHandler);
+                doFetch(true); // 초기 로드
+                return true;
+            };
+            if (!initWithViewer()) {
+                let waits = 0;
+                viewerWaitTimer = setInterval(() => {
+                    if (initWithViewer() || ++waits > 120) { // 최대 60s 대기
+                        if (viewerWaitTimer) { clearInterval(viewerWaitTimer); viewerWaitTimer = null; }
+                    }
+                }, 500);
+            }
+            // 재생 시각 → 창 경계 접근 시 다음 창 prefetch
+            const unsubTime = (useSimulationStore as any).subscribe(
+                (s: any) => s.currentTime,
+                () => {
+                    if (windowTo < 0) return;
+                    const cur = simMin + currentElapsed();
+                    if (cur >= windowTo - VEHICLE_STREAMING.REFETCH_REMAIN_SEC || cur < windowFrom) schedule();
+                },
+            );
+
+            return () => {
+                camViewer?.camera.changed.removeEventListener(camHandler);
+                if (viewerWaitTimer) clearInterval(viewerWaitTimer);
+                unsubTime();
+                if (timer) clearTimeout(timer);
+                (useVehicleStore.getState() as any).setDenseViewport(false); // 시나리오 전환 시 밀집 모드 해제
+                (useVehicleStore.getState() as any).setViewportVehicleInfo(null);
+            };
+        };
+
+        // 시뮬 데이터(CZML 캐시 or vehicle_sim.db)가 있을 때만 로드.
+        // 무조건 POST 하면 백엔드가 데이터 없음 → 더미 차량 자동 생성 + SFTP 업로드까지 해버림
+        // (사용자가 생성한 적 없는 더미가 계속 생기던 원인). 명시적 생성은 온보딩 버튼 경로만.
+        let streamingCleanup: (() => void) | null = null;
+        let disposed = false;
+        fetch(`${baseUrl}/vehicle/vehicle-route/${scenarioKey}/exists`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((info) => {
+                if (!info || disposed) return;
+                // 타일 모드 + 시뮬 원본 존재 → viewport 스트리밍 (상시 타일 모드에서 기본 경로)
+                if (VEHICLE_STREAMING.ENABLED && info.simDbExists
+                        && (NETWORK_TILING.ENABLED || useNetworkTileStore.getState().tileMode)) {
+                    streamingCleanup = startViewportStreaming();
+                    return;
+                }
+                if (info.exists || info.generating || info.simDbExists) {
+                    useLogStore.getState().addLog('info', `[차량 경로] ${scenarioKey} — 서버에서 데이터를 가져옵니다...`);
+                    fetchWithRetry();
+                } else {
+                    useLogStore.getState().addLog('info', '[차량 경로] 시뮬레이션 데이터 없음 — 로드 건너뜀');
+                }
+            })
+            .catch(() => { /* exists 확인 실패 시 로드 안 함 (더미 생성 방지 우선) */ });
+
+        return () => { disposed = true; streamingCleanup?.(); };
     }, [ numVehicle, speedFactor, selectedScenario?.key, refetchTrigger ]);
 
     // Cesium과 OpenLayers 시뮬레이션 통합: 후처리 및 Cesium 관련 설정
@@ -667,6 +884,15 @@ const useSimulation = () => {
     const loadCzmlDataSource = (czml) => {
         const czmlSource = new Cesium.CzmlDataSource();
 
+        // 재로드(viewport 스트리밍 등) 시 재생 위치 보존:
+        // CzmlDataSource를 add하면 Cesium이 document clock으로 viewer.clock을 자동 동기화
+        // (automaticallyTrackDataSourceClocks) → currentTime이 시작점으로 리셋됨.
+        // 기존 재생 시각/재생 상태를 캡처해 두었다가 새 clock 범위 안이면 복원한다.
+        const clockV = viewer!; // setSimulation에서 viewer 확인 후에만 호출됨
+        const isReload = !!czmlDataSourceRef.current;
+        const prevTime = isReload ? Cesium.JulianDate.clone(clockV.clock.currentTime) : null;
+        const prevShouldAnimate = clockV.clock.shouldAnimate;
+
         if (czmlDataSourceRef.current) {
             viewer.dataSources.remove(czmlDataSourceRef.current, true);
         }
@@ -684,6 +910,15 @@ const useSimulation = () => {
 
                 if (viewerClockMultiplier.current) {
                     viewer.clock.multiplier = viewerClockMultiplier.current;
+                }
+
+                // 재생 위치 복원 (worker init이 viewer.clock.currentTime을 읽기 전에 수행)
+                if (prevTime
+                    && Cesium.JulianDate.greaterThanOrEquals(prevTime, clockV.clock.startTime)
+                    && Cesium.JulianDate.lessThan(prevTime, clockV.clock.stopTime)) {
+                    clockV.clock.currentTime = prevTime;
+                    clockV.clock.shouldAnimate = prevShouldAnimate;
+                    useSimulationStore.getState().setCurrentTime(Cesium.JulianDate.clone(prevTime));
                 }
 
                 // 지형이 있으면 모든 웨이포인트에 지형 고도를 주입한 뒤 워커 초기화

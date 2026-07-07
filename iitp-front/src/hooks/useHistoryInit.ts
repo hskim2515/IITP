@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { getActiveVersionId } from "@utils/versionId";
 import { propertyFormSchema, PropertyFormSchemaProps } from "@schema/propertyFormSchema";
 import { apiConfig, ApiMenuKey } from "@config/apiConfig";
 import axiosInstance from "@api/axiosInstance";
@@ -60,7 +61,7 @@ const useHistoryInit = (reloadFlag:boolean) => {
                     if (!api) continue;
                     const response = await axiosInstance({
                         method: api.method,
-                        url: api.url + '/' + (selectedScenarioVersion?.key ?? selectedScenario.key),
+                        url: api.url + '/' + getActiveVersionId(),
                     });
 
                     // store를 동적으로 선언하기 때문에, store 메서드를 동적으로 호출

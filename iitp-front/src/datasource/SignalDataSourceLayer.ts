@@ -1,4 +1,5 @@
 import * as Cesium from "cesium";
+import { getActiveVersionId } from "@utils/versionId";
 import { CustomDataSource, Viewer } from "cesium";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { useNetworkStore } from "@stores/useNetworkStore";
@@ -8,7 +9,6 @@ import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import { LOD_ALT, SIGNAL_TILING } from "@utils/lodConstants";
 import { SignalTileManager } from "@managers/SignalTileManager";
 import { SignalTileMembership } from "@managers/signalTileMembership";
-import { useScenarioStore } from "@stores/useScenarioStore";
 
 /* ─────────────────────────────────────────────────────────────────
    LOD 전략 (단순화: 줌아웃 시 크기 고정)
@@ -530,7 +530,7 @@ export default class SignalDataSourceLayer {
         const east = Cesium.Math.toDegrees(rect.east);
         const north = Cesium.Math.toDegrees(rect.north);
         if (!this.tileManager) {
-            const versionId = useScenarioStore.getState().selectedScenario?.key;
+            const versionId = getActiveVersionId();
             if (!versionId) return;
             this.tileManager = new SignalTileManager(String(versionId), {
                 onTileLoaded: (_k, payload) => { if (this.membership.add(payload)) this.load(); },

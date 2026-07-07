@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import { getActiveVersionId } from "@utils/versionId";
 import { useWorkflowStore } from '@stores/useWorkflowStore';
 import { useNetworkStore } from '@stores/useNetworkStore';
 import { useScenarioStore } from '@stores/useScenarioStore';
@@ -15,7 +16,7 @@ const MENU_CODE = 'NETWORK_IMPORT';
 
 const NetworkImportModal: React.FC = () => {
     const closeSession = useWorkflowStore((s: any) => s.closeSession) as (code: string) => void;
-    const versionId = useScenarioStore.getState().selectedScenario?.key ?? '';
+    const versionId = getActiveVersionId() ?? '';
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);

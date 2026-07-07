@@ -10,6 +10,7 @@ import { isDescendantOf, useMenuStore } from "@stores/useMenuStore";
 import { usePropertyStore } from "@stores/usePropertyStore";
 import { MessagePopup } from "@component/message/MessagePopup";
 import PerformancePanel from "@component/util/PerformancePanel";
+import { getActiveVersionId } from "@utils/versionId";
 import { useSchemaStore } from "@stores/useSchemaStore";
 import SchemaSetting from "@component/schema/SchemaSetting";
 import ScenarioSelector from "@component/scenario/ScenarioSelector";
@@ -36,6 +37,7 @@ import { generateDummySignals } from "@utils/signal";
 import { generateDummyPavementMarkings } from "@utils/pavementMarking";
 import { usePavementMarkingStore } from "@stores/usePavementMarkingStore";
 import { autoSaveChangedLayers } from "@utils/autoSave";
+import { useBackgroundTaskStore } from "@stores/useBackgroundTaskStore";
 
 function VersionPopup({ scenarioId, onSelect }: { scenarioId: number; onSelect: (v: ScenarioVersions) => void }) {
     const [versions, setVersions] = useState<ScenarioVersions[] | null>(null);
@@ -83,7 +85,7 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const setStep = useOnboardingStore((s) => s.setStep);
     const missingSignal = useOnboardingStore((s) => s.missingSignal);
     const missingVehicle = useOnboardingStore((s) => s.missingVehicle);
-    const scenarioKey = useScenarioStore.getState().selectedScenario?.key ?? '';
+    const scenarioKey = getActiveVersionId() ?? '';
     const [generatingVehicle, setGeneratingVehicle] = useState(false);
     const [signalDone, setSignalDone] = useState(false);
     const [vehicleDone, setVehicleDone] = useState(false);
@@ -107,7 +109,7 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
         assignPropertyToResponseData(pavementMarkingData);
         usePavementMarkingStore.getState().setCurrentJsonData(pavementMarkingData);
         usePavementMarkingStore.getState().setChange(true);
-        const versionKey = useScenarioStore.getState().selectedScenarioVersion?.key;
+        const versionKey = getActiveVersionId();
         if (versionKey) await autoSaveChangedLayers(versionKey);
         useLogStore.getState().addLog('info', `노면 표시 더미 생성 완료 (${pavementMarkings.length}개)`);
     };
@@ -128,6 +130,9 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
             : '더미 차량 시뮬레이션 데이터 생성 시작 (신호 데이터 없음 — 신호 패턴 자동 추정)...'
         );
 
+        const setVehicleTask = (label: string | null) =>
+            useBackgroundTaskStore.getState().setTask('vehicle-route', label);
+
         const poll = (retryCount: number) => {
             fetch(
                 `${import.meta.env.VITE_API_URL}/vehicle/vehicle-route/${scenarioKey}`,
@@ -139,16 +144,19 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                         const stage = body?.stage ?? '처리 중...';
                         const elapsed = body?.elapsed ?? 0;
                         useLogStore.getState().addLog('info', `[차량 경로 생성 중] ${stage} (${elapsed}초 경과)`);
+                        setVehicleTask(`차량 경로 생성 중 — ${stage} (${elapsed}초)`);
                         if (retryCount < 120) {
                             const delay = retryCount < 10 ? 3000 : 5000;
                             setTimeout(() => poll(retryCount + 1), delay);
                         } else {
                             useLogStore.getState().addLog('warn', '더미 차량 데이터 생성 대기 시간 초과');
+                            setVehicleTask(null);
                             setGeneratingVehicle(false);
                         }
                     });
                 } else if (res.ok) {
                     useLogStore.getState().addLog('info', '더미 차량 데이터 생성 완료 — 시뮬레이션 재생을 시작합니다...');
+                    setVehicleTask(null);
                     setVehicleDone(true);
                     setGeneratingVehicle(false);
                     useVehicleStore.getState().triggerRefetch();
@@ -163,12 +171,14 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                     res.json().catch(() => ({})).then((body: any) => {
                         const msg = body?.error ?? `서버 오류 (${res.status})`;
                         useLogStore.getState().addLog('error', `더미 차량 데이터 생성 실패: ${msg}`);
+                        setVehicleTask(null);
                         setGeneratingVehicle(false);
                     });
                 }
             })
             .catch(() => {
                 useLogStore.getState().addLog('error', '더미 차량 데이터 생성 중 오류 발생');
+                setVehicleTask(null);
                 setGeneratingVehicle(false);
             });
         };
@@ -193,7 +203,7 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
         useSignalStore.getState().setChange(true);
 
         // 자동 저장
-        const versionKey = useScenarioStore.getState().selectedScenarioVersion?.key;
+        const versionKey = getActiveVersionId();
         if (versionKey) {
             await autoSaveChangedLayers(versionKey);
             useLogStore.getState().addLog('info', `신호 더미 생성 완료 (${signals.length}개)`);

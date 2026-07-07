@@ -1,4 +1,5 @@
 import VectorLayer from "ol/layer/Vector";
+import { getActiveVersionId } from "@utils/versionId";
 import VectorSource from "ol/source/Vector";
 import { Feature } from "ol";
 import { Circle as CircleStyle, Fill, Stroke, Style } from "ol/style";
@@ -21,7 +22,6 @@ import type { EventsKey } from "ol/events";
 import type OLMap from "ol/Map";
 import { NETWORK_TILING } from "@utils/lodConstants";
 import { NetworkTileManager, type NetworkTilePayload } from "@managers/NetworkTileManager";
-import { useScenarioStore } from "@stores/useScenarioStore";
 import { assignTileGuids } from "@utils/tileGuid";
 import NetworkMvtLayer from "@features/NetworkMvtLayer";
 
@@ -141,7 +141,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         }
         // MVT 레이어 부착 (2D 네트워크 도로/차선, 전 줌 LOD). 가시성은 네트워크 레이어와 동기화.
         if (NETWORK_TILING.USE_MVT_2D && !this.mvtLayer) {
-            const versionId = useScenarioStore.getState().selectedScenario?.key;
+            const versionId = getActiveVersionId();
             const base = import.meta.env.VITE_API_URL ?? "";
             if (versionId) {
                 this.mvtLayer = new NetworkMvtLayer(String(versionId), String(base));
@@ -186,7 +186,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         if (draw.isActive || draw.isConnectionActive || draw.isSelectActive || draw.placementMode !== 'none') return;
 
         if (!this.tileManager) {
-            const versionId = useScenarioStore.getState().selectedScenario?.key;
+            const versionId = getActiveVersionId();
             if (!versionId) return; // 시나리오 미선택 시 fetch 불가
             this.tileManager = new NetworkTileManager(String(versionId), {
                 onTileLoaded: (_k, payload) => this.addTilePayload(payload),

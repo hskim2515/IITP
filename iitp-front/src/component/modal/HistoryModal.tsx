@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { getActiveVersionId } from "@utils/versionId";
 import {
     VerticalTimeline,
     VerticalTimelineElement,
@@ -69,7 +70,7 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
             const api = apiConfig[menuCode as ApiMenuKey].origin;
             const response = await axiosInstance({
                 method: api.method,
-                url: api.url + '/' + (selectedScenarioVersion?.key ?? selectedScenario.key),
+                url: api.url + '/' + getActiveVersionId(),
             });
 
             store.getState().setOriginHistoryData(response.data);
