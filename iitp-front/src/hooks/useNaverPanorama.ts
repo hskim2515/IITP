@@ -78,6 +78,7 @@ export function useNaverPanorama(
         let lastLng = 0, lastLat = 0;
         let onOlCenter: (() => void) | null = null;
         let removeKeyListener: (() => void) | null = null;
+        let cleanupResize: (() => void) | null = null;
 
         loadNaverMaps().then((naver) => {
             if (disposed || !naver?.maps?.Panorama || !containerRef.current) {
@@ -101,6 +102,16 @@ export function useNaverPanorama(
                 keyboardShortcuts: false,   // 네이버 자체 키 끔 → 우리가 화살표로 링크 따라 이동/회전
             });
             panoRef.current = pano;
+
+            // 분할↔단일 모드 전환·디바이더 드래그로 컨테이너 폭이 바뀌면 네이버 Panorama 는 자동
+            //   리사이즈 안 됨 → ResizeObserver 로 setSize 갱신(안 하면 전환 후 파노라마가 안 채워짐).
+            const roEl = containerRef.current;
+            const resizeObs = new ResizeObserver(() => {
+                if (disposed || !panoRef.current || !roEl) return;
+                try { panoRef.current.setSize(new naver.maps.Size(roEl.clientWidth, roEl.clientHeight)); } catch (_) {}
+            });
+            try { resizeObs.observe(roEl); } catch (_) {}
+            cleanupResize = () => { try { resizeObs.disconnect(); } catch (_) {} };
 
             // ── 거리뷰 없는 지점 처리: 마지막 유효 위치 유지 + 경고 ──
             //   네이버는 반경 내 파노라마 없으면 pano_status='ERROR'. 그 위치로는 이동하지 않고
@@ -335,6 +346,7 @@ export function useNaverPanorama(
             disposed = true;
             if (debounceTimer) clearTimeout(debounceTimer);
             if (removeKeyListener) removeKeyListener();
+            if (cleanupResize) cleanupResize();
             if (onOlCenter && olView) olView.un("change:center", onOlCenter);
             if (markerLayerRef.current && olMap) { try { olMap.removeLayer(markerLayerRef.current); } catch (_) {} markerLayerRef.current = null; }
             if (panoRef.current) {
