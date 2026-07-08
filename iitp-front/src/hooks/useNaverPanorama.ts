@@ -6,7 +6,15 @@ import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import { Style, Icon } from "ol/style";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
+import { useNetworkStore } from "@stores/useNetworkStore";
 import { loadNaverMaps } from "@utils/naverMapLoader";
+import {
+    type OnLink, buildAdjacency, buildLinkIndex, snapToLinks, advanceAlongLink,
+} from "@utils/networkSnap";
+
+const SNAP_MAX_METERS = 60;   // 이 거리 밖이면 스냅 안 함(자유 이동)
+const KEY_MOVE_METERS = 15;   // ↑/↓ 한 번에 링크 따라 이동 거리
+const KEY_ROTATE_DEG = 15;    // ←/→ 한 번에 시야 회전 각도
 
 /** 거리뷰 위치+방향 마커 아이콘 (canvas): 큰 시야 부채꼴 + 눈에 띄는 중심 점. */
 const PANO_MARKER_ICON = (() => {
@@ -53,6 +61,8 @@ export function useNaverPanorama(
     const olMap = useOpenLayersStore((s) => s.map);
     const panoRef = useRef<any>(null);
     const markerLayerRef = useRef<any>(null);
+    const onLinkRef = useRef<OnLink | null>(null);   // 현재 얹힌 링크 위 점(키보드 이동 기준)
+    const lastPanRef = useRef<number>(0);            // pov.pan 마지막 유효값(Infinity 폴백)
 
     useEffect(() => {
         if (!enabled || !containerRef.current || !olView) return;
@@ -61,6 +71,7 @@ export function useNaverPanorama(
         let debounceTimer: ReturnType<typeof setTimeout> | null = null;
         let lastLng = 0, lastLat = 0;
         let onOlCenter: (() => void) | null = null;
+        let removeKeyListener: (() => void) | null = null;
 
         loadNaverMaps().then((naver) => {
             if (disposed || !naver?.maps?.Panorama || !containerRef.current) {
@@ -80,7 +91,8 @@ export function useNaverPanorama(
                 visible: true,
                 logoControl: true,
                 zoomControl: true,
-                aroundControl: true,   // 거리뷰 걷기(위치 이동)
+                aroundControl: true,        // 거리뷰 걷기(위치 이동)
+                keyboardShortcuts: false,   // 네이버 자체 키 끔 → 우리가 화살표로 링크 따라 이동/회전
             });
             panoRef.current = pano;
 
@@ -95,18 +107,32 @@ export function useNaverPanorama(
             markerLayerRef.current = markerLayer;
             if (olMap) olMap.addLayer(markerLayer);
 
+            // 현재 뷰포트 네트워크 링크(타일 모드에서도 store 에 동기화됨)로 로드뷰 위치를 스냅.
+            //   스냅되면 마커를 링크 선 위 점에 찍고 onLinkRef 갱신(키보드 이동 기준). 임계 밖이면 null.
+            const snapToNetwork = (lng: number, lat: number): OnLink | null => {
+                const links = useNetworkStore.getState().currentJsonData?.links ?? [];
+                if (links.length === 0) return null;
+                return snapToLinks(links, lng, lat, SNAP_MAX_METERS);
+            };
+
             const updateMarker = () => {
                 if (disposed || !panoRef.current) return;
                 try {
                     const loc = panoRef.current.getLocation?.();
                     const coord = loc?.coord;
                     if (coord?.x != null && coord?.y != null) {
-                        markerFeature.setGeometry(new Point(fromLonLat([coord.x, coord.y])));
+                        // 네트워크에 스냅되면 링크 선 위 점에, 아니면 로드뷰 실제 위치에 마커.
+                        const snap = snapToNetwork(coord.x, coord.y);
+                        onLinkRef.current = snap; // 없으면 null → 키보드 이동 시 재스냅 시도
+                        const mx = snap ? snap.lng : coord.x;
+                        const my = snap ? snap.lat : coord.y;
+                        markerFeature.setGeometry(new Point(fromLonLat([mx, my])));
                     }
                     // ⚠️ Naver getPov().pan 이 Infinity 로 나오는 경우가 있다(tilt/fov 는 정상).
                     //   유효한 유한값일 때만 마커 방향 갱신(마지막 유효값 유지).
                     const pov = panoRef.current.getPov?.();
                     if (pov?.pan != null && Number.isFinite(pov.pan)) {
+                        lastPanRef.current = pov.pan;
                         // 아이콘 부채꼴은 위(pan 0)를 향함 → pan(도, 시계) 을 라디안으로 회전.
                         (markerStyle.getImage() as Icon).setRotation((pov.pan * Math.PI) / 180);
                         markerFeature.changed();
@@ -153,11 +179,57 @@ export function useNaverPanorama(
                     setTimeout(() => { syncing = false; }, 50);
                 });
             } catch (_) {}
+
+            // ── 키보드 조작 (↑↓ 링크 따라 이동 / ←→ 시야 회전) ──
+            const moveAlong = (meters: number) => {
+                if (!panoRef.current) return;
+                const links = useNetworkStore.getState().currentJsonData?.links ?? [];
+                if (links.length === 0) return;
+                // onLinkRef 없으면 현재 위치를 먼저 스냅해 기준점 확보
+                let on = onLinkRef.current;
+                if (!on) {
+                    const loc = panoRef.current.getLocation?.();
+                    const c = loc?.coord;
+                    if (c?.x != null && c?.y != null) on = snapToLinks(links, c.x, c.y, SNAP_MAX_METERS);
+                }
+                if (!on) return; // 근처에 네트워크 없음
+                const linkIndex = buildLinkIndex(links);
+                const adjacency = buildAdjacency(links);
+                const pan = Number.isFinite(lastPanRef.current) ? lastPanRef.current : NaN;
+                const next = advanceAlongLink(on, linkIndex, adjacency, meters, pan);
+                onLinkRef.current = next;
+                syncing = true; // setPosition→pano_changed 반향 흡수
+                try { panoRef.current.setPosition(new naver.maps.LatLng(next.lat, next.lng)); } catch (_) {}
+                try { markerFeature.setGeometry(new Point(fromLonLat([next.lng, next.lat]))); } catch (_) {}
+                setTimeout(() => { syncing = false; }, 80);
+            };
+            const rotateView = (deltaDeg: number) => {
+                if (!panoRef.current) return;
+                try {
+                    const pov = panoRef.current.getPov?.() ?? {};
+                    const base = Number.isFinite(pov.pan) ? pov.pan : lastPanRef.current;
+                    const pan = ((base + deltaDeg) % 360 + 360) % 360;
+                    lastPanRef.current = pan;
+                    panoRef.current.setPov({ pan, tilt: pov.tilt ?? 0, fov: pov.fov ?? 100 });
+                } catch (_) {}
+            };
+            const onKeyDown = (e: KeyboardEvent) => {
+                if (disposed || !panoRef.current) return;
+                switch (e.key) {
+                    case "ArrowUp":    e.preventDefault(); moveAlong(KEY_MOVE_METERS); break;
+                    case "ArrowDown":  e.preventDefault(); moveAlong(-KEY_MOVE_METERS); break;
+                    case "ArrowLeft":  e.preventDefault(); rotateView(-KEY_ROTATE_DEG); break;
+                    case "ArrowRight": e.preventDefault(); rotateView(KEY_ROTATE_DEG); break;
+                }
+            };
+            window.addEventListener("keydown", onKeyDown);
+            removeKeyListener = () => window.removeEventListener("keydown", onKeyDown);
         });
 
         return () => {
             disposed = true;
             if (debounceTimer) clearTimeout(debounceTimer);
+            if (removeKeyListener) removeKeyListener();
             if (onOlCenter && olView) olView.un("change:center", onOlCenter);
             if (markerLayerRef.current && olMap) { try { olMap.removeLayer(markerLayerRef.current); } catch (_) {} markerLayerRef.current = null; }
             if (panoRef.current) {
