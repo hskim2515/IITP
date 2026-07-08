@@ -11,6 +11,7 @@ import useLayer from "@hooks/useLayer";
 import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
 import { useLayerStore } from "@stores/useLayerStore";
 import { useMapStore } from "@stores/useMapStore";
+import { useModeStore } from "@stores/useModeStore";
 import useLayerInit from "@hooks/useLayerInit";
 import useDefaultSelect from "@hooks/sync/select/useDefaultSelect";
 import '../../App.css'
@@ -60,8 +61,10 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     // 네이버 파노라마(거리뷰) 3D 배경 (readonly). 네이버 배경 선택 + 3D 표시 시 활성.
     const naverPanoRef = useRef<HTMLDivElement | null>(null);
     const currentBaseMap = useMapStore((s) => s.currentBaseMap);
-    const naverKeyed = !!process.env.REACT_APP_NAVER_MAP_CLIENT_ID && currentBaseMap === 'naver';
-    const naverEnabled = naverKeyed; // 2D 배경(OL)
+    const appMode = useModeStore((s) => s.appMode);
+    const naverKeyEnv = !!process.env.REACT_APP_NAVER_MAP_CLIENT_ID;
+    const naverKeyed = naverKeyEnv && currentBaseMap === 'naver';
+    const naverEnabled = naverKeyed; // 2D 배경(OL): 배경지도로 '네이버' 선택 시에만(편집/보기 무관)
     const isResizing = useRef(false);
 
     const [dividerX, setDividerX] = useState<number | null>(null);
@@ -82,9 +85,11 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     useSimulation();
     useMapSync();
     useNaverBaseMap(naverMapRef, naverEnabled);
-    // 거리뷰: 네이버 배경 선택 + 3D 화면 표시 시 항상 활성(줌 게이트 제거 — 항공뷰 자동전환이
-    //   네이버 API 로 불가 확정되어, 줌 제약은 거리뷰만 사라지게 해 불편했음).
-    const panoActive = naverKeyed && mapViewMode !== '2D';
+    // 거리뷰 활성 조건:
+    //   - 편집모드: 3D 영역은 항상 로드뷰(배경지도 무관, 키만 있으면). 2D 는 편집 대상.
+    //   - 보기모드: 네이버 배경 선택 시에만 로드뷰.
+    //   공통: 3D 화면이 보일 때(mapViewMode !== '2D')만.
+    const panoActive = naverKeyEnv && mapViewMode !== '2D' && (appMode === 'edit' || naverKeyed);
     useNaverPanorama(naverPanoRef, panoActive);
     useLayer();
     useDefaultSelect();

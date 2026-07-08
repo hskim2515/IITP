@@ -1,7 +1,9 @@
 import React from 'react';
 import SimulationControls from "./SimulationControls";
 import HeaderMenu from "@component/header/HeaderMenu";
+import TimelineTrack from "../util/TimelineTrack";
 // import VehicleModelSelector from "@component/setting/VehicleModelSelector";
+import { useModeStore } from "@stores/useModeStore";
 import styles from '@css/Header.module.css'
 
 interface Props {
@@ -11,6 +13,8 @@ interface Props {
 }
 
 const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
+    const appMode = useModeStore((s) => s.appMode);
+    const toggleAppMode = useModeStore((s) => s.toggleAppMode);
     return (
         <header className={styles['header']}>
             {dashboardMode ? (
@@ -24,8 +28,23 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
             ) : (
                 <HeaderMenu/>
             )}
+            <TimelineTrack/>
             <div className={styles['headerRight']}>
                 {/*<VehicleModelSelector />*/}
+                {!dashboardMode && (
+                    <button
+                        onClick={toggleAppMode}
+                        title={appMode === 'edit' ? '편집 모드 (클릭 시 보기 모드)' : '보기 모드 (클릭 시 편집 모드)'}
+                        style={{
+                            padding: '4px 12px', marginRight: 8, borderRadius: 4, cursor: 'pointer',
+                            border: '1px solid ' + (appMode === 'edit' ? '#ff8c1a' : '#888'),
+                            background: appMode === 'edit' ? '#ff8c1a' : 'transparent',
+                            color: appMode === 'edit' ? '#fff' : '#ccc', fontWeight: 600, fontSize: 13,
+                        }}
+                    >
+                        {appMode === 'edit' ? '● 편집' : '보기'}
+                    </button>
+                )}
                 <button
                     className={isDashboardOpen ? styles['dashboardBtnActive'] : styles['dashboardBtn']}
                     onClick={onDashboard}
