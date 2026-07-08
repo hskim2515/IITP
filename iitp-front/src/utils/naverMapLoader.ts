@@ -21,7 +21,6 @@ export function loadNaverMaps(): Promise<typeof window.naver | null> {
     loadPromise = new Promise((resolve) => {
         // 이미 로드된 경우: Panorama 서브모듈이 없으면 재로드가 필요하므로 캐시 반환하지 않는다.
         if (window.naver?.maps?.Panorama) {
-            console.log("[naverMap] 이미 로드됨(Panorama 포함) → 캐시 반환");
             resolve(window.naver);
             return;
         }
@@ -46,7 +45,6 @@ export function loadNaverMaps(): Promise<typeof window.naver | null> {
         // submodules=panorama: 거리뷰(naver.maps.Panorama)는 별도 서브모듈이라 명시 로드해야 한다.
         //   (기본 maps.js 에는 지도만 포함 → Panorama 클래스가 undefined)
         script.src = `https://oapi.map.naver.com/openapi/v3/maps.js?${param}=${encodeURIComponent(clientId)}&submodules=panorama`;
-        console.log("[naverMap] 스크립트 로드 시작:", script.src);
         script.async = true;
         script.onload = () => {
             // ⚠️ 메인 스크립트 onload 후에도 submodules(panorama)는 별도 비동기 로드된다 →
