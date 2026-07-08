@@ -3,9 +3,11 @@ import 'ol/ol.css';
 import MapCesium from "@component/map/MapCesium";
 import MapOL from "@component/map/MapOL";
 import useMapInit from "@hooks/useMapInit";
+import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import useSimulation from "@hooks/useSimulation";
 import useMapSync from "@hooks/sync/useMapSync";
 import { useNaverBaseMap } from "@hooks/useNaverBaseMap";
+import { useNaverPanorama } from "@hooks/useNaverPanorama";
 import useLayer from "@hooks/useLayer";
 import { useLayerSchemaStore } from "@stores/useLayerSchemaStore";
 import { useLayerStore } from "@stores/useLayerStore";
@@ -56,8 +58,22 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     const cesiumMapRef = useRef<Element | null>(null);
     // 네이버 배경 지도 (읽기 전용, OL 아래 겹침). 배경지도로 '네이버' 선택 + 키 설정 시 활성.
     const naverMapRef = useRef<HTMLDivElement | null>(null);
+    // 네이버 파노라마(거리뷰) 3D 배경 (readonly). 네이버 배경 선택 + 3D 표시 시 활성.
+    const naverPanoRef = useRef<HTMLDivElement | null>(null);
     const currentBaseMap = useMapStore((s) => s.currentBaseMap);
-    const naverEnabled = !!process.env.REACT_APP_NAVER_MAP_CLIENT_ID && currentBaseMap === 'naver';
+    const naverKeyed = !!process.env.REACT_APP_NAVER_MAP_CLIENT_ID && currentBaseMap === 'naver';
+    const naverEnabled = naverKeyed; // 2D 배경(OL)
+    // 줌 기반 거리뷰↔항공뷰 전환: OL 줌 ≥ PANO_MIN_ZOOM(가까이) 이면 거리뷰(파노라마), 멀면 항공뷰(위성).
+    const olZoomView = useOpenLayersStore((s) => s.view);
+    const [olZoom, setOlZoom] = useState<number>(16);
+    const PANO_MIN_ZOOM = 17; // 이 줌 이상으로 확대해야 거리뷰 표시
+    useEffect(() => {
+        if (!olZoomView) return;
+        const update = () => setOlZoom(olZoomView.getZoom() ?? 16);
+        update();
+        olZoomView.on('change:resolution', update);
+        return () => { try { olZoomView.un('change:resolution', update); } catch (_) {} };
+    }, [olZoomView]);
     const isResizing = useRef(false);
 
     const [dividerX, setDividerX] = useState<number | null>(null);
@@ -78,6 +94,10 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     useSimulation();
     useMapSync();
     useNaverBaseMap(naverMapRef, naverEnabled);
+    // 파노라마는 네이버 배경 + 3D가 화면에 보일 때만 (2D 전용 모드에선 비활성)
+    // 거리뷰는 네이버 배경 + 3D면서 + 충분히 줌인(≥PANO_MIN_ZOOM)일 때만. 줌아웃하면 항공뷰(위성).
+    const panoActive = naverKeyed && mapViewMode !== '2D' && olZoom >= PANO_MIN_ZOOM;
+    useNaverPanorama(naverPanoRef, panoActive);
     useLayer();
     useDefaultSelect();
     useDefaultMoveMouse();
@@ -317,6 +337,21 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
             )}
 
             {!singleMapMode && mapViewMode === 'split' && !ONLY_3D && <Divider onMouseDown={handleMouseDown}/>}
+
+            {/* 네이버 파노라마 전용 모드: 네이버 배경+3D면 Cesium 위 전경으로 풀표시. 사용자가 파노라마
+                자체를 조작(거리뷰 둘러보기·이동). pointerEvents:auto 로 입력 받음. */}
+            {panoActive && (
+                <div
+                    ref={naverPanoRef}
+                    style={{
+                        position: 'absolute' as const,
+                        top: 0, right: 0, bottom: 0,
+                        width: useStackedLayout ? '100%' : rightWidth,
+                        zIndex: 5,
+                        pointerEvents: 'auto' as const,
+                    }}
+                />
+            )}
 
             <MapCesium
                 ref={cesiumMapRef}
