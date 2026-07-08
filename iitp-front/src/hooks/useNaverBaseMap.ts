@@ -21,6 +21,7 @@ export function useNaverBaseMap(
     const olMap = useOpenLayersStore((s) => s.map);
     const olView = useOpenLayersStore((s) => s.view);
     const naverMapRef = useRef<any>(null);
+    const syncRef = useRef<(() => void) | null>(null);
 
     useEffect(() => {
         if (!enabled || !containerRef.current || !olView) return;
@@ -28,6 +29,7 @@ export function useNaverBaseMap(
         let onCenter: (() => void) | null = null;
         let onRes: (() => void) | null = null;
         let onRot: (() => void) | null = null;
+        let cleanupResize: (() => void) | null = null;
         const hiddenBaseLayers: any[] = []; // 네이버 위해 숨긴 OL 배경타일 (복원용)
         let layerAddKey: any = null;
 
@@ -96,6 +98,20 @@ export function useNaverBaseMap(
             });
             naverMapRef.current = map;
 
+            // 분할 폭 변경(디바이더 드래그)·모드 전환으로 컨테이너 크기가 바뀌면 naver.maps.Map 은
+            //   자동 리사이즈 안 됨 → 내부 뷰포트가 옛 크기라 지도가 잘리고 배율이 어긋난다.
+            //   ResizeObserver 로 setSize + 재동기화(sync)로 새 크기에 맞춘다.
+            const roEl = containerRef.current;
+            const resizeObs = new ResizeObserver(() => {
+                if (disposed || !naverMapRef.current || !roEl) return;
+                try {
+                    naverMapRef.current.setSize(new naver.maps.Size(roEl.clientWidth, roEl.clientHeight));
+                    syncRef.current?.();
+                } catch (_) {}
+            });
+            try { resizeObs.observe(roEl); } catch (_) {}
+            cleanupResize = () => { try { resizeObs.disconnect(); } catch (_) {} };
+
             // OL → 네이버 동기화 (배경이므로 단방향).
             // ⚠️ 이 리스너는 OL view 이벤트 체인에서 실행되고, 그 체인은 Cesium 카메라 동기화
             // (useMapSync) 안에서도 발화한다 — 여기서 예외가 새면 **Cesium 렌더 루프가 정지**
@@ -127,6 +143,7 @@ export function useNaverBaseMap(
                     console.warn('[naverMap] sync 실패 (무시):', err);
                 }
             };
+            syncRef.current = sync;
             onCenter = sync;
             onRes = sync;
             onRot = sync;
@@ -138,6 +155,8 @@ export function useNaverBaseMap(
 
         return () => {
             disposed = true;
+            if (cleanupResize) cleanupResize();
+            syncRef.current = null;
             if (olView) {
                 if (onCenter) olView.un("change:center", onCenter);
                 if (onRes) olView.un("change:resolution", onRes);

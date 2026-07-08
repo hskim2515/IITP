@@ -20,33 +20,34 @@ const SNAP_MAX_METERS = 25;   // 이 거리 밖이면 스냅 안 함(자유 이�
 const KEY_MOVE_METERS = 15;   // ↑/↓ 한 번에 링크 따라 이동 거리
 const KEY_ROTATE_DEG = 15;    // ←/→ 한 번에 시야 회전 각도
 
-/** 거리뷰 위치+방향 마커 아이콘 (canvas): 큰 시야 부채꼴 + 눈에 띄는 중심 점. */
-const PANO_MARKER_ICON = (() => {
+/** 거리뷰 위치+방향 마커 아이콘 (canvas): 큰 시야 부채꼴 + 눈에 띄는 중심 점. 색상 파라미터화. */
+const makeMarkerIcon = (fanInner: string, fanMid: string, fanEdge: string, dot: string): string => {
     const s = 120;
     const c = document.createElement("canvas");
     c.width = s; c.height = s;
     const ctx = c.getContext("2d")!;
     const cx = s / 2, cy = s / 2;
     const R = 52;
-    // 시야 부채꼴 (위쪽 = pan 0). 넓고 진하게 + 외곽선으로 대비.
     ctx.beginPath();
     ctx.moveTo(cx, cy);
     ctx.arc(cx, cy, R, -Math.PI / 2 - 0.7, -Math.PI / 2 + 0.7);
     ctx.closePath();
     const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
-    grad.addColorStop(0, "rgba(255,210,60,0.95)");
-    grad.addColorStop(0.7, "rgba(255,170,30,0.55)");
-    grad.addColorStop(1, "rgba(255,170,30,0)");
+    grad.addColorStop(0, fanInner);
+    grad.addColorStop(0.7, fanMid);
+    grad.addColorStop(1, fanEdge);
     ctx.fillStyle = grad; ctx.fill();
     ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = 2; ctx.stroke();
-    // 중심 점 (크고 흰 테두리 + 그림자로 배경 대비)
     ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 6;
     ctx.beginPath(); ctx.arc(cx, cy, 11, 0, Math.PI * 2);
-    ctx.fillStyle = "#ff8c1a"; ctx.fill();
+    ctx.fillStyle = dot; ctx.fill();
     ctx.shadowBlur = 0;
     ctx.lineWidth = 3.5; ctx.strokeStyle = "#fff"; ctx.stroke();
     return c.toDataURL();
-})();
+};
+// 주황(정상: 거리뷰 있음) / 회색(거리뷰 없음)
+const PANO_MARKER_ICON = makeMarkerIcon("rgba(255,210,60,0.95)", "rgba(255,170,30,0.55)", "rgba(255,170,30,0)", "#ff8c1a");
+const PANO_MARKER_ICON_GRAY = makeMarkerIcon("rgba(180,180,185,0.9)", "rgba(150,150,155,0.5)", "rgba(150,150,155,0)", "#8a8a90");
 
 /**
  * 네이버 파노라마(거리뷰)를 3D 자리에 전경 표시하고, 2D(OpenLayers) 지도와 **위치 양방향 동기화**한다.
@@ -68,7 +69,6 @@ export function useNaverPanorama(
     const markerLayerRef = useRef<any>(null);
     const onLinkRef = useRef<OnLink | null>(null);   // 현재 얹힌 링크 위 점(키보드 이동 기준)
     const lastPanRef = useRef<number>(0);            // pov.pan 마지막 유효값(Infinity 폴백)
-    const lastSnapRef = useRef<{ lng: number; lat: number } | null>(null); // 마지막 네트워크 스냅 위치(되돌림용)
 
     useEffect(() => {
         if (!enabled || !containerRef.current || !olView) return;
@@ -113,37 +113,46 @@ export function useNaverPanorama(
             try { resizeObs.observe(roEl); } catch (_) {}
             cleanupResize = () => { try { resizeObs.disconnect(); } catch (_) {} };
 
-            // ── 거리뷰 없는 지점 처리: 마지막 유효 위치 유지 + 경고 ──
-            //   네이버는 반경 내 파노라마 없으면 pano_status='ERROR'. 그 위치로는 이동하지 않고
-            //   직전 유효 위치로 되돌린다("이전 위치 유지"). 경고 토스트로 사용자에게 알림.
-            let lastValidLat = initLat, lastValidLng = initLng;
-            let noStreetWarnedAt = 0;
+            // ── 거리뷰 없는 지점 처리 ──
+            //   거리뷰 없음(pano_status ERROR): 이동은 막지 않음(마커는 그대로 이동), 다만 마커를 회색으로
+            //     + 파노라마 화면을 마스킹(grayscale+어둡게)하고 경고. OK 로 돌아오면 원복.
+            let noStreetview = false;
+            let offNetwork = false;
+            let lastWarnAt = 0;
+            const warnThrottled = (text: string) => {
+                const now = Date.now();
+                if (now - lastWarnAt > 2500) { lastWarnAt = now; useMessageStore.getState().setMessage({ type: "warn", text }); }
+            };
+            const setMask = (on: boolean) => {
+                if (!containerRef.current) return;
+                containerRef.current.style.filter = on ? "grayscale(1) brightness(0.6)" : "";
+            };
             try {
                 naver.maps.Event.addListener(pano, "pano_status", (status: any) => {
-                    if (status === "ERROR") {
-                        const now = Date.now();
-                        if (now - noStreetWarnedAt > 2000) { // 연타 경고 방지
-                            noStreetWarnedAt = now;
-                            useMessageStore.getState().setMessage({ type: "warn", text: "이 구간은 거리뷰가 없습니다." });
-                        }
-                        syncing = true;
-                        try { pano.setPosition(new naver.maps.LatLng(lastValidLat, lastValidLng)); } catch (_) {}
-                        setTimeout(() => { syncing = false; }, 80);
-                        return;
+                    const err = status === "ERROR";
+                    if (err !== noStreetview) {
+                        noStreetview = err;
+                        setMask(err);
+                        applyMarkerIcon();           // 회색/주황 전환
+                        if (err) warnThrottled("이 구간은 거리뷰가 없습니다.");
                     }
-                    // OK: 현재 위치를 마지막 유효 위치로 기록
-                    const loc = pano.getLocation?.();
-                    const c = loc?.coord;
-                    if (c?.x != null && c?.y != null) { lastValidLng = c.x; lastValidLat = c.y; }
                 });
             } catch (_) {}
 
 
             // ── 2D 위치+방향 마커 (거리뷰가 어디서 어느 방향을 보는지 표시) ──
             const markerFeature = new Feature({ geometry: new Point(fromLonLat([initLng, initLat])) });
-            const markerStyle = new Style({
-                image: new Icon({ src: PANO_MARKER_ICON, scale: 1.0, rotateWithView: true, rotation: 0 }),
-            });
+            const iconNormal = new Icon({ src: PANO_MARKER_ICON, scale: 1.0, rotateWithView: true, rotation: 0 });
+            const iconGray = new Icon({ src: PANO_MARKER_ICON_GRAY, scale: 1.0, rotateWithView: true, rotation: 0 });
+            const markerStyle = new Style({ image: iconNormal });
+            // 거리뷰 없음 상태에 따라 마커 아이콘(주황/회색) 전환. 현재 회전값 유지.
+            const applyMarkerIcon = () => {
+                const rot = (markerStyle.getImage() as Icon).getRotation?.() ?? 0;
+                const img = noStreetview ? iconGray : iconNormal;
+                img.setRotation(rot);
+                markerStyle.setImage(img);
+                markerFeature.changed();
+            };
             markerFeature.setStyle(markerStyle);
             const markerLayer = new VectorLayer({ source: new VectorSource({ features: [markerFeature] }), zIndex: 9999 });
             // 클릭/호버 히트 테스트에서 제외(마커는 항상 링크 위에 스냅되어 그 아래 링크/레인 선택을
@@ -200,21 +209,16 @@ export function useNaverPanorama(
                         followCamera(coord.x, coord.y); // Cesium 카메라가 로드뷰 따라가 3D 네트워크 로드
                         const snap = snapToNetwork(coord.x, coord.y);
                         if (snap) {
-                            // 네트워크에 스냅됨 → 마커를 링크 선 위 점에, 마지막 유효 위치 기록.
+                            // 네트워크에 스냅됨 → 마커를 링크 선 위 점에. onLinkRef 갱신(키보드 이동 기준).
                             onLinkRef.current = snap;
-                            lastSnapRef.current = { lng: snap.lng, lat: snap.lat };
                             markerFeature.setGeometry(new Point(fromLonLat([snap.lng, snap.lat])));
-                        } else if (lastSnapRef.current && !syncing) {
-                            // 임계 내 네트워크 없음 → 로드뷰를 마지막 스냅 위치로 되돌림(네트워크 고정,
-                            //   자유 이동으로 벗어나거나 무한 이동하는 것 방지).
-                            const back = lastSnapRef.current;
-                            syncing = true;
-                            try { panoRef.current.setPosition(new naver.maps.LatLng(back.lat, back.lng)); } catch (_) {}
-                            setTimeout(() => { syncing = false; }, 80);
-                            return; // 방향 갱신은 되돌린 뒤 다음 이벤트에서
+                            if (offNetwork) { offNetwork = false; } // 네트워크 복귀
                         } else {
-                            // 아직 한 번도 스냅 안 됨(초기) → 로드뷰 실제 위치에 마커
+                            // 네트워크 없음(우리 도로망 밖) → 자유 이동 허용, 마커는 로드뷰 실제 위치.
+                            //   키보드 링크 이동 기준 없음(onLinkRef null). 진입 시 1회 경고.
+                            onLinkRef.current = null;
                             markerFeature.setGeometry(new Point(fromLonLat([coord.x, coord.y])));
+                            if (!offNetwork) { offNetwork = true; warnThrottled("네트워크가 없는 구역입니다."); }
                         }
                     }
                     // ⚠️ Naver getPov().pan 이 Infinity 로 나오는 경우가 있다(tilt/fov 는 정상).
@@ -356,8 +360,9 @@ export function useNaverPanorama(
             // 배경지도 변경/모드전환으로 파노라마 종료 시 2D 상태 원복:
             //   거리뷰 방향 동기화로 회전시킨 olView 를 0(북)으로 되돌린다(안 하면 2D 가 돌아간 채 남음).
             if (olView) { try { if ((olView.getRotation?.() ?? 0) !== 0) olView.setRotation(0); } catch (_) {} }
+            // 거리뷰 없음 마스크(grayscale) 원복
+            if (containerRef.current) { try { containerRef.current.style.filter = ""; } catch (_) {} }
             onLinkRef.current = null;
-            lastSnapRef.current = null;
         };
     }, [enabled, olView, olMap, viewer, containerRef]);
 }
