@@ -53,9 +53,6 @@ export default class NetworkFeatureLayer extends VectorLayer {
     private lastTier: NetworkLodTier | null = null;
     private moveEndKey: EventsKey | null = null;
     private visChangeKey: EventsKey | null = null;
-    // 편집 델타 추적: 편집 세션(isChanged) 시작 시점 링크 스냅샷(linkId → geo 해시).
-    //   currentJsonData 변화 시 이 베이스라인과 diff 해 편집/삭제 링크 id 를 useNetworkEditStore 에 반영.
-    private editBaseline: Map<string, string> | null = null;
     // 편집 델타 오버레이: editedLinkIds 링크를 MVT 위에 OL 벡터로 그리는 전용 레이어(this.source 와 분리).
     private editOverlaySource: VectorSource | null = null;
     private editOverlayLayer: VectorLayer | null = null;
@@ -111,7 +108,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         if (store) {
             this.unsubscribe = store.subscribe(
                 (state: { currentJsonData: Network; }) => state.currentJsonData,
-                () => { this.updateEditDeltas(); this.load(); },
+                () => { this.updateEditDeltas(); this.renderEditOverlay(); this.load(); },
                 { equalityFn: (a:Network, b:Network) => a === b }
             );
         }
@@ -317,43 +314,30 @@ export default class NetworkFeatureLayer extends VectorLayer {
     }
 
     /**
-     * 편집 델타 추적: 편집 세션(isChanged) 대비 currentJsonData 를 diff 해 편집/삭제 링크 id 를
-     *   useNetworkEditStore 에 반영. 편집 중엔 타일 동기화가 동결되므로 currentJsonData 변화 =
-     *   편집 결과로 간주한다. (타일 모드 아닐 땐 전체-로드라 오버레이 불필요 → skip)
+     * 편집 델타 추적: currentJsonData 의 링크를 **cachedLinkMap(서버 타일 = 미저장 편집 절대 없음)**
+     *   과 비교해 편집 링크 id 를 useNetworkEditStore 에 반영.
+     *   - cachedLinkMap 에 없거나 geo 해시가 다른 링크 = 추가/수정(edited).
+     *   isChanged 타이밍(setCurrentJsonData→setChange 순서)에 의존하지 않아 첫 편집도 정확히 잡는다.
+     *   (삭제는 뷰포트 한계로 이 방식으론 신뢰 어려워 별도 처리 — 여기선 edited 만.)
      */
     private updateEditDeltas(): void {
         if (!NETWORK_TILING.ENABLED) return;
         const store = layerNameToStoreMap[this.LAYER_NAME];
-        const st: any = store?.getState();
-        const isChanged: boolean = !!st?.isChanged;
-        const links: any[] = st?.currentJsonData?.links ?? [];
-
-        if (!isChanged) {
-            // 편집 없음(초기/저장 후) → 베이스라인·델타 초기화
-            if (this.editBaseline !== null) {
-                this.editBaseline = null;
-                try { useNetworkEditStore.getState().clear(); } catch (_) {}
-            }
-            return;
-        }
-        // 편집 세션 시작(false→true): 현재 링크를 베이스라인으로 스냅샷
-        if (this.editBaseline === null) {
-            this.editBaseline = new Map();
-            for (const l of links) this.editBaseline.set(String(l.id), NetworkFeatureLayer.linkGeoHash(l));
-            return; // 시작 시점엔 델타 없음
-        }
-        // 베이스라인 대비 diff → 추가/수정(edited), 사라짐(deleted)
+        const links: any[] = (store?.getState() as any)?.currentJsonData?.links ?? [];
         const edited = new Set<string>();
-        const seen = new Set<string>();
         for (const l of links) {
             const id = String(l.id);
-            seen.add(id);
-            const base = this.editBaseline.get(id);
-            if (base === undefined || base !== NetworkFeatureLayer.linkGeoHash(l)) edited.add(id);
+            const cached = this.cachedLinkMap.get(id);
+            // 서버 타일에 없거나(신규) geo 가 다르면(수정) → 편집됨
+            if (!cached || NetworkFeatureLayer.linkGeoHash(cached) !== NetworkFeatureLayer.linkGeoHash(l)) {
+                edited.add(id);
+            }
         }
-        const deleted = new Set<string>();
-        for (const id of this.editBaseline.keys()) if (!seen.has(id)) deleted.add(id);
-        try { useNetworkEditStore.getState().setEdits(edited, deleted); } catch (_) {}
+        const prev = useNetworkEditStore.getState();
+        // 참조 안정: 내용 동일하면 set 안 함(불필요 재렌더 방지)
+        if (edited.size === prev.editedLinkIds.size &&
+            [...edited].every((id) => prev.editedLinkIds.has(id))) return;
+        try { useNetworkEditStore.getState().setEdits(edited, prev.deletedLinkIds); } catch (_) {}
     }
 
     /** 편집 오버레이 스타일: 편집된 도로를 눈에 띄게(도로 몸체 + 강조 외곽). */
@@ -372,7 +356,9 @@ export default class NetworkFeatureLayer extends VectorLayer {
         return [];
     }
 
-    /** editedLinkIds 링크를 currentJsonData 에서 뽑아 오버레이 소스에 (재)렌더. */
+    /** editedLinkIds 링크를 currentJsonData 에서 뽑아 오버레이 소스에 (재)렌더.
+     *  ⚠️ buildLinkFeatures 는 this.laneMap/nodeCoordMap 를 변경(부작용)하므로 쓰지 않는다.
+     *     여기선 링크 좌표에서 직접 중심선 LineString + 버퍼 폴리곤만 만든다(부작용 없음). */
     private renderEditOverlay(): void {
         if (!this.editOverlaySource) return;
         this.editOverlaySource.clear();
@@ -381,20 +367,33 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const store = layerNameToStoreMap[this.LAYER_NAME];
         const net: any = store?.getState()?.currentJsonData;
         const links: any[] = net?.links ?? [];
-        // buildLinkFeatures 는 nodeMap 필요 → currentJsonData.nodes 로 구성(뷰포트 캐시 폴백).
-        const nodeMap = new Map<string, any>(this.cachedNodeMap);
-        for (const n of (net?.nodes ?? [])) nodeMap.set(String(n.id), n);
         const buf: Feature[] = [];
         for (const link of links) {
             if (!editedIds.has(String(link.id))) continue;
-            try {
-                const feats = this.buildLinkFeatures(link, nodeMap);
-                // 도로 몸체(links) + 중심선(link-edit)만 오버레이(차선/셀은 생략 — 가시성 목적).
-                for (const ft of feats) {
-                    const t = ft.get("featureType");
-                    if (t === "links" || t === "link-edit") buf.push(ft);
-                }
-            } catch (_) {}
+            const coords = link?.coordinates;
+            if (!Array.isArray(coords) || coords.length < 2) continue;
+            const pts: [number, number][] = coords.map((c: any) => fromLonLat([c.lng, c.lat]) as [number, number]);
+            // 중심선
+            const line = new Feature(new LineString(pts));
+            line.setProperties({ featureType: "link-edit", linkRef: link.id });
+            buf.push(line);
+            // 버퍼 폴리곤(도로 몸체) — 세그먼트별 법선 오프셋(부작용 없는 로컬 계산)
+            const half = (link.width ?? 3) / 2;
+            const left: number[][] = [], right: number[][] = [];
+            for (let i = 0; i < pts.length; i++) {
+                const prev = pts[Math.max(0, i - 1)]!;
+                const next = pts[Math.min(pts.length - 1, i + 1)]!;
+                const sdx = next[0] - prev[0], sdy = next[1] - prev[1];
+                const sl = Math.hypot(sdx, sdy) || 1;
+                const nx = -sdy / sl, ny = sdx / sl;
+                const p = pts[i]!;
+                left.push([p[0] + nx * half, p[1] + ny * half]);
+                right.push([p[0] - nx * half, p[1] - ny * half]);
+            }
+            const ring = [...left, ...right.reverse(), left[0]!];
+            const poly = new Feature(new Polygon([ring]));
+            poly.setProperties({ featureType: "links", linkRef: link.id });
+            buf.push(poly);
         }
         if (buf.length > 0) this.editOverlaySource.addFeatures(buf);
         try { this.getMapInternal()?.render(); } catch (_) {}
@@ -410,10 +409,13 @@ export default class NetworkFeatureLayer extends VectorLayer {
         if (this.storeSyncTimer) return;
         this.storeSyncTimer = setTimeout(() => {
             this.storeSyncTimer = null;
+            const store = layerNameToStoreMap[this.LAYER_NAME];
             // 편집 중에는 store 동기화 동결 — viewport 네트워크로 덮어쓰면 편집 내용이 사라진다.
+            //   ⚠️ 활성 편집(draw.isActive 등)뿐 아니라 **미저장 편집(isChanged)** 이 있으면도 동결해야
+            //   한다. 안 그러면 그리기 종료 후 줌/팬 시 viewport 타일로 덮어써 그린 링크가 사라진다.
             const draw = useNetworkDrawStore.getState();
             if (draw.isActive || draw.isConnectionActive || draw.isSelectActive || draw.placementMode !== 'none') return;
-            const store = layerNameToStoreMap[this.LAYER_NAME];
+            if ((store.getState() as any).isChanged) return; // 미저장 편집 보존
             const prev = store.getState().currentJsonData ?? {};
             const next = {
                 ...prev,                                  // id/name 등 메타 보존
