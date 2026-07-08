@@ -224,10 +224,11 @@ export default class NetworkFeatureLayer extends VectorLayer {
             return;
         }
 
-        // 편집 중에는 타일 갱신(fetch/evict) 동결 — 편집 대상이 viewport 이동으로 evict되어
-        // 사라지거나 store 동기화로 편집 내용이 덮어써지는 것을 방지.
+        // 활성 그리기/커넥션/배치 중에만 타일 갱신 동결 — 진행 중 편집 대상이 evict/덮어써지는 것 방지.
+        //   ⚠️ 선택 모드(isSelectActive)는 동결하지 않는다. 동결하면 팬/줌 시 새 지역 타일이 안 와
+        //   cachedLinkMap→store 가 비어 **기존 링크 선택 불가**. (편집 링크는 scheduleStoreSync 병합이 보존)
         const draw = useNetworkDrawStore.getState();
-        if (draw.isActive || draw.isConnectionActive || draw.isSelectActive || draw.placementMode !== 'none') return;
+        if (draw.isActive || draw.isConnectionActive || draw.placementMode !== 'none') return;
 
         if (!this.tileManager) {
             const versionId = getActiveVersionId();
