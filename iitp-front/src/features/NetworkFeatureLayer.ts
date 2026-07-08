@@ -56,6 +56,10 @@ export default class NetworkFeatureLayer extends VectorLayer {
     // 편집 델타 추적: 편집 세션(isChanged) 시작 시점 링크 스냅샷(linkId → geo 해시).
     //   currentJsonData 변화 시 이 베이스라인과 diff 해 편집/삭제 링크 id 를 useNetworkEditStore 에 반영.
     private editBaseline: Map<string, string> | null = null;
+    // 편집 델타 오버레이: editedLinkIds 링크를 MVT 위에 OL 벡터로 그리는 전용 레이어(this.source 와 분리).
+    private editOverlaySource: VectorSource | null = null;
+    private editOverlayLayer: VectorLayer | null = null;
+    private unsubscribeEdit: (() => void) | undefined;
 
     // ── 타일링 상태 (NETWORK_TILING.ENABLED 일 때만 사용; 읽기 전용 뷰) ──
     // 타일 경계 링크/노드는 여러 타일에 중복 등장 → id별 refcount 로 마지막 타일 evict 시에만 destroy.
@@ -152,10 +156,32 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 this.mvtLayer.setVisible(this.getVisible());
                 map.addLayer(this.mvtLayer);
                 if (!this.visChangeKey) {
-                    this.visChangeKey = this.on('change:visible', () => this.mvtLayer?.setVisible(this.getVisible()));
+                    this.visChangeKey = this.on('change:visible', () => {
+                        this.mvtLayer?.setVisible(this.getVisible());
+                        this.editOverlayLayer?.setVisible(this.getVisible());
+                    });
                 }
             }
         }
+        // 편집 델타 오버레이 레이어 부착 (MVT 위, editedLinkIds 링크만 그림).
+        if (NETWORK_TILING.ENABLED && !this.editOverlayLayer) {
+            this.editOverlaySource = new VectorSource();
+            this.editOverlayLayer = new VectorLayer({
+                source: this.editOverlaySource,
+                style: (f) => this.editOverlayStyle(f as Feature),
+                zIndex: 120, // MVT/도로 위, 편집 요소(노드 등)와 비슷한 층
+            });
+            this.editOverlayLayer.setVisible(this.getVisible());
+            map.addLayer(this.editOverlayLayer);
+            // 편집 델타 변경 시 오버레이 재렌더
+            this.unsubscribeEdit = useNetworkEditStore.subscribe(
+                (s) => s.editedLinkIds,
+                () => this.renderEditOverlay(),
+                { equalityFn: (a, b) => a === b },
+            );
+            this.renderEditOverlay();
+        }
+
         if (NETWORK_TILING.ENABLED) {
             // 타일 모드: viewport 단위 fetch + evict (광역권→전국, 읽기 전용)
             this.moveEndKey = map.on('moveend', () => this.updateTiles(map));
@@ -328,6 +354,50 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const deleted = new Set<string>();
         for (const id of this.editBaseline.keys()) if (!seen.has(id)) deleted.add(id);
         try { useNetworkEditStore.getState().setEdits(edited, deleted); } catch (_) {}
+    }
+
+    /** 편집 오버레이 스타일: 편집된 도로를 눈에 띄게(도로 몸체 + 강조 외곽). */
+    private editOverlayStyle(f: Feature): Style[] {
+        const ft = f.get("featureType");
+        if (ft === "links") {
+            return [new Style({
+                fill: new Fill({ color: "rgba(72,74,80,0.95)" }),               // 도로 몸체
+                stroke: new Stroke({ color: "rgba(90,200,255,0.95)", width: 2 }), // 편집 강조(하늘색 외곽)
+                zIndex: 120,
+            })];
+        }
+        if (ft === "link-edit") {
+            return [new Style({ stroke: new Stroke({ color: "rgba(90,200,255,0.9)", width: 1.5 }), zIndex: 121 })];
+        }
+        return [];
+    }
+
+    /** editedLinkIds 링크를 currentJsonData 에서 뽑아 오버레이 소스에 (재)렌더. */
+    private renderEditOverlay(): void {
+        if (!this.editOverlaySource) return;
+        this.editOverlaySource.clear();
+        const editedIds = useNetworkEditStore.getState().editedLinkIds;
+        if (editedIds.size === 0) { try { this.getMapInternal()?.render(); } catch (_) {} return; }
+        const store = layerNameToStoreMap[this.LAYER_NAME];
+        const net: any = store?.getState()?.currentJsonData;
+        const links: any[] = net?.links ?? [];
+        // buildLinkFeatures 는 nodeMap 필요 → currentJsonData.nodes 로 구성(뷰포트 캐시 폴백).
+        const nodeMap = new Map<string, any>(this.cachedNodeMap);
+        for (const n of (net?.nodes ?? [])) nodeMap.set(String(n.id), n);
+        const buf: Feature[] = [];
+        for (const link of links) {
+            if (!editedIds.has(String(link.id))) continue;
+            try {
+                const feats = this.buildLinkFeatures(link, nodeMap);
+                // 도로 몸체(links) + 중심선(link-edit)만 오버레이(차선/셀은 생략 — 가시성 목적).
+                for (const ft of feats) {
+                    const t = ft.get("featureType");
+                    if (t === "links" || t === "link-edit") buf.push(ft);
+                }
+            } catch (_) {}
+        }
+        if (buf.length > 0) this.editOverlaySource.addFeatures(buf);
+        try { this.getMapInternal()?.render(); } catch (_) {}
     }
 
     /**
@@ -1254,12 +1324,14 @@ export default class NetworkFeatureLayer extends VectorLayer {
     public dispose(): void {
         this.unsubscribe?.();
         this.unsubscribeDraw?.();
+        this.unsubscribeEdit?.();
         if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
         if (this.visChangeKey) { unByKey(this.visChangeKey); this.visChangeKey = null; }
         this.tileManager?.clear();
         this.tileManager = null;
         if (this.storeSyncTimer) { clearTimeout(this.storeSyncTimer); this.storeSyncTimer = null; }
         if (this.mvtLayer) { try { this.mvtLayer.setMap(null); } catch (_) {} this.mvtLayer = null; }
+        if (this.editOverlayLayer) { try { this.editOverlayLayer.setMap(null); } catch (_) {} this.editOverlayLayer = null; this.editOverlaySource = null; }
         super.dispose();
     }
 }
