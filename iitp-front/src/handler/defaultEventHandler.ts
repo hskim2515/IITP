@@ -80,18 +80,22 @@ export const defaultEventHandlers ={
             // → 커서 지면점에서 렌더 규칙과 동일한 기하 탐색 (보이는 도로 = 선택되는 도로)
             const hit = pickNetworkAtPosition(viewer.scene, e.position);
             let primitiveProps = hit?.props ?? null;
+            let linkGuidForHighlight: string | null = primitiveProps?.__guid ?? null; // 하이라이트용 링크 guid
             // 도로 몸체 클릭 → 클릭 지점의 레인으로 해석
             // (레인 채움면이 렌더에 없어 직접 pick 불가 → 측방향 오프셋 역산으로 레인 클릭 지원)
             if (primitiveProps?.featureType === 'links') {
                 const lane = pickLaneAtPosition(viewer.scene, e.position, primitiveProps);
                 if (lane?.__guid) primitiveProps = { ...lane, featureType: 'lanes', linkRef: primitiveProps.id };
+                // linkGuidForHighlight 는 원래 링크 guid 유지(레인 선택도 부모 링크를 하이라이트)
             }
             if (primitiveProps) {
                 Object.assign(props, primitiveProps);
                 setSelectedProps(props);
                 setSelectedGuid([primitiveProps.__guid]);
+                highlightNetworkPrimitive?.(linkGuidForHighlight); // 링크(또는 레인의 부모 링크) 하이라이트
             } else {
                 setSelectedProps(null);
+                highlightNetworkPrimitive?.(null);
             }
         }
     },

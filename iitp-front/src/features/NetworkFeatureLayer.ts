@@ -11,6 +11,7 @@ import { Network } from "@type/Network";
 import { FeatureLike } from "ol/Feature";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import { useNetworkEditStore } from "@stores/useNetworkEditStore";
+import { usePropertyStore } from "@stores/usePropertyStore";
 import {
     getNetworkLodTierByResolution,
     isNetworkFeatureVisibleAtTier,
@@ -59,6 +60,10 @@ export default class NetworkFeatureLayer extends VectorLayer {
     private unsubscribeEdit: (() => void) | undefined;
     private unsubscribeChanged: (() => void) | undefined;
     private prevIsChanged = false;
+    // 선택 하이라이트 오버레이: selectedProps(링크/레인)를 좌표 기반으로 그리는 전용 레이어(2D, MVT 위).
+    private selHighlightSource: VectorSource | null = null;
+    private selHighlightLayer: VectorLayer | null = null;
+    private unsubscribeSel: (() => void) | undefined;
 
     // ── 타일링 상태 (NETWORK_TILING.ENABLED 일 때만 사용; 읽기 전용 뷰) ──
     // 타일 경계 링크/노드는 여러 타일에 중복 등장 → id별 refcount 로 마지막 타일 evict 시에만 destroy.
@@ -167,6 +172,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                     this.visChangeKey = this.on('change:visible', () => {
                         this.mvtLayer?.setVisible(this.getVisible());
                         this.editOverlayLayer?.setVisible(this.getVisible());
+                        this.selHighlightLayer?.setVisible(this.getVisible());
                     });
                 }
             }
@@ -194,6 +200,24 @@ export default class NetworkFeatureLayer extends VectorLayer {
             );
             this.unsubscribeEdit = () => { unsubEdited(); unsubDeleted(); };
             this.renderEditOverlay();
+        }
+
+        // 선택 하이라이트 오버레이 (2D, MVT 위). selectedProps(링크/레인) 좌표 기반 강조.
+        if (!this.selHighlightLayer) {
+            this.selHighlightSource = new VectorSource();
+            this.selHighlightLayer = new VectorLayer({
+                source: this.selHighlightSource,
+                style: (f) => this.selHighlightStyle(f as Feature),
+                zIndex: 125, // 편집 오버레이(120) 위
+            });
+            this.selHighlightLayer.setVisible(this.getVisible());
+            map.addLayer(this.selHighlightLayer);
+            this.unsubscribeSel = usePropertyStore.subscribe(
+                (s: any) => s.selectedProps,
+                () => this.renderSelHighlight(),
+                { equalityFn: (a: any, b: any) => a === b },
+            );
+            this.renderSelHighlight();
         }
 
         if (NETWORK_TILING.ENABLED) {
@@ -372,6 +396,69 @@ export default class NetworkFeatureLayer extends VectorLayer {
             return [new Style({ stroke: new Stroke({ color: "rgba(90,200,255,0.9)", width: 1.5 }), zIndex: 121 })];
         }
         return [];
+    }
+
+    /** 선택 하이라이트 스타일 (노란 강조). 링크=선, 레인=폴리곤. */
+    private selHighlightStyle(f: Feature): Style[] {
+        const ft = f.get("featureType");
+        if (ft === "lanes") {
+            return [new Style({ fill: new Fill({ color: "rgba(255,200,0,0.35)" }), stroke: new Stroke({ color: "rgba(255,200,0,0.95)", width: 2 }), zIndex: 126 })];
+        }
+        return [new Style({ stroke: new Stroke({ color: "rgba(255,200,0,0.95)", width: 4 }), zIndex: 126 })];
+    }
+
+    /** selectedProps(링크/레인)를 좌표 기반으로 선택 오버레이에 그림. 링크/레인만 대상(노드/신호 등은
+     *  기존 OL 피처/3D 엔티티 하이라이트가 담당). */
+    private renderSelHighlight(): void {
+        if (!this.selHighlightSource) return;
+        this.selHighlightSource.clear();
+        const props: any = usePropertyStore.getState().selectedProps;
+        const ft = props?.featureType;
+        try {
+            if (ft === "links" && Array.isArray(props.coordinates) && props.coordinates.length >= 2) {
+                const pts = props.coordinates.map((c: any) => fromLonLat([c.lng, c.lat]));
+                const f = new Feature(new LineString(pts));
+                f.set("featureType", "links");
+                this.selHighlightSource.addFeature(f);
+            } else if (ft === "lanes") {
+                // 레인: linkRef 로 currentJsonData 에서 링크 찾아 레인 폴리곤 생성(오프셋은 렌더와 동일).
+                const linkId = String(props.linkRef ?? "");
+                const link: any = this.cachedLinkMap.get(linkId)
+                    ?? (layerNameToStoreMap[this.LAYER_NAME]?.getState() as any)?.currentJsonData?.links?.find((l: any) => String(l.id) === linkId);
+                const laneIdx = Number(props.laneRef ?? props.id ?? 0);
+                const ring = link ? this.buildLaneRing(link, laneIdx) : null;
+                if (ring) {
+                    const f = new Feature(new Polygon([ring]));
+                    f.set("featureType", "lanes");
+                    this.selHighlightSource.addFeature(f);
+                }
+            }
+        } catch (_) {}
+        try { this.getMapInternal()?.render(); } catch (_) {}
+    }
+
+    /** 레인 폴리곤 링(3857) — findNearestLane/렌더와 동일 오프셋 공식. */
+    private buildLaneRing(link: any, laneIdx: number): number[][] | null {
+        const lanes = link?.lanes ?? [];
+        const laneCount = lanes.length;
+        if (laneCount === 0 || laneIdx < 0 || laneIdx >= laneCount) return null;
+        const laneW = (link.width ?? 7) / laneCount;
+        const off = ((laneCount - 1) / 2 - laneIdx) * laneW;
+        const half = laneW / 2;
+        const pts = (link.coordinates ?? []).map((c: any) => fromLonLat([c.lng, c.lat]));
+        if (pts.length < 2) return null;
+        const left: number[][] = [], right: number[][] = [];
+        for (let i = 0; i < pts.length; i++) {
+            const prev = pts[Math.max(0, i - 1)];
+            const next = pts[Math.min(pts.length - 1, i + 1)];
+            const sdx = next[0] - prev[0], sdy = next[1] - prev[1];
+            const sl = Math.hypot(sdx, sdy) || 1;
+            const nx = -sdy / sl, ny = sdx / sl;
+            const cx = pts[i][0] + nx * off, cy = pts[i][1] + ny * off;
+            left.push([cx + nx * half, cy + ny * half]);
+            right.push([cx - nx * half, cy - ny * half]);
+        }
+        return [...left, ...right.reverse(), left[0]!];
     }
 
     /** editedLinkIds 링크를 currentJsonData 에서 뽑아 오버레이 소스에 (재)렌더.
@@ -1379,6 +1466,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         this.unsubscribeDraw?.();
         this.unsubscribeEdit?.();
         this.unsubscribeChanged?.();
+        this.unsubscribeSel?.();
         if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
         if (this.visChangeKey) { unByKey(this.visChangeKey); this.visChangeKey = null; }
         this.tileManager?.clear();
@@ -1386,6 +1474,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         if (this.storeSyncTimer) { clearTimeout(this.storeSyncTimer); this.storeSyncTimer = null; }
         if (this.mvtLayer) { try { this.mvtLayer.setMap(null); } catch (_) {} this.mvtLayer = null; }
         if (this.editOverlayLayer) { try { this.editOverlayLayer.setMap(null); } catch (_) {} this.editOverlayLayer = null; this.editOverlaySource = null; }
+        if (this.selHighlightLayer) { try { this.selHighlightLayer.setMap(null); } catch (_) {} this.selHighlightLayer = null; this.selHighlightSource = null; }
         super.dispose();
     }
 }
