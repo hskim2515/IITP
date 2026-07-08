@@ -20,24 +20,26 @@ const SNAP_MAX_METERS = 25;   // 이 거리 밖이면 스냅 안 함(자유 이�
 const KEY_MOVE_METERS = 15;   // ↑/↓ 한 번에 링크 따라 이동 거리
 const KEY_ROTATE_DEG = 15;    // ←/→ 한 번에 시야 회전 각도
 
-/** 거리뷰 위치+방향 마커 아이콘 (canvas): 큰 시야 부채꼴 + 눈에 띄는 중심 점. 색상 파라미터화. */
-const makeMarkerIcon = (fanInner: string, fanMid: string, fanEdge: string, dot: string): string => {
+/** 거리뷰 위치 마커 아이콘 (canvas): 중심 점 + (옵션) 시야 부채꼴. 색상·부채꼴 유무 파라미터화. */
+const makeMarkerIcon = (
+    fan: [string, string, string] | null, dot: string,
+): string => {
     const s = 120;
     const c = document.createElement("canvas");
     c.width = s; c.height = s;
     const ctx = c.getContext("2d")!;
     const cx = s / 2, cy = s / 2;
     const R = 52;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.arc(cx, cy, R, -Math.PI / 2 - 0.7, -Math.PI / 2 + 0.7);
-    ctx.closePath();
-    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
-    grad.addColorStop(0, fanInner);
-    grad.addColorStop(0.7, fanMid);
-    grad.addColorStop(1, fanEdge);
-    ctx.fillStyle = grad; ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = 2; ctx.stroke();
+    if (fan) { // 시야 부채꼴(위=pan 0). 거리뷰 있을 때만.
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, R, -Math.PI / 2 - 0.7, -Math.PI / 2 + 0.7);
+        ctx.closePath();
+        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+        grad.addColorStop(0, fan[0]); grad.addColorStop(0.7, fan[1]); grad.addColorStop(1, fan[2]);
+        ctx.fillStyle = grad; ctx.fill();
+        ctx.strokeStyle = "rgba(255,255,255,0.9)"; ctx.lineWidth = 2; ctx.stroke();
+    }
     ctx.shadowColor = "rgba(0,0,0,0.5)"; ctx.shadowBlur = 6;
     ctx.beginPath(); ctx.arc(cx, cy, 11, 0, Math.PI * 2);
     ctx.fillStyle = dot; ctx.fill();
@@ -45,9 +47,14 @@ const makeMarkerIcon = (fanInner: string, fanMid: string, fanEdge: string, dot: 
     ctx.lineWidth = 3.5; ctx.strokeStyle = "#fff"; ctx.stroke();
     return c.toDataURL();
 };
-// 주황(정상: 거리뷰 있음) / 회색(거리뷰 없음)
-const PANO_MARKER_ICON = makeMarkerIcon("rgba(255,210,60,0.95)", "rgba(255,170,30,0.55)", "rgba(255,170,30,0)", "#ff8c1a");
-const PANO_MARKER_ICON_GRAY = makeMarkerIcon("rgba(180,180,185,0.9)", "rgba(150,150,155,0.5)", "rgba(150,150,155,0)", "#8a8a90");
+const GREEN_FAN: [string, string, string] = ["rgba(90,230,140,0.95)", "rgba(50,200,100,0.5)", "rgba(50,200,100,0)"];
+const ORANGE_FAN: [string, string, string] = ["rgba(255,210,60,0.95)", "rgba(255,170,30,0.55)", "rgba(255,170,30,0)"];
+// 상태별 마커: 네트워크+거리뷰=초록(부채꼴) / 네트워크X+거리뷰=주황(부채꼴) /
+//   네트워크+거리뷰X=초록(점만) / 둘다X=회색(점만)
+const ICON_GREEN_FAN  = makeMarkerIcon(GREEN_FAN,  "#22c55e");
+const ICON_ORANGE_FAN = makeMarkerIcon(ORANGE_FAN, "#ff8c1a");
+const ICON_GREEN_DOT  = makeMarkerIcon(null,       "#22c55e");
+const ICON_GRAY_DOT   = makeMarkerIcon(null,       "#8a8a90");
 
 /**
  * 네이버 파노라마(거리뷰)를 3D 자리에 전경 표시하고, 2D(OpenLayers) 지도와 **위치 양방향 동기화**한다.
@@ -140,16 +147,22 @@ export function useNaverPanorama(
             } catch (_) {}
 
 
-            // ── 2D 위치+방향 마커 (거리뷰가 어디서 어느 방향을 보는지 표시) ──
+            // ── 2D 위치+방향 마커 ── 상태별 4색:
+            //   네트워크+거리뷰=초록(부채꼴) / 네트워크X+거리뷰=주황(부채꼴) /
+            //   네트워크+거리뷰X=초록(점만) / 둘다X=회색(점만). 부채꼴만 방향(pan) 회전.
             const markerFeature = new Feature({ geometry: new Point(fromLonLat([initLng, initLat])) });
-            const iconNormal = new Icon({ src: PANO_MARKER_ICON, scale: 1.0, rotateWithView: true, rotation: 0 });
-            const iconGray = new Icon({ src: PANO_MARKER_ICON_GRAY, scale: 1.0, rotateWithView: true, rotation: 0 });
-            const markerStyle = new Style({ image: iconNormal });
-            // 거리뷰 없음 상태에 따라 마커 아이콘(주황/회색) 전환. 현재 회전값 유지.
+            const mk = (src: string) => new Icon({ src, scale: 1.0, rotateWithView: true, rotation: 0 });
+            const iconGreenFan = mk(ICON_GREEN_FAN), iconOrangeFan = mk(ICON_ORANGE_FAN);
+            const iconGreenDot = mk(ICON_GREEN_DOT), iconGrayDot = mk(ICON_GRAY_DOT);
+            const markerStyle = new Style({ image: iconGreenFan });
+            let markerOnNetwork = true; // 현재 마커가 네트워크 위인지(updateMarker 가 갱신)
+            // (onNetwork, noStreetview) 조합으로 아이콘 선택. 부채꼴 아이콘만 회전값 유지.
             const applyMarkerIcon = () => {
                 const rot = (markerStyle.getImage() as Icon).getRotation?.() ?? 0;
-                const img = noStreetview ? iconGray : iconNormal;
-                img.setRotation(rot);
+                let img: Icon;
+                if (!noStreetview) img = markerOnNetwork ? iconGreenFan : iconOrangeFan; // 거리뷰 있음 → 부채꼴
+                else               img = markerOnNetwork ? iconGreenDot : iconGrayDot;  // 거리뷰 없음 → 점만
+                if (!noStreetview) img.setRotation(rot); // 부채꼴만 방향 회전
                 markerStyle.setImage(img);
                 markerFeature.changed();
             };
@@ -212,24 +225,27 @@ export function useNaverPanorama(
                             // 네트워크에 스냅됨 → 마커를 링크 선 위 점에. onLinkRef 갱신(키보드 이동 기준).
                             onLinkRef.current = snap;
                             markerFeature.setGeometry(new Point(fromLonLat([snap.lng, snap.lat])));
-                            if (offNetwork) { offNetwork = false; } // 네트워크 복귀
+                            offNetwork = false;
+                            if (!markerOnNetwork) { markerOnNetwork = true; applyMarkerIcon(); } // 초록 전환
                         } else {
                             // 네트워크 없음(우리 도로망 밖) → 자유 이동 허용, 마커는 로드뷰 실제 위치.
-                            //   키보드 링크 이동 기준 없음(onLinkRef null). 진입 시 1회 경고.
+                            //   키보드 링크 이동 기준 없음(onLinkRef null). 밖에 머무는 동안 재경고.
                             onLinkRef.current = null;
                             markerFeature.setGeometry(new Point(fromLonLat([coord.x, coord.y])));
                             offNetwork = true;
-                            warnThrottled("네트워크가 없는 구역입니다."); // 밖에 머무는 동안 2.5s 마다 재경고
+                            warnThrottled("네트워크가 없는 구역입니다.");
+                            if (markerOnNetwork) { markerOnNetwork = false; applyMarkerIcon(); } // 주황 전환
                         }
                     }
                     // ⚠️ Naver getPov().pan 이 Infinity 로 나오는 경우가 있다(tilt/fov 는 정상).
-                    //   유효한 유한값일 때만 마커 방향 갱신(마지막 유효값 유지).
+                    //   유효한 유한값일 때만 마커 방향 갱신(부채꼴 아이콘에만; 점만 아이콘은 회전 무의미).
                     const pov = panoRef.current.getPov?.();
                     if (pov?.pan != null && Number.isFinite(pov.pan)) {
                         lastPanRef.current = pov.pan;
-                        // 아이콘 부채꼴은 위(pan 0)를 향함 → pan(도, 시계) 을 라디안으로 회전.
-                        (markerStyle.getImage() as Icon).setRotation((pov.pan * Math.PI) / 180);
-                        markerFeature.changed();
+                        if (!noStreetview) { // 거리뷰 있을 때만 부채꼴 방향 회전
+                            (markerStyle.getImage() as Icon).setRotation((pov.pan * Math.PI) / 180);
+                            markerFeature.changed();
+                        }
                         // 거리뷰 방향 → 2D 지도 방향 동기화: 로드뷰가 보는 쪽이 2D 에서 위(북)로 오도록
                         //   olView 를 회전. OL rotation 은 반시계(+)라 pan(시계) 을 부호 반전. syncing 중엔 스킵.
                         if (!syncing && olView.getRotation) {
