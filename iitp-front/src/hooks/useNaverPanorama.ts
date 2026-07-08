@@ -111,8 +111,13 @@ export function useNaverPanorama(
             //   스냅되면 마커를 링크 선 위 점에 찍고 onLinkRef 갱신(키보드 이동 기준). 임계 밖이면 null.
             const snapToNetwork = (lng: number, lat: number): OnLink | null => {
                 const links = useNetworkStore.getState().currentJsonData?.links ?? [];
+                const l0: any = links[0];
+                console.log("[snap] links=", links.length, "link0.coordinates=", l0?.coordinates?.length,
+                    "link0 keys=", l0 ? Object.keys(l0).slice(0, 12) : null, "at", lng.toFixed(5), lat.toFixed(5));
                 if (links.length === 0) return null;
-                return snapToLinks(links, lng, lat, SNAP_MAX_METERS);
+                const r = snapToLinks(links, lng, lat, SNAP_MAX_METERS);
+                console.log("[snap] 결과=", r);
+                return r;
             };
 
             const updateMarker = () => {

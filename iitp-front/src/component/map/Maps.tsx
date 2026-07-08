@@ -3,7 +3,6 @@ import 'ol/ol.css';
 import MapCesium from "@component/map/MapCesium";
 import MapOL from "@component/map/MapOL";
 import useMapInit from "@hooks/useMapInit";
-import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import useSimulation from "@hooks/useSimulation";
 import useMapSync from "@hooks/sync/useMapSync";
 import { useNaverBaseMap } from "@hooks/useNaverBaseMap";
@@ -63,17 +62,6 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     const currentBaseMap = useMapStore((s) => s.currentBaseMap);
     const naverKeyed = !!process.env.REACT_APP_NAVER_MAP_CLIENT_ID && currentBaseMap === 'naver';
     const naverEnabled = naverKeyed; // 2D 배경(OL)
-    // 줌 기반 거리뷰↔항공뷰 전환: OL 줌 ≥ PANO_MIN_ZOOM(가까이) 이면 거리뷰(파노라마), 멀면 항공뷰(위성).
-    const olZoomView = useOpenLayersStore((s) => s.view);
-    const [olZoom, setOlZoom] = useState<number>(16);
-    const PANO_MIN_ZOOM = 17; // 이 줌 이상으로 확대해야 거리뷰 표시
-    useEffect(() => {
-        if (!olZoomView) return;
-        const update = () => setOlZoom(olZoomView.getZoom() ?? 16);
-        update();
-        olZoomView.on('change:resolution', update);
-        return () => { try { olZoomView.un('change:resolution', update); } catch (_) {} };
-    }, [olZoomView]);
     const isResizing = useRef(false);
 
     const [dividerX, setDividerX] = useState<number | null>(null);
@@ -94,9 +82,9 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     useSimulation();
     useMapSync();
     useNaverBaseMap(naverMapRef, naverEnabled);
-    // 파노라마는 네이버 배경 + 3D가 화면에 보일 때만 (2D 전용 모드에선 비활성)
-    // 거리뷰는 네이버 배경 + 3D면서 + 충분히 줌인(≥PANO_MIN_ZOOM)일 때만. 줌아웃하면 항공뷰(위성).
-    const panoActive = naverKeyed && mapViewMode !== '2D' && olZoom >= PANO_MIN_ZOOM;
+    // 거리뷰: 네이버 배경 선택 + 3D 화면 표시 시 항상 활성(줌 게이트 제거 — 항공뷰 자동전환이
+    //   네이버 API 로 불가 확정되어, 줌 제약은 거리뷰만 사라지게 해 불편했음).
+    const panoActive = naverKeyed && mapViewMode !== '2D';
     useNaverPanorama(naverPanoRef, panoActive);
     useLayer();
     useDefaultSelect();
