@@ -6,20 +6,154 @@ import { useScenarioStore } from "@stores/useScenarioStore";
 import { Network } from "@type/Network";
 import { useNetworkTileStore } from "@stores/useNetworkTileStore";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
-import { LOD_ALT, LOD_RES, NETWORK_TILING, NETWORK_LOD_TIER_ORDER, getNetworkLodTierByResolution } from "@utils/lodConstants";
+import { LOD_ALT, LOD_RES, NETWORK_TILING, NETWORK_LOD_TIER_ORDER, getNetworkLodTierByResolution, type NetworkLodTier } from "@utils/lodConstants";
 import axiosInstance from "@api/axiosInstance";
 import { NetworkTileManager, type NetworkTilePayload } from "@managers/NetworkTileManager";
 import { assignTileGuids } from "@utils/tileGuid";
 
 // --- 이벤트 핸들러에서 Primitive 피킹/하이라이트에 사용 ---
 export const networkPrimitivePropertiesMap = new Map<string, any>();
-export let highlightNetworkPrimitive: ((guid: string | null) => void) | null = null;
+// guid=링크 guid. laneIdx 지정 시 그 레인만(부모 링크 전체 아님) 하이라이트.
+export let highlightNetworkPrimitive: ((guid: string | null, laneIdx?: number) => void) | null = null;
 
-/** 공간 청크 단위 Primitive 묶음 (3종 → 3 draw call per chunk). 지형 클램프 GroundPrimitive */
+/** 커서 지면점 (타원체 표면 height 0 으로 정규화 — 측방향 오프셋 계산용).
+ *
+ *  1순위 scene.pickPosition(깊이버퍼) — 커서 아래 "실제로 렌더된 표면"의 좌표라
+ *  보이는 것과 정의상 일치. globe.pick(ray-지형 교차)은 지형 타일 미로딩 시
+ *  지속 실패하고(updateTiles 주석 참고), pickEllipsoid(height 0)는 지형고도 h·
+ *  카메라 기울기 θ에서 수평오차 h/tanθ 가 **카메라 방위 따라 회전**하며 생겨
+ *  "선택이 보이는 도로에서 어긋나고 방향에 따라 도는" 원인이 된다. */
+let lastGroundSource = 'none'; // 디버그용 (__netPickDebug)
+
+function pickGroundPoint(scene: Cesium.Scene, position: Cesium.Cartesian2): Cesium.Cartesian3 | null {
+    let ground: Cesium.Cartesian3 | undefined;
+    try {
+        if (scene.pickPositionSupported) {
+            const p = scene.pickPosition(position);
+            if (Cesium.defined(p)) { ground = p; lastGroundSource = 'pickPosition'; }
+        }
+    } catch (_) { /* noop */ }
+    if (!ground) {
+        const ray = scene.camera.getPickRay(position);
+        ground = ray ? scene.globe.pick(ray, scene) : undefined;
+        if (ground) lastGroundSource = 'globePick';
+    }
+    if (!ground) {
+        ground = scene.camera.pickEllipsoid(position, scene.globe.ellipsoid);
+        if (ground) lastGroundSource = 'ellipsoid';
+    }
+    if (!ground) { lastGroundSource = 'none'; return null; }
+    const carto = Cesium.Cartographic.fromCartesian(ground);
+    return Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude);
+}
+
+/** groundPt → 폴리라인 최근접 세그먼트의 (거리 m, 우측 부호화 오프셋 m).
+ *  right = dir × up — computeOffsetPositions 의 렌더 오프셋과 같은 규약 */
+function nearestLateralToPolyline(coords: any[], groundPt: Cesium.Cartesian3): { dist: number; signed: number } | null {
+    let bestD2 = Infinity, signed = 0;
+    for (let i = 0; i < coords.length - 1; i++) {
+        const a = Cesium.Cartesian3.fromDegrees(coords[i].lng, coords[i].lat);
+        const b = Cesium.Cartesian3.fromDegrees(coords[i + 1].lng, coords[i + 1].lat);
+        const ab = Cesium.Cartesian3.subtract(b, a, new Cesium.Cartesian3());
+        const len2 = Cesium.Cartesian3.magnitudeSquared(ab);
+        if (len2 < 1e-6) continue;
+        const ap = Cesium.Cartesian3.subtract(groundPt, a, new Cesium.Cartesian3());
+        const t = Cesium.Math.clamp(Cesium.Cartesian3.dot(ap, ab) / len2, 0, 1);
+        const proj = Cesium.Cartesian3.add(a,
+            Cesium.Cartesian3.multiplyByScalar(ab, t, new Cesium.Cartesian3()), new Cesium.Cartesian3());
+        const off = Cesium.Cartesian3.subtract(groundPt, proj, new Cesium.Cartesian3());
+        const d2 = Cesium.Cartesian3.magnitudeSquared(off);
+        if (d2 >= bestD2) continue;
+        const up = Cesium.Cartesian3.normalize(proj, new Cesium.Cartesian3());
+        const right = Cesium.Cartesian3.cross(
+            Cesium.Cartesian3.normalize(ab, new Cesium.Cartesian3()), up, new Cesium.Cartesian3());
+        const rightMag = Cesium.Cartesian3.magnitude(right);
+        if (rightMag < 1e-6) continue;
+        bestD2 = d2;
+        signed = Cesium.Cartesian3.dot(off, right) / rightMag;
+    }
+    if (!isFinite(bestD2)) return null;
+    return { dist: Math.sqrt(bestD2), signed };
+}
+
+/** 커서 지면점 기준 링크 기하 탐색 — scene.pick 을 쓰지 않는다.
+ *
+ *  GroundPrimitive 분류볼륨 pick 은 지형 고저 범위만큼 수직 확장된 볼륨의 **벽면**이
+ *  카메라 기울기에 따라 도로 footprint 밖 픽셀에 걸려, "보이는 것과 선택되는 것이
+ *  다른" 픽 불일치를 만든다 (tier 스왑 잔존 지오메트리도 동일 증상). 화면에 보이는
+ *  도로는 coordinates + 우측 반폭 이동의 결정적 함수이므로, 등록된 링크 지오메트리에서
+ *  같은 규칙(중심선 우측 [0, width])으로 직접 탐색하면 보이는 것 = 선택되는 것이 보장된다. */
+export function pickNetworkAtPosition(
+    scene: Cesium.Scene,
+    position: Cesium.Cartesian2,
+): { guid: string; props: any } | null {
+    const groundPt = pickGroundPoint(scene, position);
+    if (!groundPt) return null;
+    const carto = Cesium.Cartographic.fromCartesian(groundPt);
+    const gLng = Cesium.Math.toDegrees(carto.longitude);
+    const gLat = Cesium.Math.toDegrees(carto.latitude);
+
+    let best: { guid: string; props: any; score: number } | null = null;
+    for (const [guid, props] of networkPrimitivePropertiesMap) {
+        if (props?.featureType !== 'links') continue;
+        const coords = props.coordinates;
+        if (!coords || coords.length < 2 || !coords[0]) continue;
+        // 빠른 기각: 시작점 거리 > 링크 길이 + 도달 여유 (평면 근사, 원거리 링크 대부분 컷)
+        const dx = (gLng - coords[0].lng) * 88000, dy = (gLat - coords[0].lat) * 111000;
+        const reach = (typeof props.length === 'number' ? props.length : 1e7) + (props.width ?? 7) + 20;
+        if (dx * dx + dy * dy > reach * reach) continue;
+
+        const near = nearestLateralToPolyline(coords, groundPt);
+        if (!near) continue;
+        const width = props.width ?? 7;
+        // 렌더된 몸체 = 중심선 우측 [0, width] (+외곽 0.6m) — 범위 밖(반대 방향 링크 쪽)은 기각
+        if (near.signed < -0.6 || near.signed > width + 0.6) continue;
+        if (near.dist > width + 2) continue; // 끝점 밖 과도 이탈 기각
+        const score = Math.abs(near.signed - width / 2); // 몸체 중심에 가까운 링크 우선
+        if (!best || score < best.score) best = { guid, props, score };
+    }
+    if ((globalThis as any).__netPickDebug) {
+        console.log('[netPick]', {
+            ground: lastGroundSource,
+            lng: gLng.toFixed(6), lat: gLat.toFixed(6),
+            hitLink: best?.props?.id ?? null,
+            offsetFromCenter: best ? best.score.toFixed(2) : null,
+        });
+    }
+    return best ? { guid: best.guid, props: best.props } : null;
+}
+
+/** 도로 몸체 클릭 지점의 레인 역산 — 레인 채움면은 시점 아티팩트로 렌더에서 제거되어
+ *  직접 pick 이 불가하므로, 지면점의 중심선 대비 우측 오프셋으로 레인 인덱스를 계산한다.
+ *  buildLinkInstances 의 오프셋 규칙(dirOffset + ((laneCount-1)/2 - i)*laneWidth)과 정합. */
+export function pickLaneAtPosition(scene: Cesium.Scene, position: Cesium.Cartesian2, link: any): any | null {
+    const lanes = link?.lanes ?? [];
+    const coords = (link?.coordinates ?? []).filter((c: any) => c && isFinite(c.lng) && isFinite(c.lat));
+    if (lanes.length === 0 || coords.length < 2) return null;
+
+    const groundPt = pickGroundPoint(scene, position);
+    if (!groundPt) return null;
+    const near = nearestLateralToPolyline(coords, groundPt);
+    if (!near) return null;
+
+    const roadWidth = link.width ?? 7;
+    const laneCount = lanes.length;
+    const laneWidth = roadWidth / laneCount;
+    const dirOffset = roadWidth / 2; // 렌더와 동일한 우측 반폭 이동
+    const idx = Math.round((laneCount - 1) / 2 - (near.signed - dirOffset) / laneWidth);
+    if (idx < 0 || idx >= laneCount) return null; // 몸체 밖 (외곽 그림자 등)
+    const lane = lanes[idx];
+    return lane ? { ...lane, _laneIdx: idx } : null; // _laneIdx: 하이라이트/셀 계산용 레인 인덱스
+}
+
+/** 공간 청크 단위 Primitive 묶음 (지형 클램프).
+ *  구분선/중앙선은 corridor(면)가 아닌 GroundPolyline(픽셀 폭 선) — 0.1m급 초박형 corridor 는
+ *  분류 섀도우볼륨이 시선각에 따라 슬리버로 투영되어 "카메라 방향 따라 형상이 바뀌는" 아티팩트 발생. */
 interface ChunkPrimitives {
-    outline: Cesium.GroundPrimitive | null;  // 외곽 그림자 — link/outline LOD에서 표시
-    link:    Cesium.GroundPrimitive | null;  // 아스팔트 링크 — link/full LOD에서 표시
-    lane:    Cesium.GroundPrimitive | null;  // 레인+구분선+중앙선 합산 — full LOD에서만 표시
+    outline: Cesium.GroundPrimitive | null;          // 외곽 그림자 — link/outline LOD에서 표시
+    link:    Cesium.GroundPrimitive | null;          // 아스팔트 링크 — link/full LOD에서 표시
+    lane:    Cesium.GroundPrimitive | null;          // 레인 면 — full LOD에서만 표시
+    line:    Cesium.GroundPolylinePrimitive | null;  // 구분선(흰)+중앙선(황) — full LOD에서만 표시
 }
 
 export default class NetworkDataSourceLayer {
@@ -54,6 +188,12 @@ export default class NetworkDataSourceLayer {
     private chunkTiers: Map<string, number> = new Map();
     /** fullBuild 산출물 존재 여부 — 타일 모드 load() 재진입 시 전면 wipe 를 모드 전환 때만 하도록 */
     private hasFullBuildArtifacts = false;
+    /** globe.pick 실패(지형 미로딩) 시 updateTiles 재시도 타이머 */
+    private pickRetryTimer: ReturnType<typeof setTimeout> | null = null;
+    /** 노드/포트/커넥션 엔티티가 빌드되어 있는 타일 (거리 기반 생명주기 관리) */
+    private entityTiles = new Set<string>();
+    /** 마지막 updateTiles 의 pixelSize 기반 tier — 엔티티 표시 게이팅용 (alt 기반 currentLod 와 별개) */
+    private lastPixelTier: NetworkLodTier | 'unknown' = 'unknown';
     /** 마지막으로 near 이상 tier 였던 시각 — 경계 플랩 시 전체 clear 방지 (히스테리시스) */
     private lastNearTs = 0;
     private tileCameraTimer: ReturnType<typeof setTimeout> | null = null;
@@ -76,8 +216,8 @@ export default class NetworkDataSourceLayer {
 
     // ── 색상 팔레트 ─────────────────────────────────────────────
     // 아스팔트 도로 기본 (외곽 → 메인 순)
-    private static readonly COLOR_LINK_OUTLINE = Cesium.Color.fromBytes(30, 30, 35, 200);   // 외곽 그림자
-    private static readonly COLOR_LINK_BASE    = Cesium.Color.fromBytes(72, 74, 80, 235);   // 도로 기본
+    private static readonly COLOR_LINK_OUTLINE = Cesium.Color.fromBytes(30, 30, 35, 255);   // 외곽 그림자
+    private static readonly COLOR_LINK_BASE    = Cesium.Color.fromBytes(72, 74, 80, 255);   // 도로 기본
 
     // 레인 교차 음영 (짝/홀)
     private static readonly LANE_COLORS = [
@@ -87,19 +227,19 @@ export default class NetworkDataSourceLayer {
 
     // 도로 타입별 색조 (link.type 기준)
     private static readonly LINK_TYPE_COLOR: Record<string, Cesium.Color> = {
-        'highway':    Cesium.Color.fromBytes(70, 60, 30, 245),   // 고속도로 — 황토
-        'motorway':   Cesium.Color.fromBytes(70, 60, 30, 245),
-        'trunk':      Cesium.Color.fromBytes(60, 55, 35, 245),   // 주간선 — 황갈색
-        'primary':    Cesium.Color.fromBytes(55, 52, 40, 245),   // 1차로 — 진한 회갈
-        'secondary':  Cesium.Color.fromBytes(50, 52, 50, 245),   // 2차로
-        'local':      Cesium.Color.fromBytes(46, 48, 50, 245),   // 이면도로
-        'ramp':       Cesium.Color.fromBytes(48, 55, 38, 245),   // 램프 — 녹색조
+        'highway':    Cesium.Color.fromBytes(70, 60, 30, 255),   // 고속도로 — 황토
+        'motorway':   Cesium.Color.fromBytes(70, 60, 30, 255),
+        'trunk':      Cesium.Color.fromBytes(60, 55, 35, 255),   // 주간선 — 황갈색
+        'primary':    Cesium.Color.fromBytes(55, 52, 40, 255),   // 1차로 — 진한 회갈
+        'secondary':  Cesium.Color.fromBytes(50, 52, 50, 255),   // 2차로
+        'local':      Cesium.Color.fromBytes(46, 48, 50, 255),   // 이면도로
+        'ramp':       Cesium.Color.fromBytes(48, 55, 38, 255),   // 램프 — 녹색조
     };
 
     // 차선 구분선 (경계)
-    private static readonly COLOR_DIVIDER      = Cesium.Color.fromBytes(190, 190, 190, 200);  // 흰색 실선
+    private static readonly COLOR_DIVIDER      = Cesium.Color.fromBytes(190, 190, 190, 255);  // 흰색 실선
     // 중앙선
-    private static readonly COLOR_CENTER_LINE  = Cesium.Color.fromBytes(220, 180, 40, 220);   // 황색 중앙선
+    private static readonly COLOR_CENTER_LINE  = Cesium.Color.fromBytes(220, 180, 40, 255);   // 황색 중앙선
 
     private unsubscribe: (() => void) | undefined;
     private unsubscribeDraw: (() => void) | undefined;
@@ -164,12 +304,12 @@ export default class NetworkDataSourceLayer {
 
 
 
-    // 하이라이트 상태
+    // 하이라이트 상태 — 인스턴스 색 변조 대신 전용 오버레이 primitive (highlightInstance 참고)
     private highlightedGuid: string | null = null;
-    private originalHighlightColor: Uint8Array | null = null;
+    private highlightPrimitive: Cesium.GroundPrimitive | null = null;
 
     /** overview 도로망 폴리라인 색/굵기 */
-    private static readonly COLOR_ROAD_OVERVIEW = Cesium.Color.fromBytes(236, 238, 245, 230);
+    private static readonly COLOR_ROAD_OVERVIEW = Cesium.Color.fromBytes(236, 238, 245, 255);
 
     constructor(private viewer: Viewer) {
         this.dataSource = new Cesium.CustomDataSource(this.LAYER_NAME);
@@ -254,14 +394,25 @@ export default class NetworkDataSourceLayer {
 
         // 화면 중앙 ray → 지면(globe) 교차점. 하늘을 보면(교차 없음) 네트워크 숨김 + 회수.
         const center = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
+        // 지면점: globe.pick(지형) → 실패 시 pickEllipsoid(타원체) 폴백.
+        // globe.pick 은 지형 타일 미로딩(줌 직후)·지형서버 장애 시 **지속** 실패할 수 있어
+        // 폴백 없이는 타일 fetch 가 영영 시작되지 않는다(실측: 250m 순간이동 후 fetch 0건).
+        // 타원체 거리도 pixelSize 용도로는 충분(지형고도 ≪ 카메라 거리 오차 무시 가능).
         const ray = camera.getPickRay(center);
-        const ground = ray ? scene.globe.pick(ray, scene) : undefined;
+        let ground = ray ? scene.globe.pick(ray, scene) : undefined;
+        if (!ground) ground = camera.pickEllipsoid(center, scene.globe.ellipsoid);
         if (!ground) {
-            // globe.pick 은 지형 타일 로딩 중/기울인 시점에서 일시적으로 실패할 수 있다.
-            // 여기서 clear() 하면 detail 사용 중 네트워크가 통째로 사라졌다 재로드되는 깜빡임 발생
-            // → 보유 타일 유지(메모리는 LRU 상한이 지킴), 다음 카메라 정착에서 재평가.
+            // 그래도 실패(하늘을 보는 시점): 보유 타일 유지, 재시도 예약
+            if (!this.pickRetryTimer) {
+                this.pickRetryTimer = setTimeout(() => {
+                    this.pickRetryTimer = null;
+                    try { this.viewer.scene.requestRender(); } catch (_) {}
+                    this.updateTiles();
+                }, 1000);
+            }
             return;
         }
+        if (this.pickRetryTimer) { clearTimeout(this.pickRetryTimer); this.pickRetryTimer = null; }
 
         // 화면 중앙 1px이 덮는 지면 거리(m/px) = 2D OL resolution 과 동일 단위 → tier 기준 일치.
         //   pixelSize = (2·d·tan(fovy/2)) / canvasHeight
@@ -272,6 +423,7 @@ export default class NetworkDataSourceLayer {
         const canvasW = canvas.clientWidth || 1200;
         const pixelSizeM = (2 * groundDist * Math.tan(fovy / 2)) / canvasH;
         const lod = getNetworkLodTierByResolution(pixelSizeM);
+        this.lastPixelTier = lod;
 
         // bbox: 화면 중앙 지면점 ± (실제 화면이 덮는 지면 절반) — 가로/세로 픽셀 반영, 거대 bbox 방지.
         const halfHeightM = pixelSizeM * canvasH / 2;
@@ -322,6 +474,7 @@ export default class NetworkDataSourceLayer {
         }
         // near: 차선 없는 경량 타일(도로 폴리곤 연속성 우선), detail: 차선+노드/포트/커넥션 엔티티
         this.tileManager.updateForBbox(west, south, east, north, lod);
+        this.syncNodeEntities(); // 카메라 정착 시 엔티티 거리 생명주기 갱신 (빌드/제거)
     }
 
     /** viewport 간선 중심선을 fetch → roadOverviewPrimitive (overview/mid 표시 + near 이상 연속성 베이스).
@@ -338,7 +491,10 @@ export default class NetworkDataSourceLayer {
         const pw = w - padX, pe = e + padX, ps = s - padY, pn = n + padY;
 
         const seq = ++this.overviewFetchSeq;
-        useNetworkTileStore.getState().incLoading(); // 첫 요청은 서버 SQLite 재빌드로 수십 초 걸릴 수 있음 → 스피너
+        // 스피너는 화면에 아무것도 없을 첫 로드만 — 이미 표시 중인 상태의 백그라운드 갱신(팬마다
+        // 3x bbox 이탈 시 발생)까지 카운트하면 "네트워크 로딩중"이 계속 떠 있게 된다.
+        const countSpinner = !this.overviewArterialsActive;
+        if (countSpinner) useNetworkTileStore.getState().incLoading();
         axiosInstance.get(`/network/${versionId}/tiles`, { params: { bbox: `${pw},${ps},${pe},${pn}`, lod } })
             .then((res) => {
                 if (seq !== this.overviewFetchSeq || this.destroyed) return; // 더 최신 요청이 있으면 폐기
@@ -354,7 +510,7 @@ export default class NetworkDataSourceLayer {
                 if (err?.response?.status !== 404) console.warn('[NetworkDataSourceLayer] overview 간선 fetch 실패', err);
             })
             .finally(() => {
-                useNetworkTileStore.getState().decLoading();
+                if (countSpinner) useNetworkTileStore.getState().decLoading();
             });
     }
 
@@ -398,14 +554,21 @@ export default class NetworkDataSourceLayer {
             // (고정 지연은 detail 빌드가 그보다 오래 걸리면 공백 발생 — 실사용 재현된 버그)
             this.chunkPrimitives.delete(tileKey);
             const old = existing;
+            // (하이라이트는 전용 오버레이 primitive — old 청크 색 원복 불필요)
+            const swapStart = performance.now();
             const removeOldWhenReady = () => {
                 const fresh = this.chunkPrimitives.get(tileKey);
-                const freshPrims = fresh ? [fresh.outline, fresh.link, fresh.lane].filter(Boolean) as any[] : [];
-                const allReady = freshPrims.length > 0 && freshPrims.every((p) => { try { return p.ready; } catch { return true; } });
-                if (allReady || this.destroyed || !fresh) {
+                const freshPrims = fresh ? [fresh.outline, fresh.link, fresh.lane, fresh.line].filter(Boolean) as any[] : [];
+                // 빈 타일(프리미티브 0개)도 ready 취급 — 아니면 old 가 영영 안 지워져 near/detail 겹침
+                const allReady = freshPrims.every((p) => { try { return p.ready; } catch { return true; } });
+                // 강제 마감 12s: old 가 잔존하면 구(중앙)·신(우측이동) 지오메트리가 겹쳐
+                // "보이는 것과 선택되는 것이 다른" 픽 불일치 발생
+                const deadline = performance.now() - swapStart > 12000;
+                if (allReady || deadline || this.destroyed || !fresh) {
                     if (old.outline) { try { this.viewer.scene.groundPrimitives.remove(old.outline); } catch (_) {} }
                     if (old.link)    { try { this.viewer.scene.groundPrimitives.remove(old.link); } catch (_) {} }
                     if (old.lane)    { try { this.viewer.scene.groundPrimitives.remove(old.lane); } catch (_) {} }
+                    if (old.line)    { try { this.viewer.scene.groundPrimitives.remove(old.line); } catch (_) {} }
                     try { this.viewer.scene.requestRender(); } catch (_) {}
                 } else {
                     setTimeout(removeOldWhenReady, 500);
@@ -433,26 +596,73 @@ export default class NetworkDataSourceLayer {
         const outlineInst: Cesium.GeometryInstance[] = [];
         const linkInst: Cesium.GeometryInstance[] = [];
         const laneInst: Cesium.GeometryInstance[] = [];
+        const lineInst: Cesium.GeometryInstance[] = []; // 구분선+중앙선 (GroundPolyline)
         for (const link of payload.links) {
             if (this.linkChunkKey(link) !== tileKey) continue;
-            this.buildLinkInstances(link, this.cachedNodeMap, outlineInst, linkInst, laneInst, laneInst, laneInst);
+            this.buildLinkInstances(link, this.cachedNodeMap, outlineInst, linkInst, laneInst, lineInst, lineInst);
         }
-        this.buildChunkPrimitives(tileKey, outlineInst, linkInst, laneInst);
+        this.buildChunkPrimitives(tileKey, outlineInst, linkInst, laneInst, lineInst);
         this.chunkTiers.set(tileKey, tierOrder ?? 99);
-        // 노드/포트/커넥션 엔티티는 detail 타일(tierOrder>=3, ring=0으로 1~4개)에서만 빌드.
-        // near 타일까지 빌드하면 LRU 캐시(최대 64타일) 누적으로 엔티티 수만 개 → heap/frame 급증.
-        // (비타일 모드는 tierOrder=undefined → 기존처럼 전부 빌드)
-        if (tierOrder === undefined || tierOrder >= NETWORK_LOD_TIER_ORDER.detail) {
+        // 노드/포트/커넥션 엔티티: 거리 기반 생명주기(syncNodeEntities)가 담당 —
+        // 여기서 즉시 빌드하지 않는다. (LRU 64타일 누적 시 엔티티 수천 개가 CPU를 매 프레임
+        // 소모해 FPS 한 자리로 추락. DDC는 GPU 컬링만 하고 CPU 비용은 총량에 비례)
+        if (tierOrder === undefined) {
+            // 비타일 모드: 기존처럼 전부 빌드
             const homeNodes = payload.nodes.filter(nd => this.nodeChunkKey(nd) === tileKey);
             if (homeNodes.length > 0) {
                 this.nodeBuildQueue.set(tileKey, homeNodes);
                 this.scheduleNodeBuild();
             }
+        } else {
+            this.syncNodeEntities();
         }
 
         // applyVisibility 는 전체 청크 순회(거리 컬링)라 타일마다 호출하면 O(N²) → 끊김.
         // 여러 타일이 동시에 로드될 때 debounce 로 1회만 실행.
         this.scheduleApplyVisibility();
+    }
+
+    /**
+     * 노드/포트/커넥션 엔티티 거리 기반 생명주기 — 카메라 1km 진입 시 빌드, 1.3km 이탈 시 제거.
+     * 엔티티 총량을 viewport 주변 수백 개로 제한 (총량이 CPU 프레임 비용을 결정).
+     * 노드 데이터는 cachedNodeMap 에 남아 있어 재진입 시 재빌드 가능.
+     */
+    private syncNodeEntities(): void {
+        const detailOrder = NETWORK_LOD_TIER_ORDER.detail;
+        const cam = this.viewer.scene.camera.positionWC;
+        const BUILD_R = 1000, DROP_R = 1300; // 히스테리시스
+        for (const [key, home] of this.tileHomeIds) {
+            const center = this.chunkCenters.get(key);
+            if (!center) continue;
+            const d = Cesium.Cartesian3.distance(cam, center);
+            const has = this.entityTiles.has(key);
+            if (!has && d <= BUILD_R && (this.chunkTiers.get(key) ?? 0) >= detailOrder) {
+                const nodes = home.nodeIds.map((id) => this.cachedNodeMap.get(id)).filter(Boolean);
+                if (nodes.length > 0) {
+                    this.nodeBuildQueue.set(key, nodes);
+                    this.scheduleNodeBuild();
+                }
+                this.entityTiles.add(key);
+            } else if (has && d > DROP_R) {
+                this.nodeBuildQueue.delete(key);
+                this.dataSource.entities.suspendEvents();
+                try {
+                    for (const nodeId of home.nodeIds) {
+                        const ids = this.nodeEntityIds.get(nodeId);
+                        if (ids) {
+                            for (const id of ids) {
+                                const ent = this.dataSource.entities.getById(id);
+                                if (ent) this.dataSource.entities.remove(ent);
+                            }
+                            this.nodeEntityIds.delete(nodeId);
+                        }
+                    }
+                } finally {
+                    this.dataSource.entities.resumeEvents();
+                }
+                this.entityTiles.delete(key);
+            }
+        }
     }
 
     /** 노드 엔티티 빌드를 rAF로 프레임당 1타일씩 처리 (메인스레드 양보 → 줌/pan 부드럽게) */
@@ -501,6 +711,7 @@ export default class NetworkDataSourceLayer {
             if (chunk.outline) this.viewer.scene.groundPrimitives.remove(chunk.outline);
             if (chunk.link)    this.viewer.scene.groundPrimitives.remove(chunk.link);
             if (chunk.lane)    this.viewer.scene.groundPrimitives.remove(chunk.lane);
+            if (chunk.line)    this.viewer.scene.groundPrimitives.remove(chunk.line);
             this.chunkPrimitives.delete(tileKey);
             this.chunkCenters.delete(tileKey);
             this.chunkTiers.delete(tileKey);
@@ -521,9 +732,19 @@ export default class NetworkDataSourceLayer {
             this.cachedNodeMap.delete(nodeId);
         }
         for (const linkId of home?.linkIds ?? []) {
+            // 픽 속성 맵도 함께 정리 — 남겨두면 evict 된(화면에 없는) 링크가
+            // 지면점 기하 탐색(pickNetworkAtPosition)에 걸려 "안 보이는 것이 선택"된다
+            const link = this.cachedLinkMap.get(linkId);
+            if (link?.__guid) {
+                networkPrimitivePropertiesMap.delete(link.__guid);
+                for (const lane of link.lanes ?? []) {
+                    if (lane?.__guid) networkPrimitivePropertiesMap.delete(lane.__guid);
+                }
+            }
             this.cachedLinkMap.delete(linkId);
         }
         this.tileHomeIds.delete(tileKey);
+        this.entityTiles.delete(tileKey);
         try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
@@ -570,13 +791,22 @@ export default class NetworkDataSourceLayer {
             if (chunk.outline) chunk.outline.show = layer && linkFT && inLinkRange;
             if (chunk.link)    chunk.link.show    = layer && linkFT && inLinkRange && lod !== 'outline';
             if (chunk.lane)    chunk.lane.show    = layer && laneFT && lod === 'full' && inLaneRange;
+            if (chunk.line)    chunk.line.show    = layer && laneFT && lod === 'full' && inLaneRange;
         }
 
         // overview 도로망 중심선: 비타일 모드는 outline LOD(원거리), 타일 모드는 줌아웃 간선 fetch 활성 시.
-        this.roadOverviewShow = layer && linkFT && (lod === 'outline' || this.overviewArterialsActive);
+        // detail(완전 근접)에선 숨김 — 도로 폴리곤 위로 주변 골목 중심선 그물이 겹쳐 노이즈
+        // (near 는 타일 경계 밖 연속성용으로 유지).
+        this.roadOverviewShow = layer && linkFT
+            && (lod === 'outline' || this.overviewArterialsActive)
+            && this.lastPixelTier !== 'detail';
         if (this.roadOverviewPrimitive) this.roadOverviewPrimitive.show = this.roadOverviewShow;
 
-        this.dataSource.show = layer && lod === 'full';
+        // 노드/포트/커넥션 엔티티: alt 기반 full + **pixelSize 기반 detail** 둘 다 만족할 때만.
+        // alt 기준만 쓰면 near(0.3~1.5m/px)에서도 detail 시절 쌓인 엔티티 수천 개가 전역 표시되어
+        // FPS 급락 + "먼 엔티티까지 보임" (비타일 모드는 lastPixelTier='unknown' → 기존 동작).
+        const entityTierOk = this.lastPixelTier === 'unknown' || this.lastPixelTier === 'detail';
+        this.dataSource.show = layer && lod === 'full' && entityTierOk;
         // GroundPolylinePrimitive(지형 클램프) 전환으로 depth test 를 항상 켜도 중심선이 안 묻힘
         // → 땅속 오브젝트가 투과되어 보이던 문제 제거
         this.viewer.scene.globe.depthTestAgainstTerrain = true;
@@ -585,43 +815,59 @@ export default class NetworkDataSourceLayer {
     // ─────────────────────────────────────────────
     // Primitive 하이라이트 (이벤트 핸들러에서 호출)
     // ─────────────────────────────────────────────
-    private highlightInstance(guid: string | null): void {
-        // 이전 하이라이트 복원 — 모든 청크의 link/lane Primitive에서 검색
-        if (this.highlightedGuid && this.originalHighlightColor) {
-            const prevColor = this.originalHighlightColor;
-            const prevGuid  = this.highlightedGuid;
-            for (const chunk of this.chunkPrimitives.values()) {
-                let found = false;
-                for (const p of [chunk.link, chunk.lane]) {
-                    if (!p?.ready) continue;
-                    try {
-                        const attrs = p.getGeometryInstanceAttributes(prevGuid);
-                        if (attrs) { attrs.color = prevColor; found = true; break; }
-                    } catch (_) {}
-                }
-                if (found) break;
-            }
-        }
-        this.highlightedGuid = null;
-        this.originalHighlightColor = null;
+    /** 링크 하이라이트 — 전용 오버레이 GroundPrimitive.
+     *  기존 방식(청크 배치 인스턴스의 색 속성 변조)은 tier 스왑으로 같은 링크의 구/신
+     *  청크가 기하적으로 겹쳐 렌더되는 동안 노란색이 어느 사본에 칠해졌는지·어느 사본이
+     *  위에 그려지는지가 카메라 이동(청크 재빌드/스왑)마다 바뀌어 **노란 영역이 도로 안에서
+     *  움직이는** 문제를 만들었다. 링크 좌표에서 렌더와 동일한 corridor 를 즉석 생성해
+     *  최상위에 얹으면 청크 생명주기와 완전히 분리된다 (색 복원 부기도 불필요). */
+    private highlightInstance(guid: string | null, laneIdx?: number): void {
+        const cacheKey = guid == null ? null : (laneIdx != null ? `${guid}#${laneIdx}` : guid);
+        if (this.highlightedGuid === cacheKey) return; // hover 마다 재호출 — 동일 대상이면 no-op
+        this.highlightedGuid = cacheKey;
 
-        if (guid) {
-            outer: for (const chunk of this.chunkPrimitives.values()) {
-                for (const p of [chunk.link, chunk.lane]) {
-                    if (!p?.ready) continue;
-                    try {
-                        const attrs = p.getGeometryInstanceAttributes(guid);
-                        if (attrs?.color) {
-                            this.originalHighlightColor = new Uint8Array(attrs.color);
-                            attrs.color = Cesium.ColorGeometryInstanceAttribute.toValue(Cesium.Color.YELLOW.withAlpha(0.9));
-                            try { this.viewer.scene.requestRender(); } catch (_) {}
-                            break outer;
-                        }
-                    } catch (_) {}
-                }
-            }
+        if (this.highlightPrimitive) {
+            try { this.viewer.scene.groundPrimitives.remove(this.highlightPrimitive); } catch (_) {}
+            this.highlightPrimitive = null;
         }
-        this.highlightedGuid = guid;
+
+        const props = guid ? networkPrimitivePropertiesMap.get(guid) : null;
+        const coords = props?.featureType === 'links'
+            ? (props.coordinates ?? []).filter((c: any) => c && isFinite(c.lng) && isFinite(c.lat))
+            : [];
+        if (coords.length >= 2) {
+            const roadWidth = props.width ?? 7;
+            const laneCount = props.lanes?.length || props.numLane || 1;
+            // 레인 지정 시: 그 레인만(폭=laneWidth, 중심 오프셋). 아니면 링크 전체(폭=roadWidth, 우측 반폭).
+            //   렌더 규약(dirOffset=roadWidth/2 + ((laneCount-1)/2 - i)*laneWidth)과 정합.
+            const isLane = laneIdx != null && laneIdx >= 0 && laneIdx < laneCount;
+            const laneWidth = roadWidth / laneCount;
+            const width = isLane ? laneWidth : roadWidth;
+            const offset = isLane
+                ? roadWidth / 2 + ((laneCount - 1) / 2 - laneIdx!) * laneWidth
+                : roadWidth / 2;
+            const shifted = this.computeOffsetPositions(coords, offset);
+            this.highlightPrimitive = new Cesium.GroundPrimitive({
+                geometryInstances: new Cesium.GeometryInstance({
+                    id: `${cacheKey}_highlight`,
+                    geometry: new Cesium.CorridorGeometry({
+                        positions: shifted,
+                        width,
+                        cornerType: Cesium.CornerType.MITERED,
+                        vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
+                    }),
+                    attributes: {
+                        // 알파 1.0 — 불투명(translucent:false) 패스와 정합 (반투명은 분류 렌더 오동작 유발)
+                        color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.YELLOW),
+                    },
+                }),
+                appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: false }),
+                asynchronous: false, // 단일 corridor — 동기 빌드로 hover 즉시 표시 (ready 펌프 불필요)
+                classificationType: Cesium.ClassificationType.BOTH,
+            });
+            this.viewer.scene.groundPrimitives.add(this.highlightPrimitive);
+        }
+        try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
     // ─────────────────────────────────────────────
@@ -716,22 +962,23 @@ export default class NetworkDataSourceLayer {
         // 링크·레인 → 공간 청크별 Primitive
         const chunkOutline = new Map<string, Cesium.GeometryInstance[]>();
         const chunkLink    = new Map<string, Cesium.GeometryInstance[]>();
-        const chunkLane    = new Map<string, Cesium.GeometryInstance[]>(); // lane+divider+center 합산
+        const chunkLane    = new Map<string, Cesium.GeometryInstance[]>(); // lane 면
+        const chunkLine    = new Map<string, Cesium.GeometryInstance[]>(); // 구분선+중앙선 (폴리라인)
 
         this.clearRoadOverview();
         for (const link of network.links) {
             const key = this.linkChunkKey(link);
             if (!chunkOutline.has(key)) {
-                chunkOutline.set(key, []); chunkLink.set(key, []); chunkLane.set(key, []);
+                chunkOutline.set(key, []); chunkLink.set(key, []); chunkLane.set(key, []); chunkLine.set(key, []);
             }
-            const laneArr = chunkLane.get(key)!;
+            const lineArr = chunkLine.get(key)!;
             this.buildLinkInstances(link, this.cachedNodeMap,
-                chunkOutline.get(key)!, chunkLink.get(key)!, laneArr, laneArr, laneArr);
+                chunkOutline.get(key)!, chunkLink.get(key)!, chunkLane.get(key)!, lineArr, lineArr);
             this.addRoadOverviewPolyline(link);
         }
         this.commitRoadOverview();
         for (const key of chunkOutline.keys()) {
-            this.buildChunkPrimitives(key, chunkOutline.get(key)!, chunkLink.get(key)!, chunkLane.get(key)!);
+            this.buildChunkPrimitives(key, chunkOutline.get(key)!, chunkLink.get(key)!, chunkLane.get(key)!, chunkLine.get(key)!);
         }
 
         // 노드·포트·커넥션 → DataSource Entity
@@ -847,21 +1094,24 @@ export default class NetworkDataSourceLayer {
         outlineInst: Cesium.GeometryInstance[],
         linkInst:    Cesium.GeometryInstance[],
         laneInst:    Cesium.GeometryInstance[],
+        lineInst:    Cesium.GeometryInstance[] = [],
     ): void {
-        this.highlightedGuid = null;
-        this.originalHighlightColor = null;
+        // (하이라이트는 전용 오버레이 primitive — 청크 재빌드와 무관, 리셋 불필요)
 
-        const appearance = () => new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true });
-        const makeGround = (instances: Cesium.GeometryInstance[]) => new Cesium.GroundPrimitive({
-            geometryInstances: instances,
-            appearance: appearance(),
-            asynchronous: true,
-            // BOTH: 지형 + 3D Tiles 표면 모두에 드레이프.
-            // TERRAIN 전용이면 3D Tiles(건물/정밀지형) 레이어를 켰을 때 도로가 타일셋에 가려져
-            // 하나도 안 보임 (실사용 보고). BOTH 는 두 표면 모두에 분류 렌더.
-            classificationType: Cesium.ClassificationType.BOTH,
-        });
-        const chunk: ChunkPrimitives = { outline: null, link: null, lane: null };
+        // translucent:false — 불투명 분류가 blend 순서 의존성이 없어 시점 안정적.
+        // (색상 알파는 전부 200+ 로 사실상 불투명 — translucent 경로는 비용만 들고 아티팩트 유발)
+        const appearance = () => new Cesium.PerInstanceColorAppearance({ flat: true, translucent: false });
+        // ⚠️ 분류 대상은 **모든 도로 요소가 동일**해야 한다 (전부 BOTH).
+        // 요소별로 TERRAIN/BOTH 를 섞으면 지형과 3D Tiles 표면 높이가 다른 곳에서
+        // 레인과 도로가 서로 다른 표면에 그려져, 카메라 이동 시 시차로 어긋나 도는 아티팩트 발생.
+        const makeGround = (instances: Cesium.GeometryInstance[]) =>
+            new Cesium.GroundPrimitive({
+                geometryInstances: instances,
+                appearance: appearance(),
+                asynchronous: true,
+                classificationType: Cesium.ClassificationType.BOTH,
+            });
+        const chunk: ChunkPrimitives = { outline: null, link: null, lane: null, line: null };
 
         if (outlineInst.length > 0) {
             chunk.outline = makeGround(outlineInst);
@@ -875,9 +1125,19 @@ export default class NetworkDataSourceLayer {
             chunk.lane = makeGround(laneInst);
             this.viewer.scene.groundPrimitives.add(chunk.lane);
         }
+        if (lineInst.length > 0) {
+            // 구분선/중앙선: 픽셀 폭 GroundPolyline — 초박형 corridor 분류볼륨의 시선각 아티팩트 회피
+            chunk.line = new Cesium.GroundPolylinePrimitive({
+                geometryInstances: lineInst,
+                appearance: new Cesium.PolylineColorAppearance(),
+                asynchronous: true,
+                classificationType: Cesium.ClassificationType.BOTH,
+            });
+            this.viewer.scene.groundPrimitives.add(chunk.line);
+        }
 
         this.chunkPrimitives.set(key, chunk);
-        this.pumpUntilReady([chunk.outline, chunk.link, chunk.lane]); // 카메라 정지 상태에서도 ready까지 렌더 펌핑
+        this.pumpUntilReady([chunk.outline, chunk.link, chunk.lane, chunk.line]); // 카메라 정지 상태에서도 ready까지 렌더 펌핑
 
         // 청크 중심 좌표 계산
         const [cx = 0, cy = 0] = key.split(',').map(Number);
@@ -892,12 +1152,11 @@ export default class NetworkDataSourceLayer {
             if (chunk.outline) this.viewer.scene.groundPrimitives.remove(chunk.outline);
             if (chunk.link)    this.viewer.scene.groundPrimitives.remove(chunk.link);
             if (chunk.lane)    this.viewer.scene.groundPrimitives.remove(chunk.lane);
+            if (chunk.line)    this.viewer.scene.groundPrimitives.remove(chunk.line);
         }
         this.chunkPrimitives.clear();
         this.chunkCenters.clear();
         this.chunkTiers.clear();
-        this.highlightedGuid = null;
-        this.originalHighlightColor = null;
     }
 
     /** 레이어 전체 on/off (DataSourceLayerManager에서 호출) */
@@ -978,21 +1237,22 @@ export default class NetworkDataSourceLayer {
             const chunkOutline = new Map<string, Cesium.GeometryInstance[]>();
             const chunkLink    = new Map<string, Cesium.GeometryInstance[]>();
             const chunkLane    = new Map<string, Cesium.GeometryInstance[]>();
+            const chunkLine    = new Map<string, Cesium.GeometryInstance[]>();
             this.clearRoadOverview();
             for (const link of next.links) {
                 const key = this.linkChunkKey(link);
                 if (!chunkOutline.has(key)) {
-                    chunkOutline.set(key, []); chunkLink.set(key, []); chunkLane.set(key, []);
+                    chunkOutline.set(key, []); chunkLink.set(key, []); chunkLane.set(key, []); chunkLine.set(key, []);
                 }
-                const laneArr = chunkLane.get(key)!;
+                const lineArr = chunkLine.get(key)!;
                 this.buildLinkInstances(link, this.cachedNodeMap,
-                    chunkOutline.get(key)!, chunkLink.get(key)!, laneArr, laneArr, laneArr);
+                    chunkOutline.get(key)!, chunkLink.get(key)!, chunkLane.get(key)!, lineArr, lineArr);
                 this.addRoadOverviewPolyline(link);
             }
             this.commitRoadOverview();
             this.removeAllChunkPrimitives();
             for (const key of chunkOutline.keys()) {
-                this.buildChunkPrimitives(key, chunkOutline.get(key)!, chunkLink.get(key)!, chunkLane.get(key)!);
+                this.buildChunkPrimitives(key, chunkOutline.get(key)!, chunkLink.get(key)!, chunkLane.get(key)!, chunkLine.get(key)!);
             }
             this.applyVisibility();
         }
@@ -1080,29 +1340,49 @@ export default class NetworkDataSourceLayer {
         // 이전의 avgTerrainH+ε 방식은 지형 샘플링 실패/불일치 시 도로가 지형에 묻히거나
         // 땅속 투과로 보이는 원인이었음. 레이어링은 groundPrimitives 추가 순서로 유지.
 
-        // 중간 좌표 모두 반영 (NaN·중복 좌표 제거 — Cesium WebGL 오류 방지)
+        // 좌표 정제: NaN → 근접중복(<0.5m) → **급반전점(>150° 꺾임)** 제거.
+        // KTDB 클러스터 병합 좌표에 왕복 접힌 점이 섞이면 offset 접선이 무너져
+        // 차선 구분선이 직각 ㄱ자로 꺾이고("방향 안 맞음") corridor 스파이크가 생긴다.
+        // corridor/lane/divider 가 전부 같은 정제 좌표를 쓰도록 여기서 일괄 정제.
         const MIN_LINK_DIST = 0.5;
-        const validCoords = link.coordinates.filter(
-            (c: any) => c && isFinite(c.lng) && isFinite(c.lat)
-        );
+        const raw = link.coordinates.filter((c: any) => c && isFinite(c.lng) && isFinite(c.lat));
+        if (raw.length < 2) return;
+        const dedup: any[] = [raw[0]];
+        for (let i = 1; i < raw.length; i++) {
+            const p = dedup[dedup.length - 1];
+            const dx = (raw[i].lng - p.lng) * 88000, dy = (raw[i].lat - p.lat) * 111000;
+            if (dx * dx + dy * dy >= MIN_LINK_DIST * MIN_LINK_DIST) dedup.push(raw[i]);
+        }
+        const validCoords: any[] = dedup.length <= 2 ? dedup : [dedup[0]];
+        for (let i = 1; i < dedup.length - 1; i++) {
+            const a = validCoords[validCoords.length - 1], b = dedup[i], c = dedup[i + 1];
+            const v1x = (b.lng - a.lng) * 88000, v1y = (b.lat - a.lat) * 111000;
+            const v2x = (c.lng - b.lng) * 88000, v2y = (c.lat - b.lat) * 111000;
+            const m1 = Math.hypot(v1x, v1y), m2 = Math.hypot(v2x, v2y);
+            if (m1 > 0 && m2 > 0 && (v1x * v2x + v1y * v2y) / (m1 * m2) < -0.87) continue; // cos150°
+            validCoords.push(b);
+        }
+        if (dedup.length > 2) validCoords.push(dedup[dedup.length - 1]);
         if (validCoords.length < 2) return;
-        const rawLinkPos = validCoords.map((c: any) =>
+        const linkPositions: Cesium.Cartesian3[] = validCoords.map((c: any) =>
             Cesium.Cartesian3.fromDegrees(c.lng, c.lat)
         );
-        const linkPositions: Cesium.Cartesian3[] = [rawLinkPos[0]];
-        for (let _i = 1; _i < rawLinkPos.length; _i++) {
-            if (Cesium.Cartesian3.distance(rawLinkPos[_i], linkPositions[linkPositions.length - 1]) >= MIN_LINK_DIST)
-                linkPositions.push(rawLinkPos[_i]);
-        }
-        if (linkPositions.length < 2) return;
 
         const roadWidth = link.width ?? 7;
+
+        // ── 방향별 우측 오프셋 ──────────────────────────────────
+        // KTDB 표준노드링크는 상/하행이 **같은 도로 중심선 지오메트리를 공유하는 별도 링크**.
+        // 중심선 기준 전체 폭으로 그리면 반대 방향 도로 폭 전체가 겹치고 차선 줄무늬가
+        // 교차로 얽혀 "방향이 안 맞는" 형상이 됨 → 진행방향 오른쪽으로 반폭 이동해 분리.
+        // (단방향 도로는 살짝 오른쪽으로 치우칠 뿐 시각 영향 미미)
+        const dirOffset = roadWidth / 2;
+        const shiftedCenter = this.computeOffsetPositions(validCoords, dirOffset);
 
         // ── 1. 외곽 그림자 (도로 폭보다 약간 크게, 어두운 색) ─────
         linkOutlineInstances.push(new Cesium.GeometryInstance({
             id: `${link.__guid}_outline`,
             geometry: new Cesium.CorridorGeometry({
-                positions: linkPositions,
+                positions: shiftedCenter,
                 width: roadWidth + 1.2,
                 cornerType: Cesium.CornerType.MITERED,
                 vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
@@ -1119,7 +1399,7 @@ export default class NetworkDataSourceLayer {
         linkInstances.push(new Cesium.GeometryInstance({
             id: link.__guid,
             geometry: new Cesium.CorridorGeometry({
-                positions: linkPositions,
+                positions: shiftedCenter,
                 width: roadWidth,
                 cornerType: Cesium.CornerType.MITERED,
                 vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
@@ -1136,41 +1416,32 @@ export default class NetworkDataSourceLayer {
         for (let i = 0; i < link.lanes.length; i++) {
             const lane = link.lanes[i];
             if (!lane) continue;
-            const lateralOffset = ((laneCount - 1) / 2 - i) * laneWidth;
+            const lateralOffset = dirOffset + ((laneCount - 1) / 2 - i) * laneWidth;
 
-            const lanePositions = this.computeOffsetPositions(link.coordinates, lateralOffset);
+            const lanePositions = this.computeOffsetPositions(validCoords, lateralOffset);
             this.lanePositionMap.set(`${link.id}_${i}`, {
                 source: lanePositions[0]!,
                 target: lanePositions[lanePositions.length - 1]!,
             });
 
-            // ── 3. 레인 교차 음영 ──────────────────────────────
-            const laneColor = NetworkDataSourceLayer.LANE_COLORS[i % 2]!;
-            laneInstances.push(new Cesium.GeometryInstance({
-                id: lane.__guid,
-                geometry: new Cesium.CorridorGeometry({
-                    positions: lanePositions,
-                    width: laneWidth * 0.94,
-                    cornerType: Cesium.CornerType.MITERED,
-                    vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
-                }),
-                attributes: {
-                    color: Cesium.ColorGeometryInstanceAttribute.fromColor(laneColor),
-                },
-            }));
+            // ── 3. 레인 채움면(교차 음영) 제거 ──────────────────
+            // 좁고 긴 corridor 분류볼륨은 카메라 각도에 따라 회색면이 뒤틀려 보이는
+            // 시점 의존 아티팩트의 진원지 ("회색부분이 카메라 따라 돌아감" 실사용 보고).
+            // 차선 구분은 흰 구분선+황 중앙선(GroundPolyline, 안정적)으로 표현 — 시뮬레이터 표준.
+            // lane 속성 조회는 링크 pick → 링크 속성의 lanes 로 접근 가능.
             networkPrimitivePropertiesMap.set(lane.__guid, { ...lane, featureType: "lanes", linkRef: link.id });
 
-            // ── 4. 차선 구분선 (흰색 실선, 마지막 레인 제외) ──
+            // ── 4. 차선 구분선 (흰색, GroundPolyline 픽셀 폭) ──
+            // 0.15m corridor 분류볼륨은 시선각 따라 슬리버로 투영되어
+            // "카메라 방향에 따라 형상이 바뀌는" 아티팩트 → 폴리라인으로 대체
             if (i < link.lanes.length - 1 && lane.__guid) {
                 const boundaryOffset = lateralOffset - laneWidth / 2;
-                const boundaryPositions = this.computeOffsetPositions(link.coordinates, boundaryOffset);
+                const boundaryPositions = this.computeOffsetPositions(validCoords, boundaryOffset);
                 dividerInstances.push(new Cesium.GeometryInstance({
                     id: `${lane.__guid}_divider`,
-                    geometry: new Cesium.CorridorGeometry({
+                    geometry: new Cesium.GroundPolylineGeometry({
                         positions: boundaryPositions,
-                        width: Math.max(laneWidth * 0.055, 0.15),
-                        cornerType: Cesium.CornerType.MITERED,
-                        vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
+                        width: 1.5, // px
                     }),
                     attributes: {
                         color: Cesium.ColorGeometryInstanceAttribute.fromColor(
@@ -1181,17 +1452,14 @@ export default class NetworkDataSourceLayer {
             }
         }
 
-        // ── 5. 중앙선 (황색, 양방향 도로의 경계) ──────────────
-        // 레인이 2개 이상이고 중간 경계에 황색 중앙선 표시
+        // ── 5. 중앙선 (황색, GroundPolyline 픽셀 폭 — 공유 중심선 위치) ──
         if (laneCount >= 2) {
-            const centerPositions = this.computeOffsetPositions(link.coordinates, 0);
+            const centerPositions = this.computeOffsetPositions(validCoords, 0);
             centerLineInstances.push(new Cesium.GeometryInstance({
                 id: `${link.__guid}_center`,
-                geometry: new Cesium.CorridorGeometry({
+                geometry: new Cesium.GroundPolylineGeometry({
                     positions: centerPositions,
-                    width: Math.max(laneWidth * 0.04, 0.12),
-                    cornerType: Cesium.CornerType.MITERED,
-                    vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
+                    width: 2, // px
                 }),
                 attributes: {
                     color: Cesium.ColorGeometryInstanceAttribute.fromColor(
@@ -1242,8 +1510,8 @@ export default class NetworkDataSourceLayer {
     // ─────────────────────────────────────────────
     // 노드·포트·커넥션 Entity 생성
     // ─────────────────────────────────────────────
-    /** 노드/포트/커넥션 엔티티 원거리 GPU 컬링 — 카메라 4km 밖이면 렌더 스킵 (LRU 잔존 타일 부하 차단) */
-    private static readonly NODE_ENTITY_DDC = new Cesium.DistanceDisplayCondition(0, 4000);
+    /** 노드/포트/커넥션 엔티티 컬링 — 카메라 600m 이내만 렌더 ("가까운 것만" 표시, LRU 잔존 부하 차단) */
+    private static readonly NODE_ENTITY_DDC = new Cesium.DistanceDisplayCondition(0, 600);
 
     private buildNodeEntities(node: any, linkMap: Map<string, any>, nodeMap: Map<string, any>): void {
         if (!node.coordinates?.lng || !node.coordinates?.lat) return;
@@ -1412,6 +1680,8 @@ export default class NetworkDataSourceLayer {
         this.destroyed = true;
         this.cameraChangeUnsubscribe?.();
         if (this.tileCameraTimer) { clearTimeout(this.tileCameraTimer); this.tileCameraTimer = null; }
+        if (this.pickRetryTimer) { clearTimeout(this.pickRetryTimer); this.pickRetryTimer = null; }
+        if (this.pumpTimer) { clearInterval(this.pumpTimer); this.pumpTimer = null; }
         if (this.applyVisDebounce) { clearTimeout(this.applyVisDebounce); this.applyVisDebounce = null; }
         if (this.nodeBuildRaf != null) { cancelAnimationFrame(this.nodeBuildRaf); this.nodeBuildRaf = null; }
         this.nodeBuildQueue.clear();
@@ -1422,6 +1692,10 @@ export default class NetworkDataSourceLayer {
         this.unsubscribe?.();
         this.unsubscribeDraw?.();
         this.unsubscribeTileMode?.();
+        if (this.highlightPrimitive) {
+            try { this.viewer.scene.groundPrimitives.remove(this.highlightPrimitive); } catch (_) {}
+            this.highlightPrimitive = null;
+        }
         this.removeAllChunkPrimitives();
         this.clearRoadOverview();
         if (this.dataSource) {

@@ -66,6 +66,8 @@ export const defaultEventHandlers ={
             Object.assign(props, flat);
             setSelectedProps(props);
             setSelectedGuid([props.__guid]);
+            selectEntity(picked.id);              // 3D 엔티티 선택 하이라이트
+            highlightNetworkPrimitive?.(null);    // 링크 하이라이트 해제
         } else if (Cesium.defined(picked) && picked.id && typeof picked.id === 'object' && !(picked.id instanceof Cesium.Entity)) {
             // PointPrimitive / Billboard 등 — id에 plain object가 설정된 경우 (버스정류장 마커, 신호 램프 등)
             Object.assign(props, picked.id);
@@ -75,24 +77,30 @@ export const defaultEventHandlers ={
             } else {
                 setSelectedProps(null);
             }
+            clearSelectedEntity();                // 프리미티브는 엔티티 하이라이트 대상 아님
+            highlightNetworkPrimitive?.(null);
         } else {
             // 링크/레인: 분류볼륨 scene.pick 은 "보이는 것과 선택되는 것"이 어긋난다
             // → 커서 지면점에서 렌더 규칙과 동일한 기하 탐색 (보이는 도로 = 선택되는 도로)
             const hit = pickNetworkAtPosition(viewer.scene, e.position);
             let primitiveProps = hit?.props ?? null;
-            let linkGuidForHighlight: string | null = primitiveProps?.__guid ?? null; // 하이라이트용 링크 guid
+            const linkGuidForHighlight: string | null = primitiveProps?.__guid ?? null; // 하이라이트용 링크 guid
+            let laneIdxForHighlight: number | undefined = undefined;
             // 도로 몸체 클릭 → 클릭 지점의 레인으로 해석
             // (레인 채움면이 렌더에 없어 직접 pick 불가 → 측방향 오프셋 역산으로 레인 클릭 지원)
             if (primitiveProps?.featureType === 'links') {
                 const lane = pickLaneAtPosition(viewer.scene, e.position, primitiveProps);
-                if (lane?.__guid) primitiveProps = { ...lane, featureType: 'lanes', linkRef: primitiveProps.id };
-                // linkGuidForHighlight 는 원래 링크 guid 유지(레인 선택도 부모 링크를 하이라이트)
+                if (lane?.__guid) {
+                    laneIdxForHighlight = lane._laneIdx; // 그 레인만 하이라이트
+                    primitiveProps = { ...lane, featureType: 'lanes', linkRef: primitiveProps.id, laneRef: lane._laneIdx };
+                }
             }
+            clearSelectedEntity(); // 링크/레인 선택 시 엔티티 하이라이트 해제
             if (primitiveProps) {
                 Object.assign(props, primitiveProps);
                 setSelectedProps(props);
                 setSelectedGuid([primitiveProps.__guid]);
-                highlightNetworkPrimitive?.(linkGuidForHighlight); // 링크(또는 레인의 부모 링크) 하이라이트
+                highlightNetworkPrimitive?.(linkGuidForHighlight, laneIdxForHighlight); // 레인이면 그 레인만
             } else {
                 setSelectedProps(null);
                 highlightNetworkPrimitive?.(null);
@@ -314,9 +322,46 @@ const highlightEntity = (entity: Cesium.Entity) => {
     highlightedEntity = entity;
 };
 
+// ── 3D 엔티티 select 하이라이트 (hover 와 별개 상태) ─────────────────
+//   hover(highlightEntity/highlightedEntity)는 크기 확대. select 는 별도 selectedEntity 로
+//   관리해 hover 가 지나가도 유지된다. 같은 엔티티가 hover+select 로 중첩되지 않게 상호 배제.
+let selectedEntity: Cesium.Entity | null = null;
+const originalSelectedMap = new WeakMap<Cesium.Entity, any>();
+const applyEntityScale = (entity: Cesium.Entity, store: WeakMap<Cesium.Entity, any>) => {
+    const now = Cesium.JulianDate.now();
+    const o: any = {};
+    if (entity.point)    { o.pixelSize = entity.point.pixelSize?.getValue(now) ?? 10; entity.point.pixelSize = new Cesium.ConstantProperty(o.pixelSize * HIGHLIGHT_SCALE); }
+    if (entity.model)    { o.scale = entity.model.scale?.getValue(now) ?? 1.0; entity.model.scale = new Cesium.ConstantProperty(o.scale * HIGHLIGHT_SCALE); }
+    if (entity.polyline) { o.width = entity.polyline.width?.getValue(now) ?? 3.0; entity.polyline.width = new Cesium.ConstantProperty(o.width * HIGHLIGHT_SCALE); }
+    if (entity.billboard){ o.bbScale = entity.billboard.scale?.getValue(now) ?? 1.0; entity.billboard.scale = new Cesium.ConstantProperty(o.bbScale * HIGHLIGHT_SCALE); }
+    store.set(entity, o);
+};
+const restoreEntityScale = (entity: Cesium.Entity, store: WeakMap<Cesium.Entity, any>) => {
+    const o = store.get(entity); if (!o) return;
+    if (entity.point && o.pixelSize !== undefined)    entity.point.pixelSize = new Cesium.ConstantProperty(o.pixelSize);
+    if (entity.model && o.scale !== undefined)        entity.model.scale = new Cesium.ConstantProperty(o.scale);
+    if (entity.polyline && o.width !== undefined)     entity.polyline.width = new Cesium.ConstantProperty(o.width);
+    if (entity.billboard && o.bbScale !== undefined)  entity.billboard.scale = new Cesium.ConstantProperty(o.bbScale);
+    store.delete(entity);
+};
+const clearSelectedEntity = () => {
+    if (selectedEntity) { restoreEntityScale(selectedEntity, originalSelectedMap); selectedEntity = null; }
+};
+const selectEntity = (entity: Cesium.Entity | null) => {
+    if (selectedEntity === entity) return;
+    clearSelectedEntity();
+    if (!entity) return;
+    // hover 로 이미 확대돼 있으면 hover 를 먼저 해제(중첩 확대 방지)
+    if (highlightedEntity === entity) clearCesiumHighlight();
+    applyEntityScale(entity, originalSelectedMap);
+    selectedEntity = entity;
+};
+
 const clearCesiumHighlight = () => {
     const entity = highlightedEntity;
     if (!entity) return;
+    // select 된 엔티티는 hover 해제 대상에서 제외(select 확대 유지)
+    if (entity === selectedEntity) { highlightedEntity = null; return; }
 
     const original = originalSizeCesiumMap.get(entity);
     if (!original) return;
