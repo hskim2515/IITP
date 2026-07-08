@@ -5,14 +5,18 @@ import { Point } from "ol/geom";
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import { Style, Icon } from "ol/style";
+import * as Cesium from "cesium";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
-import { useNetworkStore } from "@stores/useNetworkStore";
+import { useCesiumStore } from "@stores/useCesiumStore";
+import { useMessageStore } from "@stores/useMessageStore";
+import { networkPrimitivePropertiesMap } from "@datasource/NetworkDataSourceLayer";
 import { loadNaverMaps } from "@utils/naverMapLoader";
+import type { Link } from "@type/Network";
 import {
-    type OnLink, buildAdjacency, buildLinkIndex, snapToLinks, advanceAlongLink,
+    type OnLink, buildAdjacency, buildLinkIndex, snapToLinks, advanceAlongLink, bearing,
 } from "@utils/networkSnap";
 
-const SNAP_MAX_METERS = 60;   // 이 거리 밖이면 스냅 안 함(자유 이동)
+const SNAP_MAX_METERS = 25;   // 이 거리 밖이면 스냅 안 함(자유 이동). 좁게 → 없는 도로에 잘못 붙는 것 방지
 const KEY_MOVE_METERS = 15;   // ↑/↓ 한 번에 링크 따라 이동 거리
 const KEY_ROTATE_DEG = 15;    // ←/→ 한 번에 시야 회전 각도
 
@@ -59,10 +63,12 @@ export function useNaverPanorama(
 ) {
     const olView = useOpenLayersStore((s) => s.view);
     const olMap = useOpenLayersStore((s) => s.map);
+    const viewer = useCesiumStore((s) => s.viewer);
     const panoRef = useRef<any>(null);
     const markerLayerRef = useRef<any>(null);
     const onLinkRef = useRef<OnLink | null>(null);   // 현재 얹힌 링크 위 점(키보드 이동 기준)
     const lastPanRef = useRef<number>(0);            // pov.pan 마지막 유효값(Infinity 폴백)
+    const lastSnapRef = useRef<{ lng: number; lat: number } | null>(null); // 마지막 네트워크 스냅 위치(되돌림용)
 
     useEffect(() => {
         if (!enabled || !containerRef.current || !olView) return;
@@ -96,6 +102,31 @@ export function useNaverPanorama(
             });
             panoRef.current = pano;
 
+            // ── 거리뷰 없는 지점 처리: 마지막 유효 위치 유지 + 경고 ──
+            //   네이버는 반경 내 파노라마 없으면 pano_status='ERROR'. 그 위치로는 이동하지 않고
+            //   직전 유효 위치로 되돌린다("이전 위치 유지"). 경고 토스트로 사용자에게 알림.
+            let lastValidLat = initLat, lastValidLng = initLng;
+            let noStreetWarnedAt = 0;
+            try {
+                naver.maps.Event.addListener(pano, "pano_status", (status: any) => {
+                    if (status === "ERROR") {
+                        const now = Date.now();
+                        if (now - noStreetWarnedAt > 2000) { // 연타 경고 방지
+                            noStreetWarnedAt = now;
+                            useMessageStore.getState().setMessage({ type: "warn", text: "이 구간은 거리뷰가 없습니다." });
+                        }
+                        syncing = true;
+                        try { pano.setPosition(new naver.maps.LatLng(lastValidLat, lastValidLng)); } catch (_) {}
+                        setTimeout(() => { syncing = false; }, 80);
+                        return;
+                    }
+                    // OK: 현재 위치를 마지막 유효 위치로 기록
+                    const loc = pano.getLocation?.();
+                    const c = loc?.coord;
+                    if (c?.x != null && c?.y != null) { lastValidLng = c.x; lastValidLat = c.y; }
+                });
+            } catch (_) {}
+
 
             // ── 2D 위치+방향 마커 (거리뷰가 어디서 어느 방향을 보는지 표시) ──
             const markerFeature = new Feature({ geometry: new Point(fromLonLat([initLng, initLat])) });
@@ -104,20 +135,49 @@ export function useNaverPanorama(
             });
             markerFeature.setStyle(markerStyle);
             const markerLayer = new VectorLayer({ source: new VectorSource({ features: [markerFeature] }), zIndex: 9999 });
+            // 클릭/호버 히트 테스트에서 제외(마커는 항상 링크 위에 스냅되어 그 아래 링크/레인 선택을
+            //   가릴 수 있음). defaultEventHandler 의 layerFilter 가 이 플래그를 보고 건너뜀.
+            markerLayer.set("excludeFromHit", true);
             markerLayerRef.current = markerLayer;
             if (olMap) olMap.addLayer(markerLayer);
 
-            // 현재 뷰포트 네트워크 링크(타일 모드에서도 store 에 동기화됨)로 로드뷰 위치를 스냅.
-            //   스냅되면 마커를 링크 선 위 점에 찍고 onLinkRef 갱신(키보드 이동 기준). 임계 밖이면 null.
+            // 스냅 소스: 3D(Cesium) 네트워크가 그린 링크 지오메트리(networkPrimitivePropertiesMap).
+            //   로드뷰는 3D 모드 기능이라, 3D 에 렌더된 링크가 정확한 소스(2D store 는 3D 에선 빈 채).
+            //   각 entry 는 { ...link, featureType } → featureType==='links' 만, coordinates/fromNode/toNode 보유.
+            const currentLinks = (): Link[] => {
+                const out: Link[] = [];
+                for (const props of networkPrimitivePropertiesMap.values()) {
+                    if (props?.featureType === "links" && Array.isArray(props.coordinates) && props.coordinates.length >= 2) {
+                        out.push(props as Link);
+                    }
+                }
+                return out;
+            };
+            // 로드뷰 위치를 링크 선 위 최근접점으로 스냅. 마커를 그 점에 찍고 onLinkRef 갱신(키보드 기준).
             const snapToNetwork = (lng: number, lat: number): OnLink | null => {
-                const links = useNetworkStore.getState().currentJsonData?.links ?? [];
-                const l0: any = links[0];
-                console.log("[snap] links=", links.length, "link0.coordinates=", l0?.coordinates?.length,
-                    "link0 keys=", l0 ? Object.keys(l0).slice(0, 12) : null, "at", lng.toFixed(5), lat.toFixed(5));
+                const links = currentLinks();
                 if (links.length === 0) return null;
-                const r = snapToLinks(links, lng, lat, SNAP_MAX_METERS);
-                console.log("[snap] 결과=", r);
-                return r;
+                return snapToLinks(links, lng, lat, SNAP_MAX_METERS);
+            };
+
+            // 로드뷰가 이동하면 Cesium 카메라도 그 지점으로(디바운스) → 3D 네트워크가 그 위치에 로드되어
+            //   스냅 소스(networkPrimitivePropertiesMap)가 채워진다. useMapSync 는 OL 사용자 조작일 때만
+            //   카메라를 옮겨(isOLSyncing guard) 로드뷰 setCenter 로는 안 따라오므로 직접 옮긴다.
+            let camTimer: ReturnType<typeof setTimeout> | null = null;
+            const followCamera = (lng: number, lat: number) => {
+                if (!viewer || viewer.isDestroyed?.()) return;
+                if (camTimer) clearTimeout(camTimer);
+                camTimer = setTimeout(() => {
+                    camTimer = null;
+                    if (disposed) return;
+                    try {
+                        const cam = viewer.camera;
+                        cam.setView({
+                            destination: Cesium.Cartesian3.fromDegrees(lng, lat, cam.positionCartographic.height),
+                            orientation: { heading: cam.heading, pitch: cam.pitch, roll: cam.roll },
+                        });
+                    } catch (_) {}
+                }, 250); // 연속 이동 정착 후 1회 (타일 재로딩 과다 방지)
             };
 
             const updateMarker = () => {
@@ -126,12 +186,25 @@ export function useNaverPanorama(
                     const loc = panoRef.current.getLocation?.();
                     const coord = loc?.coord;
                     if (coord?.x != null && coord?.y != null) {
-                        // 네트워크에 스냅되면 링크 선 위 점에, 아니면 로드뷰 실제 위치에 마커.
+                        followCamera(coord.x, coord.y); // Cesium 카메라가 로드뷰 따라가 3D 네트워크 로드
                         const snap = snapToNetwork(coord.x, coord.y);
-                        onLinkRef.current = snap; // 없으면 null → 키보드 이동 시 재스냅 시도
-                        const mx = snap ? snap.lng : coord.x;
-                        const my = snap ? snap.lat : coord.y;
-                        markerFeature.setGeometry(new Point(fromLonLat([mx, my])));
+                        if (snap) {
+                            // 네트워크에 스냅됨 → 마커를 링크 선 위 점에, 마지막 유효 위치 기록.
+                            onLinkRef.current = snap;
+                            lastSnapRef.current = { lng: snap.lng, lat: snap.lat };
+                            markerFeature.setGeometry(new Point(fromLonLat([snap.lng, snap.lat])));
+                        } else if (lastSnapRef.current && !syncing) {
+                            // 임계 내 네트워크 없음 → 로드뷰를 마지막 스냅 위치로 되돌림(네트워크 고정,
+                            //   자유 이동으로 벗어나거나 무한 이동하는 것 방지).
+                            const back = lastSnapRef.current;
+                            syncing = true;
+                            try { panoRef.current.setPosition(new naver.maps.LatLng(back.lat, back.lng)); } catch (_) {}
+                            setTimeout(() => { syncing = false; }, 80);
+                            return; // 방향 갱신은 되돌린 뒤 다음 이벤트에서
+                        } else {
+                            // 아직 한 번도 스냅 안 됨(초기) → 로드뷰 실제 위치에 마커
+                            markerFeature.setGeometry(new Point(fromLonLat([coord.x, coord.y])));
+                        }
                     }
                     // ⚠️ Naver getPov().pan 이 Infinity 로 나오는 경우가 있다(tilt/fov 는 정상).
                     //   유효한 유한값일 때만 마커 방향 갱신(마지막 유효값 유지).
@@ -141,6 +214,14 @@ export function useNaverPanorama(
                         // 아이콘 부채꼴은 위(pan 0)를 향함 → pan(도, 시계) 을 라디안으로 회전.
                         (markerStyle.getImage() as Icon).setRotation((pov.pan * Math.PI) / 180);
                         markerFeature.changed();
+                        // 거리뷰 방향 → 2D 지도 방향 동기화: 로드뷰가 보는 쪽이 2D 에서 위(북)로 오도록
+                        //   olView 를 회전. OL rotation 은 반시계(+)라 pan(시계) 을 부호 반전. syncing 중엔 스킵.
+                        if (!syncing && olView.getRotation) {
+                            try {
+                                const target = (-pov.pan * Math.PI) / 180;
+                                if (Math.abs((olView.getRotation() ?? 0) - target) > 0.02) olView.setRotation(target);
+                            } catch (_) {}
+                        }
                     }
                 } catch (_) {}
             };
@@ -172,23 +253,27 @@ export function useNaverPanorama(
             olView.on("change:center", onOlCenter);
 
             // ── 거리뷰 → 2D (거리뷰에서 걸으면 2D center 이동) ──
+            //   ⚠️ 거리 임계 없이 매 pano_changed 마다 setCenter 하면 2D↔로드뷰 가 미세 진동(churn)해
+            //     OL 이 계속 재중심화 → singleclick 이 안 뜬다(2D 클릭 죽음). 15m 이상일 때만 반영.
             try {
                 naver.maps.Event.addListener(pano, "pano_changed", () => {
                     if (disposed || syncing) return;
                     const loc = pano.getLocation?.();
                     const coord = loc?.coord; // {x:lng, y:lat}
                     if (!coord || coord.x == null || coord.y == null) return;
+                    const dx = (coord.x - lastLng) * 88000, dy = (coord.y - lastLat) * 111000;
+                    if (dx * dx + dy * dy < 15 * 15) return; // 미세 이동 무시 → churn 방지
                     lastLng = coord.x; lastLat = coord.y;
                     syncing = true;
                     try { olView.setCenter(fromLonLat([coord.x, coord.y])); } catch (_) {}
-                    setTimeout(() => { syncing = false; }, 50);
+                    setTimeout(() => { syncing = false; }, 80);
                 });
             } catch (_) {}
 
             // ── 키보드 조작 (↑↓ 링크 따라 이동 / ←→ 시야 회전) ──
             const moveAlong = (meters: number) => {
                 if (!panoRef.current) return;
-                const links = useNetworkStore.getState().currentJsonData?.links ?? [];
+                const links = currentLinks();
                 if (links.length === 0) return;
                 // onLinkRef 없으면 현재 위치를 먼저 스냅해 기준점 확보
                 let on = onLinkRef.current;
@@ -201,7 +286,22 @@ export function useNaverPanorama(
                 const linkIndex = buildLinkIndex(links);
                 const adjacency = buildAdjacency(links);
                 const pan = Number.isFinite(lastPanRef.current) ? lastPanRef.current : NaN;
-                const next = advanceAlongLink(on, linkIndex, adjacency, meters, pan);
+                // 방향 정정: advanceAlongLink 의 +meters 는 링크 좌표 순서(fromNode→toNode)로 전진하는데,
+                //   로드뷰가 보는 방향(pan)이 그 반대면 ↑ 가 뒤로 간다. 현재 세그먼트의 진행 방위와 pan 을
+                //   비교해, 시야와 반대 방향이면 meters 부호를 뒤집어 "↑=보는 쪽 전진"이 되게 한다.
+                let signed = meters;
+                const curLink = linkIndex.get(on.linkId);
+                if (curLink && Number.isFinite(pan)) {
+                    const c = curLink.coordinates;
+                    const a = c[on.segIndex], b = c[on.segIndex + 1] ?? a;
+                    if (a && b) {
+                        const segBrg = bearing({ lng: a.lng, lat: a.lat }, { lng: b.lng, lat: b.lat });
+                        const d = Math.abs(((segBrg - pan) % 360 + 360) % 360);
+                        const diff = d > 180 ? 360 - d : d;
+                        if (diff > 90) signed = -meters; // 링크 순서가 시야와 반대 → 부호 반전
+                    }
+                }
+                const next = advanceAlongLink(on, linkIndex, adjacency, signed, pan);
                 onLinkRef.current = next;
                 syncing = true; // setPosition→pano_changed 반향 흡수
                 try { panoRef.current.setPosition(new naver.maps.LatLng(next.lat, next.lng)); } catch (_) {}
@@ -241,6 +341,11 @@ export function useNaverPanorama(
                 try { panoRef.current.destroy?.(); } catch (_) {}
                 panoRef.current = null;
             }
+            // 배경지도 변경/모드전환으로 파노라마 종료 시 2D 상태 원복:
+            //   거리뷰 방향 동기화로 회전시킨 olView 를 0(북)으로 되돌린다(안 하면 2D 가 돌아간 채 남음).
+            if (olView) { try { if ((olView.getRotation?.() ?? 0) !== 0) olView.setRotation(0); } catch (_) {} }
+            onLinkRef.current = null;
+            lastSnapRef.current = null;
         };
-    }, [enabled, olView, olMap, containerRef]);
+    }, [enabled, olView, olMap, viewer, containerRef]);
 }
