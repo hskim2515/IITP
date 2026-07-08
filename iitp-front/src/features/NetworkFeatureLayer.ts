@@ -57,6 +57,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
     private editOverlaySource: VectorSource | null = null;
     private editOverlayLayer: VectorLayer | null = null;
     private unsubscribeEdit: (() => void) | undefined;
+    private unsubscribeChanged: (() => void) | undefined;
+    private prevIsChanged = false;
 
     // ── 타일링 상태 (NETWORK_TILING.ENABLED 일 때만 사용; 읽기 전용 뷰) ──
     // 타일 경계 링크/노드는 여러 타일에 중복 등장 → id별 refcount 로 마지막 타일 evict 시에만 destroy.
@@ -110,6 +112,15 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 (state: { currentJsonData: Network; }) => state.currentJsonData,
                 () => { this.updateEditDeltas(); this.renderEditOverlay(); this.load(); },
                 { equalityFn: (a:Network, b:Network) => a === b }
+            );
+            // 저장/폐기(isChanged true→false) 감지 → 편집 델타 정리 + 서버 데이터 새로고침.
+            this.prevIsChanged = !!(store.getState() as any).isChanged;
+            this.unsubscribeChanged = store.subscribe(
+                (state: any) => !!state.isChanged,
+                (isChanged: boolean) => {
+                    if (this.prevIsChanged && !isChanged) this.onEditsCleared();
+                    this.prevIsChanged = isChanged;
+                },
             );
         }
 
@@ -396,6 +407,25 @@ export default class NetworkFeatureLayer extends VectorLayer {
             buf.push(poly);
         }
         if (buf.length > 0) this.editOverlaySource.addFeatures(buf);
+        try { this.getMapInternal()?.render(); } catch (_) {}
+    }
+
+    /**
+     * 편집이 정리됨(저장 또는 폐기, isChanged true→false) → 서버가 최신 데이터를 가지므로:
+     *   1) 편집 델타/오버레이 초기화, 2) MVT 소스 새로고침(타일 재fetch, 저장한 도로 서버 렌더 반영),
+     *   3) viewport 타일 캐시 비우고 재fetch(cachedLinkMap 서버 최신화).
+     */
+    private onEditsCleared(): void {
+        try { useNetworkEditStore.getState().clear(); } catch (_) {}
+        this.editOverlaySource?.clear();
+        // MVT 새로고침: OL VectorTileSource.refresh() 가 캐시 비우고 재fetch.
+        try { (this.mvtLayer?.getSource() as any)?.refresh?.(); } catch (_) {}
+        // viewport 타일 재fetch → cachedLinkMap 서버 최신(저장 반영). 편집 delta 도 자연 소멸.
+        try {
+            this.tileManager?.clear();
+            const map = this.getMapInternal();
+            if (map) this.updateTiles(map);
+        } catch (_) {}
         try { this.getMapInternal()?.render(); } catch (_) {}
     }
 
@@ -1327,6 +1357,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         this.unsubscribe?.();
         this.unsubscribeDraw?.();
         this.unsubscribeEdit?.();
+        this.unsubscribeChanged?.();
         if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
         if (this.visChangeKey) { unByKey(this.visChangeKey); this.visChangeKey = null; }
         this.tileManager?.clear();
