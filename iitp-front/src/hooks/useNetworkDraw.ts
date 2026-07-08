@@ -129,8 +129,9 @@ const angleLockStyle = new Style({
 });
 
 const ALIGN_SNAP_MIN_M  = 10;   // 이 거리 이내는 노드 스냅에 맡김
-const ALIGN_SNAP_MAX_M  = 400;  // 이 거리 이상은 너무 멀어서 무시
-const ALIGN_ANGLE_DEG   = 8;    // 연장선 방향과 ±8° 이내면 스냅
+const ALIGN_SNAP_MAX_M  = 150;  // 이 거리 이상 노드의 연장선은 무시(과도 스냅 방지, 기존 400 너무 멂)
+const ALIGN_ANGLE_DEG   = 5;    // 연장선 방향과 ±5° 이내면 스냅(기존 8° 완화)
+const ALIGN_PERP_MAX_M  = 12;   // 커서~연장선 수직거리 상한(m). 각도만으론 먼 곳서 크게 벗어나도 잡혀 이상하게 스냅됨
 
 // ── 유틸 ────────────────────────────────────────────────────────
 function buildRoadPolygon(p1: Coordinate, p2: Coordinate, halfW: number): Coordinate[] | null {
@@ -243,6 +244,9 @@ function findAlignmentSnap(
         for (const ray of getAlignRayAngles(node, links)) {
             let diff = Math.abs(toCursorAngle - ray.angle);
             if (diff > Math.PI) diff = 2 * Math.PI - diff;
+            // 수직거리 상한: 각도가 맞아도 커서가 연장선에서 실제로 멀면(distM·sin(diff)) 스냅 안 함.
+            //   (각도만 판정하면 먼 노드일수록 큰 이탈도 통과해 "이상한 곳" 스냅 발생)
+            if (distM * Math.sin(diff) > ALIGN_PERP_MAX_M) continue;
             if (diff < minDiff) {
                 minDiff = diff;
                 best = {

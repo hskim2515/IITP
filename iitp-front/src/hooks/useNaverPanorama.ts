@@ -8,6 +8,7 @@ import { Style, Icon } from "ol/style";
 import * as Cesium from "cesium";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import { useCesiumStore } from "@stores/useCesiumStore";
+import { useModeStore } from "@stores/useModeStore";
 import { useMessageStore } from "@stores/useMessageStore";
 import { networkPrimitivePropertiesMap } from "@datasource/NetworkDataSourceLayer";
 import { loadNaverMaps } from "@utils/naverMapLoader";
@@ -366,6 +367,11 @@ export function useNaverPanorama(
             };
             const onKeyDown = (e: KeyboardEvent) => {
                 if (disposed || !panoRef.current) return;
+                // 편집모드에선 로드뷰는 참조용 → 화살표 키는 도로 편집과 충돌하므로 무시.
+                if (useModeStore.getState().appMode === "edit") return;
+                // 입력/텍스트 편집 중이면 무시(타이핑 방해 방지).
+                const el = document.activeElement as HTMLElement | null;
+                if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
                 switch (e.key) {
                     case "ArrowUp":    e.preventDefault(); moveAlong(KEY_MOVE_METERS); break;
                     case "ArrowDown":  e.preventDefault(); moveAlong(-KEY_MOVE_METERS); break;
