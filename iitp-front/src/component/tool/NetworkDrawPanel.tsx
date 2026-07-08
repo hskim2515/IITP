@@ -31,18 +31,10 @@ const NetworkDrawPanel: React.FC = () => {
     const toggle       = () => setActive(!isActive);
     const toggleSelect = () => setSelectActive(!isSelectActive);
 
-    // isActive / placementMode 진입 시 2D 고정, 종료 시 복원
-    // (isSelectActive 는 useNetworkSelect.ts 에서 동일하게 처리)
+    // (구) 편집 진입 시 mapViewMode='2D' 강제 로직 제거 — 이제 편집모드는 split(2D 편집 + 3D 로드뷰)라
+    //   강제 2D 전환이 로드뷰를 끄고 불편했음. 편집은 어차피 2D(OL) 전용(NETWORK_EDIT_2D_ONLY)이므로
+    //   뷰 모드를 강제할 필요 없음.
     const isDrawEditActive = isActive || placementMode !== 'none';
-    useEffect(() => {
-        const mapStore = useMapStore.getState();
-        if (isDrawEditActive) {
-            prevMapViewModeRef.current = mapStore.mapViewMode;
-            mapStore.setMapViewMode('2D');
-        } else {
-            mapStore.setMapViewMode(prevMapViewModeRef.current as any);
-        }
-    }, [isDrawEditActive]);
 
     // 시설물 배치 모드 활성화: createEventHandlers 등록 + 완료 시 자동 해제
     useEffect(() => {

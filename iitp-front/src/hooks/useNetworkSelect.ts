@@ -10,7 +10,7 @@ import { getDistance } from 'ol/sphere';
 import { Coordinate } from 'ol/coordinate';
 import DragPan from 'ol/interaction/DragPan';
 import DragZoom from 'ol/interaction/DragZoom';
-import { networkPrimitivePropertiesMap } from '@datasource/NetworkDataSourceLayer';
+import { pickNetworkAtPosition } from '@datasource/NetworkDataSourceLayer';
 import { useOpenLayersStore } from '@stores/useOpenLayersStore';
 import { useMapStore } from '@stores/useMapStore';
 import { useCesiumStore } from '@stores/useCesiumStore';
@@ -549,17 +549,8 @@ export const useNetworkSelect = () => {
     const selectedLinkIds = useNetworkDrawStore(s => s.selectedLinkIds);
     const selectedNodeIds = useNetworkDrawStore(s => s.selectedNodeIds);
 
-    // 편집 모드 진입 시 2D 고정, 종료 시 split 복원
-    const prevMapViewModeRef = useRef<string>('split');
-    useEffect(() => {
-        const mapStore = useMapStore.getState();
-        if (isSelectActive) {
-            prevMapViewModeRef.current = mapStore.mapViewMode;
-            mapStore.setMapViewMode('2D');
-        } else {
-            mapStore.setMapViewMode(prevMapViewModeRef.current as any);
-        }
-    }, [isSelectActive]);
+    // (구) 선택 편집 진입 시 mapViewMode='2D' 강제 로직 제거 — 편집모드는 split(2D 편집 + 3D 로드뷰)
+    //   유지. 편집은 2D(OL) 전용이라 뷰 강제 불필요.
 
     const selSrcRef   = useRef<VectorSource | null>(null);
     const hoverSrcRef = useRef<VectorSource | null>(null);
@@ -1133,22 +1124,21 @@ export const useNetworkSelect = () => {
             const scene     = v.scene;
             const drawStore = useNetworkDrawStore.getState();
 
-            // 1순위: scene.pick() — Entity(노드) 또는 Primitive(링크)
+            // 1순위: scene.pick() — Entity(노드)만 신뢰
             const picked = scene.pick(e.position);
-            if (Cesium.defined(picked)) {
-                if (picked.id instanceof Cesium.Entity) {
-                    const props = picked.id.properties?.getValue(Cesium.JulianDate.now());
-                    if (props?.featureType === 'nodes' && props?.id != null) {
-                        drawStore.setSelectedNode(String(props.id));
-                        return;
-                    }
-                } else if (typeof picked.id === 'string') {
-                    const data = networkPrimitivePropertiesMap.get(picked.id);
-                    if (data?.featureType === 'links' && data?.id != null) {
-                        drawStore.setSelectedLink(String(data.id));
-                        return;
-                    }
+            if (Cesium.defined(picked) && picked.id instanceof Cesium.Entity) {
+                const props = picked.id.properties?.getValue(Cesium.JulianDate.now());
+                if (props?.featureType === 'nodes' && props?.id != null) {
+                    drawStore.setSelectedNode(String(props.id));
+                    return;
                 }
+            }
+
+            // 링크: 분류볼륨 scene.pick 은 보이는 것과 어긋남 → 지면점 기하 탐색
+            const hit = pickNetworkAtPosition(scene, e.position);
+            if (hit?.props?.id != null) {
+                drawStore.setSelectedLink(String(hit.props.id));
+                return;
             }
 
             // 2순위: 화면거리 기반 fallback
