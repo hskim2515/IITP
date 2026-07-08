@@ -163,7 +163,7 @@ export const defaultEventHandlers ={
                 else if (lane) {
                     const l0 = (network.links ?? []).find((l: any) => String(l.id) === lane.linkId);
                     const laneObj = l0?.lanes?.[lane.laneIdx];
-                    if (laneObj) hit = { ...laneObj, featureType: 'lanes', linkRef: lane.linkId };
+                    if (laneObj) hit = { ...laneObj, featureType: 'lanes', linkRef: lane.linkId, laneRef: lane.laneIdx };
                 } else if (link) hit = { ...link, featureType: 'links' };
             }
             if (hit) {

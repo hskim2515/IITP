@@ -1072,7 +1072,7 @@ export const useNetworkSelect = () => {
                 const link0 = network.links.find(l => String(l.id) === lane.linkId);
                 const laneObj = link0?.lanes?.[lane.laneIdx];
                 useNetworkDrawStore.getState().setSelectedLane(`${lane.linkId}_${lane.laneIdx}`);
-                setProps(laneObj ? { ...laneObj, featureType: 'lanes', linkRef: lane.linkId } as any : null); return;
+                setProps(laneObj ? { ...laneObj, featureType: 'lanes', linkRef: lane.linkId, laneRef: lane.laneIdx } as any : null); return;
             }
             if (link) {
                 useNetworkDrawStore.getState().setSelectedLink(link.id);

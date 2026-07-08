@@ -208,7 +208,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
             this.selHighlightLayer = new VectorLayer({
                 source: this.selHighlightSource,
                 style: (f) => this.selHighlightStyle(f as Feature),
-                zIndex: 125, // 편집 오버레이(120) 위
+                zIndex: 350, // MVT(295)·네트워크 벡터(300) 위 — 레인 폴리곤 fill 이 MVT 차선에 안 가리게
             });
             this.selHighlightLayer.setVisible(this.getVisible());
             map.addLayer(this.selHighlightLayer);
