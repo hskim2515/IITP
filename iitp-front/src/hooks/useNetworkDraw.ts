@@ -14,6 +14,7 @@ import { useNetworkUndoStore } from '@stores/useNetworkUndoStore';
 import { useNodeContextMenuStore } from '@stores/useNodeContextMenuStore';
 import { useOpenLayersStore } from '@stores/useOpenLayersStore';
 import { useCesiumStore } from '@stores/useCesiumStore';
+import { useMapStore } from '@stores/useMapStore';
 import { useMessageStore } from '@stores/useMessageStore';
 import { generateGUID, assignPropertyToResponseData } from '@utils/guid';
 import { Network, Node, Link, Lane, Cell, Segment, Port, Connection, Coordinates } from '@type/Network';
@@ -599,6 +600,10 @@ function findNearestNodeForContextMenu(
     return nearestNode;
 }
 
+// 도로편집은 2D(OpenLayers)에서만. 편집모드에서 3D 영역은 로드뷰(참조)라 3D(Cesium) 드로우·
+//   커넥션·노드 컨텍스트메뉴 등 편집 상호작용을 전부 비활성화한다.
+const NETWORK_EDIT_2D_ONLY = true;
+
 // ── 메인 훅 ──────────────────────────────────────────────────────
 export const useNetworkDraw = () => {
     const olMap = useOpenLayersStore((s) => s.map);
@@ -673,6 +678,7 @@ export const useNetworkDraw = () => {
 
     // ── 그리기/커넥션 모드 중 Cesium 기본 이벤트 차단 ──────────
     useEffect(() => {
+        if (NETWORK_EDIT_2D_ONLY) return; // 2D 전용: 3D 이벤트 차단 불필요
         if (!viewer || (!isActive && !isConnectionActive)) return;
         // Cesium 기본 핸들러의 LEFT_CLICK (엔티티 선택 등) 임시 제거
         const defaultHandler = (viewer as any).cesiumWidget
@@ -714,6 +720,7 @@ export const useNetworkDraw = () => {
             }
             // Cesium preview 갱신
             if (lastCesiumWgs84Ref.current && cesiumDsRef.current && startWgs84Ref.current) {
+                const v = useCesiumStore.getState().viewer;
                 updateCesiumPreview(
                     cesiumDsRef.current,
                     lastCesiumWgs84Ref.current,
@@ -722,6 +729,7 @@ export const useNetworkDraw = () => {
                     startWgs84Ref.current,
                     linkWidthRef.current,
                     shiftRef.current,
+                    v ?? undefined,
                 );
             }
         });
@@ -747,8 +755,9 @@ export const useNetworkDraw = () => {
         return () => viewport.removeEventListener('contextmenu', onContextMenuAlways);
     }, [olMap]);
 
-    // ── 항상 활성: Cesium 우클릭 → 노드 컨텍스트 메뉴 ────────────
+    // ── Cesium 우클릭 → 노드 컨텍스트 메뉴 (2D 전용 모드에선 비활성) ────────────
     useEffect(() => {
+        if (NETWORK_EDIT_2D_ONLY) return; // 편집은 2D 전용 → 3D 노드 컨텍스트메뉴 없음
         if (!viewer) return;
         const canvas = viewer.canvas;
         const onCesiumContextMenu = (e: MouseEvent) => {
@@ -1410,6 +1419,8 @@ export const useNetworkDraw = () => {
             if (olMoveRafId !== null) return;
             olMoveRafId = requestAnimationFrame(() => {
                 olMoveRafId = null;
+                // 3D 모드에서는 OL 프리뷰 불필요 (Cesium이 주 편집 맵)
+                if (useMapStore.getState().mapViewMode === '3D') return;
                 if (lastOlCursorRef.current) renderOlPreview(lastOlCursorRef.current);
             });
         };
@@ -1579,8 +1590,9 @@ export const useNetworkDraw = () => {
         };
     }, [olMap, isActive, drawResetKey]);
 
-    // ── Cesium 이벤트 & 프리뷰 ──────────────────────────────────
+    // ── Cesium 이벤트 & 프리뷰 (2D 전용 모드에선 비활성) ──────────────────────────────────
     useEffect(() => {
+        if (NETWORK_EDIT_2D_ONLY) return; // 도로 그리기는 2D(OL)에서만
         if (!viewer || !isActive) return;
 
         const ds = new Cesium.CustomDataSource('networkDrawPreview');
@@ -1598,6 +1610,8 @@ export const useNetworkDraw = () => {
             cesiumMoveRafId = requestAnimationFrame(() => {
                 cesiumMoveRafId = null;
                 if (!lastMovePosition) return;
+                // 2D 모드에서는 Cesium 프리뷰 불필요 (OL이 주 편집 맵)
+                if (useMapStore.getState().mapViewMode === '2D') return;
 
                 // pickEllipsoid: GPU readback 없이 타원체 교점 계산 (빠름)
                 const cartesian = viewer.camera.pickEllipsoid(lastMovePosition);
@@ -1629,7 +1643,7 @@ export const useNetworkDraw = () => {
                     endWgs84 = { lng: ll[0]!, lat: ll[1]! };
                 }
                 lastCesiumWgs84Ref.current = endWgs84;
-                updateCesiumPreview(ds, endWgs84, snapNode, snapLink, startWgs84Ref.current, linkWidthRef.current, shiftRef.current);
+                updateCesiumPreview(ds, endWgs84, snapNode, snapLink, startWgs84Ref.current, linkWidthRef.current, shiftRef.current, viewer);
             });
         }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
@@ -2135,8 +2149,9 @@ export const useNetworkDraw = () => {
         };
     }, [olMap, isConnectionActive]);
 
-    // ── Connection 모드: Cesium ─────────────────────────────────
+    // ── Connection 모드: Cesium (2D 전용 모드에선 비활성) ─────────────────────────────────
     useEffect(() => {
+        if (NETWORK_EDIT_2D_ONLY) return; // 커넥션 편집도 2D(OL)에서만
         if (!viewer || !isConnectionActive) return;
 
         const ds = new Cesium.CustomDataSource('connectionDraw');
@@ -2458,7 +2473,9 @@ function updateCesiumPreview(
     startWgs84: Coordinates | null,
     linkWidth: number,
     shiftActive = false,
+    viewer?: Cesium.Viewer,
 ) {
+    ds.entities.suspendEvents();
     ds.entities.removeAll();
 
     const endPos = Cesium.Cartesian3.fromDegrees(endWgs84.lng, endWgs84.lat);
@@ -2717,6 +2734,8 @@ function updateCesiumPreview(
             } as any);
         }
     }
+    ds.entities.resumeEvents();
+    if (viewer) try { viewer.scene.requestRender(); } catch (_) {}
 }
 
 // ── 전체 네트워크 교차로 자동 생성 (export, 훅 외부에서 호출 가능) ──
