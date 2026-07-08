@@ -20,6 +20,8 @@ import { useNetworkEditStore } from '@stores/useNetworkEditStore';
 import { useNetworkUndoStore } from '@stores/useNetworkUndoStore';
 import { useMessageStore } from '@stores/useMessageStore';
 import { assignPropertyToResponseData } from '@utils/guid';
+import { getNetworkLodTierByResolution } from '@utils/lodConstants';
+import { useModeStore } from '@stores/useModeStore';
 import { Network, Link, Node, Lane, Coordinates } from '@type/Network';
 import { containsCoordinate } from 'ol/extent';
 import type { Extent } from 'ol/extent';
@@ -52,6 +54,11 @@ const nodeSelectStyle = [
     new Style({ image: new CircleStyle({ radius: 14, fill: new Fill({ color: 'rgba(255,200,0,0.2)' }), stroke: new Stroke({ color: 'rgba(255,200,0,1)', width: 2.5 }) }) }),
     new Style({ image: new CircleStyle({ radius: 6, fill: new Fill({ color: 'rgba(255,200,0,1)' }), stroke: new Stroke({ color: '#fff', width: 1.5 }) }) }),
 ];
+// 레인 선택: 해당 레인 폴리곤을 노란 반투명으로 강조.
+const laneSelectStyle = new Style({
+    fill: new Fill({ color: 'rgba(255,200,0,0.35)' }),
+    stroke: new Stroke({ color: 'rgba(255,200,0,0.95)', width: 2 }),
+});
 const nodeHoverStyle = [
     new Style({ image: new CircleStyle({ radius: 12, fill: new Fill({ color: 'rgba(255,255,255,0.08)' }), stroke: new Stroke({ color: 'rgba(255,255,255,0.6)', width: 2 }) }) }),
 ];
@@ -133,6 +140,42 @@ function findNearestLink(links: Link[], coord: Coordinate, threshold: number): L
             const t = Math.max(0, Math.min(1, ((coord[0]!-a[0]!)*dx + (coord[1]!-a[1]!)*dy) / len2));
             const d = olDist([a[0]!+t*dx, a[1]!+t*dy], coord);
             if (d < minD) { minD = d; best = link; }
+        }
+    }
+    return best;
+}
+
+// 레인 최근접 탐색: 각 링크의 각 레인 중심선(링크 중심선 + 레인 오프셋)에 점-선분 최근접.
+//   레인 오프셋은 렌더(NetworkFeatureLayer buildLinkFeatures)와 동일 공식:
+//   offset = ((laneCount-1)/2 - i) * (link.width/laneCount), 세그먼트별 법선 적용(곡선 대응).
+function findNearestLane(links: Link[], coord: Coordinate, threshold: number): { linkId: string; laneIdx: number } | null {
+    let best: { linkId: string; laneIdx: number } | null = null;
+    let minD = threshold;
+    for (const link of links) {
+        const lanes = link.lanes ?? [];
+        const laneCount = lanes.length;
+        if (laneCount === 0) continue;
+        const laneW = (link.width ?? 7) / laneCount;
+        const c = link.coordinates;
+        // 링크 중심선을 3857 점 배열로 (세그먼트별 법선 계산용)
+        const pts = c.map(p => fromLonLat([p.lng, p.lat]));
+        for (let li = 0; li < laneCount; li++) {
+            const off = ((laneCount - 1) / 2 - li) * laneW; // 레인 중심 오프셋(m≈3857 단위, 저위도 근사)
+            for (let si = 0; si < pts.length - 1; si++) {
+                const a = pts[si]!, b = pts[si + 1]!;
+                const dx = b[0]! - a[0]!, dy = b[1]! - a[1]!;
+                const len = Math.hypot(dx, dy);
+                if (len < 1e-6) continue;
+                const nx = -dy / len, ny = dx / len; // 세그먼트 법선(단위)
+                const oa = [a[0]! + nx * off, a[1]! + ny * off];
+                const ob = [b[0]! + nx * off, b[1]! + ny * off];
+                const odx = ob[0] - oa[0], ody = ob[1] - oa[1];
+                const len2 = odx * odx + ody * ody;
+                if (len2 < 1e-10) continue;
+                const t = Math.max(0, Math.min(1, ((coord[0]! - oa[0]) * odx + (coord[1]! - oa[1]) * ody) / len2));
+                const d = olDist([oa[0] + t * odx, oa[1] + t * ody], coord);
+                if (d < minD) { minD = d; best = { linkId: String(link.id), laneIdx: li }; }
+            }
         }
     }
     return best;
@@ -255,6 +298,7 @@ export function updateLinkCoordinates(network: Network, linkId: number | string,
             lanes: l.lanes.map((lane: any) => ({
                 ...lane,
                 coordinates: newCoords,
+                numCell: Math.max(1, Math.ceil(length / 100)), // 길이 변경 반영(cells 는 빈 배열 유지=서버 생성)
                 segments: [{ ...lane.segments[0], initPoint: 0, endPoint: length }],
             })),
         };
@@ -487,12 +531,45 @@ function updateLinkEditGeometry(lef: LinkEditFeatures, coords: Coordinates[], dr
     });
 }
 
+/** 레인 폴리곤 링(3857) 생성 — findNearestLane 과 동일 오프셋 공식(렌더 정합). */
+function buildLanePolygonRing(link: Link, laneIdx: number): number[][] | null {
+    const lanes = link.lanes ?? [];
+    const laneCount = lanes.length;
+    if (laneCount === 0 || laneIdx < 0 || laneIdx >= laneCount) return null;
+    const laneW = (link.width ?? 7) / laneCount;
+    const off = ((laneCount - 1) / 2 - laneIdx) * laneW; // 레인 중심 오프셋
+    const half = laneW / 2;
+    const pts = link.coordinates.map(c => fromLonLat([c.lng, c.lat]));
+    const left: number[][] = [], right: number[][] = [];
+    for (let i = 0; i < pts.length; i++) {
+        const prev = pts[Math.max(0, i - 1)]!;
+        const next = pts[Math.min(pts.length - 1, i + 1)]!;
+        const sdx = next[0]! - prev[0]!, sdy = next[1]! - prev[1]!;
+        const sl = Math.hypot(sdx, sdy) || 1;
+        const nx = -sdy / sl, ny = sdx / sl;
+        const cx = pts[i]![0]! + nx * off, cy = pts[i]![1]! + ny * off; // 레인 중심
+        left.push([cx + nx * half, cy + ny * half]);
+        right.push([cx - nx * half, cy - ny * half]);
+    }
+    return [...left, ...right.reverse(), left[0]!];
+}
+
 function renderHighlight(
     selSrc: VectorSource, hoverSrc: VectorSource, network: Network,
     selectedLinkId: number | string | null, selectedNodeId: number | string | null,
     hoveredLinkId: number | string | null, hoveredNodeId: number | string | null,
+    selectedLaneId: string | null = null,
 ) {
     selSrc.clear(); hoverSrc.clear();
+    if (selectedLaneId !== null) {
+        const [lid, lidxStr] = selectedLaneId.split('_');
+        const link = network.links.find(l => String(l.id) === String(lid));
+        const ring = link ? buildLanePolygonRing(link, Number(lidxStr)) : null;
+        if (ring) {
+            const f = new Feature(new Polygon([ring]));
+            f.setStyle(laneSelectStyle); selSrc.addFeature(f);
+        }
+    }
     if (selectedLinkId !== null) {
         const link = network.links.find(l => String(l.id) === String(selectedLinkId));
         if (link) {
@@ -547,8 +624,13 @@ export const useNetworkSelect = () => {
     const isSelectActive  = useNetworkDrawStore(s => s.isSelectActive);
     const selectedLinkId  = useNetworkDrawStore(s => s.selectedLinkId);
     const selectedNodeId  = useNetworkDrawStore(s => s.selectedNodeId);
+    const selectedLaneId  = useNetworkDrawStore(s => s.selectedLaneId);
     const selectedLinkIds = useNetworkDrawStore(s => s.selectedLinkIds);
     const selectedNodeIds = useNetworkDrawStore(s => s.selectedNodeIds);
+    const appMode        = useModeStore(s => s.appMode);
+    // 선택(하이라이트+속성) 활성: 선택 모드(편집) 또는 보기모드(읽기전용). 편집 조작(이동/삭제)은
+    //   isSelectActive 게이트를 그대로 쓴다(보기모드는 선택만).
+    const selectEnabled  = isSelectActive || appMode === 'view';
 
     // (구) 선택 편집 진입 시 mapViewMode='2D' 강제 로직 제거 — 편집모드는 split(2D 편집 + 3D 로드뷰)
     //   유지. 편집은 2D(OL) 전용이라 뷰 강제 불필요.
@@ -575,7 +657,7 @@ export const useNetworkSelect = () => {
 
     // ── 레이어 생명주기 ──────────────────────────────────────────
     useEffect(() => {
-        if (!olMap || !isSelectActive) return;
+        if (!olMap || !selectEnabled) return; // 선택모드 또는 보기모드(읽기전용 선택)
 
         const selSrc   = new VectorSource();
         const hoverSrc = new VectorSource();
@@ -622,7 +704,7 @@ export const useNetworkSelect = () => {
             boxSrcRef.current   = null;
             olMap.getTargetElement().style.cursor = '';
         };
-    }, [olMap, isSelectActive]);
+    }, [olMap, selectEnabled]);
 
     // ── 선택 변경 → 하이라이트 + 편집 핸들 생성 ────────────────
     useEffect(() => {
@@ -639,22 +721,28 @@ export const useNetworkSelect = () => {
         nodeEditRef.current  = null;
 
         renderHighlight(selSrc, hoverSrc, network, selectedLinkId, selectedNodeId,
-            hoveredLinkIdRef.current, hoveredNodeIdRef.current);
+            hoveredLinkIdRef.current, hoveredNodeIdRef.current, selectedLaneId);
 
-        if (selectedLinkId !== null) {
+        // 편집 핸들은 편집 조작용 → 선택 모드에서만. 레인은 편집 핸들 없음(선택+속성만).
+        if (isSelectActive && selectedLinkId !== null) {
             const link = network.links.find(l => String(l.id) === String(selectedLinkId));
             if (link) linkEditRef.current = buildLinkEditFeatures(editSrc, link.coordinates);
-        } else if (selectedNodeId !== null) {
+        } else if (isSelectActive && selectedNodeId !== null) {
             const node = network.nodes.find(n => String(n.id) === String(selectedNodeId));
             if (node) nodeEditRef.current = buildNodeEditFeatures(editSrc, node);
         } else {
             editSrc.clear();
         }
-    }, [selectedLinkId, selectedNodeId]);
+    }, [selectedLinkId, selectedNodeId, selectedLaneId, isSelectActive]);
+
+    // 모드 전환(보기↔편집) 시 선택 초기화 (확정 요구사항)
+    useEffect(() => {
+        useNetworkDrawStore.getState().clearSelection();
+    }, [appMode]);
 
     // ── OL 포인터 이벤트 (선택 + Ctrl+드래그 편집) ──────────────
     useEffect(() => {
-        if (!olMap || !isSelectActive) return;
+        if (!olMap || !selectEnabled) return; // 선택모드 또는 보기모드(읽기전용 선택)
         const vp = olMap.getViewport();
 
         const blockContextMenu = (e: Event) => { e.preventDefault(); e.stopImmediatePropagation(); };
@@ -663,6 +751,8 @@ export const useNetworkSelect = () => {
         // ──────────────────── pointerdown ──────────────────────
         const onPointerDown = (e: PointerEvent) => {
             if (e.button !== 0) return;
+            // 편집 조작(Ctrl+드래그 꼭짓점/노드 이동, 범위선택)은 선택 모드 전용 — 보기모드는 선택만.
+            if (!useNetworkDrawStore.getState().isSelectActive) return;
 
             // Ctrl 없으면 지도 이동 허용 (드래그 편집 안 함)
             if (!e.ctrlKey) return;
@@ -960,17 +1050,21 @@ export const useNetworkSelect = () => {
                 if (node && olDist(fromLonLat([node.coordinates.lng, node.coordinates.lat]), coord) < res * 18) return;
             }
 
+            // 우선순위: 노드 > 레인(detail 줌에서만) > 링크. 레인은 링크보다 세밀하니 먼저.
             const node = findNearestNode(network.nodes, coord, res * 20);
-            const link = !node ? findNearestLink(network.links, coord, res * 15) : null;
+            const isDetail = getNetworkLodTierByResolution(res) === 'detail';
+            const lane = !node && isDetail ? findNearestLane(network.links, coord, res * 8) : null;
+            const link = (!node && !lane) ? findNearestLink(network.links, coord, res * 15) : null;
 
             if (e.shiftKey) {
-                // Shift+클릭: 멀티셀렉트 토글
+                // Shift+클릭: 멀티셀렉트 토글 (레인은 멀티셀렉트 미지원 → 링크로)
                 if (node) { useNetworkDrawStore.getState().toggleSelectedNodeId(String(node.id)); return; }
                 if (link) { useNetworkDrawStore.getState().toggleSelectedLinkId(String(link.id)); return; }
                 return;
             }
 
             if (node) { useNetworkDrawStore.getState().setSelectedNode(node.id); return; }
+            if (lane) { useNetworkDrawStore.getState().setSelectedLane(`${lane.linkId}_${lane.laneIdx}`); return; }
             if (link) { useNetworkDrawStore.getState().setSelectedLink(link.id); return; }
             useNetworkDrawStore.getState().clearSelection();
         };
@@ -983,6 +1077,8 @@ export const useNetworkSelect = () => {
             if (e.key === 'Escape') {
                 useNetworkDrawStore.getState().clearSelection();
             } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                // 삭제는 편집 조작 → 선택 모드 전용(보기모드는 선택만).
+                if (!useNetworkDrawStore.getState().isSelectActive) return;
                 const network = useNetworkStore.getState().currentJsonData;
                 if (!network) return;
                 const beforeLinkIds = new Set(network.links.map(l => String(l.id)));
@@ -1027,7 +1123,7 @@ export const useNetworkSelect = () => {
             vp.removeEventListener('click', onClick, true);
             document.removeEventListener('keydown', onKey);
         };
-    }, [olMap, isSelectActive]);
+    }, [olMap, selectEnabled]);
 
     // ── 멀티셀렉트 하이라이트 렌더링 ────────────────────────────
     useEffect(() => {

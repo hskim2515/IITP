@@ -1,10 +1,13 @@
 import { create } from 'zustand';
 import { Coordinates } from '@type/Network';
 
+export type PlacementMode = 'none' | 'busStation' | 'railStation' | 'signal';
+
 interface NetworkDrawState {
     isActive: boolean;
     isConnectionActive: boolean;
     isSelectActive: boolean;
+    placementMode: PlacementMode;
     laneCount: number;
     linkWidth: number;
     maxSpd: number;
@@ -23,6 +26,7 @@ interface NetworkDrawState {
     // 선택 모드: 단일 선택 (편집 핸들용)
     selectedLinkId: number | string | null;
     selectedNodeId: number | string | null;
+    selectedLaneId: string | null;  // `${linkId}_${laneIdx}` — 개별 레인 선택
     // 멀티셀렉트 (Shift+클릭, 박스 드래그)
     selectedLinkIds: string[];
     selectedNodeIds: string[];
@@ -30,6 +34,7 @@ interface NetworkDrawState {
     setActive: (active: boolean) => void;
     setConnectionActive: (active: boolean) => void;
     setSelectActive: (active: boolean) => void;
+    setPlacementMode: (mode: PlacementMode) => void;
     setLaneCount: (count: number) => void;
     setLinkWidth: (width: number) => void;
     setMaxSpd: (spd: number) => void;
@@ -41,6 +46,7 @@ interface NetworkDrawState {
     clearPendingStart: () => void;
     setSelectedLink: (id: number | string | null) => void;
     setSelectedNode: (id: number | string | null) => void;
+    setSelectedLane: (id: string | null) => void;
     clearSelection: () => void;
     toggleSelectedLinkId: (id: string) => void;
     toggleSelectedNodeId: (id: string) => void;
@@ -54,6 +60,7 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
     isActive: false,
     isConnectionActive: false,
     isSelectActive: false,
+    placementMode: 'none' as PlacementMode,
     laneCount: 2,
     linkWidth: 7.0,
     maxSpd: 50,
@@ -66,12 +73,14 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
     pendingStartNodeId: null,
     selectedLinkId: null,
     selectedNodeId: null,
+    selectedLaneId: null,
     selectedLinkIds: [],
     selectedNodeIds: [],
 
-    setActive: (active) => set({ isActive: active, isConnectionActive: false, isSelectActive: false }),
-    setConnectionActive: (active) => set({ isConnectionActive: active, isActive: false, isSelectActive: false, connSelectedNodeId: null }),
-    setSelectActive: (active) => set({ isSelectActive: active, isActive: false, isConnectionActive: false, selectedLinkId: null, selectedNodeId: null }),
+    setActive: (active) => set({ isActive: active, isConnectionActive: false, isSelectActive: false, placementMode: 'none' }),
+    setConnectionActive: (active) => set({ isConnectionActive: active, isActive: false, isSelectActive: false, connSelectedNodeId: null, placementMode: 'none' }),
+    setSelectActive: (active) => set({ isSelectActive: active, isActive: false, isConnectionActive: false, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, placementMode: 'none' }),
+    setPlacementMode: (mode) => set({ placementMode: mode, isActive: false, isConnectionActive: false, isSelectActive: false }),
     setLaneCount: (count) => set({ laneCount: count }),
     setLinkWidth: (width) => set({ linkWidth: width }),
     setMaxSpd: (spd) => set({ maxSpd: spd }),
@@ -90,9 +99,10 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
         pendingStartNodeId: startNodeId ?? null,
     })),
     clearPendingStart: () => set({ pendingStartNodeId: null }),
-    setSelectedLink: (id) => set({ selectedLinkId: id, selectedNodeId: null, selectedLinkIds: [], selectedNodeIds: [] }),
-    setSelectedNode: (id) => set({ selectedNodeId: id, selectedLinkId: null, selectedLinkIds: [], selectedNodeIds: [] }),
-    clearSelection: () => set({ selectedLinkId: null, selectedNodeId: null, selectedLinkIds: [], selectedNodeIds: [] }),
+    setSelectedLink: (id) => set({ selectedLinkId: id, selectedNodeId: null, selectedLaneId: null, selectedLinkIds: [], selectedNodeIds: [] }),
+    setSelectedNode: (id) => set({ selectedNodeId: id, selectedLinkId: null, selectedLaneId: null, selectedLinkIds: [], selectedNodeIds: [] }),
+    setSelectedLane: (id) => set({ selectedLaneId: id, selectedLinkId: null, selectedNodeId: null, selectedLinkIds: [], selectedNodeIds: [] }),
+    clearSelection: () => set({ selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedLinkIds: [], selectedNodeIds: [] }),
     toggleSelectedLinkId: (id) => set(s => ({
         selectedLinkId: null, selectedNodeId: null,
         selectedLinkIds: s.selectedLinkIds.includes(id)
@@ -110,5 +120,5 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
     setSelectedLinkIds: (ids) => set({ selectedLinkIds: ids, selectedNodeIds: [], selectedLinkId: null, selectedNodeId: null }),
     setSelectedNodeIds: (ids) => set({ selectedNodeIds: ids, selectedLinkIds: [], selectedLinkId: null, selectedNodeId: null }),
     clearMultiSelection: () => set({ selectedLinkIds: [], selectedNodeIds: [] }),
-    reset: () => set({ isActive: false, isConnectionActive: false, isSelectActive: false, startNodeId: null, startNodeCoord: null, connSelectedNodeId: null, selectedLinkId: null, selectedNodeId: null, selectedLinkIds: [], selectedNodeIds: [] }),
+    reset: () => set({ isActive: false, isConnectionActive: false, isSelectActive: false, placementMode: 'none', startNodeId: null, startNodeCoord: null, connSelectedNodeId: null, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedLinkIds: [], selectedNodeIds: [] }),
 }));
