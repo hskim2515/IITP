@@ -10,6 +10,7 @@ import { Coordinate } from "ol/coordinate";
 import { Network } from "@type/Network";
 import { FeatureLike } from "ol/Feature";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
+import { useNetworkEditStore } from "@stores/useNetworkEditStore";
 import {
     getNetworkLodTierByResolution,
     isNetworkFeatureVisibleAtTier,
@@ -52,6 +53,9 @@ export default class NetworkFeatureLayer extends VectorLayer {
     private lastTier: NetworkLodTier | null = null;
     private moveEndKey: EventsKey | null = null;
     private visChangeKey: EventsKey | null = null;
+    // 편집 델타 추적: 편집 세션(isChanged) 시작 시점 링크 스냅샷(linkId → geo 해시).
+    //   currentJsonData 변화 시 이 베이스라인과 diff 해 편집/삭제 링크 id 를 useNetworkEditStore 에 반영.
+    private editBaseline: Map<string, string> | null = null;
 
     // ── 타일링 상태 (NETWORK_TILING.ENABLED 일 때만 사용; 읽기 전용 뷰) ──
     // 타일 경계 링크/노드는 여러 타일에 중복 등장 → id별 refcount 로 마지막 타일 evict 시에만 destroy.
@@ -103,7 +107,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         if (store) {
             this.unsubscribe = store.subscribe(
                 (state: { currentJsonData: Network; }) => state.currentJsonData,
-                () => { this.load(); },
+                () => { this.updateEditDeltas(); this.load(); },
                 { equalityFn: (a:Network, b:Network) => a === b }
             );
         }
@@ -277,6 +281,53 @@ export default class NetworkFeatureLayer extends VectorLayer {
             try { this.getMapInternal()?.render(); } catch (_) {}
         }
         this.scheduleStoreSync();
+    }
+
+    /** 링크의 렌더 관련 지오메트리 해시(수정 감지용). 좌표+폭+차선수만으로 충분. */
+    private static linkGeoHash(link: any): string {
+        const coords = Array.isArray(link?.coordinates)
+            ? link.coordinates.map((c: any) => `${c?.lng},${c?.lat}`).join(";") : "";
+        return `${coords}|${link?.width ?? ""}|${link?.numLane ?? link?.lanes?.length ?? ""}`;
+    }
+
+    /**
+     * 편집 델타 추적: 편집 세션(isChanged) 대비 currentJsonData 를 diff 해 편집/삭제 링크 id 를
+     *   useNetworkEditStore 에 반영. 편집 중엔 타일 동기화가 동결되므로 currentJsonData 변화 =
+     *   편집 결과로 간주한다. (타일 모드 아닐 땐 전체-로드라 오버레이 불필요 → skip)
+     */
+    private updateEditDeltas(): void {
+        if (!NETWORK_TILING.ENABLED) return;
+        const store = layerNameToStoreMap[this.LAYER_NAME];
+        const st: any = store?.getState();
+        const isChanged: boolean = !!st?.isChanged;
+        const links: any[] = st?.currentJsonData?.links ?? [];
+
+        if (!isChanged) {
+            // 편집 없음(초기/저장 후) → 베이스라인·델타 초기화
+            if (this.editBaseline !== null) {
+                this.editBaseline = null;
+                try { useNetworkEditStore.getState().clear(); } catch (_) {}
+            }
+            return;
+        }
+        // 편집 세션 시작(false→true): 현재 링크를 베이스라인으로 스냅샷
+        if (this.editBaseline === null) {
+            this.editBaseline = new Map();
+            for (const l of links) this.editBaseline.set(String(l.id), NetworkFeatureLayer.linkGeoHash(l));
+            return; // 시작 시점엔 델타 없음
+        }
+        // 베이스라인 대비 diff → 추가/수정(edited), 사라짐(deleted)
+        const edited = new Set<string>();
+        const seen = new Set<string>();
+        for (const l of links) {
+            const id = String(l.id);
+            seen.add(id);
+            const base = this.editBaseline.get(id);
+            if (base === undefined || base !== NetworkFeatureLayer.linkGeoHash(l)) edited.add(id);
+        }
+        const deleted = new Set<string>();
+        for (const id of this.editBaseline.keys()) if (!seen.has(id)) deleted.add(id);
+        try { useNetworkEditStore.getState().setEdits(edited, deleted); } catch (_) {}
     }
 
     /**
