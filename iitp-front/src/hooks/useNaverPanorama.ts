@@ -13,7 +13,7 @@ import { networkPrimitivePropertiesMap } from "@datasource/NetworkDataSourceLaye
 import { loadNaverMaps } from "@utils/naverMapLoader";
 import type { Link } from "@type/Network";
 import {
-    type OnLink, buildAdjacency, buildLinkIndex, snapToLinks, advanceAlongLink, bearing,
+    type OnLink, buildAdjacency, buildLinkIndex, snapToLinks, advanceAlongLink, bearing, destinationPoint,
 } from "@utils/networkSnap";
 
 const SNAP_MAX_METERS = 25;   // 이 거리 밖이면 스냅 안 함(자유 이동). 좁게 → 없는 도로에 잘못 붙는 것 방지
@@ -218,7 +218,8 @@ export function useNaverPanorama(
                             //   키보드 링크 이동 기준 없음(onLinkRef null). 진입 시 1회 경고.
                             onLinkRef.current = null;
                             markerFeature.setGeometry(new Point(fromLonLat([coord.x, coord.y])));
-                            if (!offNetwork) { offNetwork = true; warnThrottled("네트워크가 없는 구역입니다."); }
+                            offNetwork = true;
+                            warnThrottled("네트워크가 없는 구역입니다."); // 밖에 머무는 동안 2.5s 마다 재경고
                         }
                     }
                     // ⚠️ Naver getPov().pan 이 Infinity 로 나오는 경우가 있다(tilt/fov 는 정상).
@@ -285,19 +286,33 @@ export function useNaverPanorama(
                 });
             } catch (_) {}
 
-            // ── 키보드 조작 (↑↓ 링크 따라 이동 / ←→ 시야 회전) ──
+            // ── 키보드 조작 (↑↓ 이동 / ←→ 시야 회전) ──
+            //   네트워크 위: 링크 따라 이동(advanceAlongLink). 네트워크 밖: 보는 방향으로 직진 이동.
+            const moveFree = (meters: number) => {
+                // 네트워크 없는 구역: pov.pan(보는 방향)으로 meters 직진. ↓는 반대(뒤로).
+                const loc = panoRef.current.getLocation?.();
+                const c = loc?.coord;
+                if (c?.x == null || c?.y == null) return;
+                const pan = Number.isFinite(lastPanRef.current) ? lastPanRef.current : 0;
+                const brg = meters >= 0 ? pan : (pan + 180) % 360;
+                const dest = destinationPoint(c.x, c.y, brg, Math.abs(meters));
+                warnThrottled("네트워크가 없는 구역입니다.");
+                syncing = true;
+                try { panoRef.current.setPosition(new naver.maps.LatLng(dest.lat, dest.lng)); } catch (_) {}
+                try { markerFeature.setGeometry(new Point(fromLonLat([dest.lng, dest.lat]))); } catch (_) {}
+                setTimeout(() => { syncing = false; }, 80);
+            };
             const moveAlong = (meters: number) => {
                 if (!panoRef.current) return;
                 const links = currentLinks();
-                if (links.length === 0) return;
                 // onLinkRef 없으면 현재 위치를 먼저 스냅해 기준점 확보
                 let on = onLinkRef.current;
-                if (!on) {
+                if (!on && links.length > 0) {
                     const loc = panoRef.current.getLocation?.();
                     const c = loc?.coord;
                     if (c?.x != null && c?.y != null) on = snapToLinks(links, c.x, c.y, SNAP_MAX_METERS);
                 }
-                if (!on) return; // 근처에 네트워크 없음
+                if (!on) { moveFree(meters); return; } // 네트워크 없음 → 보는 방향 직진
                 const linkIndex = buildLinkIndex(links);
                 const adjacency = buildAdjacency(links);
                 const pan = Number.isFinite(lastPanRef.current) ? lastPanRef.current : NaN;

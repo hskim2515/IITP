@@ -44,6 +44,18 @@ export function bearing(from: { lng: number; lat: number }, to: { lng: number; l
     return ((θ * 180) / Math.PI + 360) % 360;
 }
 
+/** (lng,lat)에서 방위각 bearingDeg(북=0 시계) 방향으로 meters 만큼 이동한 좌표. */
+export function destinationPoint(lng: number, lat: number, bearingDeg: number, meters: number): { lng: number; lat: number } {
+    const R = 6378137; // 지구 반경(m)
+    const δ = meters / R;
+    const θ = (bearingDeg * Math.PI) / 180;
+    const φ1 = (lat * Math.PI) / 180;
+    const λ1 = (lng * Math.PI) / 180;
+    const φ2 = Math.asin(Math.sin(φ1) * Math.cos(δ) + Math.cos(φ1) * Math.sin(δ) * Math.cos(θ));
+    const λ2 = λ1 + Math.atan2(Math.sin(θ) * Math.sin(δ) * Math.cos(φ1), Math.cos(δ) - Math.sin(φ1) * Math.sin(φ2));
+    return { lng: (λ2 * 180) / Math.PI, lat: (φ2 * 180) / Math.PI };
+}
+
 /** 두 각도(도)의 최소 차이 0~180. */
 function angleDiff(a: number, b: number): number {
     const d = Math.abs(((a - b) % 360 + 360) % 360);
