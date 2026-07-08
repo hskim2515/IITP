@@ -446,18 +446,32 @@ export default class NetworkFeatureLayer extends VectorLayer {
         this.storeSyncTimer = setTimeout(() => {
             this.storeSyncTimer = null;
             const store = layerNameToStoreMap[this.LAYER_NAME];
-            // 편집 중에는 store 동기화 동결 — viewport 네트워크로 덮어쓰면 편집 내용이 사라진다.
-            //   ⚠️ 활성 편집(draw.isActive 등)뿐 아니라 **미저장 편집(isChanged)** 이 있으면도 동결해야
-            //   한다. 안 그러면 그리기 종료 후 줌/팬 시 viewport 타일로 덮어써 그린 링크가 사라진다.
+            // 활성 그리기/커넥션/배치 중에는 완전 동결 — 진행 중 편집 상태가 store 에 있어 덮으면 깨진다.
             const draw = useNetworkDrawStore.getState();
-            if (draw.isActive || draw.isConnectionActive || draw.isSelectActive || draw.placementMode !== 'none') return;
-            if ((store.getState() as any).isChanged) return; // 미저장 편집 보존
-            const prev = store.getState().currentJsonData ?? {};
-            const next = {
-                ...prev,                                  // id/name 등 메타 보존
-                links: [...this.cachedLinkMap.values()],  // viewport 링크
-                nodes: [...this.cachedNodeMap.values()],  // viewport 노드
-            };
+            if (draw.isActive || draw.isConnectionActive || draw.placementMode !== 'none') return;
+
+            // 그 외(선택 모드·idle)에는 viewport 타일로 갱신하되 **미저장 편집 링크는 보존 병합**.
+            //   (전면 동결하면 팬/줌 후 새 지역 링크가 store 에 없어 선택 불가. 전면 덮으면 편집 손실.)
+            const prev: any = store.getState().currentJsonData ?? {};
+            const edit = useNetworkEditStore.getState();
+            const editedIds = edit.editedLinkIds, deletedIds = edit.deletedLinkIds;
+
+            // viewport 타일 링크(서버 최신) + 편집된 링크(prev 에서 보존). 삭제된 링크는 제외.
+            const linkById = new Map<string, any>();
+            for (const l of this.cachedLinkMap.values()) linkById.set(String(l.id), l);
+            for (const l of (prev.links ?? [])) {          // 편집(추가/수정) 링크는 prev 값으로 덮어씀(보존)
+                if (editedIds.has(String(l.id))) linkById.set(String(l.id), l);
+            }
+            for (const id of deletedIds) linkById.delete(id); // 삭제 링크 제외
+
+            const nodeById = new Map<string, any>();
+            for (const n of this.cachedNodeMap.values()) nodeById.set(String(n.id), n);
+            // 편집 링크가 참조하는 노드는 prev 에서 보존(신규 노드가 타일에 없을 수 있음)
+            if (editedIds.size > 0) {
+                for (const n of (prev.nodes ?? [])) if (!nodeById.has(String(n.id))) nodeById.set(String(n.id), n);
+            }
+
+            const next = { ...prev, links: [...linkById.values()], nodes: [...nodeById.values()] };
             // setCurrentJsonData 는 구독 트리거 → 의존 레이어 재로드 (자기 load()는 타일모드 가드로 no-op)
             store.getState().setCurrentJsonData(next as Network);
         }, 150);
