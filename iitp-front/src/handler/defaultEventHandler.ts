@@ -14,7 +14,10 @@ import CircleStyle from "ol/style/Circle";
 import {propertyFormSchema} from "@schema/propertyFormSchema";
 import {useMenuStore} from "@stores/useMenuStore";
 import {useNetworkDrawStore} from "@stores/useNetworkDrawStore";
-import { networkPrimitivePropertiesMap, highlightNetworkPrimitive } from "@datasource/NetworkDataSourceLayer";
+import { highlightNetworkPrimitive, pickNetworkAtPosition, pickLaneAtPosition } from "@datasource/NetworkDataSourceLayer";
+import { useNetworkStore } from "@stores/useNetworkStore";
+import { findNearestNode, findNearestLink, findNearestLane } from "@hooks/useNetworkSelect";
+import { getNetworkLodTierByResolution } from "@utils/lodConstants";
 
 
 const selectedGuid = useSelectionStore.getState().selectedGuid;
@@ -38,9 +41,9 @@ export const defaultEventHandlers ={
 
 
     handleCesiumSelect : (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
-        // 도로 그리기 / 커넥션 그리기 / 선택편집 모드 중에는 속성조회 이벤트 무시
+        // 도로 그리기 / 커넥션 그리기 / 선택편집 / 시설물 배치 모드 중에는 속성조회 이벤트 무시
         const drawStore = useNetworkDrawStore.getState();
-        if (drawStore.isActive || drawStore.isConnectionActive || drawStore.isSelectActive) return;
+        if (drawStore.isActive || drawStore.isConnectionActive || drawStore.isSelectActive || drawStore.placementMode !== 'none') return;
         if (useMenuStore.getState().activeSubmenu) return;
 
         const viewer = useCesiumStore.getState().viewer;
@@ -48,53 +51,55 @@ export const defaultEventHandlers ={
 
         const picked = viewer.scene.pick(e.position);
 
-        if (Cesium.defined(picked)) {
-            const props: Record<string, any> = {};
-            const cartesian = viewer.scene.camera.pickEllipsoid(e.position, viewer.scene.globe.ellipsoid);
-            if (cartesian) {
-                const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-                props.longitude = Cesium.Math.toDegrees(cartographic.longitude);
-                props.latitude = Cesium.Math.toDegrees(cartographic.latitude);
-                props.height = cartographic.height;
-            }
+        const props: Record<string, any> = {};
+        const cartesian = viewer.scene.camera.pickEllipsoid(e.position, viewer.scene.globe.ellipsoid);
+        if (cartesian) {
+            const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+            props.longitude = Cesium.Math.toDegrees(cartographic.longitude);
+            props.latitude = Cesium.Math.toDegrees(cartographic.latitude);
+            props.height = cartographic.height;
+        }
 
-            if (picked.id instanceof Cesium.Entity && picked.id.properties) {
-                // Entity 피킹 (노드, 포트, 커넥션, 버스정류장 등)
-                const flat = picked.id.properties.getValue(Cesium.JulianDate.now()) ?? {};
-                Object.assign(props, flat);
+        if (Cesium.defined(picked) && picked.id instanceof Cesium.Entity && picked.id.properties) {
+            // Entity 피킹 (노드, 포트, 커넥션, 버스정류장 등)
+            const flat = picked.id.properties.getValue(Cesium.JulianDate.now()) ?? {};
+            Object.assign(props, flat);
+            setSelectedProps(props);
+            setSelectedGuid([props.__guid]);
+        } else if (Cesium.defined(picked) && picked.id && typeof picked.id === 'object' && !(picked.id instanceof Cesium.Entity)) {
+            // PointPrimitive / Billboard 등 — id에 plain object가 설정된 경우 (버스정류장 마커, 신호 램프 등)
+            Object.assign(props, picked.id);
+            if (props.__guid || props.featureType) {
                 setSelectedProps(props);
-                setSelectedGuid([props.__guid]);
-            } else if (typeof picked.id === 'string') {
-                // Primitive/GroundPrimitive 피킹 (링크, 레인, 경계선)
-                const resolvedId = resolveNetworkId(picked.id);
-                const primitiveProps = resolvedId ? networkPrimitivePropertiesMap.get(resolvedId) : null;
-                if (primitiveProps) {
-                    Object.assign(props, primitiveProps);
-                    setSelectedProps(props);
-                    setSelectedGuid([primitiveProps.__guid]);
-                } else {
-                    setSelectedProps(null);
-                }
-            } else if (picked.id && typeof picked.id === 'object' && !(picked.id instanceof Cesium.Entity)) {
-                // PointPrimitive / Billboard 등 — id에 plain object가 설정된 경우 (버스정류장 마커, 신호 램프 등)
-                Object.assign(props, picked.id);
-                if (props.__guid || props.featureType) {
-                    setSelectedProps(props);
-                    setSelectedGuid(props.__guid ? [props.__guid] : []);
-                } else {
-                    setSelectedProps(null);
-                }
+                setSelectedGuid(props.__guid ? [props.__guid] : []);
             } else {
                 setSelectedProps(null);
             }
         } else {
-            setSelectedProps(null);
+            // 링크/레인: 분류볼륨 scene.pick 은 "보이는 것과 선택되는 것"이 어긋난다
+            // → 커서 지면점에서 렌더 규칙과 동일한 기하 탐색 (보이는 도로 = 선택되는 도로)
+            const hit = pickNetworkAtPosition(viewer.scene, e.position);
+            let primitiveProps = hit?.props ?? null;
+            // 도로 몸체 클릭 → 클릭 지점의 레인으로 해석
+            // (레인 채움면이 렌더에 없어 직접 pick 불가 → 측방향 오프셋 역산으로 레인 클릭 지원)
+            if (primitiveProps?.featureType === 'links') {
+                const lane = pickLaneAtPosition(viewer.scene, e.position, primitiveProps);
+                if (lane?.__guid) primitiveProps = { ...lane, featureType: 'lanes', linkRef: primitiveProps.id };
+            }
+            if (primitiveProps) {
+                Object.assign(props, primitiveProps);
+                setSelectedProps(props);
+                setSelectedGuid([primitiveProps.__guid]);
+            } else {
+                setSelectedProps(null);
+            }
         }
     },
 
     handleOLSelect : (e: MapBrowserEvent<UIEvent>) => {
-        // 선택편집 모드 중에는 속성조회 이벤트 무시
-        if (useNetworkDrawStore.getState().isSelectActive) return;
+        // 선택편집 / 시설물 배치 모드 중에는 속성조회 이벤트 무시
+        const drawState = useNetworkDrawStore.getState();
+        if (drawState.isSelectActive || drawState.placementMode !== 'none') return;
         if (useMenuStore.getState().activeSubmenu) return;
         const olMap = useOpenLayersStore.getState().map;
 
@@ -136,11 +141,34 @@ export const defaultEventHandlers ={
         }, {
             // disableHitDetection: true 인 WebGLVectorLayer(TrailFeatureLayer 등)에서
             // forEachFeatureAtPixel 호출 시 throw 발생 → 해당 레이어 제외
-            layerFilter: (layer) => !isWebGLVectorLayer(layer),
+            layerFilter: (layer) => !isWebGLVectorLayer(layer) && !layer.get("excludeFromHit"),
         });
         if (!isFeatureExist) {
-            setSelectedProps(null);
-            setSelectedGuid([]);
+            // OL 벡터 피처 히트 실패 → MVT 로 렌더되는 링크/레인은 __guid 피처가 없어 여기로 온다.
+            //   currentJsonData 데이터 기반으로 노드>레인(detail)>링크 최근접 히트 → selectedProps 세팅.
+            const network: any = useNetworkStore.getState().currentJsonData;
+            const coord = olMap.getCoordinateFromPixel(e.pixel);
+            const res = olMap.getView().getResolution() ?? 1;
+            let hit: any = null;
+            if (network && coord) {
+                const node = findNearestNode(network.nodes ?? [], coord, res * 20);
+                const isDetail = getNetworkLodTierByResolution(res) === 'detail';
+                const lane = !node && isDetail ? findNearestLane(network.links ?? [], coord, res * 8) : null;
+                const link = (!node && !lane) ? findNearestLink(network.links ?? [], coord, res * 15) : null;
+                if (node) hit = { ...node, featureType: 'nodes' };
+                else if (lane) {
+                    const l0 = (network.links ?? []).find((l: any) => String(l.id) === lane.linkId);
+                    const laneObj = l0?.lanes?.[lane.laneIdx];
+                    if (laneObj) hit = { ...laneObj, featureType: 'lanes', linkRef: lane.linkId };
+                } else if (link) hit = { ...link, featureType: 'links' };
+            }
+            if (hit) {
+                setSelectedProps(hit);
+                setSelectedGuid(hit.__guid ? [hit.__guid] : []);
+            } else {
+                setSelectedProps(null);
+                setSelectedGuid([]);
+            }
             if (selectedFeature) {
                 clearSelectionHighlight(selectedFeature);
             }
@@ -156,32 +184,20 @@ export const defaultEventHandlers ={
 
         const pickedObject = scene.pick(position);
 
-        if (!pickedObject) {
-            clearCesiumHighlight();
-            highlightNetworkPrimitive?.(null);
-            return;
-        }
-
-        if (pickedObject.id instanceof Cesium.Entity) {
+        if (pickedObject?.id instanceof Cesium.Entity) {
             // Entity 호버 (노드, 포트, 커넥션 등)
             highlightNetworkPrimitive?.(null);
             if (highlightedEntity !== pickedObject.id) {
                 highlightEntity(pickedObject.id);
             }
-        } else if (typeof pickedObject.id === 'string') {
-            // GroundPrimitive 호버 (링크, 레인, 경계선) — _divider suffix 정규화
-            const resolvedId = resolveNetworkId(pickedObject.id);
-            if (resolvedId) {
-                clearCesiumHighlight();
-                highlightNetworkPrimitive?.(resolvedId);
-            } else {
-                clearCesiumHighlight();
-                highlightNetworkPrimitive?.(null);
-            }
-        } else {
-            clearCesiumHighlight();
-            highlightNetworkPrimitive?.(null);
+            return;
         }
+
+        // 링크: 분류볼륨 scene.pick 은 "보이는 것과 하이라이트되는 것"이 어긋난다
+        // → 커서 지면점에서 렌더 규칙과 동일한 기하 탐색 (보이는 도로 = 하이라이트되는 도로)
+        clearCesiumHighlight();
+        const hit = pickNetworkAtPosition(scene, position);
+        highlightNetworkPrimitive?.(hit?.guid ?? null);
     },
 
     handleOlHover : (e: MapBrowserEvent<UIEvent>) => {
@@ -217,7 +233,7 @@ export const defaultEventHandlers ={
             },
             {
                 hitTolerance: 10,
-                layerFilter: (layer) => !isWebGLVectorLayer(layer),
+                layerFilter: (layer) => !isWebGLVectorLayer(layer) && !layer.get("excludeFromHit"),
             }
         );
 
@@ -431,20 +447,6 @@ const highlightFeature = (feature: FeatureLike | Feature, styleFunction: StyleFu
     });
 
     highlightedFeature = feature;
-};
-
-/**
- * GroundPrimitive pick id 정규화.
- * - 경계선 id: "{guid}_divider" → 부모 lane guid 반환
- * - networkPrimitivePropertiesMap에 있는 id → 그대로 반환
- * - 없으면 null
- */
-const resolveNetworkId = (id: string): string | null => {
-    if (networkPrimitivePropertiesMap.has(id)) return id;
-    // _divider suffix 제거 후 재시도
-    const withoutSuffix = id.replace(/_divider$/, '');
-    if (networkPrimitivePropertiesMap.has(withoutSuffix)) return withoutSuffix;
-    return null;
 };
 
 const getHighlightedOlStyle = (baseStyle: Style | Style[] | null | undefined, scale: number) => {

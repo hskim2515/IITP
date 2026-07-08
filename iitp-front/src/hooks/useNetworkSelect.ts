@@ -22,6 +22,7 @@ import { useMessageStore } from '@stores/useMessageStore';
 import { assignPropertyToResponseData } from '@utils/guid';
 import { getNetworkLodTierByResolution } from '@utils/lodConstants';
 import { useModeStore } from '@stores/useModeStore';
+import { usePropertyStore } from '@stores/usePropertyStore';
 import { Network, Link, Node, Lane, Coordinates } from '@type/Network';
 import { containsCoordinate } from 'ol/extent';
 import type { Extent } from 'ol/extent';
@@ -118,7 +119,7 @@ function olDist(a: Coordinate, b: Coordinate): number {
     return Math.hypot(a[0]! - b[0]!, a[1]! - b[1]!);
 }
 
-function findNearestNode(nodes: Node[], coord: Coordinate, threshold: number): Node | null {
+export function findNearestNode(nodes: Node[], coord: Coordinate, threshold: number): Node | null {
     let best: Node | null = null, minD = threshold;
     for (const n of nodes) {
         const d = olDist(fromLonLat([n.coordinates.lng, n.coordinates.lat]), coord);
@@ -127,7 +128,7 @@ function findNearestNode(nodes: Node[], coord: Coordinate, threshold: number): N
     return best;
 }
 
-function findNearestLink(links: Link[], coord: Coordinate, threshold: number): Link | null {
+export function findNearestLink(links: Link[], coord: Coordinate, threshold: number): Link | null {
     let best: Link | null = null, minD = threshold;
     for (const link of links) {
         const c = link.coordinates;
@@ -148,7 +149,7 @@ function findNearestLink(links: Link[], coord: Coordinate, threshold: number): L
 // 레인 최근접 탐색: 각 링크의 각 레인 중심선(링크 중심선 + 레인 오프셋)에 점-선분 최근접.
 //   레인 오프셋은 렌더(NetworkFeatureLayer buildLinkFeatures)와 동일 공식:
 //   offset = ((laneCount-1)/2 - i) * (link.width/laneCount), 세그먼트별 법선 적용(곡선 대응).
-function findNearestLane(links: Link[], coord: Coordinate, threshold: number): { linkId: string; laneIdx: number } | null {
+export function findNearestLane(links: Link[], coord: Coordinate, threshold: number): { linkId: string; laneIdx: number } | null {
     let best: { linkId: string; laneIdx: number } | null = null;
     let minD = threshold;
     for (const link of links) {
@@ -627,10 +628,7 @@ export const useNetworkSelect = () => {
     const selectedLaneId  = useNetworkDrawStore(s => s.selectedLaneId);
     const selectedLinkIds = useNetworkDrawStore(s => s.selectedLinkIds);
     const selectedNodeIds = useNetworkDrawStore(s => s.selectedNodeIds);
-    const appMode        = useModeStore(s => s.appMode);
-    // 선택(하이라이트+속성) 활성: 선택 모드(편집) 또는 보기모드(읽기전용). 편집 조작(이동/삭제)은
-    //   isSelectActive 게이트를 그대로 쓴다(보기모드는 선택만).
-    const selectEnabled  = isSelectActive || appMode === 'view';
+    const appMode        = useModeStore(s => s.appMode); // 모드 전환 시 선택 초기화용
 
     // (구) 선택 편집 진입 시 mapViewMode='2D' 강제 로직 제거 — 편집모드는 split(2D 편집 + 3D 로드뷰)
     //   유지. 편집은 2D(OL) 전용이라 뷰 강제 불필요.
@@ -657,7 +655,7 @@ export const useNetworkSelect = () => {
 
     // ── 레이어 생명주기 ──────────────────────────────────────────
     useEffect(() => {
-        if (!olMap || !selectEnabled) return; // 선택모드 또는 보기모드(읽기전용 선택)
+        if (!olMap || !isSelectActive) return; // 편집모드 선택(하이라이트+편집핸들)
 
         const selSrc   = new VectorSource();
         const hoverSrc = new VectorSource();
@@ -704,7 +702,7 @@ export const useNetworkSelect = () => {
             boxSrcRef.current   = null;
             olMap.getTargetElement().style.cursor = '';
         };
-    }, [olMap, selectEnabled]);
+    }, [olMap, isSelectActive]);
 
     // ── 선택 변경 → 하이라이트 + 편집 핸들 생성 ────────────────
     useEffect(() => {
@@ -742,7 +740,7 @@ export const useNetworkSelect = () => {
 
     // ── OL 포인터 이벤트 (선택 + Ctrl+드래그 편집) ──────────────
     useEffect(() => {
-        if (!olMap || !selectEnabled) return; // 선택모드 또는 보기모드(읽기전용 선택)
+        if (!olMap || !isSelectActive) return; // 편집모드 선택 전용(속성조회는 defaultEventHandler 담당)
         const vp = olMap.getViewport();
 
         const blockContextMenu = (e: Event) => { e.preventDefault(); e.stopImmediatePropagation(); };
@@ -1063,10 +1061,25 @@ export const useNetworkSelect = () => {
                 return;
             }
 
-            if (node) { useNetworkDrawStore.getState().setSelectedNode(node.id); return; }
-            if (lane) { useNetworkDrawStore.getState().setSelectedLane(`${lane.linkId}_${lane.laneIdx}`); return; }
-            if (link) { useNetworkDrawStore.getState().setSelectedLink(link.id); return; }
+            // 선택 시 drawStore(하이라이트/편집핸들) + usePropertyStore(속성창 PropertyModal) 동시 세팅.
+            //   MVT 라 링크/레인은 OL 피처 히트(handleOLSelect)로 못 잡혀 여기서 데이터 기반으로 세팅.
+            const setProps = usePropertyStore.getState().setSelectedProps;
+            if (node) {
+                useNetworkDrawStore.getState().setSelectedNode(node.id);
+                setProps({ ...node, featureType: 'nodes' } as any); return;
+            }
+            if (lane) {
+                const link0 = network.links.find(l => String(l.id) === lane.linkId);
+                const laneObj = link0?.lanes?.[lane.laneIdx];
+                useNetworkDrawStore.getState().setSelectedLane(`${lane.linkId}_${lane.laneIdx}`);
+                setProps(laneObj ? { ...laneObj, featureType: 'lanes', linkRef: lane.linkId } as any : null); return;
+            }
+            if (link) {
+                useNetworkDrawStore.getState().setSelectedLink(link.id);
+                setProps({ ...link, featureType: 'links' } as any); return;
+            }
             useNetworkDrawStore.getState().clearSelection();
+            usePropertyStore.getState().setSelectedProps(null);
         };
         vp.addEventListener('click', onClick, true);
 
@@ -1123,7 +1136,7 @@ export const useNetworkSelect = () => {
             vp.removeEventListener('click', onClick, true);
             document.removeEventListener('keydown', onKey);
         };
-    }, [olMap, selectEnabled]);
+    }, [olMap, isSelectActive]);
 
     // ── 멀티셀렉트 하이라이트 렌더링 ────────────────────────────
     useEffect(() => {
