@@ -4,6 +4,7 @@ import HeaderMenu from "@component/header/HeaderMenu";
 import TimelineTrack from "../util/TimelineTrack";
 // import VehicleModelSelector from "@component/setting/VehicleModelSelector";
 import { useModeStore } from "@stores/useModeStore";
+import { useNetworkStore } from "@stores/useNetworkStore";
 import styles from '@css/Header.module.css'
 
 interface Props {
@@ -15,6 +16,7 @@ interface Props {
 const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
     const appMode = useModeStore((s) => s.appMode);
     const toggleAppMode = useModeStore((s) => s.toggleAppMode);
+    const netChanged = useNetworkStore((s: any) => s.isChanged);
     return (
         <header className={styles['header']}>
             {dashboardMode ? (
@@ -44,6 +46,19 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
                     >
                         {appMode === 'edit' ? '● 편집' : '보기'}
                     </button>
+                )}
+                {!dashboardMode && netChanged && (
+                    <span
+                        title="저장되지 않은 네트워크 편집이 있습니다. 데이터 입출력 → 저장"
+                        style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 5,
+                            padding: '4px 10px', marginRight: 8, borderRadius: 4,
+                            background: 'rgba(255,140,26,0.15)', border: '1px solid #ff8c1a',
+                            color: '#ff8c1a', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap',
+                        }}
+                    >
+                        ● 미저장 편집
+                    </span>
                 )}
                 <button
                     className={isDashboardOpen ? styles['dashboardBtnActive'] : styles['dashboardBtn']}
