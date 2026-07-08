@@ -628,6 +628,7 @@ export const useNetworkDraw = () => {
     const startWgs84Ref = useRef<Coordinates | null>(null);
     const snapNodeRef = useRef<Node | null>(null);
     const shiftRef = useRef(false);  // Shift 키 각도 스냅 활성 여부
+    const altRef = useRef(false);    // Alt 키: 스냅 임시 해제(노드/링크/정렬 스냅 무시)
 
     // OL 프리뷰 refs
     const olSrcRef = useRef<VectorSource | null>(null);
@@ -901,18 +902,19 @@ export const useNetworkDraw = () => {
             const links = data?.links ?? [];
             const lonLat = toLonLat(cursor);
 
-            // 스냅 우선순위: 노드 > 링크 > 자유점
-            const snapNode = findSnapNode(nodes, lonLat);
+            // 스냅 우선순위: 노드 > 링크 > 자유점. Alt 누르면 스냅 전부 해제(자유점).
+            const snapOff = altRef.current;
+            const snapNode = snapOff ? null : findSnapNode(nodes, lonLat);
             snapNodeRef.current = snapNode;
 
-            const snapLink = findSnapLink(links, cursor, !!snapNode);
+            const snapLink = snapOff ? null : findSnapLink(links, cursor, !!snapNode);
             linkSnapRef.current = snapLink;
 
             let effCoord: Coordinate;
             let snapIndicatorStyles: Style | Style[];
 
-            // 정렬 스냅 탐색 (노드·링크 스냅 없을 때만)
-            const alignSnap = (!snapNode && !snapLink)
+            // 정렬 스냅 탐색 (노드·링크 스냅 없을 때만; Alt 시 해제)
+            const alignSnap = (!snapOff && !snapNode && !snapLink)
                 ? findAlignmentSnap(nodes, links, cursor, lonLat)
                 : null;
 
@@ -1551,11 +1553,20 @@ export const useNetworkDraw = () => {
                 shiftRef.current = true;
                 if (lastOlCursorRef.current) renderOlPreview(lastOlCursorRef.current);
             }
+            if (e.key === 'Alt') {
+                e.preventDefault(); // Alt 기본동작(메뉴 포커스) 방지
+                altRef.current = true;
+                if (lastOlCursorRef.current) renderOlPreview(lastOlCursorRef.current);
+            }
             if (e.key === 'Escape') useNetworkDrawStore.getState().setActive(false);
         };
         const onKeyUp = (e: KeyboardEvent) => {
             if (e.key === 'Shift') {
                 shiftRef.current = false;
+                if (lastOlCursorRef.current) renderOlPreview(lastOlCursorRef.current);
+            }
+            if (e.key === 'Alt') {
+                altRef.current = false;
                 if (lastOlCursorRef.current) renderOlPreview(lastOlCursorRef.current);
             }
         };
@@ -1577,6 +1588,7 @@ export const useNetworkDraw = () => {
             if (olMoveRafId !== null) cancelAnimationFrame(olMoveRafId);
             clearInterval(dashAnimInterval);
             shiftRef.current = false;
+            altRef.current = false;
             vp.removeEventListener('pointermove', onPointerMove, true);
             vp.removeEventListener('pointerdown', blockPointerDown, true);
             vp.removeEventListener('pointerup',   blockPointerDown, true);

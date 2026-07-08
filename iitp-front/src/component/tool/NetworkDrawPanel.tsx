@@ -156,7 +156,7 @@ const NetworkDrawPanel: React.FC = () => {
                     <HintBox color="blue">
                         클릭 → 시작점<br />
                         이동 → 미리보기 · 클릭 → 구간 완성<br />
-                        <span style={{ color: '#ffb347' }}>Shift → 각도 잠금</span><br />
+                        <span style={{ color: '#ffb347' }}>Shift → 각도 잠금</span> · <span style={{ color: '#ffb347' }}>Alt → 스냅 해제</span><br />
                         우클릭/ESC → 취소
                     </HintBox>
                 )}
