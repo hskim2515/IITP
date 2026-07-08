@@ -19,6 +19,8 @@ interface NetworkEditState {
     deletedLinkIds: Set<string>;
     /** 편집 세션 결과를 통째로 설정(diff 계산 결과 반영). */
     setEdits: (edited: Set<string>, deleted: Set<string>) => void;
+    /** 삭제된 링크 id 누적(삭제 조작 지점에서 호출 — MVT 마스킹 대상). */
+    addDeleted: (ids: (string | number)[]) => void;
     /** 저장/리로드 시 초기화. */
     clear: () => void;
 }
@@ -28,6 +30,14 @@ export const useNetworkEditStore = create<NetworkEditState>()(
         editedLinkIds: new Set<string>(),
         deletedLinkIds: new Set<string>(),
         setEdits: (edited, deleted) => set({ editedLinkIds: edited, deletedLinkIds: deleted }),
+        addDeleted: (ids) => set((s) => {
+            const next = new Set(s.deletedLinkIds);
+            for (const id of ids) next.add(String(id));
+            // 삭제된 링크는 편집(추가/수정) 대상에서 제외
+            const edited = new Set(s.editedLinkIds);
+            for (const id of ids) edited.delete(String(id));
+            return { deletedLinkIds: next, editedLinkIds: edited };
+        }),
         clear: () => set({ editedLinkIds: new Set<string>(), deletedLinkIds: new Set<string>() }),
     })),
 );

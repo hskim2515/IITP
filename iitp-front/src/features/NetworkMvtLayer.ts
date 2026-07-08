@@ -5,6 +5,7 @@ import { Fill, Stroke, Style } from "ol/style";
 import type { FeatureLike } from "ol/Feature";
 import { createXYZ } from "ol/tilegrid";
 import { NETWORK_TILING, getNetworkLodTierByResolution } from "@utils/lodConstants";
+import { useNetworkEditStore } from "@stores/useNetworkEditStore";
 
 /**
  * 네트워크 MVT(PBF) 레이어 (단계 3) — overview/mid 2D 도로망을 OL VectorTile 로 렌더.
@@ -71,6 +72,14 @@ export default class NetworkMvtLayer extends VectorTileLayer {
         // MVT RenderFeature 는 getType()/getId() 가 있으나 FeatureLike 타입엔 없어 any 캐스팅.
         const f = feature as any;
         const tier = getNetworkLodTierByResolution(resolution);
+        // 편집 삭제 마스킹: 삭제된 링크(저장 전)는 서버 MVT 에 아직 남아있으므로 클라이언트에서 숨김.
+        //   feature id: 중심선/도로=linkId, 차선폴리곤=linkId*100+laneIdx → /100 으로 링크 id 복원.
+        const deleted = useNetworkEditStore.getState().deletedLinkIds;
+        if (deleted.size > 0) {
+            const rawId = Number(f.getId?.() ?? -1);
+            const linkId = (f.getType?.() === "Polygon" && tier === "detail") ? Math.floor(rawId / 100) : rawId;
+            if (deleted.has(String(linkId))) return undefined; // 삭제된 링크 → 렌더 생략
+        }
         if (f.getType?.() === "Polygon") {
             if (tier === "detail") {
                 // 차선 id = link*100 + laneIdx → laneIdx 짝/홀로 음영 번갈아 (3D LANE_COLORS 일치)

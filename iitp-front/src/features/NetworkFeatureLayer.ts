@@ -181,12 +181,18 @@ export default class NetworkFeatureLayer extends VectorLayer {
             });
             this.editOverlayLayer.setVisible(this.getVisible());
             map.addLayer(this.editOverlayLayer);
-            // 편집 델타 변경 시 오버레이 재렌더
-            this.unsubscribeEdit = useNetworkEditStore.subscribe(
+            // 편집 델타 변경 시 오버레이 재렌더(edited) + MVT 재렌더(deleted 마스킹 반영).
+            const unsubEdited = useNetworkEditStore.subscribe(
                 (s) => s.editedLinkIds,
                 () => this.renderEditOverlay(),
                 { equalityFn: (a, b) => a === b },
             );
+            const unsubDeleted = useNetworkEditStore.subscribe(
+                (s) => s.deletedLinkIds,
+                () => { try { this.mvtLayer?.changed(); } catch (_) {} try { this.getMapInternal()?.render(); } catch (_) {} },
+                { equalityFn: (a, b) => a === b },
+            );
+            this.unsubscribeEdit = () => { unsubEdited(); unsubDeleted(); };
             this.renderEditOverlay();
         }
 

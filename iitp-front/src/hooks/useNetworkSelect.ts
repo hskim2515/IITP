@@ -16,6 +16,7 @@ import { useMapStore } from '@stores/useMapStore';
 import { useCesiumStore } from '@stores/useCesiumStore';
 import { useNetworkDrawStore } from '@stores/useNetworkDrawStore';
 import { useNetworkStore } from '@stores/useNetworkStore';
+import { useNetworkEditStore } from '@stores/useNetworkEditStore';
 import { useNetworkUndoStore } from '@stores/useNetworkUndoStore';
 import { useMessageStore } from '@stores/useMessageStore';
 import { assignPropertyToResponseData } from '@utils/guid';
@@ -984,22 +985,33 @@ export const useNetworkSelect = () => {
             } else if (e.key === 'Delete' || e.key === 'Backspace') {
                 const network = useNetworkStore.getState().currentJsonData;
                 if (!network) return;
+                const beforeLinkIds = new Set(network.links.map(l => String(l.id)));
+                // 삭제 후 사라진 링크 id 를 MVT 마스킹 대상으로 마킹(노드 삭제 시 연결 링크 포함).
+                const markDeleted = () => {
+                    const after = new Set((useNetworkStore.getState().currentJsonData?.links ?? []).map(l => String(l.id)));
+                    const removed = [...beforeLinkIds].filter(id => !after.has(id));
+                    if (removed.length > 0) useNetworkEditStore.getState().addDeleted(removed);
+                };
                 // 멀티셀렉트 일괄 삭제
                 if (selectedLinkIds.length > 0) {
                     applyNetworkUpdate(batchDeleteLinksFromNetwork(network, selectedLinkIds));
+                    markDeleted();
                     useNetworkDrawStore.getState().clearSelection();
                     useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkIds.length}개 삭제됨` });
                 } else if (selectedNodeIds.length > 0) {
                     applyNetworkUpdate(batchDeleteNodesFromNetwork(network, selectedNodeIds));
+                    markDeleted();
                     useNetworkDrawStore.getState().clearSelection();
                     useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${selectedNodeIds.length}개 삭제됨` });
                 } else if (sl !== null) {
                     applyNetworkUpdate(deleteLinkFromNetwork(network, sl));
+                    markDeleted();
                     useNetworkDrawStore.getState().clearSelection();
                     useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${sl} 삭제됨` });
                 } else if (sn !== null) {
                     const node = network.nodes.find(n => String(n.id) === String(sn));
                     applyNetworkUpdate(deleteNodeFromNetwork(network, sn));
+                    markDeleted();
                     useNetworkDrawStore.getState().clearSelection();
                     useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${sn} 및 연결 링크 ${node?.ports.length ?? 0}개 삭제됨` });
                 }
