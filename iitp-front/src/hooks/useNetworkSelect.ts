@@ -23,6 +23,7 @@ import { assignPropertyToResponseData } from '@utils/guid';
 import { getNetworkLodTierByResolution } from '@utils/lodConstants';
 import { useModeStore } from '@stores/useModeStore';
 import { usePropertyStore } from '@stores/usePropertyStore';
+import { nextDrillDepth, resetDrill, cellIndexAtFrac } from '@utils/networkDrilldown';
 import { Network, Link, Node, Lane, Coordinates } from '@type/Network';
 import { containsCoordinate } from 'ol/extent';
 import type { Extent } from 'ol/extent';
@@ -149,8 +150,9 @@ export function findNearestLink(links: Link[], coord: Coordinate, threshold: num
 // 레인 최근접 탐색: 각 링크의 각 레인 중심선(링크 중심선 + 레인 오프셋)에 점-선분 최근접.
 //   레인 오프셋은 렌더(NetworkFeatureLayer buildLinkFeatures)와 동일 공식:
 //   offset = ((laneCount-1)/2 - i) * (link.width/laneCount), 세그먼트별 법선 적용(곡선 대응).
-export function findNearestLane(links: Link[], coord: Coordinate, threshold: number): { linkId: string; laneIdx: number } | null {
-    let best: { linkId: string; laneIdx: number } | null = null;
+// frac: 링크 전체 길이 대비 종방향 위치(0~1) — 셀/세그먼트 인덱스 계산용.
+export function findNearestLane(links: Link[], coord: Coordinate, threshold: number): { linkId: string; laneIdx: number; frac: number } | null {
+    let best: { linkId: string; laneIdx: number; frac: number } | null = null;
     let minD = threshold;
     for (const link of links) {
         const lanes = link.lanes ?? [];
@@ -158,8 +160,14 @@ export function findNearestLane(links: Link[], coord: Coordinate, threshold: num
         if (laneCount === 0) continue;
         const laneW = (link.width ?? 7) / laneCount;
         const c = link.coordinates;
-        // 링크 중심선을 3857 점 배열로 (세그먼트별 법선 계산용)
+        // 링크 중심선을 3857 점 배열 + 세그먼트 누적거리(종방향 frac 계산용)
         const pts = c.map(p => fromLonLat([p.lng, p.lat]));
+        const segLen: number[] = [], cum: number[] = [0];
+        for (let si = 0; si < pts.length - 1; si++) {
+            const l = Math.hypot(pts[si + 1]![0]! - pts[si]![0]!, pts[si + 1]![1]! - pts[si]![1]!);
+            segLen.push(l); cum.push(cum[si]! + l);
+        }
+        const total = cum[cum.length - 1]! || 1;
         for (let li = 0; li < laneCount; li++) {
             const off = ((laneCount - 1) / 2 - li) * laneW; // 레인 중심 오프셋(m≈3857 단위, 저위도 근사)
             for (let si = 0; si < pts.length - 1; si++) {
@@ -175,7 +183,11 @@ export function findNearestLane(links: Link[], coord: Coordinate, threshold: num
                 if (len2 < 1e-10) continue;
                 const t = Math.max(0, Math.min(1, ((coord[0]! - oa[0]) * odx + (coord[1]! - oa[1]) * ody) / len2));
                 const d = olDist([oa[0] + t * odx, oa[1] + t * ody], coord);
-                if (d < minD) { minD = d; best = { linkId: String(link.id), laneIdx: li }; }
+                if (d < minD) {
+                    minD = d;
+                    const frac = (cum[si]! + t * segLen[si]!) / total; // 종방향 0~1
+                    best = { linkId: String(link.id), laneIdx: li, frac };
+                }
             }
         }
     }
@@ -733,9 +745,10 @@ export const useNetworkSelect = () => {
         }
     }, [selectedLinkId, selectedNodeId, selectedLaneId, isSelectActive]);
 
-    // 모드 전환(보기↔편집) 시 선택 초기화 (확정 요구사항)
+    // 모드 전환(보기↔편집) 시 선택 초기화 (확정 요구사항) + 드릴다운 깊이 리셋
     useEffect(() => {
         useNetworkDrawStore.getState().clearSelection();
+        resetDrill();
     }, [appMode]);
 
     // ── OL 포인터 이벤트 (선택 + Ctrl+드래그 편집) ──────────────
@@ -1065,19 +1078,36 @@ export const useNetworkSelect = () => {
             //   MVT 라 링크/레인은 OL 피처 히트(handleOLSelect)로 못 잡혀 여기서 데이터 기반으로 세팅.
             const setProps = usePropertyStore.getState().setSelectedProps;
             if (node) {
+                resetDrill();
                 useNetworkDrawStore.getState().setSelectedNode(node.id);
                 setProps({ ...node, featureType: 'nodes' } as any); return;
             }
+            // 도로 위(레인 히트) → 드릴다운: 같은 링크 반복 클릭 시 링크→레인→셀 깊이 증가.
             if (lane) {
                 const link0 = network.links.find(l => String(l.id) === lane.linkId);
                 const laneObj = link0?.lanes?.[lane.laneIdx];
-                useNetworkDrawStore.getState().setSelectedLane(`${lane.linkId}_${lane.laneIdx}`);
-                setProps(laneObj ? { ...laneObj, featureType: 'lanes', linkRef: lane.linkId, laneRef: lane.laneIdx } as any : null); return;
+                const depth = nextDrillDepth(lane.linkId);
+                if (depth === 'link' && link0) {
+                    useNetworkDrawStore.getState().setSelectedLink(link0.id);
+                    setProps({ ...link0, featureType: 'links' } as any); return;
+                }
+                if (depth === 'lane' && laneObj) {
+                    useNetworkDrawStore.getState().setSelectedLane(`${lane.linkId}_${lane.laneIdx}`);
+                    setProps({ ...laneObj, featureType: 'lanes', linkRef: lane.linkId, laneRef: lane.laneIdx } as any); return;
+                }
+                if (depth === 'cell' && laneObj && link0) {
+                    const ci = cellIndexAtFrac(laneObj, link0, lane.frac);
+                    const cellObj = laneObj.cells?.[ci];
+                    setProps({ ...(cellObj ?? {}), featureType: 'cells', linkRef: lane.linkId, laneRef: lane.laneIdx, cellIdx: ci, __guid: cellObj?.__guid ?? `${lane.linkId}_lane${lane.laneIdx}_cell${ci}` } as any);
+                    useNetworkDrawStore.getState().setSelectedLane(`${lane.linkId}_${lane.laneIdx}`); return;
+                }
             }
             if (link) {
+                resetDrill();
                 useNetworkDrawStore.getState().setSelectedLink(link.id);
                 setProps({ ...link, featureType: 'links' } as any); return;
             }
+            resetDrill();
             useNetworkDrawStore.getState().clearSelection();
             usePropertyStore.getState().setSelectedProps(null);
         };

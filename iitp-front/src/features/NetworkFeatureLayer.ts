@@ -401,6 +401,9 @@ export default class NetworkFeatureLayer extends VectorLayer {
     /** 선택 하이라이트 스타일 (노란 강조). 링크=선, 레인=폴리곤. */
     private selHighlightStyle(f: Feature): Style[] {
         const ft = f.get("featureType");
+        if (ft === "cells") {
+            return [new Style({ fill: new Fill({ color: "rgba(255,120,0,0.45)" }), stroke: new Stroke({ color: "rgba(255,120,0,1)", width: 2 }), zIndex: 127 })];
+        }
         if (ft === "lanes") {
             return [new Style({ fill: new Fill({ color: "rgba(255,200,0,0.35)" }), stroke: new Stroke({ color: "rgba(255,200,0,0.95)", width: 2 }), zIndex: 126 })];
         }
@@ -420,16 +423,25 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 const f = new Feature(new LineString(pts));
                 f.set("featureType", "links");
                 this.selHighlightSource.addFeature(f);
-            } else if (ft === "lanes") {
-                // 레인: linkRef 로 currentJsonData 에서 링크 찾아 레인 폴리곤 생성(오프셋은 렌더와 동일).
+            } else if (ft === "lanes" || ft === "cells") {
+                // 레인/셀: linkRef 로 링크 찾아 레인 폴리곤(오프셋은 렌더와 동일). 셀이면 종방향 구간 클립.
                 const linkId = String(props.linkRef ?? "");
                 const link: any = this.cachedLinkMap.get(linkId)
                     ?? (layerNameToStoreMap[this.LAYER_NAME]?.getState() as any)?.currentJsonData?.links?.find((l: any) => String(l.id) === linkId);
                 const laneIdx = Number(props.laneRef ?? props.id ?? 0);
-                const ring = link ? this.buildLaneRing(link, laneIdx) : null;
+                let ring: number[][] | null = null;
+                if (link && ft === "cells") {
+                    // 셀: cellIdx / cellCount 로 종방향 [start,end] 비율 → 그 구간만.
+                    const lane = link.lanes?.[laneIdx];
+                    const n = Math.max(1, lane?.cells?.length || lane?.numCell || Math.ceil((link.length ?? 0) / 100) || 1);
+                    const ci = Number(props.cellIdx ?? 0);
+                    ring = this.buildLaneRing(link, laneIdx, ci / n, (ci + 1) / n);
+                } else if (link) {
+                    ring = this.buildLaneRing(link, laneIdx);
+                }
                 if (ring) {
                     const f = new Feature(new Polygon([ring]));
-                    f.set("featureType", "lanes");
+                    f.set("featureType", ft === "cells" ? "cells" : "lanes");
                     this.selHighlightSource.addFeature(f);
                 }
             }
@@ -437,24 +449,40 @@ export default class NetworkFeatureLayer extends VectorLayer {
         try { this.getMapInternal()?.render(); } catch (_) {}
     }
 
-    /** 레인 폴리곤 링(3857) — findNearestLane/렌더와 동일 오프셋 공식. */
-    private buildLaneRing(link: any, laneIdx: number): number[][] | null {
+    /** 레인 폴리곤 링(3857) — findNearestLane/렌더와 동일 오프셋 공식.
+     *  fracStart/fracEnd(0~1) 지정 시 종방향 그 구간만(셀 하이라이트용). */
+    private buildLaneRing(link: any, laneIdx: number, fracStart = 0, fracEnd = 1): number[][] | null {
         const lanes = link?.lanes ?? [];
         const laneCount = lanes.length;
         if (laneCount === 0 || laneIdx < 0 || laneIdx >= laneCount) return null;
         const laneW = (link.width ?? 7) / laneCount;
         const off = ((laneCount - 1) / 2 - laneIdx) * laneW;
         const half = laneW / 2;
-        const pts = (link.coordinates ?? []).map((c: any) => fromLonLat([c.lng, c.lat]));
+        let pts: number[][] = (link.coordinates ?? []).map((c: any) => fromLonLat([c.lng, c.lat]));
         if (pts.length < 2) return null;
+        // 종방향 구간 클립: 누적거리 비율 [fracStart, fracEnd] 에 해당하는 중심선 부분경로 추출.
+        if (fracStart > 0 || fracEnd < 1) {
+            const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1]! + Math.hypot(pts[i]![0]! - pts[i - 1]![0]!, pts[i]![1]! - pts[i - 1]![1]!));
+            const total = cum[cum.length - 1]! || 1;
+            const dS = fracStart * total, dE = fracEnd * total;
+            const at = (d: number): number[] => {
+                for (let i = 1; i < cum.length; i++) if (d <= cum[i]!) { const t = (d - cum[i - 1]!) / ((cum[i]! - cum[i - 1]!) || 1); return [pts[i - 1]![0]! + (pts[i]![0]! - pts[i - 1]![0]!) * t, pts[i - 1]![1]! + (pts[i]![1]! - pts[i - 1]![1]!) * t]; }
+                return pts[pts.length - 1]!;
+            };
+            const sub: number[][] = [at(dS)];
+            for (let i = 0; i < pts.length; i++) if (cum[i]! > dS && cum[i]! < dE) sub.push(pts[i]!);
+            sub.push(at(dE));
+            pts = sub;
+            if (pts.length < 2) return null;
+        }
         const left: number[][] = [], right: number[][] = [];
         for (let i = 0; i < pts.length; i++) {
-            const prev = pts[Math.max(0, i - 1)];
-            const next = pts[Math.min(pts.length - 1, i + 1)];
-            const sdx = next[0] - prev[0], sdy = next[1] - prev[1];
+            const prev = pts[Math.max(0, i - 1)]!;
+            const next = pts[Math.min(pts.length - 1, i + 1)]!;
+            const sdx = next[0]! - prev[0]!, sdy = next[1]! - prev[1]!;
             const sl = Math.hypot(sdx, sdy) || 1;
             const nx = -sdy / sl, ny = sdx / sl;
-            const cx = pts[i][0] + nx * off, cy = pts[i][1] + ny * off;
+            const cx = pts[i]![0]! + nx * off, cy = pts[i]![1]! + ny * off;
             left.push([cx + nx * half, cy + ny * half]);
             right.push([cx - nx * half, cy - ny * half]);
         }
