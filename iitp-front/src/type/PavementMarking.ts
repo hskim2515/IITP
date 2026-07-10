@@ -24,6 +24,7 @@ export interface PavementMarkingData {
     angle: number | null;
     linkRef: number | null;
     laneRef: number | null;
+    cellId: number | null;
     offset: number | null;
     markingType: string | null;
     coordinates: [{
