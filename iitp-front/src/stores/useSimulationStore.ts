@@ -24,6 +24,7 @@ interface Actions {
     // ⏱️ Clock 정보 설정
     setClock: (start: JulianDate, end: JulianDate, current: JulianDate) => void;
     setCurrentTime: (current: JulianDate) => void;
+    reset: () => void;
 }
 
 const initialState: State = {
@@ -69,6 +70,14 @@ export const useSimulationStore = createSelectors(
                     setCurrentTime: (current) =>
                         set((state) => {
                             state.currentTime = current;
+                        }),
+                    reset: () =>
+                        set((state) => {
+                            state.isRunning = false;
+                            state.isStop = false;
+                            state.startTime = undefined;
+                            state.endTime = undefined;
+                            state.currentTime = undefined;
                         }),
                 }))
             )

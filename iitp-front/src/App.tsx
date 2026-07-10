@@ -18,9 +18,6 @@ import PropertyForm from "@component/popup/PropertyPopup";
 import { propertyFormSchema } from "@schema/propertyFormSchema";
 import Maps from "@component/map/Maps";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
-import KtdbImportModal from "@component/modal/KtdbImportModal";
-import OsmImportModal from "@component/modal/OsmImportModal";
-import NetworkImportModal from "@component/modal/NetworkImportModal";
 import OdMatrixModal from "@component/modal/OdMatrixModal";
 import Taskbar from "@component/panel/Taskbar";
 import DashboardLeft from "@component/panel/DashboardLeft";
@@ -35,6 +32,7 @@ import { useNetworkStore } from "@stores/useNetworkStore";
 import { assignPropertyToResponseData } from "@utils/guid";
 import { generateDummySignals } from "@utils/signal";
 import { generateDummyPavementMarkings } from "@utils/pavementMarking";
+import { getNetworkForDummyGeneration } from "@utils/generationNetwork";
 import { usePavementMarkingStore } from "@stores/usePavementMarkingStore";
 import { autoSaveChangedLayers } from "@utils/autoSave";
 import { useBackgroundTaskStore } from "@stores/useBackgroundTaskStore";
@@ -95,7 +93,7 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const handleDismiss = () => setStep('idle');
 
     const handleGeneratePavementMarking = async () => {
-        const network = useNetworkStore.getState().currentJsonData as any;
+        const network = await getNetworkForDummyGeneration();
         if (!network?.nodes?.length) {
             useLogStore.getState().addLog('warn', '네트워크 데이터가 없어 노면 표시 더미를 생성할 수 없습니다.');
             return;
@@ -136,7 +134,7 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
         const poll = (retryCount: number) => {
             fetch(
                 `${import.meta.env.VITE_API_URL}/vehicle/vehicle-route/${scenarioKey}`,
-                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ numVehicle: 0, regenerate: retryCount === 0 }) }
+                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ numVehicle: 0, regenerate: retryCount === 0, generateDummy: true }) }
             )
             .then((res) => {
                 if (res.status === 202) {
@@ -187,7 +185,7 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     };
 
     const handleGenerateSignal = async () => {
-        const network = useNetworkStore.getState().currentJsonData as any;
+        const network = await getNetworkForDummyGeneration();
         if (!network?.nodes?.length) {
             useLogStore.getState().addLog('warn', '네트워크 데이터가 없어 신호 더미를 생성할 수 없습니다.');
             return;
@@ -455,23 +453,13 @@ function App() {
 
                         {!showDashboard && <Taskbar/>}
 
-                        {!showDashboard && activeSession && activeSession.menuCode === 'KTDB_IMPORT' && (
-                            <KtdbImportModal/>
-                        )}
-
-                        {!showDashboard && activeSession && activeSession.menuCode === 'OSM_IMPORT' && (
-                            <OsmImportModal/>
-                        )}
-
-                        {!showDashboard && activeSession && activeSession.menuCode === 'NETWORK_IMPORT' && (
-                            <NetworkImportModal/>
-                        )}
-
+                        {/* KTDB/OSM/NETWORK 임포트는 FileImportModal(헤더 파일>가져오기)로 통합 —
+                            구 메뉴 모달(KtdbImportModal 등)은 헤더가 FILE 메뉴 트리를 렌더하지 않아 도달 불가로 제거 */}
                         {!showDashboard && activeSession && activeSession.menuCode === 'OD_MATRIX' && (
                             <OdMatrixModal/>
                         )}
 
-                        {!showDashboard && activeSession && activeSession.menuCode !== 'KTDB_IMPORT' && activeSession.menuCode !== 'OSM_IMPORT' && activeSession.menuCode !== 'NETWORK_IMPORT' && (
+                        {!showDashboard && activeSession && (
                             isDescendantOf(menu, 'SCHEMA_SETTING', activeSession.menuCode) ? (
                                 <SchemaSetting/>
                             ) : activeSession.menuCode === 'VEHICLE_TYPE' ? (

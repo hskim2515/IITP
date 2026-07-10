@@ -3,7 +3,6 @@ import { useSimulationStore } from "@stores/useSimulationStore";
 import { FaPlay, FaPause, FaStop, FaFastForward, FaFastBackward } from "react-icons/fa";
 import { useCesiumStore } from "@stores/useCesiumStore";
 import { useDebouncedEffect } from "../../hooks/useDebouncedEffect";
-import TimelineTrack from "../util/TimelineTrack";
 import styles from "@css/Header.module.css";
 
 const SimulationControls: React.FC = () => {
@@ -25,10 +24,6 @@ const SimulationControls: React.FC = () => {
 
     return (
         <div className={styles.simBar}>
-            <TimelineTrack />
-
-            <div className={styles.simDivider} />
-
             <button className={styles.simBtn} onClick={decreaseSpeed} title={`감속 (${speedState}x)`}>
                 <FaFastBackward size={10} />
             </button>

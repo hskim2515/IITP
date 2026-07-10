@@ -111,7 +111,8 @@ const VehicleOrientationPanel: React.FC<{ onClose?: () => void; inline?: boolean
                 <HprRow label="Roll"    value={current.roll}    onChange={v => update('roll', v)} />
 
                 <div className={styles.hint}>
-                    모델이 뒤집혀 있으면 Roll ±180°, 옆으로 누워 있으면 Pitch ±90° 조정
+                    모델이 뒤집혀 있으면 Roll ±180°, 옆으로 누워 있으면 Pitch ±90°,
+                    진행방향과 정면이 다르면 Heading ±90°/180° 조정
                 </div>
 
                 <button className={styles.resetBtn} onClick={reset}>

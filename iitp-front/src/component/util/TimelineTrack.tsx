@@ -17,10 +17,11 @@ export default function TimelineTrack() {
 
 
     const minFrame = 0;
-    const maxFrame = endTime?.secondsOfDay - startTime?.secondsOfDay;
-    const blockWidth = 600/maxFrame; // 1프레임 = 2px
+    const totalFrames = (endTime && startTime) ? JulianDate.secondsDifference(endTime, startTime) : 0;
+    const maxFrame = totalFrames > 0 ? totalFrames : 1;
+    const blockWidth = 600 / maxFrame;
 
-    const [active, setActive] = useState({ start: 0, end: endTime?.secondsOfDay - startTime?.secondsOfDay });
+    const [active, setActive] = useState({ start: 0, end: maxFrame });
 
     const [jump, setJump] = useState<{ start: number; end: number } | null>(null);
 
@@ -31,7 +32,18 @@ export default function TimelineTrack() {
     const dragOffset = useRef<number>(0); // 마우스와 블록 사이 오프셋
     const trackRef = useRef<HTMLDivElement>(null);
 
-    const [range, setRangeValue] = useState((active.end - active.start )/50); // 0~100%
+    // 눈금 간격: maxFrame을 ~6개 눈금으로 나누되 50의 배수로 올림
+    const tickStep = Math.max(50, Math.ceil(maxFrame / 6 / 50) * 50);
+    const tickCount = Math.max(1, Math.floor(maxFrame / tickStep));
+    const tickWidth = 600 / tickCount; // px
+
+    // startTime/endTime이 늦게 로드되어 첫 렌더 시 maxFrame=1로 고정된 경우,
+    // 실제 데이터 로드 후 active를 전체 범위로 재설정
+    useEffect(() => {
+        if (totalFrames > 0) {
+            setActive({ start: minFrame, end: maxFrame });
+        }
+    }, [totalFrames]);
 
     useEffect(() => {
         const onMouseMove = (e: MouseEvent) => {
@@ -201,12 +213,14 @@ export default function TimelineTrack() {
         window.removeEventListener("mouseup", onMouseUp);
     };
 
+    if (!startTime || !endTime) return null;
+
     return (
         <div className="timeline-container">
 
             <div className="ruler">
-                {[...Array(range)].map((_, i) => (
-                    <div key={i} className="tick">{(i +1) * 50}</div>
+                {[...Array(tickCount)].map((_, i) => (
+                    <div key={i} className="tick" style={{ width: `${tickWidth}px` }}>{(i + 1) * tickStep}</div>
                 ))}
                 <div className="slider-icon"
                      style={{

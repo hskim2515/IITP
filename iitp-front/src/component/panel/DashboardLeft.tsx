@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { ConsolePanel } from '@component/console/ConsolePanel';
 import { useSimulationStore } from '@stores/useSimulationStore';
 import { useVehicleStore } from '@stores/useVehicleStore';
 import { useNetworkStore, useNetworkHistoryStore } from '@stores/useNetworkStore';
@@ -457,6 +458,9 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
                     )}
                 </div>
             </div>
+
+            {/* ── 로그 ── */}
+            <ConsolePanel embedded />
         </div>
     );
 };

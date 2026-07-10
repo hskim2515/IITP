@@ -280,7 +280,10 @@ const useSimulation = () => {
     }, [ heatmapSetting.colors, heatmapSetting.blur, heatmapSetting.exaggeration ]);
 
     useEffect(() => {
-        if (!selectedScenario) return;
+        // 버전 선택 전 로드 금지 — scenario.key로 폴백하면 이전(원본) 시뮬 데이터를
+        // 로드해서 현재 버전에 데이터가 없어도 타임트랙이 떠버림. deps에 버전 키가
+        // 있어야 버전 선택 시점에 올바른 키로 (재)실행된다.
+        if (!selectedScenario || !selectedScenarioVersion) return;
 
         const scenarioKey = getActiveVersionId() ?? selectedScenario.key;
         const baseUrl = import.meta.env.VITE_API_URL;
@@ -466,13 +469,11 @@ const useSimulation = () => {
                 // 시간창이 빨리 소진되어도 수 초마다 반복되면 시뮬/타일 렌더가 전부 굶는다.
                 if (!force && performance.now() - lastFetchWall < 8000) return;
 
-                // 시간창을 재생 배속에 비례해 확장 — 배속 30x면 시뮬시간 창이 벽시계로 순식간에
-                // 소진되므로(120s÷30 = 4s) 창을 곱해 재로드 주기를 벽시계 기준으로 되돌린다.
-                const mult = Math.max(1, (useVehicleStore.getState() as any).speedFactor || 1);
-                const windowSec = Math.min(
-                    VEHICLE_STREAMING.TIME_WINDOW_SEC * mult,
-                    Math.max(600, simMax - simMin), // 최소 600s, simRange 전체 초과 불필요
-                );
+                // 시간창을 재생 배속에 비례해 확장하되 **상한 300s** — 배속 30x에 무제한 확장하면
+                // 창=시뮬 전체(3,600s)가 되어 차량 수천 대 전체 궤적 로드 → czml 엔티티 폭증으로
+                // FPS 한 자리 추락 (실사용 회귀). 창이 크면 선별 차량 수·heap 이 함께 커진다.
+                const mult = Math.min(2.5, Math.max(1, ((useVehicleStore.getState() as any).speedFactor || 1) / 12));
+                const windowSec = Math.min(300, VEHICLE_STREAMING.TIME_WINDOW_SEC * mult);
                 const from = Math.max(0, Math.floor(cur));
                 const to = from + windowSec;
                 fetching = true;
@@ -614,7 +615,7 @@ const useSimulation = () => {
             .catch(() => { /* exists 확인 실패 시 로드 안 함 (더미 생성 방지 우선) */ });
 
         return () => { disposed = true; streamingCleanup?.(); };
-    }, [ numVehicle, speedFactor, selectedScenario?.key, refetchTrigger ]);
+    }, [ numVehicle, speedFactor, selectedScenario?.key, selectedScenarioVersion?.key, refetchTrigger ]);
 
     // Cesium과 OpenLayers 시뮬레이션 통합: 후처리 및 Cesium 관련 설정
     useEffect(() => {

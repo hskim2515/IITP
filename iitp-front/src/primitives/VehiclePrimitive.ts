@@ -72,6 +72,11 @@ export default class VehiclePrimitive {
     private correctionQ = new Cesium.Quaternion();
     private instanceScales: Float32Array;
 
+    // ─── LOD 계산용 (매 프레임 update에서 갱신) ──────────────────────────
+    // projScale = viewportHeight / (2 * tan(halfFovY))
+    // apparentPixels = targetSizeM * instanceScale * projScale / eyeDist
+    private _projScale = 300.0;
+
     constructor(
         paths: number[][],
         viewer: any,
@@ -249,6 +254,15 @@ export default class VehiclePrimitive {
             }
         }
 
+        // 텍스처 없을 때 1×1 흰색 더미 — UniformSampler에 null이 들어가면 Cesium이 크래시
+        if (!this.cesiumTexture) {
+            this.cesiumTexture = new (Cesium as any).Texture({
+                context: this.context,
+                source: { width: 1, height: 1, arrayBufferView: new Uint8Array([255, 255, 255, 255]) },
+                pixelFormat: (Cesium as any).PixelFormat.RGBA,
+            });
+        }
+
         if (this.destroyed) return;
 
         // ── 초기 orientation / offset ─────────────────────────────────────
@@ -323,13 +337,15 @@ export default class VehiclePrimitive {
                 layout(location=4) in vec4 a_instanceOrientation;
                 layout(location=5) in float a_instanceScale;
 
-                uniform mat4 u_view;
-                uniform mat4 u_projection;
-                uniform vec3 u_rtcCenter;
+                uniform mat4  u_view;
+                uniform mat4  u_projection;
+                uniform vec3  u_rtcCenter;
+                uniform float u_projScale;   // viewportH / (2 * tan(halfFovY))
+                uniform float u_targetSizeM; // 기준 차량 크기(m)
 
-                out vec2 v_uv;
-                out float v_eyeDist;
+                out vec2  v_uv;
                 out float v_meshAlpha;
+                out float v_apparentPx; // 화면상 차량 크기(픽셀)
 
                 vec3 quatRotate(vec3 v, vec4 q) {
                     return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
@@ -339,12 +355,14 @@ export default class VehiclePrimitive {
                     vec3 instCenter = mat3(u_view) * (u_rtcCenter + a_instanceOffset);
                     float instDist  = length(instCenter);
 
-                    // 메쉬 페이드 아웃: 1400~1800m 구간에서 부드럽게 소멸
-                    // 1800m 이상이면 완전히 클리핑
-                    if (instDist > 1800.0) {
+                    // 화면상 픽셀 크기: 차량 길이(m) × projScale / 거리
+                    float px = u_targetSizeM * a_instanceScale * u_projScale / max(instDist, 1.0);
+                    v_apparentPx = px;
+
+                    // 픽셀 3이하(원거리)에서 메쉬 제거, 절대 거리 20km 제한
+                    if (px < 1.5 || instDist > 20000.0) {
                         gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
                         v_uv        = vec2(0.0);
-                        v_eyeDist   = instDist;
                         v_meshAlpha = 0.0;
                         return;
                     }
@@ -353,19 +371,18 @@ export default class VehiclePrimitive {
                     vec3 posRel  = u_rtcCenter + a_instanceOffset + rotated;
                     vec3 posEye  = mat3(u_view) * posRel;
                     gl_Position  = u_projection * vec4(posEye, 1.0);
-                    v_uv        = a_uv;
-                    v_eyeDist   = length(posEye);
-                    // 1400m부터 서서히 투명해짐
-                    v_meshAlpha = 1.0 - smoothstep(1400.0, 1800.0, instDist);
+                    v_uv         = a_uv;
+                    // 픽셀 1.5→3.5 구간에서 서서히 나타남 (포인트 페이드아웃과 자연스럽게 교차)
+                    v_meshAlpha  = smoothstep(1.5, 3.5, px);
                 }
             `,
             fragmentShaderSource: `
                 #version 300 es
                 precision highp float;
 
-                in vec2 v_uv;
-                in float v_eyeDist;
+                in vec2  v_uv;
                 in float v_meshAlpha;
+                in float v_apparentPx;
                 uniform sampler2D u_texture;
                 uniform vec3      u_baseColor;
                 uniform bool      u_hasTexture;
@@ -377,8 +394,9 @@ export default class VehiclePrimitive {
 
                     vec4 colorOnly = vec4(u_baseColor, 0.9 * v_meshAlpha);
                     if (u_hasTexture) {
-                        // 100m 이내: 텍스처, 300m 이상: 색상만, 사이: 블렌딩
-                        float texWeight = 1.0 - smoothstep(100.0, 300.0, v_eyeDist);
+                        // 8px 이하: 색상만, 16px 이상: 텍스처
+                        // (줌 레벨·뷰포트 크기에 무관하게 항상 적절한 품질)
+                        float texWeight = smoothstep(8.0, 16.0, v_apparentPx);
                         vec4 texColor = texture(u_texture, v_uv);
                         texColor.a   *= v_meshAlpha;
                         fragColor = mix(colorOnly, texColor, texWeight);
@@ -416,6 +434,8 @@ export default class VehiclePrimitive {
                 u_baseColor:   () => new Cesium.Cartesian3(self.baseColor[0], self.baseColor[1], self.baseColor[2]),
                 u_texture:     () => self.cesiumTexture,
                 u_hasTexture:  () => self.hasTexture,
+                u_projScale:   () => self._projScale,
+                u_targetSizeM: () => self.targetSizeM,
             },
             primitiveType: Cesium.PrimitiveType.TRIANGLES,
             count:         indicesTyped.length,
@@ -441,6 +461,7 @@ export default class VehiclePrimitive {
             attributes: [
                 { index: 0, vertexBuffer: this.pointDummyBuffer,  componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT },
                 { index: 1, vertexBuffer: this.offsetBuffer,      componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
+                { index: 2, vertexBuffer: this.scaleBuffer,       componentsPerAttribute: 1, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
             ],
         });
 
@@ -449,50 +470,70 @@ export default class VehiclePrimitive {
             vertexShaderSource: `
                 #version 300 es
 
-                layout(location=0) in vec3 a_dummy;
-                layout(location=1) in vec3 a_instanceOffset;
+                layout(location=0) in vec3  a_dummy;
+                layout(location=1) in vec3  a_instanceOffset;
+                layout(location=2) in float a_instanceScale;
 
-                uniform mat4 u_view;
-                uniform mat4 u_projection;
-                uniform vec3 u_rtcCenter;
+                uniform mat4  u_view;
+                uniform mat4  u_projection;
+                uniform vec3  u_rtcCenter;
+                uniform float u_projScale;
+                uniform float u_targetSizeM;
 
                 out float v_pointAlpha;
+                out float v_pointSize;
 
                 void main() {
                     vec3 instEye  = mat3(u_view) * (u_rtcCenter + a_instanceOffset);
                     float instDist = length(instEye);
 
-                    // 1400m 이하는 메쉬가 담당 → 포인트는 1200~1600m 구간에서 페이드 인
-                    if (instDist < 1200.0) {
+                    // 화면상 픽셀 크기 (인스턴스 스케일 반영)
+                    float px = u_targetSizeM * a_instanceScale * u_projScale / max(instDist, 1.0);
+
+                    // 픽셀 8 이상이면 메쉬가 담당 → 포인트 클리핑
+                    // 절대 거리 20km 초과도 제거
+                    if (px > 8.0 || instDist > 20000.0) {
                         gl_Position  = vec4(2.0, 2.0, 0.0, 1.0);
                         gl_PointSize = 1.0;
                         v_pointAlpha = 0.0;
+                        v_pointSize  = 1.0;
                         return;
                     }
+
                     gl_Position  = u_projection * vec4(instEye, 1.0);
-                    gl_PointSize = clamp(8000.0 / instDist, 3.0, 10.0);
-                    // 메쉬 페이드 아웃 구간(1400~1800m)에서 포인트는 페이드 인
-                    v_pointAlpha = smoothstep(1200.0, 1600.0, instDist);
+                    // 포인트 크기 = 화면 픽셀 크기의 절반 (너무 크지 않게), 최소 2px
+                    float pSize  = clamp(px * 0.6, 2.0, 8.0);
+                    gl_PointSize = pSize;
+                    v_pointSize  = pSize;
+
+                    // 픽셀 4~8 구간에서 메쉬와 교차 페이드 (px=4 → alpha=1, px=8 → alpha=0)
+                    float nearFade = 1.0 - smoothstep(15000.0, 20000.0, instDist); // 원거리 감쇠
+                    v_pointAlpha = smoothstep(8.0, 4.0, px) * nearFade;
                 }
             `,
             fragmentShaderSource: `
                 #version 300 es
                 precision mediump float;
 
-                uniform vec3 u_baseColor;
+                uniform vec3  u_baseColor;
                 in float v_pointAlpha;
+                in float v_pointSize;
                 out vec4 fragColor;
 
                 void main() {
                     if (v_pointAlpha <= 0.0) discard;
-                    // 원형 점
-                    if (length(gl_PointCoord - vec2(0.5)) > 0.5) discard;
-                    fragColor = vec4(u_baseColor, v_pointAlpha);
+                    // 원형 점 (pointSize가 작을수록 가장자리 부드럽게)
+                    float r = length(gl_PointCoord - vec2(0.5));
+                    float edge = 0.5 - max(0.5 / v_pointSize, 0.05);
+                    float alpha = v_pointAlpha * (1.0 - smoothstep(edge, 0.5, r));
+                    if (alpha <= 0.0) discard;
+                    fragColor = vec4(u_baseColor, alpha);
                 }
             `,
             attributeLocations: {
                 a_dummy:          0,
                 a_instanceOffset: 1,
+                a_instanceScale:  2,
             },
         });
 
@@ -509,7 +550,9 @@ export default class VehiclePrimitive {
                     sRTC.z = self.referenceCenter.z - cam.z;
                     return sRTC;
                 },
-                u_baseColor: () => new Cesium.Cartesian3(self.baseColor[0], self.baseColor[1], self.baseColor[2]),
+                u_baseColor:   () => new Cesium.Cartesian3(self.baseColor[0], self.baseColor[1], self.baseColor[2]),
+                u_projScale:   () => self._projScale,
+                u_targetSizeM: () => self.targetSizeM,
             },
             primitiveType: Cesium.PrimitiveType.POINTS,
             count:         1,
@@ -637,6 +680,21 @@ export default class VehiclePrimitive {
 
         this.drawCommand.instanceCount      = count;
         this.drawCommandPoint.instanceCount = count;
+
+        // ─ projScale 갱신 ─────────────────────────────────────────────────
+        // projScale = viewportHeight / (2 * tan(halfFovY))
+        // 이 값이 클수록 화면이 크거나 FOV가 좁아서 차량이 더 크게 보임
+        const scene = this.viewer.scene;
+        const frustum = scene.camera.frustum as any;
+        const fovY: number = frustum.fovy ?? frustum.fov ?? (Math.PI / 3);
+        const vh = Math.max(1, scene.drawingBufferHeight);
+        this._projScale = vh / (2.0 * Math.tan(fovY / 2));
+
+        // 메쉬/포인트 LOD 전환은 각 셰이더가 인스턴스별 거리(instDist)로 처리하므로
+        // 두 DrawCommand를 항상 함께 제출한다.
+        // (이전에는 referenceCenter 한 점까지의 거리로 일괄 제출 여부를 결정했는데,
+        //  차량들이 referenceCenter에서 먼 곳까지 퍼지면서 그 근처 차량은 메쉬 미제출 +
+        //  포인트는 자체 셰이더 로직(가까우면 숨김)으로 숨겨져 아예 안 보이는 문제가 있었음)
         frameState.commandList.push(this.drawCommand);
         frameState.commandList.push(this.drawCommandPoint);
     }

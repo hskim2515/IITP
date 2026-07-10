@@ -26,14 +26,31 @@ export interface CorrectionHpr {
     roll:    number;
 }
 
-/** 타입별 기본 보정값 (radians). GLB 모델의 좌표계에 따라 조정 필요. */
+/**
+ * 타입별 기본 보정값 (radians).
+ *
+ * VehiclePrimitive는 raw glTF(Y-up) 정점을 그대로 사용하므로 Cesium의 Z-up
+ * 로컬 프레임으로 보정이 필요하다. roll=+90°(π/2)는 (x,y,z)→(x,-z,y) 변환으로
+ * glTF의 "위" 축(Y)을 Cesium의 "위" 축(Z)으로 맞춰준다 — 보정이 없으면(roll=0)
+ * 차량 모델이 옆으로 누운 채 절반은 도로 아래, 절반은 공중으로 솟아오른 것처럼
+ * 보인다("뒤집힘"/"공중에 뜸" 증상의 근본 원인).
+ *
+ * heading은 모델별 "정면" 축에 따라 추가 조정이 필요할 수 있다. heading=+90°를
+ * 시도한 결과 회전 오차가 90°→180°로 더 커지고 공중에 뜨는 증상까지 재발하는
+ * 것으로 확인되어(즉 +π/2는 잘못된 방향) 일단 0으로 되돌렸다. 설정 > 차량 모델 >
+ * 차량 방향 보정 패널에서 heading을 ±90°/180° 단위로 라이브 조정해 정확한 값을
+ * 찾은 뒤 이 기본값을 갱신할 것.
+ */
 export const DEFAULT_CORRECTIONS: Record<string, CorrectionHpr> = {
-    CAR:   { heading: 0, pitch: 0, roll: Math.PI },
-    TAXI:  { heading: 0, pitch: 0, roll: Math.PI },
-    BUS:   { heading: 0, pitch: 0, roll: Math.PI },
-    TRUCK: { heading: 0, pitch: 0, roll: Math.PI },
-    MOTO:  { heading: 0, pitch: 0, roll: Math.PI },
+    CAR:   { heading: -Math.PI / 2, pitch: 0, roll: Math.PI / 2 },
+    TAXI:  { heading: -Math.PI / 2, pitch: 0, roll: Math.PI / 2 },
+    BUS:   { heading: -Math.PI / 2, pitch: 0, roll: Math.PI / 2 },
+    TRUCK: { heading: -Math.PI / 2, pitch: 0, roll: Math.PI / 2 },
+    MOTO:  { heading: -Math.PI / 2, pitch: 0, roll: Math.PI / 2 },
 };
+
+/** DB 모델에 zOffset이 없을 때 사용하는 기본 높이 보정(m). 차량이 노면보다 1.5m 위에 위치. */
+export const DEFAULT_Z_OFFSET = 0.2;
 
 interface VehicleModelState {
     models: VehicleModelItem[];
@@ -59,15 +76,6 @@ export const useVehicleModelStore = create<VehicleModelState>((set) => ({
         set((s) => ({ correctionByType: { ...s.correctionByType, [vehicleType]: correction } })),
 }));
 
-/** 차량 유형별 파일 서버 모델 기본 매핑 (buildFileUrl 경유) */
-const TYPE_LOCAL_MODEL_MAP: Record<string, string> = {
-    'CAR':     '/models/model_12.glb',
-    'TAXI':    '/models/tusan.glb',
-    'BUS':     '/models/CesiumMilkTruck.glb',
-    'TRUCK':   '/models/CesiumMilkTruck.glb',
-    'MOTO':    '/models/model_12.glb',
-};
-
 /** 차량 유형 문자열(예: "CAR")로 해당 VehicleModelItem을 반환합니다. */
 export function resolveModelByVehicleType(
     vehicleTypeStr: string,
@@ -79,23 +87,8 @@ export function resolveModelByVehicleType(
     return models.find(m => m.vehicleTypeId === vt.id) ?? null;
 }
 
-/**
- * 모델의 GLB URL을 반환합니다.
- * 우선순위: DB 모델 filePath(프록시 URL) > 차량 유형별 로컬 모델 > 기본 모델
- */
-export function resolveGlbUrl(model: VehicleModelItem | null, vehicleType?: string): string {
-    // DB 모델 경로가 있으면 buildFileUrl로 프록시 URL 생성
-    if (model?.filePath) {
-        const url = buildFileUrl(model.filePath);
-        if (url) return url;
-    }
-
-    // 차량 유형별 파일 서버 모델 매핑
-    if (vehicleType) {
-        const localModel = TYPE_LOCAL_MODEL_MAP[vehicleType.toUpperCase()];
-        if (localModel) return buildFileUrl(localModel);
-    }
-
-    // 기본 모델
+/** DB vehicle_type_model.file_path 기반 GLB URL을 반환합니다. */
+export function resolveGlbUrl(model: VehicleModelItem | null): string {
+    if (model?.filePath) return buildFileUrl(model.filePath);
     return buildFileUrl('/models/model_12.glb');
 }
