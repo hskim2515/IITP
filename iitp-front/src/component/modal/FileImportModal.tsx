@@ -10,7 +10,8 @@ import { useRailStationStore } from '@stores/useRailStationStore';
 import { useBusPtLineStore } from '@stores/useBusPtLineStore';
 import { useRailPtLineStore } from '@stores/useRailPtLineStore';
 import { assignPropertyToResponseData } from '@utils/guid';
-import { useImportProgress, OSM_STEPS } from '@hooks/useImportProgress';
+import { useImportProgress, OSM_STEPS, KTDB_STEPS } from '@hooks/useImportProgress';
+import { refreshNetworkTiles } from '@utils/networkRefresh';
 import ImportProgressBar from '@component/util/ImportProgressBar';
 import { LAYER_CONFIG, detectLayerFromFilename } from '@component/tool/DataIOPanel';
 import { autoSaveChangedLayers, backupAndResetDependentLayers } from '@utils/autoSave';
@@ -288,7 +289,9 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
     const [pendingFacilities, setPendingFacilities] = useState<any>(null);
     const [warnings, setWarnings] = useState<string[]>([]);
     const [isSimplified, setIsSimplified]     = useState(false);
-    const { progress, start: startProgress, finish: finishProgress, reset: resetProgress } = useImportProgress(OSM_STEPS);
+    const { progress, start: startProgress, finish: finishProgress, reset: resetProgress } =
+        useImportProgress(type === 'ktdb' ? KTDB_STEPS : OSM_STEPS);
+    const [reflecting, setReflecting] = useState(false); // 지도 반영 중 로더
 
     useEffect(() => {
         if (!bbox) return;
@@ -338,40 +341,51 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
         if (!pendingData) return;
         if (versionId) await backupAndResetDependentLayers(versionId);
 
-        if (isSimplified) {
-            // 대용량 KTDB: 뷰포트 타일 모드로 전환 (versionId별 영속 → 이 시나리오만 타일 모드).
-            // currentJsonData에 빈 마커 설정 → Facility.tsx visibleFields 필터 통과 → 레이어 목록 유지.
-            // setTileMode(true) → tileMode 구독 → load() → updateTiles() 트리거.
-            useNetworkTileStore.getState().setTileMode(true, versionId ?? undefined);
-            useNetworkStore.getState().setCurrentJsonData({ id: 0, name: null, nodes: [], links: [] } as any);
-        } else {
-            useNetworkTileStore.getState().setTileMode(false, versionId ?? undefined);
-            assignPropertyToResponseData(pendingData);
-            useNetworkStore.getState().setCurrentJsonDataWithFullBuild(pendingData);
-            useNetworkStore.getState().setChange(true);
-        }
-        injectAll(pendingFacilities);
+        setReflecting(true);
+        try {
+            await new Promise(r => setTimeout(r, 50)); // 로더 렌더 프레임 양보
 
-        // KTDB: intersection 노드 기반 더미 신호 자동 생성
-        if (type === 'ktdb') {
-            const signals = generateDummySignals(pendingData);
-            if (signals.length > 0) {
-                const signalData = { signals };
-                assignPropertyToResponseData(signalData);
-                useSignalStore.getState().setCurrentJsonData(signalData);
-                useSignalStore.getState().setChange(true);
+            if (isSimplified) {
+                // 대용량 KTDB: 뷰포트 타일 모드로 전환 (versionId별 영속 → 이 시나리오만 타일 모드).
+                // currentJsonData에 빈 마커 설정 → Facility.tsx visibleFields 필터 통과 → 레이어 목록 유지.
+                // setTileMode(true) → tileMode 구독 → load() → updateTiles() 트리거.
+                useNetworkTileStore.getState().setTileMode(true, versionId ?? undefined);
+                useNetworkStore.getState().setCurrentJsonData({ id: 0, name: null, nodes: [], links: [] } as any);
+            } else {
+                useNetworkTileStore.getState().setTileMode(false, versionId ?? undefined);
+                assignPropertyToResponseData(pendingData);
+                useNetworkStore.getState().setCurrentJsonDataWithFullBuild(pendingData);
+                useNetworkStore.getState().setChange(true);
             }
-        }
+            refreshNetworkTiles(); // MVT/타일 캐시 무효화 — 이전 네트워크 타일 잔존 방지
+            injectAll(pendingFacilities);
 
-        if (versionId) {
-            const emptyLogs = { added: [], modified: [], deleted: [] };
-            const saveRoute = (url: string, d: any) =>
-                fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: d, logs: emptyLogs }) })
-                    .catch(e => console.warn('[FileImport] 노선 저장 실패:', e));
-            const base = import.meta.env.VITE_API_URL;
-            if (pendingFacilities?.busRoutes?.lines?.length > 0)  await saveRoute(`${base}/public-transit/line/bus/${versionId}`, pendingFacilities.busRoutes);
-            if (pendingFacilities?.railRoutes?.routes?.length > 0) await saveRoute(`${base}/public-transit/line/rail/${versionId}`, pendingFacilities.railRoutes);
-            await autoSaveChangedLayers(versionId);
+            // KTDB: intersection 노드 기반 더미 신호 자동 생성
+            if (type === 'ktdb') {
+                const signals = generateDummySignals(pendingData);
+                if (signals.length > 0) {
+                    const signalData = { signals };
+                    assignPropertyToResponseData(signalData);
+                    useSignalStore.getState().setCurrentJsonData(signalData);
+                    useSignalStore.getState().setChange(true);
+                }
+            }
+
+            if (versionId) {
+                const emptyLogs = { added: [], modified: [], deleted: [] };
+                const saveRoute = (url: string, d: any) =>
+                    fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: d, logs: emptyLogs }) })
+                        .catch(e => console.warn('[FileImport] 노선 저장 실패:', e));
+                const base = import.meta.env.VITE_API_URL;
+                if (pendingFacilities?.busRoutes?.lines?.length > 0)  await saveRoute(`${base}/public-transit/line/bus/${versionId}`, pendingFacilities.busRoutes);
+                if (pendingFacilities?.railRoutes?.routes?.length > 0) await saveRoute(`${base}/public-transit/line/rail/${versionId}`, pendingFacilities.railRoutes);
+                await autoSaveChangedLayers(versionId);
+            }
+
+            // 타일 재요청이 시작될 시간 확보 (로더가 즉시 사라져 빈 지도로 보이는 것 방지)
+            await new Promise(r => setTimeout(r, 800));
+        } finally {
+            setReflecting(false);
         }
 
         useOnboardingStore.getState().setStep('need-dummy');
@@ -381,6 +395,19 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
 
     const isOsm = type === 'osm';
     const label = isOsm ? 'OSM (Overpass)' : 'KTDB 표준노드링크';
+
+    // 지도 반영 중 로더
+    if (reflecting) {
+        return (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '20px 0' }}>
+                <div style={reflectSpinnerStyle} />
+                <p style={{ fontSize: 13, color: '#e0e0e0', margin: 0, fontWeight: 600 }}>지도에 반영 중...</p>
+                <p style={{ fontSize: 11, color: '#888', margin: 0, textAlign: 'center' }}>
+                    기존 데이터를 초기화하고 새 네트워크 타일을 불러오고 있습니다.
+                </p>
+            </div>
+        );
+    }
 
     // 변환 완료 확인 다이얼로그
     if (pendingData) {
@@ -482,6 +509,15 @@ const tabActiveStyle: React.CSSProperties = {
 const bodyStyle: React.CSSProperties = {
     padding: '14px', overflowY: 'auto', flex: 1,
 };
+const reflectSpinnerStyle: React.CSSProperties = {
+    width: 28,
+    height: 28,
+    border: '3px solid rgba(255,255,255,0.15)',
+    borderTopColor: '#5588ee',
+    borderRadius: '50%',
+    animation: 'spin 0.9s linear infinite', // App.css @keyframes spin 재사용
+};
+
 const descStyle: React.CSSProperties = {
     fontSize: 11, color: '#888', margin: '0 0 4px', lineHeight: 1.6,
 };

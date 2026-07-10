@@ -14,6 +14,14 @@ export const OSM_STEPS: ImportStep[] = [
     { label: '시설물 변환 중...',     weight:  5 },
 ];
 
+// KTDB 표준노드링크 직접 변환 (netconvert/Overpass 없음 — DB 조회+변환+저장이 대부분)
+export const KTDB_STEPS: ImportStep[] = [
+    { label: '표준노드링크 조회 중...',       weight: 25 },
+    { label: '네트워크 변환 중 (교차로 병합)...', weight: 45 },
+    { label: 'network.xml 저장 중...',        weight: 20 },
+    { label: '타일 인덱스 준비 중...',         weight: 10 },
+];
+
 export interface ProgressState {
     running: boolean;
     percent: number;
