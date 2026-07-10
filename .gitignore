@@ -1,1 +1,13 @@
 .idea
+
+# OS / IDE 잡파일
+.DS_Store
+identifier.sqlite
+
+# 빌드 산출물
+build/
+.gradle/
+iitp-rest/src/main/generated/
+
+# MS Office 임시 파일
+~$*.pptx
