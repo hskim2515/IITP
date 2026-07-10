@@ -12,6 +12,9 @@ import { useNetworkDrawStore } from '@stores/useNetworkDrawStore';
 import { useNetworkStore, useNetworkHistoryStore } from '@stores/useNetworkStore';
 import { useNetworkUndoStore } from '@stores/useNetworkUndoStore';
 import { useNodeContextMenuStore } from '@stores/useNodeContextMenuStore';
+import { useEditGuideStore } from '@stores/useEditGuideStore';
+import { useNetworkEditStore } from '@stores/useNetworkEditStore';
+import { markRemovedForTileMask } from '@hooks/useNetworkSelect';
 import { useOpenLayersStore } from '@stores/useOpenLayersStore';
 import { useCesiumStore } from '@stores/useCesiumStore';
 import { useMapStore } from '@stores/useMapStore';
@@ -22,6 +25,28 @@ import { UpdateLogEntry } from '@type/HistoryTypes';
 
 /** 신규 추가 객체의 모든 필드를 added 항목으로 수집 */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+/** 도로 그리기 상시 가이드 — 단계(시작점 대기/구간 추가)에 맞춰 갱신 */
+function setDrawGuide(stage: 'start' | 'segment'): void {
+    useEditGuideStore.getState().setGuide(stage === 'start' ? {
+        title: '도로 그리기',
+        steps: [
+            { keys: ['클릭'], text: '시작점을 클릭하세요 — 기존 노드·링크 위를 클릭하면 자동으로 이어집니다', em: true },
+            { keys: ['우클릭'], text: '그리기 종료' },
+        ],
+        tip: '노드·링크 근처는 자동으로 달라붙습니다(스냅). Alt를 누르고 있으면 스냅이 꺼져요.',
+    } : {
+        title: '도로 그리기 — 구간 추가 중',
+        steps: [
+            { keys: ['클릭'], text: '끝점을 클릭하면 도로가 만들어지고, 그 지점에서 이어서 계속 그립니다', em: true },
+            { keys: ['더블클릭'], text: '이어 그리기 끝내기 (새 시작점 선택으로 돌아감)' },
+            { keys: ['Shift'], text: '15° 단위 각도 잠금' },
+            { keys: ['Alt'], text: '스냅 임시 해제' },
+            { keys: ['우클릭'], text: '지금 그리던 구간 취소' },
+        ],
+        tip: '기존 링크 위에서 끝내면 그 링크를 잘라서 자동으로 연결합니다.',
+    });
+}
+
 function collectAdded(item: any): NonNullable<UpdateLogEntry['added']> {
     if (!item?.__guid) return [];
     return Object.entries(item as Record<string, unknown>).map(([field, value]) => ({
@@ -273,7 +298,8 @@ export function createIntersectionAtNode(nodeId: number | string): void {
     useNetworkStore.getState().setChange(true);
 }
 
-function regenerateNodeConnections(network: Network, nodeId: number | string): Network {
+/** 노드의 커넥션을 in/out 링크 조합으로 전면 재생성 (링크 반전·병합 후 정합성 복구용) */
+export function regenerateNodeConnections(network: Network, nodeId: number | string): Network {
     const node = network.nodes.find(n => String(n.id) === String(nodeId));
     if (!node) return network;
 
@@ -345,7 +371,8 @@ function mergeNodes(
 }
 
 // ── 링크 분할 (T/Y 교차로 생성) ─────────────────────────────────
-function splitLinkInNetwork(
+/** 링크를 지정 좌표에서 분할 — 새 노드 + 통과 커넥션 자동 생성, 양끝 노드 포트/커넥션 재연결 */
+export function splitLinkInNetwork(
     network: Network,
     link: Link,
     splitCoord: Coordinates,
@@ -879,19 +906,14 @@ export const useNetworkDraw = () => {
                 startWgs84Ref.current    = pendingNode.coordinates;
                 useMessageStore.getState().setMessage({
                     type: 'info',
-                    text: `교차로 노드(${pendingId}) 시작 설정됨. 연결할 끝점을 클릭하세요.`,
+                    text: `교차로 노드(${pendingId})에서 시작합니다.`,
                 });
+                setDrawGuide('segment');
             } else {
-                useMessageStore.getState().setMessage({
-                    type: 'info',
-                    text: '지도를 클릭하여 도로의 시작점을 설정하세요. (ESC / 우클릭: 취소)',
-                });
+                setDrawGuide('start');
             }
         } else {
-            useMessageStore.getState().setMessage({
-                type: 'info',
-                text: '지도를 클릭하여 도로의 시작점을 설정하세요. (ESC / 우클릭: 취소)',
-            });
+            setDrawGuide('start');
         }
 
         // ── OL 공통 렌더링 함수 ──────────────────────────────────
@@ -1441,7 +1463,8 @@ export const useNetworkDraw = () => {
                 startWgs84Ref.current   = null;
                 snapNodeRef.current     = null;
                 source.clear();
-                useMessageStore.getState().setMessage({ type: 'info', text: '이어 그리기 종료. 새 시작점을 클릭하세요.' });
+                useMessageStore.getState().setMessage({ type: 'info', text: '이어 그리기를 끝냈습니다.' });
+                setDrawGuide('start');
                 return;
             }
 
@@ -1481,14 +1504,17 @@ export const useNetworkDraw = () => {
                 );
                 useNetworkStore.getState().setCurrentJsonData(updatedNetwork);
                 useNetworkStore.getState().setChange(true);
+                // 분할된 원본 링크 — 타일 모드에서 MVT 잔상 마스킹
+                useNetworkEditStore.getState().addDeleted([String(snapLink.link.id)]);
 
                 startOlCoordRef.current  = chosenOl;
                 startNodeIdRef.current   = newNodeId;
                 startWgs84Ref.current    = chosenWgs84;
                 useMessageStore.getState().setMessage({
                     type: 'info',
-                    text: '링크 분할 완료. 끝점을 클릭하여 도로를 연결하세요.',
+                    text: '기존 링크를 분할해 시작점을 만들었습니다.',
                 });
+                setDrawGuide('segment');
                 return;
             }
 
@@ -1502,6 +1528,8 @@ export const useNetworkDraw = () => {
                     network, snapLink.link, chosenWgs84, ts
                 );
                 useNetworkStore.getState().setCurrentJsonData(updatedNetwork);
+                // 분할된 원본 링크 — 타일 모드에서 MVT 잔상 마스킹
+                useNetworkEditStore.getState().addDeleted([String(snapLink.link.id)]);
                 // finishSegment는 최신 network를 getState로 읽으므로
                 // split 후 store가 반영된 뒤에 실행
                 const splitNode = updatedNetwork.nodes.find(n => n.id === newNodeId) ?? null;
@@ -1514,9 +1542,7 @@ export const useNetworkDraw = () => {
                 startOlCoordRef.current  = chosenOl;
                 startNodeIdRef.current   = snapNode?.id ?? null;
                 startWgs84Ref.current    = snapNode ? snapNode.coordinates : chosenWgs84;
-                useMessageStore.getState().setMessage({
-                    type: 'info', text: '끝점을 클릭하여 도로를 완성하세요.',
-                });
+                setDrawGuide('segment');
             } else {
                 finishSegment(chosenOl, chosenWgs84, resolvedSnapNode);
             }
@@ -1542,7 +1568,8 @@ export const useNetworkDraw = () => {
                 startNodeIdRef.current = null;
                 startWgs84Ref.current = null;
                 source.clear();
-                useMessageStore.getState().setMessage({ type: 'info', text: '취소됨. 새 시작점을 클릭하세요.' });
+                useMessageStore.getState().setMessage({ type: 'info', text: '구간을 취소했습니다.' });
+                setDrawGuide('start');
             } else {
                 useNetworkDrawStore.getState().setActive(false);
             }
@@ -1603,6 +1630,7 @@ export const useNetworkDraw = () => {
             finishSegmentRef.current = null;
             lastOlCursorRef.current = null;
             olMap.getTargetElement().style.cursor = '';
+            useEditGuideStore.getState().clear();
         };
     }, [olMap, isActive, drawResetKey]);
 
@@ -1718,6 +1746,7 @@ export const useNetworkDraw = () => {
                 );
                 useNetworkStore.getState().setCurrentJsonData(updatedNetwork);
                 useNetworkStore.getState().setChange(true);
+                useNetworkEditStore.getState().addDeleted([String(snapLink.link.id)]);
 
                 if (!startOlCoordRef.current) {
                     startOlCoordRef.current = chosenOlCoord;
@@ -1783,8 +1812,120 @@ export const useNetworkDraw = () => {
         type Phase = 'node' | 'edit' | 'lane';
         let phase: Phase = 'node';
         let selectedNodeId: number | string | null = null;
+        // laneIdx === -1 → 링크 전체(ALL) 선택 (일괄 연결 모드)
         type FromSel = { linkId: number | string; laneIdx: number } | null;
         let fromSel: FromSel = null;
+
+        // 드래그 생성 상태: from 점에서 pointerdown → to 점에서 pointerup 으로 커넥션 생성
+        let dragConn: { fromLinkId: number | string; laneIdx: number; anchor: Coordinate; moved: boolean; startPx: [number, number] } | null = null;
+        let dragPreviewFt: Feature | null = null;
+        let suppressClickUntil = 0; // 드래그 생성 직후 따라오는 click 이벤트 무시
+
+        /** 링크 단위 일괄 연결 차선쌍 (백엔드 lanePairs와 동일 규칙) */
+        function lanePairsFor(turning: TurningType, inL: number, outL: number): Array<[number, number]> {
+            if (turning === 'Left_Turn' || turning === 'U_Turn') return [[0, 0]];
+            if (turning === 'Right_Turn') return [[inL - 1, outL - 1]];
+            const pairs: Array<[number, number]> = [];
+            const cnt = Math.min(inL, outL);
+            for (let k = 0; k < cnt; k++) pairs.push([k, k]);
+            for (let k = cnt; k < inL; k++) pairs.push([k, outL - 1]);
+            for (let k = cnt; k < outL; k++) pairs.push([inL - 1, k]);
+            return pairs;
+        }
+
+        /** 커넥션 일괄 커밋 — 중복 제외, 단일 undo/히스토리. U턴은 Left_Turn으로 저장(백엔드 규약). */
+        function commitConnections(
+            pairs: Array<{ fromLink: Link; fromLane: number; toLink: Link; toLane: number }>,
+        ): number {
+            const network = useNetworkStore.getState().currentJsonData;
+            if (!network || !selectedNodeId) return 0;
+            const node = network.nodes.find((n: any) => String(n.id) === String(selectedNodeId));
+            if (!node) return 0;
+
+            const newConns: Connection[] = [];
+            for (const p of pairs) {
+                if (p.fromLane < 0 || p.fromLane >= p.fromLink.numLane) continue;
+                if (p.toLane < 0 || p.toLane >= p.toLink.numLane) continue;
+                const exists = node.connections.some((c: any) =>
+                    String(c.fromLink) === String(p.fromLink.id) && c.fromLane === p.fromLane &&
+                    String(c.toLink) === String(p.toLink.id) && c.toLane === p.toLane
+                ) || newConns.some((c: any) =>
+                    String(c.fromLink) === String(p.fromLink.id) && c.fromLane === p.fromLane &&
+                    String(c.toLink) === String(p.toLink.id) && c.toLane === p.toLane
+                );
+                if (exists) continue;
+
+                const rawTurning = classifyTurning(linkArrivalBearing(p.fromLink), linkDepartureBearing(p.toLink));
+                const turning = rawTurning === 'U_Turn' ? 'Left_Turn' : rawTurning;
+                const laneWidth = p.toLink.width / p.toLink.numLane;
+                newConns.push({
+                    featureType: 'connections' as any,
+                    id: node.connections.length + newConns.length,
+                    fromLink: p.fromLink.id, fromLane: p.fromLane,
+                    fromLaneCoordinates: p.fromLink.coordinates[p.fromLink.coordinates.length - 1]!,
+                    toLink: p.toLink.id, toLane: p.toLane,
+                    toLaneCoordinates: p.toLink.coordinates[0]!,
+                    turning, length: 0, width: laneWidth,
+                    ffSpd: Math.min(p.fromLink.maxSpd, p.toLink.maxSpd),
+                    shape: '', coordinates: [],
+                } as Connection);
+            }
+            if (newConns.length === 0) return 0;
+
+            useNetworkUndoStore.getState().push(network);
+            const updatedNodes = network.nodes.map((n: any) =>
+                String(n.id) === String(selectedNodeId)
+                    ? { ...n, connections: [...n.connections, ...newConns], numConnection: n.connections.length + newConns.length }
+                    : n
+            );
+            const newNetwork: Network = { ...network, nodes: updatedNodes };
+            assignPropertyToResponseData(newNetwork as any);
+            useNetworkStore.getState().setCurrentJsonData(newNetwork);
+            useNetworkStore.getState().setChange(true);
+
+            const addedNode = newNetwork.nodes.find((n: any) => String(n.id) === String(selectedNodeId));
+            if (addedNode) {
+                const added = addedNode.connections.slice(addedNode.connections.length - newConns.length);
+                useNetworkHistoryStore.getState().setUpdateLogs({
+                    added: added.flatMap((c: any) => collectAdded(c)),
+                    modified: [{
+                        guid: addedNode.__guid!, field: 'numConnection',
+                        oldValue: node.connections.length, newValue: addedNode.connections.length,
+                    }],
+                });
+            }
+            return newConns.length;
+        }
+
+        /** to(파랑) 차선 점 / toAll 핸들에 연결 — 클릭·드래그 공용. fromSel 유지(연속 생성). */
+        function handleToTarget(feat: Feature): void {
+            const network = useNetworkStore.getState().currentJsonData;
+            if (!network || !selectedNodeId || !fromSel) return;
+            const toLinkId = feat.get('_linkId');
+            const isAllTarget = feat.get('_type') === 'toAll';
+            const fromLink = network.links.find((l: any) => String(l.id) === String(fromSel!.linkId));
+            const toLink = network.links.find((l: any) => String(l.id) === String(toLinkId));
+            if (!fromLink || !toLink) return;
+
+            const rawTurning = classifyTurning(linkArrivalBearing(fromLink), linkDepartureBearing(toLink));
+            const pairs: Array<{ fromLink: Link; fromLane: number; toLink: Link; toLane: number }> = [];
+            if (fromSel.laneIdx === -1 || isAllTarget) {
+                // 한쪽이라도 ALL → 링크 단위 일괄 규칙
+                for (const [a, b] of lanePairsFor(rawTurning, fromLink.numLane, toLink.numLane)) {
+                    pairs.push({ fromLink, fromLane: a, toLink, toLane: b });
+                }
+            } else {
+                pairs.push({ fromLink, fromLane: fromSel.laneIdx, toLink, toLane: feat.get('_laneIdx') as number });
+            }
+
+            const created = commitConnections(pairs);
+            const uturnNote = rawTurning === 'U_Turn' ? ' (U턴→좌회전 저장)' : '';
+            useMessageStore.getState().setMessage(created > 0
+                ? { type: 'info', text: `Connection ${created}개 생성${uturnNote} — 계속 연결하거나 [ESC]` }
+                : { type: 'warn', text: '이미 존재하는 connection입니다.' });
+            phase = 'lane';
+            renderLanePhase(); // fromSel 유지 → 연속 생성
+        }
 
         const TURN_COLOR: Record<string, string> = {
             Straight:   'rgba(0,220,255,0.85)',
@@ -1832,9 +1973,13 @@ export const useNetworkDraw = () => {
                 ] as unknown as Style);
                 src.addFeature(f);
             }
-            useMessageStore.getState().setMessage({
-                type: 'info',
-                text: '교차로(노드)를 클릭하세요. 파랑=connection 있음, 주황=없음 | [ESC] 종료',
+            useEditGuideStore.getState().setGuide({
+                title: '커넥션 편집 — 교차로 선택',
+                steps: [
+                    { keys: ['클릭'], text: '편집할 교차로(노드)를 클릭하세요', em: true },
+                    { text: '파란 원 = 커넥션 있음 · 주황 원 = 커넥션 없음 (위 숫자 = 커넥션 수)' },
+                    { keys: ['ESC'], text: '커넥션 편집 끝내기' },
+                ],
             });
         }
 
@@ -1952,11 +2097,63 @@ export const useNetworkDraw = () => {
                 }
             }
 
+            // 링크 전체(ALL) 핸들 — 클릭/드래그로 두 링크의 차선 전체를 규칙대로 일괄 연결
+            for (const link of inLinks) {
+                const f = new Feature(new Point(allHandleCoord(link, 'in')));
+                f.set('_type', 'fromAll');
+                f.set('_linkId', link.id);
+                f.setStyle(new Style({
+                    image: new RegularShape({
+                        points: 4, radius: 9, angle: Math.PI / 4,
+                        fill: new Fill({ color: 'rgba(255,70,70,0.9)' }),
+                        stroke: new Stroke({ color: '#fff', width: 2 }),
+                    }),
+                    text: new OlText({ text: 'ALL', font: 'bold 8px sans-serif', fill: new Fill({ color: '#fff' }), stroke: new Stroke({ color: '#000', width: 2 }), offsetY: -16 }),
+                }));
+                src.addFeature(f);
+            }
+            for (const link of outLinks) {
+                const f = new Feature(new Point(allHandleCoord(link, 'out')));
+                f.set('_type', 'toAll');
+                f.set('_linkId', link.id);
+                f.setStyle(new Style({
+                    image: new RegularShape({
+                        points: 4, radius: 9, angle: Math.PI / 4,
+                        fill: new Fill({ color: 'rgba(60,130,255,0.9)' }),
+                        stroke: new Stroke({ color: '#fff', width: 2 }),
+                    }),
+                    text: new OlText({ text: 'ALL', font: 'bold 8px sans-serif', fill: new Fill({ color: '#fff' }), stroke: new Stroke({ color: '#000', width: 2 }), offsetY: -16 }),
+                }));
+                src.addFeature(f);
+            }
+
             const connCount = node.connections?.length ?? 0;
-            useMessageStore.getState().setMessage({
-                type: 'info',
-                text: `교차로 편집 (connection ${connCount}개) | 빨강→from차선, 파랑→to차선 | [A] 자동완성 | [Del] 전체삭제 | 화살표 클릭=삭제 | [ESC] 뒤로`,
+            useEditGuideStore.getState().setGuide({
+                title: `커넥션 편집 — 연결 만들기 (현재 ${connCount}개)`,
+                steps: [
+                    { keys: ['드래그'], text: '빨간 점(들어오는 차선)을 잡아 파란 점(나가는 차선)으로 끌면 연결됩니다', em: true },
+                    { keys: ['클릭'], text: '빨간 점 → 파란 점 순서로 클릭해도 됩니다 (연속 생성)' },
+                    { keys: ['◆ALL'], text: 'ALL 핸들끼리 이으면 두 링크의 모든 차선을 규칙대로 한 번에 연결' },
+                    { keys: ['A'], text: '자동완성 — 가능한 모든 방향의 커넥션을 자동 생성' },
+                    { keys: ['화살표 클릭'], text: '이미 만든 커넥션 하나 삭제' },
+                    { keys: ['Del'], text: '이 교차로의 커넥션 전체 삭제' },
+                    { keys: ['ESC'], text: '교차로 선택으로 돌아가기' },
+                ],
+                tip: 'U턴 연결도 가능합니다 (좌회전으로 저장돼요).',
             });
+        }
+
+        /** 링크 전체(ALL) 핸들 좌표 — 중심선 끝점에서 노드 반대쪽으로 오프셋 (차선 점들과 분리) */
+        function allHandleCoord(link: Link, which: 'in' | 'out'): Coordinate {
+            const res = olMap!.getView().getResolution() ?? 1;
+            const cs = link.coordinates;
+            const endIdx = which === 'in' ? cs.length - 1 : 0;
+            const refIdx = which === 'in' ? Math.max(0, cs.length - 2) : Math.min(cs.length - 1, 1);
+            const end = fromLonLat([cs[endIdx]!.lng, cs[endIdx]!.lat]);
+            const ref = fromLonLat([cs[refIdx]!.lng, cs[refIdx]!.lat]);
+            const d = Math.hypot(ref[0]! - end[0]!, ref[1]! - end[1]!) || 1;
+            const off = res * 28;
+            return [end[0]! + (ref[0]! - end[0]!) / d * off, end[1]! + (ref[1]! - end[1]!) / d * off];
         }
 
         // ── Phase 3: Lane 선택 강조 추가 ─────────────────────
@@ -1967,19 +2164,37 @@ export const useNetworkDraw = () => {
             if (!network) return;
             const fromLink = network.links.find((l: any) => String(l.id) === String(fromSel!.linkId));
             if (!fromLink) return;
-            const coord = getLaneEndpointOl(fromLink, fromSel.laneIdx, 'target');
+            const isAll = fromSel.laneIdx === -1;
+            const coord = isAll
+                ? allHandleCoord(fromLink, 'in')
+                : getLaneEndpointOl(fromLink, fromSel.laneIdx, 'target');
             const f = new Feature(new Point(coord));
             f.setStyle(new Style({
-                image: new CircleStyle({
-                    radius: 9,
-                    fill: new Fill({ color: 'rgba(255,60,60,1)' }),
-                    stroke: new Stroke({ color: '#ffff00', width: 3 }),
-                }),
+                image: isAll
+                    ? new RegularShape({
+                        points: 4, radius: 11, angle: Math.PI / 4,
+                        fill: new Fill({ color: 'rgba(255,60,60,1)' }),
+                        stroke: new Stroke({ color: '#ffff00', width: 3 }),
+                    })
+                    : new CircleStyle({
+                        radius: 9,
+                        fill: new Fill({ color: 'rgba(255,60,60,1)' }),
+                        stroke: new Stroke({ color: '#ffff00', width: 3 }),
+                    }),
             }));
             src.addFeature(f);
-            useMessageStore.getState().setMessage({
-                type: 'info',
-                text: `Link ${fromSel.linkId} L${fromSel.laneIdx} 선택됨 → 파란 점(to차선) 클릭 | [ESC] 취소`,
+            useEditGuideStore.getState().setGuide({
+                title: isAll
+                    ? `링크 ${fromSel.linkId} 전체 선택됨 — 일괄 연결`
+                    : `링크 ${fromSel.linkId}의 ${fromSel.laneIdx}번 차선 선택됨`,
+                steps: [
+                    isAll
+                        ? { keys: ['클릭'], text: '파란 ALL(또는 차선 점)을 클릭하면 모든 차선이 한 번에 연결됩니다', em: true }
+                        : { keys: ['클릭'], text: '파란 점을 클릭할 때마다 커넥션이 만들어집니다 — 여러 개 연속 생성 가능', em: true },
+                    { text: '같은 빨간 점을 다시 클릭하면 선택이 풀립니다' },
+                    { keys: ['ESC'], text: '선택 취소' },
+                ],
+                tip: '잘못 만들었다면 흰 화살표를 클릭해 삭제하거나 Ctrl+Z로 되돌리세요.',
             });
         }
 
@@ -2003,6 +2218,7 @@ export const useNetworkDraw = () => {
         const CLICK_TOL = 14;
         const onClick = (e: MouseEvent) => {
             e.stopPropagation();
+            if (Date.now() < suppressClickUntil) return; // 드래그 생성 직후 click 무시
             const pixel = olMap.getEventPixel(e);
             const clickCoord = olMap.getEventCoordinate(e) as Coordinate;
             const hits = olMap.getFeaturesAtPixel(pixel, { hitTolerance: CLICK_TOL })
@@ -2027,6 +2243,16 @@ export const useNetworkDraw = () => {
                 selectedNodeId = feat.get('_nodeId');
                 phase = 'edit';
                 fromSel = null;
+                // 줌이 얕으면 차선 점들이 겹쳐 클릭 불가 → 교차로 중심으로 자동 줌인
+                const view = olMap.getView();
+                const curRes = view.getResolution() ?? 1;
+                const EDIT_RES = 0.28; // 차선 점 간격(~3.5m)이 12px 이상 되는 해상도
+                if (curRes > EDIT_RES + 0.02) {
+                    const geom = feat.getGeometry();
+                    const center = geom instanceof Point ? geom.getCoordinates() : clickCoord;
+                    view.animate({ center, resolution: EDIT_RES, duration: 350 }, () => renderEditPhase());
+                    return;
+                }
                 renderEditPhase();
                 return;
             }
@@ -2056,66 +2282,18 @@ export const useNetworkDraw = () => {
                     useMessageStore.getState().setMessage({ type: 'info', text: 'Connection 삭제됨' });
                     return;
                 }
-                if (type === 'from') {
-                    fromSel = { linkId: feat.get('_linkId'), laneIdx: feat.get('_laneIdx') };
-                    phase = 'lane'; renderLanePhase(); return;
-                }
-                if (type === 'to' && phase === 'lane' && fromSel) {
-                    const toLinkId = feat.get('_linkId');
-                    const toLane   = feat.get('_laneIdx') as number;
-                    let network = useNetworkStore.getState().currentJsonData;
-                    if (!network || !selectedNodeId) return;
-                    useNetworkUndoStore.getState().push(network);
-                    const node     = network.nodes.find((n: any) => String(n.id) === String(selectedNodeId));
-                    const fromLink = network.links.find((l: any) => String(l.id) === String(fromSel!.linkId));
-                    const toLink   = network.links.find((l: any) => String(l.id) === String(toLinkId));
-                    if (!node || !fromLink || !toLink) return;
-
-                    const turning = classifyTurning(linkArrivalBearing(fromLink), linkDepartureBearing(toLink));
-                    if (turning === 'U_Turn') {
-                        useMessageStore.getState().setMessage({ type: 'error', text: 'U턴은 지원하지 않습니다.' });
-                        return;
-                    }
-                    const alreadyExists = node.connections.some((c: any) =>
-                        String(c.fromLink) === String(fromSel!.linkId) && c.fromLane === fromSel!.laneIdx &&
-                        String(c.toLink) === String(toLinkId) && c.toLane === toLane
-                    );
-                    if (alreadyExists) {
-                        useMessageStore.getState().setMessage({ type: 'warn', text: '이미 존재하는 connection입니다.' });
+                if (type === 'from' || type === 'fromAll') {
+                    const linkId = feat.get('_linkId');
+                    const laneIdx = type === 'fromAll' ? -1 : feat.get('_laneIdx') as number;
+                    // 같은 from 재클릭 → 선택 해제
+                    if (fromSel && String(fromSel.linkId) === String(linkId) && fromSel.laneIdx === laneIdx) {
                         fromSel = null; phase = 'edit'; renderEditPhase(); return;
                     }
-
-                    const laneWidth = toLink.width / toLink.numLane;
-                    const newConn: Connection = {
-                        featureType: 'connections' as any,
-                        id: node.connections.length,
-                        fromLink: fromLink.id, fromLane: fromSel.laneIdx,
-                        fromLaneCoordinates: fromLink.coordinates[fromLink.coordinates.length - 1]!,
-                        toLink: toLink.id, toLane,
-                        toLaneCoordinates: toLink.coordinates[0]!,
-                        turning, length: 0, width: laneWidth,
-                        ffSpd: Math.min(fromLink.maxSpd, toLink.maxSpd),
-                        shape: '', coordinates: [],
-                    } as Connection;
-
-                    const updatedNodes = network.nodes.map((n: any) =>
-                        String(n.id) === String(selectedNodeId)
-                            ? { ...n, connections: [...n.connections, newConn], numConnection: n.connections.length + 1 } : n
-                    );
-                    const newNetwork: Network = { ...network, nodes: updatedNodes };
-                    assignPropertyToResponseData(newNetwork as any);
-                    useNetworkStore.getState().setCurrentJsonData(newNetwork);
-                    useNetworkStore.getState().setChange(true);
-                    const addedNode = newNetwork.nodes.find((n: any) => String(n.id) === String(selectedNodeId));
-                    const addedConn = addedNode?.connections[addedNode.connections.length - 1];
-                    if (addedConn && addedNode) {
-                        useNetworkHistoryStore.getState().setUpdateLogs({
-                            added: collectAdded(addedConn),
-                            modified: [{ guid: addedNode.__guid!, field: 'numConnection', oldValue: node.connections.length, newValue: node.connections.length + 1 }],
-                        });
-                    }
-                    fromSel = null; phase = 'edit'; renderEditPhase();
-                    useMessageStore.getState().setMessage({ type: 'info', text: `Connection 생성: ${turning}` });
+                    fromSel = { linkId, laneIdx };
+                    phase = 'lane'; renderLanePhase(); return;
+                }
+                if ((type === 'to' || type === 'toAll') && phase === 'lane' && fromSel) {
+                    handleToTarget(feat); // 생성 후 fromSel 유지 → 연속 생성
                 }
             }
         };
@@ -2144,10 +2322,68 @@ export const useNetworkDraw = () => {
             }
         };
 
+        // ── 드래그 생성: from(빨강/ALL) pointerdown → to(파랑/ALL) pointerup ──
+        const hitEditFeature = (e: PointerEvent | MouseEvent, types: string[]): Feature | null => {
+            const pixel = olMap.getEventPixel(e);
+            const found = olMap.getFeaturesAtPixel(pixel, { hitTolerance: CLICK_TOL })
+                .filter(f => types.includes(f.get('_type'))) as Feature[];
+            return found[0] ?? null;
+        };
+
+        const onConnPointerDown = (e: PointerEvent) => {
+            if (e.button !== 0 || phase === 'node') return;
+            const f = hitEditFeature(e, ['from', 'fromAll']);
+            if (!f) return;
+            dragConn = {
+                fromLinkId: f.get('_linkId'),
+                laneIdx: f.get('_type') === 'fromAll' ? -1 : f.get('_laneIdx') as number,
+                anchor: (f.getGeometry() as Point).getCoordinates() as Coordinate,
+                moved: false,
+                startPx: [e.clientX, e.clientY],
+            };
+        };
+
+        const onConnPointerMove = (e: PointerEvent) => {
+            if (!dragConn) return;
+            if (!dragConn.moved) {
+                if (Math.hypot(e.clientX - dragConn.startPx[0], e.clientY - dragConn.startPx[1]) < 5) return;
+                dragConn.moved = true;
+                fromSel = { linkId: dragConn.fromLinkId, laneIdx: dragConn.laneIdx };
+                phase = 'lane';
+                renderLanePhase(); // src.clear() 포함 → 프리뷰는 아래에서 새로 생성
+                dragPreviewFt = null;
+            }
+            const coord = olMap.getEventCoordinate(e) as Coordinate;
+            if (!dragPreviewFt) {
+                dragPreviewFt = new Feature(new LineString([dragConn.anchor, coord]));
+                dragPreviewFt.setStyle(new Style({
+                    stroke: new Stroke({ color: 'rgba(0,220,255,0.9)', width: 2.5, lineDash: [7, 5] }),
+                }));
+                src.addFeature(dragPreviewFt);
+            } else {
+                (dragPreviewFt.getGeometry() as LineString).setCoordinates([dragConn.anchor, coord]);
+            }
+        };
+
+        const onConnPointerUp = (e: PointerEvent) => {
+            if (!dragConn) return;
+            const wasMoved = dragConn.moved;
+            dragConn = null;
+            if (dragPreviewFt) { src.removeFeature(dragPreviewFt); dragPreviewFt = null; }
+            if (!wasMoved) return; // 이동 없음 → click 이벤트가 선택 토글 처리
+            suppressClickUntil = Date.now() + 350;
+            const target = hitEditFeature(e, ['to', 'toAll']);
+            if (target && fromSel) handleToTarget(target);
+            else renderLanePhase(); // 허공에 드롭 → from 선택만 유지
+        };
+
         const blockPointerDown = (e: Event) => e.stopPropagation();
         const vp = olMap.getViewport();
         vp.addEventListener('pointerdown', blockPointerDown, true);
+        vp.addEventListener('pointerdown', onConnPointerDown, true);
         vp.addEventListener('pointerup',   blockPointerDown, true);
+        vp.addEventListener('pointerup',   onConnPointerUp, true);
+        document.addEventListener('pointermove', onConnPointerMove, true);
         vp.addEventListener('click', onClick, true);
         vp.addEventListener('dblclick', blockPointerDown, true);
         vp.addEventListener('contextmenu', blockPointerDown, true);
@@ -2155,13 +2391,17 @@ export const useNetworkDraw = () => {
 
         return () => {
             vp.removeEventListener('pointerdown', blockPointerDown, true);
+            vp.removeEventListener('pointerdown', onConnPointerDown, true);
             vp.removeEventListener('pointerup',   blockPointerDown, true);
+            vp.removeEventListener('pointerup',   onConnPointerUp, true);
+            document.removeEventListener('pointermove', onConnPointerMove, true);
             vp.removeEventListener('click', onClick, true);
             vp.removeEventListener('dblclick', blockPointerDown, true);
             vp.removeEventListener('contextmenu', blockPointerDown, true);
             document.removeEventListener('keydown', onKeyDown);
             olMap.removeLayer(layer);
             olMap.getTargetElement().style.cursor = '';
+            useEditGuideStore.getState().clear();
         };
     }, [olMap, isConnectionActive]);
 
@@ -2875,9 +3115,12 @@ export function detectAndSplitIntersections(): number {
             network = regenerateNodeConnections(network, node.id);
         }
         assignPropertyToResponseData(network as any);
-        useNetworkUndoStore.getState().push(useNetworkStore.getState().currentJsonData!);
+        const before = useNetworkStore.getState().currentJsonData!;
+        useNetworkUndoStore.getState().push(before);
         useNetworkStore.getState().setCurrentJsonData(network);
         useNetworkStore.getState().setChange(true);
+        // 분할로 사라진 원본 링크/병합된 노드 — 타일 모드 MVT 마스킹·동기화 제외
+        markRemovedForTileMask(before, network);
     }
 
     return created;

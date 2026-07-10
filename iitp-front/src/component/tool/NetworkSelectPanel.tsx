@@ -9,8 +9,9 @@ import {
     batchDeleteLinksFromNetwork, batchDeleteNodesFromNetwork,
     batchUpdateLinksInNetwork,
     applyNetworkUpdate,
+    markRemovedForTileMask,
 } from '@hooks/useNetworkSelect';
-import { createIntersectionAtNode } from '@hooks/useNetworkDraw';
+import { createIntersectionAtNode, regenerateNodeConnections } from '@hooks/useNetworkDraw';
 import { useMessageStore } from '@stores/useMessageStore';
 import { Coordinates } from '@type/Network';
 import styles from '@css/ToolsPanel.module.css';
@@ -147,10 +148,14 @@ const NetworkSelectPanel: React.FC = () => {
             const cur = useNetworkStore.getState().currentJsonData;
             if (!cur) return;
             if (isMultiLink) {
-                applyNetworkUpdate(batchDeleteLinksFromNetwork(cur, selectedLinkIds));
+                const next = batchDeleteLinksFromNetwork(cur, selectedLinkIds);
+                applyNetworkUpdate(next);
+                markRemovedForTileMask(cur, next);
                 useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkIds.length}개 삭제됨` });
             } else {
-                applyNetworkUpdate(batchDeleteNodesFromNetwork(cur, selectedNodeIds));
+                const next = batchDeleteNodesFromNetwork(cur, selectedNodeIds);
+                applyNetworkUpdate(next);
+                markRemovedForTileMask(cur, next);
                 useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${selectedNodeIds.length}개 삭제됨` });
             }
             useNetworkDrawStore.getState().clearSelection();
@@ -199,15 +204,21 @@ const NetworkSelectPanel: React.FC = () => {
         const handleDelete = () => {
             const cur = useNetworkStore.getState().currentJsonData;
             if (!cur) return;
-            applyNetworkUpdate(deleteLinkFromNetwork(cur, selectedLinkId));
+            const next = deleteLinkFromNetwork(cur, selectedLinkId);
+            applyNetworkUpdate(next);
+            markRemovedForTileMask(cur, next);
             useNetworkDrawStore.getState().clearSelection();
         };
 
         const handleReverse = () => {
             const cur = useNetworkStore.getState().currentJsonData;
             if (!cur) return;
-            applyNetworkUpdate(reverseLinkDirection(cur, selectedLinkId));
-            useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkId} 방향 반전됨 (교차로 재생성 권장)` });
+            // 반전 시 이 링크를 참조하던 커넥션은 방향이 무효 → 양끝 교차로 커넥션을 함께 재생성
+            let net = reverseLinkDirection(cur, selectedLinkId);
+            net = regenerateNodeConnections(net, link.fromNode);
+            net = regenerateNodeConnections(net, link.toNode);
+            applyNetworkUpdate(net);
+            useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkId} 방향 반전 + 양끝 교차로 커넥션 재생성됨` });
         };
 
         return (
@@ -225,8 +236,9 @@ const NetworkSelectPanel: React.FC = () => {
                     border: '1px solid rgba(100,180,255,0.2)',
                     borderRadius: 5, fontSize: 10, color: '#64b4ff', lineHeight: 1.7,
                 }}>
-                    꼭짓점 드래그 → 형상 변경 · Shift+클릭 → 다중 선택<br />
-                    <span style={{ color: '#555' }}>파란 점선 위에서 드래그</span>
+                    꼭짓점 드래그 → 형상 변경 · 선 위 드래그 → 정점 추가<br />
+                    우클릭: 정점 → 삭제 · 선 → 분할/반전 메뉴<br />
+                    <span style={{ color: '#555' }}>Shift+클릭 → 다중 선택</span>
                 </div>
 
                 {/* 차선 수 */}
@@ -308,12 +320,15 @@ const NetworkSelectPanel: React.FC = () => {
             );
             if (d < nearestDist) { nearestDist = d; nearestNode = n; }
         }
-        const canMerge = nearestNode !== null && nearestDist < 50;
+        // 30m: 교차로 클러스터 분리 노드 수준만 병합 후보로 — 50m는 별개 교차로까지 잡혀 실수 병합 위험
+        const canMerge = nearestNode !== null && nearestDist < 30;
 
         const handleDelete = () => {
             const cur = useNetworkStore.getState().currentJsonData;
             if (!cur) return;
-            applyNetworkUpdate(deleteNodeFromNetwork(cur, selectedNodeId));
+            const next = deleteNodeFromNetwork(cur, selectedNodeId);
+            applyNetworkUpdate(next);
+            markRemovedForTileMask(cur, next);
             useNetworkDrawStore.getState().clearSelection();
         };
 
@@ -321,11 +336,15 @@ const NetworkSelectPanel: React.FC = () => {
             if (!nearestNode) return;
             const cur = useNetworkStore.getState().currentJsonData;
             if (!cur) return;
-            applyNetworkUpdate(mergeNodesInNetwork(cur, selectedNodeId, nearestNode.id));
+            // 병합으로 노드의 in/out 조합이 바뀌므로 커넥션을 함께 재생성 (정합성 자동 유지)
+            let net = mergeNodesInNetwork(cur, selectedNodeId, nearestNode.id);
+            net = regenerateNodeConnections(net, selectedNodeId);
+            applyNetworkUpdate(net);
+            markRemovedForTileMask(cur, net); // 흡수된 노드 — 타일 동기화 되살림 방지
             useNetworkDrawStore.getState().clearSelection();
             useMessageStore.getState().setMessage({
                 type: 'info',
-                text: `노드 ${selectedNodeId}에 ${nearestNode.id} 병합됨 (교차로 재생성 권장)`,
+                text: `노드 ${selectedNodeId}에 ${nearestNode.id} 병합 + 교차로 커넥션 재생성됨`,
             });
         };
 
@@ -354,8 +373,8 @@ const NetworkSelectPanel: React.FC = () => {
                     border: '1px solid rgba(100,180,255,0.2)',
                     borderRadius: 5, fontSize: 10, color: '#64b4ff', lineHeight: 1.7,
                 }}>
-                    파란 원 드래그 → 이동 · Shift+클릭 → 다중 선택<br />
-                    <span style={{ color: '#555' }}>연결된 링크 끝점 자동 업데이트</span>
+                    파란 원 드래그 → 이동 · 우클릭 → 교차로 생성 메뉴<br />
+                    <span style={{ color: '#555' }}>연결된 링크 끝점·커넥션 자동 업데이트</span>
                 </div>
 
                 {/* 포트 / connection 정보 */}

@@ -18,6 +18,9 @@ import { useNetworkDrawStore } from '@stores/useNetworkDrawStore';
 import { useNetworkStore } from '@stores/useNetworkStore';
 import { useNetworkEditStore } from '@stores/useNetworkEditStore';
 import { useNetworkUndoStore } from '@stores/useNetworkUndoStore';
+import { useEditGuideStore } from '@stores/useEditGuideStore';
+import { useNodeContextMenuStore } from '@stores/useNodeContextMenuStore';
+import { useLinkContextMenuStore } from '@stores/useLinkContextMenuStore';
 import { useMessageStore } from '@stores/useMessageStore';
 import { assignPropertyToResponseData } from '@utils/guid';
 import { getNetworkLodTierByResolution } from '@utils/lodConstants';
@@ -168,14 +171,17 @@ export function findNearestLane(links: Link[], coord: Coordinate, threshold: num
             segLen.push(l); cum.push(cum[si]! + l);
         }
         const total = cum[cum.length - 1]! || 1;
+        const roadW = link.width ?? 7;
         for (let li = 0; li < laneCount; li++) {
-            const off = ((laneCount - 1) / 2 - li) * laneW; // 레인 중심 오프셋(m≈3857 단위, 저위도 근사)
+            // 2D MVT 렌더 정합: 도로는 중심선 기준 중앙정렬([-hw,+hw], dirOffset 없음),
+            // 차선 0 = 최좌측(중앙선 쪽). 우측(+) 법선 기준이므로 좌측은 음수: (li - (n-1)/2)
+            const off = (li - (laneCount - 1) / 2) * laneW;
             for (let si = 0; si < pts.length - 1; si++) {
                 const a = pts[si]!, b = pts[si + 1]!;
                 const dx = b[0]! - a[0]!, dy = b[1]! - a[1]!;
                 const len = Math.hypot(dx, dy);
                 if (len < 1e-6) continue;
-                const nx = -dy / len, ny = dx / len; // 세그먼트 법선(단위)
+                const nx = dy / len, ny = -dx / len; // 우측 법선(3D right=dir×up 와 동일 방향)
                 const oa = [a[0]! + nx * off, a[1]! + ny * off];
                 const ob = [b[0]! + nx * off, b[1]! + ny * off];
                 const odx = ob[0] - oa[0], ody = ob[1] - oa[1];
@@ -279,12 +285,26 @@ export function updateLinkInNetwork(
         return updated;
     });
 
-    // width/numLane 변경 → 레인 오프셋 변화 → conn.coordinates stale
+    // width/numLane 변경 → 레인 오프셋 변화 → conn.coordinates stale.
+    // numLane 감소 시 사라진 차선을 참조하는 커넥션은 삭제 (잔존 시 렌더/시뮬 인덱스 오류).
     const laneLayoutChanged = patch.width !== undefined || patch.numLane !== undefined;
+    const newNumLane = patch.numLane;
     const updatedNodes = laneLayoutChanged
         ? network.nodes.map(n => {
             if (String(n.id) !== String(link.fromNode) && String(n.id) !== String(link.toNode)) return n;
-            return { ...n, connections: n.connections.map((c: any) => ({ ...c, coordinates: [] })) };
+            let conns = n.connections;
+            if (newNumLane !== undefined && newNumLane < link.numLane) {
+                conns = conns.filter((c: any) => {
+                    if (String(c.fromLink) === String(linkId) && c.fromLane >= newNumLane) return false;
+                    if (String(c.toLink) === String(linkId) && c.toLane >= newNumLane) return false;
+                    return true;
+                });
+            }
+            return {
+                ...n,
+                connections: conns.map((c: any) => ({ ...c, coordinates: [] })),
+                numConnection: conns.length,
+            };
         })
         : network.nodes;
 
@@ -616,7 +636,7 @@ function renderHighlight(
 // ══════════════════════════════════════════════════════════════════
 // 드래그 상태
 // ══════════════════════════════════════════════════════════════════
-type DragState = {
+type DragState = ({
     type: 'vertex';
     linkId: string | number;
     vertexIdx: number;
@@ -626,7 +646,32 @@ type DragState = {
     type: 'node';
     nodeId: string | number;
     workingCoord: Coordinates;
+}) & {
+    /** pointermove가 실제 발생했는지 — 핸들 단순 클릭(무이동)이 no-op 커밋되는 것 방지 */
+    moved?: boolean;
+    /** 세그먼트 위 pointerdown으로 새로 삽입된 정점 드래그 (무이동 시 삽입 자체를 폐기) */
+    inserted?: boolean;
 };
+
+/** 선택 링크의 세그먼트 위 최근접점 — 정점 추가(세그먼트 드래그)용 */
+function projectOnSegments(
+    coords: Coordinates[], cursor: Coordinate, threshold: number,
+): { segIdx: number; point: Coordinate } | null {
+    let best: { segIdx: number; point: Coordinate; dist: number } | null = null;
+    for (let i = 0; i < coords.length - 1; i++) {
+        const a = fromLonLat([coords[i]!.lng, coords[i]!.lat]);
+        const b = fromLonLat([coords[i + 1]!.lng, coords[i + 1]!.lat]);
+        const abx = b[0]! - a[0]!, aby = b[1]! - a[1]!;
+        const len2 = abx * abx + aby * aby;
+        if (len2 < 1e-12) continue;
+        let t = ((cursor[0]! - a[0]!) * abx + (cursor[1]! - a[1]!) * aby) / len2;
+        t = Math.max(0, Math.min(1, t));
+        const px = a[0]! + t * abx, py = a[1]! + t * aby;
+        const d = Math.hypot(cursor[0]! - px, cursor[1]! - py);
+        if (d < threshold && (!best || d < best.dist)) best = { segIdx: i, point: [px, py], dist: d };
+    }
+    return best ? { segIdx: best.segIdx, point: best.point } : null;
+}
 
 // ══════════════════════════════════════════════════════════════════
 // 메인 훅
@@ -645,6 +690,56 @@ export const useNetworkSelect = () => {
     // (구) 선택 편집 진입 시 mapViewMode='2D' 강제 로직 제거 — 편집모드는 split(2D 편집 + 3D 로드뷰)
     //   유지. 편집은 2D(OL) 전용이라 뷰 강제 불필요.
 
+    // ── 상시 가이드: 선택 전/후 단계에 맞춰 안내 (토스트는 2초 후 사라져 조작법 안내 부적합) ──
+    useEffect(() => {
+        if (!isSelectActive) return;
+        const hasSingle = selectedLinkId !== null || selectedNodeId !== null || selectedLaneId !== null;
+        const multiCount = selectedLinkIds.length + selectedNodeIds.length;
+        if (selectedLinkId !== null) {
+            useEditGuideStore.getState().setGuide({
+                title: '선택·편집 — 링크 선택됨',
+                steps: [
+                    { keys: ['드래그'], text: '꼭짓점을 끌면 형상 변경 · 선 위를 끌면 그 자리에 정점 추가', em: true },
+                    { keys: ['우클릭'], text: '정점 위 = 정점 삭제 · 선 위 = 분할/방향 반전/삭제 메뉴' },
+                    { keys: ['Delete'], text: '링크 삭제' },
+                    { keys: ['Ctrl+Z'], text: '실행 취소' },
+                ],
+                tip: '끝점을 다른 노드 근처로 끌면 자동으로 붙습니다.',
+            });
+        } else if (hasSingle) {
+            useEditGuideStore.getState().setGuide({
+                title: '선택·편집 — 노드 선택됨',
+                steps: [
+                    { keys: ['드래그'], text: '파란 핸들을 잡고 끌면 이동합니다 (연결 도로가 따라옵니다)', em: true },
+                    { keys: ['우클릭'], text: '교차로 생성/재생성 메뉴' },
+                    { keys: ['Delete'], text: '노드 삭제 (연결 링크도 함께 — 확인 후 진행)' },
+                    { keys: ['Ctrl+Z'], text: '실행 취소' },
+                ],
+                tip: '패널에서 좌표 직접 입력·가까운 노드와 병합도 할 수 있어요.',
+            });
+        } else if (multiCount > 0) {
+            useEditGuideStore.getState().setGuide({
+                title: `선택·편집 — ${multiCount}개 선택됨`,
+                steps: [
+                    { keys: ['Shift+클릭'], text: '선택 추가/제외' },
+                    { keys: ['Delete'], text: '선택한 요소 모두 삭제', em: true },
+                    { keys: ['ESC'], text: '선택 해제' },
+                ],
+            });
+        } else {
+            useEditGuideStore.getState().setGuide({
+                title: '선택·편집',
+                steps: [
+                    { keys: ['클릭'], text: '링크·노드·차선을 클릭해 선택하세요', em: true },
+                    { keys: ['Shift+클릭'], text: '여러 개 선택' },
+                    { keys: ['Ctrl+드래그'], text: '빈 곳에서 끌면 박스로 범위 선택' },
+                ],
+                tip: '선택하면 이동·삭제·속성 편집을 할 수 있어요.',
+            });
+        }
+        return () => { useEditGuideStore.getState().clear(); };
+    }, [isSelectActive, selectedLinkId, selectedNodeId, selectedLaneId, selectedLinkIds, selectedNodeIds]);
+
     const selSrcRef   = useRef<VectorSource | null>(null);
     const hoverSrcRef = useRef<VectorSource | null>(null);
     const editSrcRef  = useRef<VectorSource | null>(null);
@@ -657,6 +752,8 @@ export const useNetworkSelect = () => {
     // 편집 피처 참조 (링크 or 노드)
     const linkEditRef = useRef<LinkEditFeatures | null>(null);
     const nodeEditRef = useRef<NodeEditFeatures | null>(null);
+    /** 좌클릭 pointerdown 화면좌표 — 팬 드래그 후 click 을 선택으로 오처리하지 않기 위한 거리 판정 */
+    const panStartPxRef = useRef<[number, number] | null>(null);
 
     // 드래그 상태
     const dragStateRef = useRef<DragState | null>(null);
@@ -756,18 +853,73 @@ export const useNetworkSelect = () => {
         if (!olMap || !isSelectActive) return; // 편집모드 선택 전용(속성조회는 defaultEventHandler 담당)
         const vp = olMap.getViewport();
 
-        const blockContextMenu = (e: Event) => { e.preventDefault(); e.stopImmediatePropagation(); };
-        vp.addEventListener('contextmenu', blockContextMenu, true);
+        // 우클릭: 선택 링크의 내부 정점 → 정점 삭제 / 링크 위 → 링크 메뉴(분할·반전·삭제) /
+        //         노드 위 → 노드 메뉴(교차로 생성 등) / 그 외 → 브라우저 메뉴만 차단
+        const onContextMenu = (e: Event) => {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            if (!useNetworkDrawStore.getState().isSelectActive) return;
+            const me = e as MouseEvent;
+            const coord = olMap.getEventCoordinate(me);
+            const res   = olMap.getView().getResolution() ?? 1;
+            const network = useNetworkStore.getState().currentJsonData;
+            if (!network) return;
+            const { selectedLinkId: sl } = useNetworkDrawStore.getState();
+
+            // 1) 선택 링크의 내부 정점 우클릭 → 정점 삭제 (끝점은 노드 연결이라 제외)
+            if (sl !== null) {
+                const link = network.links.find(l => String(l.id) === String(sl));
+                if (link && link.coordinates.length > 2) {
+                    let hitIdx = -1, minD = res * 18;
+                    link.coordinates.forEach((c, i) => {
+                        if (i === 0 || i === link.coordinates.length - 1) return;
+                        const d = olDist(fromLonLat([c.lng, c.lat]), coord);
+                        if (d < minD) { minD = d; hitIdx = i; }
+                    });
+                    if (hitIdx > 0) {
+                        const newCoords = link.coordinates.filter((_, i) => i !== hitIdx);
+                        const newNet = updateLinkCoordinates(network, sl, newCoords);
+                        applyNetworkUpdate(newNet);
+                        useMessageStore.getState().setMessage({ type: 'info', text: '정점을 삭제했습니다' });
+                        if (editSrcRef.current) {
+                            const updated = newNet.links.find(l => String(l.id) === String(sl));
+                            if (updated) linkEditRef.current = buildLinkEditFeatures(editSrcRef.current, updated.coordinates);
+                        }
+                        // 선택 하이라이트(주황 점선)도 새 형상으로 갱신 — 미갱신 시 옛 형상 잔존 (실사용 재현)
+                        if (selSrcRef.current && hoverSrcRef.current) {
+                            renderHighlight(selSrcRef.current, hoverSrcRef.current, newNet, sl, null, null, null);
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // 2) 노드 우클릭 → 노드 컨텍스트 메뉴 (교차로 생성/재생성)
+            const hitNode = findNearestNode(network.nodes, coord, res * 20);
+            if (hitNode) {
+                useNodeContextMenuStore.getState().show(me.clientX, me.clientY, hitNode.id);
+                return;
+            }
+
+            // 3) 링크 우클릭 → 링크 컨텍스트 메뉴 (여기서 분할·방향 반전·삭제)
+            const hitLink = findNearestLink(network.links, coord, res * 15);
+            if (hitLink) {
+                const ll = toLonLat(coord);
+                useLinkContextMenuStore.getState().show(
+                    me.clientX, me.clientY, hitLink.id, { lng: ll[0]!, lat: ll[1]! });
+            }
+        };
+        vp.addEventListener('contextmenu', onContextMenu, true);
 
         // ──────────────────── pointerdown ──────────────────────
         const onPointerDown = (e: PointerEvent) => {
             if (e.button !== 0) return;
-            // 편집 조작(Ctrl+드래그 꼭짓점/노드 이동, 범위선택)은 선택 모드 전용 — 보기모드는 선택만.
+            panStartPxRef.current = [e.clientX, e.clientY]; // click 드래그 거리 판정용 (모드 무관)
+            // 편집 조작(드래그 꼭짓점/노드 이동, 범위선택)은 선택 모드 전용 — 보기모드는 선택만.
             if (!useNetworkDrawStore.getState().isSelectActive) return;
 
-            // Ctrl 없으면 지도 이동 허용 (드래그 편집 안 함)
-            if (!e.ctrlKey) return;
-
+            // 선택된 피처의 핸들 위에서는 Ctrl 없이 바로 드래그 이동 (일반 편집툴 UX).
+            // 빈 곳 드래그 = 지도 팬 유지, Ctrl+빈 곳 드래그 = 박스 범위선택.
             const coord = olMap.getEventCoordinate(e);
             const res   = olMap.getView().getResolution() ?? 1;
             const HANDLE_THRESH = res * 22;
@@ -789,6 +941,30 @@ export const useNetworkSelect = () => {
                             workingCoords: link.coordinates.map(c => ({ ...c })),
                             isEndpoint: hitIdx === 0 || hitIdx === link.coordinates.length - 1,
                         };
+                        setDragPan(olMap, false);
+                        e.stopPropagation();
+                        e.stopImmediatePropagation();
+                        olMap.getTargetElement().style.cursor = 'grabbing';
+                        return;
+                    }
+
+                    // 정점 아님 + 선(세그먼트) 위 → 새 정점 삽입 후 즉시 드래그 (표준 편집툴 UX).
+                    // 무이동 드롭이면 pointerup에서 삽입 자체가 폐기된다(moved 플래그).
+                    const proj = projectOnSegments(link.coordinates, coord, res * 12);
+                    if (proj) {
+                        const ll = toLonLat(proj.point);
+                        const working = link.coordinates.map(c => ({ ...c }));
+                        working.splice(proj.segIdx + 1, 0, { lng: ll[0]!, lat: ll[1]! });
+                        dragStateRef.current = {
+                            type: 'vertex', linkId: sl, vertexIdx: proj.segIdx + 1,
+                            workingCoords: working,
+                            isEndpoint: false,
+                            inserted: true,
+                        };
+                        // 편집 핸들을 삽입된 정점 포함으로 재구성 (드래그 중 시각 피드백)
+                        if (editSrcRef.current) {
+                            linkEditRef.current = buildLinkEditFeatures(editSrcRef.current, working);
+                        }
                         setDragPan(olMap, false);
                         e.stopPropagation();
                         e.stopImmediatePropagation();
@@ -817,8 +993,8 @@ export const useNetworkSelect = () => {
                 }
             }
 
-            // Ctrl + 빈 공간 → 박스 범위 선택
-            if (!e.shiftKey && network) {
+            // Ctrl + 빈 공간 → 박스 범위 선택 (Ctrl 없는 빈 곳 드래그는 지도 팬)
+            if (e.ctrlKey && !e.shiftKey && network) {
                 const hitNode = findNearestNode(network.nodes, coord, res * 20);
                 const hitLink = !hitNode ? findNearestLink(network.links, coord, res * 15) : null;
                 if (!hitNode && !hitLink) {
@@ -859,6 +1035,7 @@ export const useNetworkSelect = () => {
             if (drag) {
                 e.stopPropagation();
                 e.stopImmediatePropagation();
+                drag.moved = true;
                 const ll = toLonLat(coord);
                 const newGeo: Coordinates = { lng: ll[0]!, lat: ll[1]! };
 
@@ -892,34 +1069,42 @@ export const useNetworkSelect = () => {
                 return;
             }
 
-            // 드래그 아닌 hover — Ctrl 키 + 핸들 근처면 grab 커서
+            // 드래그 아닌 hover — 선택 피처의 핸들 근처면 grab 커서 (Ctrl 불필요)
             const { selectedLinkId: sl, selectedNodeId: sn } = useNetworkDrawStore.getState();
 
+            let onHandle = false;
+            if (sl !== null && linkEditRef.current && network) {
+                const link = network.links.find(l => String(l.id) === String(sl));
+                if (link) {
+                    onHandle = link.coordinates.some(
+                        c => olDist(fromLonLat([c.lng, c.lat]), coord) < res * 22
+                    );
+                }
+            }
+            if (!onHandle && sn !== null && nodeEditRef.current && network) {
+                const node = network.nodes.find(n => String(n.id) === String(sn));
+                if (node) {
+                    onHandle = olDist(fromLonLat([node.coordinates.lng, node.coordinates.lat]), coord) < res * 22;
+                }
+            }
+            if (onHandle) {
+                olMap.getTargetElement().style.cursor = 'grab';
+                return;
+            }
+            // 선택 링크의 세그먼트 위 → 정점 추가 가능 (copy 커서로 힌트)
+            if (sl !== null && linkEditRef.current && network) {
+                const link = network.links.find(l => String(l.id) === String(sl));
+                if (link && projectOnSegments(link.coordinates, coord, res * 12)) {
+                    olMap.getTargetElement().style.cursor = 'copy';
+                    return;
+                }
+            }
             if (e.ctrlKey) {
-                if (sl !== null && linkEditRef.current && network) {
-                    const link = network.links.find(l => String(l.id) === String(sl));
-                    if (link) {
-                        const onHandle = link.coordinates.some(
-                            c => olDist(fromLonLat([c.lng, c.lat]), coord) < res * 22
-                        );
-                        olMap.getTargetElement().style.cursor = onHandle ? 'grab' : 'crosshair';
-                        return;
-                    }
-                }
-                if (sn !== null && nodeEditRef.current && network) {
-                    const node = network.nodes.find(n => String(n.id) === String(sn));
-                    if (node) {
-                        const onHandle = olDist(fromLonLat([node.coordinates.lng, node.coordinates.lat]), coord) < res * 22;
-                        olMap.getTargetElement().style.cursor = onHandle ? 'grab' : 'crosshair';
-                        return;
-                    }
-                }
+                // Ctrl + 빈 곳: 박스 범위선택 안내
                 olMap.getTargetElement().style.cursor = 'crosshair';
                 return;
-            } else {
-                // Ctrl 없음: 기본 커서 (지도 이동 가능)
-                olMap.getTargetElement().style.cursor = 'default';
             }
+            olMap.getTargetElement().style.cursor = 'default';
 
             // hover highlight (선택 없을 때)
             if (sl === null && sn === null) {
@@ -994,6 +1179,15 @@ export const useNetworkSelect = () => {
             const drag = dragStateRef.current;
             dragStateRef.current = null;
             if (!drag) return;
+            if (!drag.moved) {
+                // 핸들 단순 클릭(무이동) → 커밋 없이 종료. 삽입 정점 프리뷰는 원상 복구.
+                if (drag.type === 'vertex' && drag.inserted && editSrcRef.current) {
+                    const net0 = useNetworkStore.getState().currentJsonData;
+                    const link0 = net0?.links.find(l => String(l.id) === String(drag.linkId));
+                    if (link0) linkEditRef.current = buildLinkEditFeatures(editSrcRef.current, link0.coordinates);
+                }
+                return;
+            }
 
             const cur = useNetworkStore.getState().currentJsonData;
             if (!cur) return;
@@ -1016,7 +1210,10 @@ export const useNetworkSelect = () => {
                 }
                 const newNet = updateLinkCoordinates(cur, drag.linkId, drag.workingCoords);
                 applyNetworkUpdate(newNet);
-                useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${drag.linkId} 형상 수정됨` });
+                useMessageStore.getState().setMessage({
+                    type: 'info',
+                    text: drag.inserted ? `링크 ${drag.linkId}에 정점 추가됨` : `링크 ${drag.linkId} 형상 수정됨`,
+                });
                 // OL 하이라이트 + 편집 핸들 즉시 갱신
                 const selSrc = selSrcRef.current, hoverSrc = hoverSrcRef.current, editSrc2 = editSrcRef.current;
                 const { selectedLinkId: sl } = useNetworkDrawStore.getState();
@@ -1044,6 +1241,13 @@ export const useNetworkSelect = () => {
         // ──────────────────── click (선택) ────────────────────
         const onClick = (e: MouseEvent) => {
             if (dragStateRef.current) return;
+            // 지도 팬 드래그 후 발화하는 click 은 선택으로 처리하지 않음 —
+            // 팬이 링크를 선택해버리면 다음 팬 down 이 그 링크 위일 때
+            // 세그먼트 드래그(정점 추가·이동)로 둔갑해 도로 형상이 왜곡된다 (실사용 재현)
+            if (panStartPxRef.current) {
+                const d = Math.hypot(e.clientX - panStartPxRef.current[0], e.clientY - panStartPxRef.current[1]);
+                if (d > 5) return;
+            }
             e.stopPropagation();
             const network = useNetworkStore.getState().currentJsonData;
             if (!network) return;
@@ -1087,6 +1291,7 @@ export const useNetworkSelect = () => {
                 const link0 = network.links.find(l => String(l.id) === lane.linkId);
                 const laneObj = link0?.lanes?.[lane.laneIdx];
                 const depth = nextDrillDepth(lane.linkId);
+                console.log("[drill] depth=", depth, "linkId=", lane.linkId, "laneIdx=", lane.laneIdx, "cells수=", laneObj?.cells?.length, "numCell=", laneObj?.numCell, "segments수=", laneObj?.segments?.length);
                 if (depth === 'link' && link0) {
                     useNetworkDrawStore.getState().setSelectedLink(link0.id);
                     setProps({ ...link0, featureType: 'links' } as any); return;
@@ -1125,11 +1330,17 @@ export const useNetworkSelect = () => {
                 const network = useNetworkStore.getState().currentJsonData;
                 if (!network) return;
                 const beforeLinkIds = new Set(network.links.map(l => String(l.id)));
-                // 삭제 후 사라진 링크 id 를 MVT 마스킹 대상으로 마킹(노드 삭제 시 연결 링크 포함).
+                const beforeNodeIds = new Set(network.nodes.map(n => String(n.id)));
+                // 삭제 후 사라진 링크/노드 id 마킹 — 링크는 MVT 마스킹, 노드는 타일 동기화 제외
+                // (마킹 없으면 다음 동기화에서 서버 타일이 삭제 노드를 되살림)
                 const markDeleted = () => {
-                    const after = new Set((useNetworkStore.getState().currentJsonData?.links ?? []).map(l => String(l.id)));
-                    const removed = [...beforeLinkIds].filter(id => !after.has(id));
-                    if (removed.length > 0) useNetworkEditStore.getState().addDeleted(removed);
+                    const cur = useNetworkStore.getState().currentJsonData;
+                    const afterLinks = new Set((cur?.links ?? []).map(l => String(l.id)));
+                    const afterNodes = new Set((cur?.nodes ?? []).map(n => String(n.id)));
+                    const removedLinks = [...beforeLinkIds].filter(id => !afterLinks.has(id));
+                    const removedNodes = [...beforeNodeIds].filter(id => !afterNodes.has(id));
+                    if (removedLinks.length > 0) useNetworkEditStore.getState().addDeleted(removedLinks);
+                    if (removedNodes.length > 0) useNetworkEditStore.getState().addDeletedNodes(removedNodes);
                 };
                 // 멀티셀렉트 일괄 삭제
                 if (selectedLinkIds.length > 0) {
@@ -1138,10 +1349,29 @@ export const useNetworkSelect = () => {
                     useNetworkDrawStore.getState().clearSelection();
                     useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkIds.length}개 삭제됨` });
                 } else if (selectedNodeIds.length > 0) {
-                    applyNetworkUpdate(batchDeleteNodesFromNetwork(network, selectedNodeIds));
-                    markDeleted();
-                    useNetworkDrawStore.getState().clearSelection();
-                    useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${selectedNodeIds.length}개 삭제됨` });
+                    // 연쇄 삭제 확인 — 노드 삭제는 연결 링크까지 함께 사라지므로 조용히 지우면 위험
+                    const linkedCount = new Set(
+                        network.nodes
+                            .filter(n => selectedNodeIds.includes(String(n.id)))
+                            .flatMap(n => n.ports.map(p => String(p.linkId)))
+                    ).size;
+                    const doDelete = () => {
+                        const net = useNetworkStore.getState().currentJsonData;
+                        if (!net) return;
+                        applyNetworkUpdate(batchDeleteNodesFromNetwork(net, selectedNodeIds));
+                        markDeleted();
+                        useNetworkDrawStore.getState().clearSelection();
+                        useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${selectedNodeIds.length}개 삭제됨` });
+                    };
+                    if (linkedCount > 0) {
+                        useMessageStore.getState().setMessage({
+                            type: 'confirm',
+                            text: `노드 ${selectedNodeIds.length}개를 삭제하면 연결된 링크 ${linkedCount}개도 함께 삭제됩니다. 계속할까요?`,
+                            onConfirm: doDelete,
+                        });
+                    } else {
+                        doDelete();
+                    }
                 } else if (sl !== null) {
                     applyNetworkUpdate(deleteLinkFromNetwork(network, sl));
                     markDeleted();
@@ -1149,17 +1379,31 @@ export const useNetworkSelect = () => {
                     useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${sl} 삭제됨` });
                 } else if (sn !== null) {
                     const node = network.nodes.find(n => String(n.id) === String(sn));
-                    applyNetworkUpdate(deleteNodeFromNetwork(network, sn));
-                    markDeleted();
-                    useNetworkDrawStore.getState().clearSelection();
-                    useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${sn} 및 연결 링크 ${node?.ports.length ?? 0}개 삭제됨` });
+                    const linkedCount = new Set((node?.ports ?? []).map(p => String(p.linkId))).size;
+                    const doDelete = () => {
+                        const net = useNetworkStore.getState().currentJsonData;
+                        if (!net) return;
+                        applyNetworkUpdate(deleteNodeFromNetwork(net, sn));
+                        markDeleted();
+                        useNetworkDrawStore.getState().clearSelection();
+                        useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${sn} 및 연결 링크 ${linkedCount}개 삭제됨` });
+                    };
+                    if (linkedCount > 0) {
+                        useMessageStore.getState().setMessage({
+                            type: 'confirm',
+                            text: `노드 ${sn}을(를) 삭제하면 연결된 링크 ${linkedCount}개도 함께 삭제됩니다. 계속할까요?`,
+                            onConfirm: doDelete,
+                        });
+                    } else {
+                        doDelete();
+                    }
                 }
             }
         };
         document.addEventListener('keydown', onKey);
 
         return () => {
-            vp.removeEventListener('contextmenu', blockContextMenu, true);
+            vp.removeEventListener('contextmenu', onContextMenu, true);
             vp.removeEventListener('pointerdown', onPointerDown, true);
             document.removeEventListener('pointermove', onPointerMove, true);
             document.removeEventListener('pointerup', onPointerUp, true);
@@ -1307,6 +1551,21 @@ export const useNetworkSelect = () => {
 // ══════════════════════════════════════════════════════════════════
 // 공통 업데이트
 // ══════════════════════════════════════════════════════════════════
+
+/**
+ * 타일 모드 삭제 마스킹: 변경 전후 diff 로 사라진 링크/노드를 편집 스토어에 마킹.
+ * 링크 → MVT 렌더 숨김, 노드 → 타일 동기화 제외(마킹 없으면 서버 타일이 되살림).
+ * 삭제·분할·병합 등 요소가 사라지는 모든 조작 후 호출.
+ */
+export function markRemovedForTileMask(before: Network, after: Network): void {
+    const afterLinks = new Set(after.links.map(l => String(l.id)));
+    const afterNodes = new Set(after.nodes.map(n => String(n.id)));
+    const removedLinks = before.links.filter(l => !afterLinks.has(String(l.id))).map(l => String(l.id));
+    const removedNodes = before.nodes.filter(n => !afterNodes.has(String(n.id))).map(n => String(n.id));
+    if (removedLinks.length > 0) useNetworkEditStore.getState().addDeleted(removedLinks);
+    if (removedNodes.length > 0) useNetworkEditStore.getState().addDeletedNodes(removedNodes);
+}
+
 export function applyNetworkUpdate(network: Network) {
     const current = useNetworkStore.getState().currentJsonData;
     if (current) useNetworkUndoStore.getState().push(current);

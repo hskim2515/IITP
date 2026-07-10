@@ -12,15 +12,16 @@ import { assignPropertyToResponseData, generateGUIDWithType } from '@utils/guid'
 import { autoSaveChangedLayers } from '@utils/autoSave';
 import { generateDummySignals } from '@utils/signal';
 import { createEventHandlers } from '@handler/createEventHandlers';
+import { useEditGuideStore } from '@stores/useEditGuideStore';
 import { useMapStore } from '@stores/useMapStore';
 import NetworkSelectPanel from './NetworkSelectPanel';
 import styles from '@css/ToolsPanel.module.css';
 
 const NetworkDrawPanel: React.FC = () => {
     const {
-        isActive, isSelectActive, placementMode,
+        isActive, isSelectActive, isConnectionActive, placementMode,
         laneCount, linkWidth, maxSpd, isBidirectional,
-        setActive, setSelectActive, setPlacementMode,
+        setActive, setSelectActive, setConnectionActive, setPlacementMode,
         setLaneCount, setLinkWidth, setMaxSpd, setBidirectional,
     } = useNetworkDrawStore();
 
@@ -30,6 +31,7 @@ const NetworkDrawPanel: React.FC = () => {
 
     const toggle       = () => setActive(!isActive);
     const toggleSelect = () => setSelectActive(!isSelectActive);
+    const toggleConn   = () => setConnectionActive(!isConnectionActive);
 
     // (구) 편집 진입 시 mapViewMode='2D' 강제 로직 제거 — 이제 편집모드는 split(2D 편집 + 3D 로드뷰)라
     //   강제 2D 전환이 로드뷰를 끄고 불편했음. 편집은 어차피 2D(OL) 전용(NETWORK_EDIT_2D_ONLY)이므로
@@ -51,6 +53,16 @@ const NetworkDrawPanel: React.FC = () => {
         } as const;
         const featureType = featureTypeMap[placementMode];
         const guid = generateGUIDWithType(featureType);
+
+        const placementLabel = { busStation: '버스 정류장', railStation: '철도역', signal: '신호등' }[placementMode];
+        useEditGuideStore.getState().setGuide({
+            title: `시설물 배치 — ${placementLabel}`,
+            steps: [
+                { keys: ['클릭'], text: `지도에서 ${placementLabel}을(를) 놓을 위치를 클릭하세요`, em: true },
+                { keys: ['ESC'], text: '배치 취소' },
+            ],
+            tip: '배치 후 속성 창에서 상세 정보를 수정할 수 있어요.',
+        });
 
         const record: Record<string, any> = { featureType, __guid: guid, id: Date.now() };
         if (placementMode === 'signal') {
@@ -76,6 +88,7 @@ const NetworkDrawPanel: React.FC = () => {
         cleanupRef.current = () => {
             handlerCleanup?.();
             unsubscribe();
+            useEditGuideStore.getState().clear();
         };
 
         return () => {
@@ -173,9 +186,26 @@ const NetworkDrawPanel: React.FC = () => {
                 {isSelectActive && (
                     <HintBox color="cyan">
                         클릭 → 선택 · Shift+클릭 → 다중<br />
-                        <span style={{ color: '#ffb347' }}>Ctrl+드래그 → 꼭짓점/노드 이동</span><br />
+                        <span style={{ color: '#ffb347' }}>핸들 드래그 → 꼭짓점/노드 이동</span><br />
                         Ctrl+드래그(빈 곳) → 범위 선택<br />
                         <span style={{ color: '#aaa' }}>Delete → 삭제 · ESC → 해제</span>
+                    </HintBox>
+                )}
+
+                <button
+                    className={isConnectionActive ? styles.measureBtnActive : styles.measureBtn}
+                    onClick={toggleConn}
+                    title={isConnectionActive ? '커넥션 편집 종료 (ESC)' : '교차로 커넥션(회전 동선) 수동 편집'}
+                >
+                    <span className={styles.measureIcon}>{isConnectionActive ? '■' : '⬡'}</span>
+                    {isConnectionActive ? '커넥션 편집 종료' : '커넥션 편집'}
+                </button>
+
+                {isConnectionActive && (
+                    <HintBox color="blue">
+                        교차로 클릭 → 차선 점 표시<br />
+                        <span style={{ color: '#ffb347' }}>빨강→파랑 드래그 → 연결</span> · ALL → 일괄<br />
+                        <span style={{ color: '#aaa' }}>[A] 자동완성 · 화살표 클릭 → 삭제</span>
                     </HintBox>
                 )}
 
@@ -358,7 +388,7 @@ const SHORTCUTS: [string, string][] = [
     ['Delete',         '선택 요소 삭제'],
     ['Shift',          '각도 잠금 (그리기)'],
     ['Shift+클릭',     '다중 선택 토글'],
-    ['Ctrl+드래그',    '꼭짓점/노드 이동 (OL·Cesium)'],
+    ['핸들 드래그',    '꼭짓점/노드 이동 (선택 후)'],
     ['Ctrl+박스드래그', '범위 선택'],
 ];
 
