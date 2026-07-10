@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import cesium from 'vite-plugin-cesium'
 import path from 'path'
+import fs from 'fs'
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, process.cwd(), '');
@@ -18,7 +19,35 @@ export default defineConfig(({ mode }) => {
                 '/file-proxy': {
                     target: fileOrigin,
                     changeOrigin: true,
-                    rewrite: (path) => path.replace(/^\/file-proxy/, ''),
+                    selfHandleResponse: true,
+                    rewrite: (p) => p.replace(/^\/file-proxy/, ''),
+                    configure: (proxy) => {
+                        proxy.on('proxyRes', (proxyRes, req, res) => {
+                            // 원격 서버 오류 시 public/ 로컬 파일 fallback
+                            if (proxyRes.statusCode && proxyRes.statusCode >= 400) {
+                                const localPath = (req.url ?? '').replace(/\?.*$/, '');
+                                const filePath = path.join(__dirname, 'public', localPath);
+                                if (fs.existsSync(filePath)) {
+                                    res.writeHead(200);
+                                    fs.createReadStream(filePath).pipe(res);
+                                    return;
+                                }
+                            }
+                            res.writeHead(proxyRes.statusCode ?? 502, proxyRes.headers);
+                            proxyRes.pipe(res);
+                        });
+                        proxy.on('error', (_err, req, res) => {
+                            const localPath = ((req as any).url ?? '').replace(/\?.*$/, '');
+                            const filePath = path.join(__dirname, 'public', localPath);
+                            if (fs.existsSync(filePath)) {
+                                (res as any).writeHead?.(200);
+                                fs.createReadStream(filePath).pipe(res as any);
+                                return;
+                            }
+                            (res as any).writeHead?.(502);
+                            (res as any).end?.('Proxy error');
+                        });
+                    },
                 },
             } : {},
         },
