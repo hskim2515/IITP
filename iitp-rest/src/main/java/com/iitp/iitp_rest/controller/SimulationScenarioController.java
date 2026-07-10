@@ -41,7 +41,7 @@ public class SimulationScenarioController {
             );
             return ResponseEntity.ok(result);
         } catch (RuntimeException e) {
-            if (e.getCause() instanceof java.io.FileNotFoundException)
+            if (e.getCause() instanceof java.io.IOException)
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
             log.error("[SimulationScenarioController] 조회 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
@@ -53,7 +53,7 @@ public class SimulationScenarioController {
         log.info("[SimulationScenarioController] GET origin scenarioKey={}", scenarioKey);
         try {
             return ResponseEntity.ok(XmlLayerConverter.toMap(simulationRunService.getByScenarioKey(scenarioKey)));
-        } catch (java.io.FileNotFoundException e) {
+        } catch (java.io.IOException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (Exception e) {
             log.error("[SimulationScenarioController] origin 오류", e);

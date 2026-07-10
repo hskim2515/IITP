@@ -7,4 +7,5 @@ import java.util.List;
 
 public interface XmlLayerLogRepository extends JpaRepository<XmlLayerLog, Long> {
     List<XmlLayerLog> findByLayerKeyAndVersionIdOrderByCreatedAtAsc(String layerKey, String versionId);
+    void deleteByLayerKeyAndVersionId(String layerKey, String versionId);
 }

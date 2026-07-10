@@ -19,6 +19,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.util.*;
+import java.util.stream.Collectors;
 
 
 @Slf4j
@@ -160,6 +161,8 @@ public class SignalService {
     public SignalXml toSignalXml(List<SignalResponse> responses) {
         // nodeId → (turnId → TurnListXml)
         Map<String, Map<String, SignalXml.TurnListXml>> nodeMap = new LinkedHashMap<>();
+        // nodeId → planList (노드당 하나의 레코드에만 채워짐)
+        Map<String, List<SignalResponse.PlanData>> planMap = new LinkedHashMap<>();
         for (SignalResponse r : responses) {
             String nid = r.getNodeId() != null ? r.getNodeId() : "";
             String tid = r.getTurnId() != null ? r.getTurnId() : "";
@@ -178,6 +181,9 @@ public class SignalService {
                 String existing = turn.getConnList() != null ? turn.getConnList().trim() : "";
                 turn.setConnList(existing.isEmpty() ? r.getConnectionId() : existing + " " + r.getConnectionId());
             }
+            if (r.getPlans() != null && !r.getPlans().isEmpty()) {
+                planMap.putIfAbsent(nid, r.getPlans());
+            }
         }
 
         List<SignalXml.SignalNodeXml> nodes = new ArrayList<>();
@@ -185,6 +191,26 @@ public class SignalService {
             SignalXml.SignalNodeXml node = new SignalXml.SignalNodeXml();
             try { node.setId(Long.parseLong(entry.getKey())); } catch (NumberFormatException ignore) {}
             node.setTurns(new ArrayList<>(entry.getValue().values()));
+
+            List<SignalResponse.PlanData> plans = planMap.get(entry.getKey());
+            if (plans != null) {
+                node.setPlans(plans.stream().map(p -> {
+                    SignalXml.PlanListXml px = new SignalXml.PlanListXml();
+                    px.setId(p.getId());
+                    px.setCycle(p.getCycle());
+                    px.setOffset(p.getOffset());
+                    if (p.getPhases() != null) {
+                        px.setPhase(p.getPhases().stream().map(ph -> {
+                            SignalXml.PhaseXml phx = new SignalXml.PhaseXml();
+                            phx.setId(ph.getId());
+                            phx.setDuration(ph.getDuration());
+                            phx.setTurnList(ph.getTurnList());
+                            return phx;
+                        }).collect(Collectors.toList()));
+                    }
+                    return px;
+                }).collect(Collectors.toList()));
+            }
             nodes.add(node);
         }
 

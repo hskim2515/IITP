@@ -12,5 +12,6 @@ public interface PavementMarkingVersionsRepository extends JpaRepository<Pavemen
 
     Optional<PavementMarkingVersion> findByVersionIdAndVersionRole(String versionId, BaseVersion.VersionRole versionRole);
 
+    void deleteByVersionId(String versionId);
 }
 

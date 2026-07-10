@@ -10,6 +10,6 @@ public interface SignalVersionsRepository extends JpaRepository<SignalVersion, L
 
     Optional<SignalVersion> findByVersionIdAndVersionRole(String versionId, BaseVersion.VersionRole versionRole);
 
-
+    void deleteByVersionId(String versionId);
 }
 

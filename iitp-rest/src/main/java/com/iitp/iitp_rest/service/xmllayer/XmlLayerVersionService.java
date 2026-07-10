@@ -125,4 +125,19 @@ public class XmlLayerVersionService {
 
         log.info("[XmlLayerVersionService] 저장 완료 layerKey={} versionId={}", layerKey, versionId);
     }
+
+    /**
+     * 버전 레코드 완전 삭제 (LATEST + origin + 로그).
+     *
+     * <p>네트워크 임포트(KTDB/OSM/SUMO/XML)처럼 파일 원본(network.xml)을 통째로 교체하는 경로에서
+     * 호출한다. getLatest()가 "DB 우선"이므로, 이 삭제 없이는 새로 저장한 XML이 있어도
+     * 옛 DB 편집본이 계속 반환되어 임포트가 반영되지 않은 것처럼 보인다.</p>
+     */
+    @Transactional
+    public void deleteVersion(String layerKey, String versionId) {
+        versionRepo.deleteByLayerKeyAndVersionId(layerKey, versionId);
+        versionRepo.deleteByLayerKeyAndVersionId(layerKey, versionId + ":origin");
+        logRepo.deleteByLayerKeyAndVersionId(layerKey, versionId);
+        log.info("[XmlLayerVersionService] 버전 삭제 layerKey={} versionId={} (임포트 교체)", layerKey, versionId);
+    }
 }

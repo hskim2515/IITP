@@ -127,7 +127,7 @@ public class BusPtLineController {
         try {
             return ResponseEntity.ok(xmlLayerVersionService.getLatest(layerKey, key, xml));
         } catch (RuntimeException e) {
-            if (e.getCause() instanceof java.io.FileNotFoundException)
+            if (e.getCause() instanceof java.io.IOException)
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
             log.error("[BusPtLineController] 조회 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
@@ -138,7 +138,7 @@ public class BusPtLineController {
         try {
             return ResponseEntity.ok(xml.get());
         } catch (RuntimeException e) {
-            if (e.getCause() instanceof java.io.FileNotFoundException)
+            if (e.getCause() instanceof java.io.IOException)
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
             log.error("[BusPtLineController] origin 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();

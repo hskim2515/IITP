@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.service.publicTransit.station;
 
+import com.iitp.iitp_rest.model.BaseVersion;
 import com.iitp.iitp_rest.model.geometry.Coordinates;
 import com.iitp.iitp_rest.model.publicTransit.rail.RailPublicTransitXml;
 import com.iitp.iitp_rest.model.publicTransit.rail.RailStationLogs;
@@ -50,7 +51,11 @@ public class RailStationService {
     @Transactional
     public void saveRailStationByVersionId(RailStationSaveRequest request, String versionId) {
         RailStationVersion entity = railStationVersionsRepository.findByVersionId(versionId)
-                .orElse(new RailStationVersion());
+                .orElseGet(() -> {
+                    RailStationVersion v = new RailStationVersion();
+                    v.setVersionRole(BaseVersion.VersionRole.LATEST);
+                    return v;
+                });
         entity.setVersionId(versionId);
         entity.setData(request.getData());
         railStationVersionsRepository.save(entity);

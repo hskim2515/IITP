@@ -1,7 +1,7 @@
 package com.iitp.iitp_rest.service.publicTransit.line;
 
 import com.iitp.iitp_rest.model.publicTransit.rail.RailPtLineXml;
-import com.iitp.iitp_rest.util.SftpFileManager;
+import com.iitp.iitp_rest.util.FileStorageService;
 import jakarta.xml.bind.JAXBContext;
 import jakarta.xml.bind.JAXBException;
 import jakarta.xml.bind.Marshaller;
@@ -22,7 +22,7 @@ import java.net.URL;
 @RequiredArgsConstructor
 public class RailPtLineService {
 
-    private final SftpFileManager sftpFileManager;
+    private final FileStorageService fileStorage;
 
     @Value("${database.vehicle_sim.remoteUrl}")
     private String remoteUrl;
@@ -37,7 +37,7 @@ public class RailPtLineService {
 
     public void saveByScenarioKey(String scenarioKey, RailPtLineXml data) throws Exception {
         byte[] xmlBytes = marshalToXml(data);
-        sftpFileManager.uploadFile(new ByteArrayInputStream(xmlBytes), scenarioKey, "railPTLine.xml");
+        fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), scenarioKey, "railPTLine.xml");
         log.info("[RailPtLineService] SFTP 저장 완료: {}/railPTLine.xml", scenarioKey);
     }
 

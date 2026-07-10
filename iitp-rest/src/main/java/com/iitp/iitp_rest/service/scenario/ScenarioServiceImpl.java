@@ -4,7 +4,7 @@ import com.iitp.iitp_rest.model.scenario.Scenario;
 import com.iitp.iitp_rest.model.scenario.ScenarioVersion;
 import com.iitp.iitp_rest.repository.ScenarioRepository;
 import com.iitp.iitp_rest.repository.ScenarioVersionRepository;
-import com.iitp.iitp_rest.util.SftpFileManager;
+import com.iitp.iitp_rest.util.FileStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -18,7 +18,7 @@ public class ScenarioServiceImpl implements ScenarioService {
 
     private final ScenarioRepository scenarioRepository;
     private final ScenarioVersionRepository versionRepository;
-    private final SftpFileManager sftpFileManager;
+    private final FileStorageService fileStorage;
 
     @Override
     public List<Scenario> getAllScenarios() {
@@ -128,7 +128,7 @@ public class ScenarioServiceImpl implements ScenarioService {
         log.info("기본 버전 생성 완료: {}", defaultVersion.getKey());
 
         try {
-            sftpFileManager.createDirectory(saved.getKey());
+            fileStorage.createDirectory(saved.getKey());
             log.info("시나리오 디렉토리 생성 완료: {}", saved.getKey());
         } catch (Exception e) {
             log.warn("시나리오 디렉토리 생성 실패 (DB 저장은 유지): {}", e.getMessage());

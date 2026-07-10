@@ -30,7 +30,7 @@ public class BusStationController {
             return ResponseEntity.ok(body);
         } catch (Exception e) {
             Throwable cause = e instanceof RuntimeException ? e.getCause() : e;
-            if (cause instanceof java.io.FileNotFoundException) {
+            if (cause instanceof java.io.IOException) {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
             }
             log.error("[getBusStationsByVersionId] 오류", e);
@@ -44,7 +44,7 @@ public class BusStationController {
         try {
             PublicTransitResponse body = busStationService.getOriginByVersionId(versionId);
             return ResponseEntity.ok(body);
-        } catch (java.io.FileNotFoundException e) {
+        } catch (java.io.IOException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (Exception e) {
             log.error("[getOriginBusStations] 오류", e);

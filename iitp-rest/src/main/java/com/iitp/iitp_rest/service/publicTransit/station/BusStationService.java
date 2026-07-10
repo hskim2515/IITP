@@ -1,6 +1,7 @@
 package com.iitp.iitp_rest.service.publicTransit.station;
 
 import com.iitp.iitp_rest.mapper.publicTransit.BusStationMapper;
+import com.iitp.iitp_rest.model.BaseVersion;
 import com.iitp.iitp_rest.model.publicTransit.StationType;
 import com.iitp.iitp_rest.model.publicTransit.TransitMode;
 import com.iitp.iitp_rest.model.publicTransit.bus.*;
@@ -69,7 +70,11 @@ public class BusStationService {
     @Transactional
     public void saveBusStationsByVersionId(BusStationSaveRequest request, String versionId) {
         BusStationVersion entity = busStationVersionsRepository.findByVersionId(versionId)
-                .orElse(new BusStationVersion());
+                .orElseGet(() -> {
+                    BusStationVersion v = new BusStationVersion();
+                    v.setVersionRole(BaseVersion.VersionRole.LATEST);
+                    return v;
+                });
         entity.setVersionId(versionId);
         entity.setData(request.getData());
         busStationVersionsRepository.save(entity);

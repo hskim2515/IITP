@@ -1,6 +1,7 @@
 package com.iitp.iitp_rest.model.publicTransit.rail;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonSetter;
 import com.iitp.iitp_rest.model.geometry.Coordinates;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -27,6 +28,18 @@ public class RailStationData {
     @Builder.Default
     private List<String> lineList = new ArrayList<>();
     private Coordinates coordinates;
+
+    @JsonSetter("lineList")
+    public void setLineListFromJson(Object value) {
+        if (value instanceof List<?> list) {
+            this.lineList = list.stream()
+                    .filter(v -> v instanceof String)
+                    .map(v -> (String) v)
+                    .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
+        } else {
+            this.lineList = new ArrayList<>();
+        }
+    }
 
     @Data // 임시
     public static class TimetableData {

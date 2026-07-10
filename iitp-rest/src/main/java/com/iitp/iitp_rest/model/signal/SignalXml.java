@@ -46,6 +46,12 @@ public class SignalXml {
     @Data
     @XmlAccessorType(XmlAccessType.NONE)
     public static class PlanListXml {
+        @XmlAttribute
+        private String id;
+        @XmlAttribute
+        private String cycle;
+        @XmlAttribute
+        private String offset;
         @XmlElement(name = "phase")
         private List<PhaseXml> phase;
     }

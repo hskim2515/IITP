@@ -13,5 +13,6 @@ public interface BusStationLogsRepository extends JpaRepository<BusStationLogs, 
     @Transactional
     List<BusStationLogs> findByVersionId(String versionId);
     List<BusStationLogs> findByVersionIdOrderByCreatedAtAsc(String versionId);
+    void deleteByVersionId(String versionId);
 }
 

@@ -13,5 +13,6 @@ public interface RailStationLogsRepository extends JpaRepository<RailStationLogs
     @Transactional
     List<RailStationLogs> findByVersionId(String versionId);
     List<RailStationLogs> findByVersionIdOrderByCreatedAtAsc(String versionId);
+    void deleteByVersionId(String versionId);
 }
 

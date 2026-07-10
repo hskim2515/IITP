@@ -41,7 +41,7 @@ public class RailPtLineController {
             );
             return ResponseEntity.ok(result);
         } catch (RuntimeException e) {
-            if (e.getCause() instanceof java.io.FileNotFoundException)
+            if (e.getCause() instanceof java.io.IOException)
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
             log.error("[RailPtLineController] 조회 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
@@ -53,7 +53,7 @@ public class RailPtLineController {
         log.info("[RailPtLineController] GET origin scenarioKey={}", scenarioKey);
         try {
             return ResponseEntity.ok(XmlLayerConverter.toMap(railPtLineService.getByScenarioKey(scenarioKey)));
-        } catch (java.io.FileNotFoundException e) {
+        } catch (java.io.IOException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (Exception e) {
             log.error("[RailPtLineController] origin 오류", e);
