@@ -16,6 +16,8 @@ public class NodeResponse {
     private int numConnection;
     private V2x v2x;
     private String center;
+    /** 교차로 명칭 (원본 NODE_NAME 유래, 옵셔널) */
+    private String name;
 
     private List<PortResponse> ports = new ArrayList<>();
     private List<ConnectionResponse> connections = new ArrayList<>();

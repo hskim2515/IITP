@@ -28,6 +28,8 @@ public class LinkResponse {
     private double maxVeh;
     private SimType simType;
     private LinkType type;
+    /** 도로명 (원본 ROAD_NAME 유래, 옵셔널) */
+    private String name;
     private String layer;
     private double stopLine;
     private String shape;

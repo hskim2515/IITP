@@ -72,6 +72,50 @@ public class CoordinateConverter {
     }
 
     /**
+     * 링크 shape 폴리라인을 따라 posX 거리만큼 이동한 후, 현재 세그먼트 방향 기준으로
+     * posY(좌측 엣지 → 우측 방향 거리)를 적용해 최종 위치를 반환합니다.
+     * toAbsolute와 동일한 좌표계를 사용하되, 직선이 아닌 폴리라인을 따릅니다.
+     */
+    public static ProjCoordinate interpolateAlongShapeWithOffset(
+            List<double[]> shape, double posX, double posY, double halfWidth,
+            double baseLon, double baseLat) {
+        if (shape == null || shape.isEmpty()) return null;
+
+        double remaining = posX;
+        for (int i = 0; i < shape.size() - 1; i++) {
+            double[] from = shape.get(i);
+            double[] to   = shape.get(i + 1);
+            double dx = to[0] - from[0];
+            double dy = to[1] - from[1];
+            double segLen = Math.sqrt(dx * dx + dy * dy);
+
+            if (remaining <= segLen || i == shape.size() - 2) {
+                double t = segLen > 0 ? Math.min(remaining / segLen, 1.0) : 0.0;
+                double cx = from[0] + t * dx;
+                double cy = from[1] + t * dy;
+
+                if (segLen > 0) {
+                    // 단위 방향 벡터 (진행방향)
+                    double ux = dx / segLen;
+                    double uy = dy / segLen;
+                    // 좌측 엣지: center + halfWidth * leftPerp(-uy, ux)
+                    double lx = cx - halfWidth * uy;
+                    double ly = cy + halfWidth * ux;
+                    // posY 만큼 우측(uy, -ux) 방향 이동
+                    cx = lx + posY * uy;
+                    cy = ly - posY * ux;
+                }
+
+                return toWgs84(cx, cy, baseLon, baseLat);
+            }
+            remaining -= segLen;
+        }
+
+        double[] last = shape.get(shape.size() - 1);
+        return toWgs84(last[0], last[1], baseLon, baseLat);
+    }
+
+    /**
      * 차선 중심선 shape 폴리라인을 따라 posX 거리만큼 이동한 위치를 반환합니다.
      * laneShape: 차선 중심선의 로컬 좌표 점 목록 ([x, y])
      * posX: 차선 시작점으로부터의 진행 거리(m)

@@ -4,7 +4,7 @@ import com.iitp.iitp_rest.model.network.NetworkResponse;
 import com.iitp.iitp_rest.model.network.OsmSaveResponse;
 import com.iitp.iitp_rest.model.signal.SignalResponse;
 import com.iitp.iitp_rest.service.network.AutoNetworkService;
-import com.iitp.iitp_rest.util.SftpFileManager;
+import com.iitp.iitp_rest.util.FileStorageService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -30,7 +30,7 @@ import org.springframework.web.bind.annotation.*;
 public class AutoNetworkController {
 
     private final AutoNetworkService autoNetworkService;
-    private final SftpFileManager sftpFileManager;
+    private final FileStorageService fileStorage;
 
     private void validateBbox(double south, double west, double north, double east) {
         if (south >= north) throw new IllegalArgumentException("south는 north보다 작아야 합니다.");
@@ -79,7 +79,7 @@ public class AutoNetworkController {
 
             byte[] jsonBytes = result.network().toString()
                     .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            sftpFileManager.uploadFile(
+            fileStorage.uploadFile(
                     new java.io.ByteArrayInputStream(jsonBytes), versionId, "network_auto.json");
             log.info("SFTP 저장 완료: {}/network_auto.json", versionId);
 

@@ -6,7 +6,10 @@ import com.iitp.iitp_rest.model.geometry.Coordinates;
 import com.iitp.iitp_rest.model.network.NetworkResponse;
 import com.iitp.iitp_rest.model.network.NetworkXml;
 import com.iitp.iitp_rest.model.network.link.LinkResponse;
+import com.iitp.iitp_rest.model.network.link.LinkXml;
 import com.iitp.iitp_rest.model.network.node.NodeResponse;
+import com.iitp.iitp_rest.model.network.node.NodeXml;
+import com.iitp.iitp_rest.util.CoordinateUtils;
 import com.iitp.iitp_rest.util.MvtEncoder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,6 +18,8 @@ import org.springframework.stereotype.Service;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -52,8 +57,9 @@ public class NetworkTileService {
     /** versionId → 빌드 직렬화 락 (동시 빌드 방지) */
     private final ConcurrentHashMap<String, ReentrantLock> buildLocks = new ConcurrentHashMap<>();
 
-    /** LOD 등급: 작을수록 간선(원거리에서도 표시). road_class 부재 → 차선수/속도 프록시 */
-    public enum Lod { OVERVIEW, MID, NEAR, DETAIL }
+    /** LOD 등급: 작을수록 간선(원거리에서도 표시). road_class 부재 → 차선수/속도 프록시.
+     *  MACRO = 광역 조망용 고속도로 골격만 (rank 0 중 고속·다차선 후필터) */
+    public enum Lod { MACRO, OVERVIEW, MID, NEAR, DETAIL }
 
     /**
      * bbox 와 교차하는 네트워크 부분집합 반환.
@@ -68,13 +74,18 @@ public class NetworkTileService {
         File db = ensureDb(versionId);
 
         int maxRank = switch (lod) {
-            case OVERVIEW -> 0;   // 간선만
-            case MID      -> 1;   // + 집산
-            default       -> 2;   // 전체
+            case MACRO, OVERVIEW -> 0;   // 간선만 (MACRO 는 추가 후필터)
+            case MID             -> 1;   // + 집산
+            default              -> 2;   // 전체
         };
+        // MACRO: rank 0 중에서도 고속도로급(고속·다차선)만 → 전국/광역 조망 골격
+        boolean macroOnly = (lod == Lod.MACRO);
         // 차선/구간은 클라 LOD상 detail(완전 근접)에서만 표시되므로 near 이하는 제거 → payload·빌드 대폭 축소.
         // (near 타일이 차선 포함 시 detail과 동일 1.6MB/차선1161/셀3096이었으나, 화면엔 안 보였음)
         boolean stripDetail = (lod != Lod.DETAIL);
+        // overview/mid: 클라이언트는 폴리라인만 사용하고 노드를 버린다 (fetchOverviewArterials).
+        // 전국 규모 bbox에서 수만 개 노드 직렬화 → 응답이 수십MB → 스킵.
+        boolean includeNodes = (lod == Lod.NEAR || lod == Lod.DETAIL);
 
         NetworkResponse out = new NetworkResponse();
         List<LinkResponse> links = new ArrayList<>();
@@ -94,18 +105,30 @@ public class NetworkTileService {
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         LinkResponse link = objectMapper.readValue(rs.getString(1), LinkResponse.class);
+                        if (macroOnly && link.getMaxSpd() < 90 && link.getNumLane() < 6) continue;
                         if (stripDetail) {
                             link.getLanes().clear();
                             link.getSections().clear();
+                        } else {
+                            // DETAIL: 렌더링은 lanes 의 개수·속성만 사용 — cells(20m당 1개×차선수)·
+                            // segments·shape 문자열이 payload 대부분을 차지하므로 제거 (수 배 축소).
+                            // coordinates 는 이미 파싱돼 있어 shape 원문은 클라이언트에서 미사용.
+                            for (var lane : link.getLanes()) {
+                                lane.getCells().clear();
+                                lane.getSegments().clear();
+                                lane.setShape(null);
+                            }
                         }
+                        link.setShape(null);
                         links.add(link);
-                        if (link.getFromNode() != null) nodeIdsToInclude.add(link.getFromNode());
-                        if (link.getToNode() != null) nodeIdsToInclude.add(link.getToNode());
+                        if (includeNodes && link.getFromNode() != null) nodeIdsToInclude.add(link.getFromNode());
+                        if (includeNodes && link.getToNode() != null) nodeIdsToInclude.add(link.getToNode());
                     }
                 }
             }
 
-            // ── 노드: bbox 내 노드 + 포함된 링크의 끝점 노드 ──
+            // ── 노드: bbox 내 노드 + 포함된 링크의 끝점 노드 (near/detail 전용) ──
+            if (includeNodes) {
             Set<Long> seen = new HashSet<>();
             String nodeBboxSql =
                 "SELECT n.id, n.json FROM nodes n JOIN node_rtree r ON n.id = r.id " +
@@ -133,6 +156,7 @@ public class NetworkTileService {
                     }
                 }
             }
+            } // end includeNodes
         } catch (SQLException e) {
             throw new IOException("타일 쿼리 실패: " + versionId, e);
         }
@@ -142,6 +166,31 @@ public class NetworkTileService {
         log.info("[NetworkTileService] {} bbox=({},{},{},{}) lod={} → links={} nodes={}",
                 versionId, west, south, east, north, lod, links.size(), nodes.size());
         return out;
+    }
+
+    /**
+     * 네트워크 전체 bbox [west, south, east, north] (링크 RTree 집계).
+     * 타일 모드에서 클라이언트가 전체 데이터를 안 갖고도 카메라를 네트워크 위치로 이동시키는 용도.
+     * 네트워크 없으면 null.
+     */
+    public double[] getExtent(String versionId) throws IOException {
+        File db = ensureDb(versionId);
+        String url = "jdbc:sqlite:" + db.getAbsolutePath();
+        try (Connection conn = DriverManager.getConnection(url);
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                     "SELECT MIN(minX), MIN(minY), MAX(maxX), MAX(maxY) FROM link_rtree")) {
+            if (rs.next()) {
+                double w = rs.getDouble(1);
+                boolean hasRows = !rs.wasNull();
+                if (hasRows) {
+                    return new double[]{ w, rs.getDouble(2), rs.getDouble(3), rs.getDouble(4) };
+                }
+            }
+        } catch (SQLException e) {
+            throw new IOException("extent 조회 실패: " + versionId, e);
+        }
+        return null;
     }
 
     private static final int MVT_EXTENT = 4096;
@@ -154,7 +203,7 @@ public class NetworkTileService {
      */
     public byte[] queryMvt(String versionId, int z, int x, int y, Lod lod) throws IOException {
         File db = ensureDb(versionId);
-        int maxRank = switch (lod) { case OVERVIEW -> 0; case MID -> 1; default -> 2; };
+        int maxRank = switch (lod) { case MACRO, OVERVIEW -> 0; case MID -> 1; default -> 2; };
 
         // 타일 경위도 bbox (웹 메르카토르 슬리피 타일)
         double n = Math.pow(2, z);
@@ -189,7 +238,8 @@ public class NetworkTileService {
                             double laneW = metersToTile(link.getWidth() / (double) numLane, z, tileCenterLat);
                             double laneHw = laneW / 2.0 * 0.94;
                             for (int li = 0; li < numLane; li++) {
-                                double lateral = ((numLane - 1) / 2.0 - li) * laneW;
+                                // 차선 0 = 최좌측(중앙선 쪽) — 법선(-dy,dx)은 타일 y-down 좌표계에서 우측(+)
+                                double lateral = (li - (numLane - 1) / 2.0) * laneW;
                                 int[][] lanePoly = buildOffsetPolygon(tileCoords, lateral - laneHw, lateral + laneHw);
                                 if (lanePoly != null) enc.addPolygon(id * 100 + li, lanePoly);
                             }
@@ -267,19 +317,39 @@ public class NetworkTileService {
         return pts.toArray(new int[0][]);
     }
 
+    /** 영속 SQLite 저장 디렉토리 (서버 재시작 후에도 유지) */
+    private static Path tileDbDir() throws IOException {
+        Path dir = Paths.get(System.getProperty("user.home"), ".iitp-tiles");
+        Files.createDirectories(dir);
+        return dir;
+    }
+
     /** versionId 의 SQLite(.db) 를 보장 (없으면 전체 네트워크 1회 적재·빌드 후 캐시). */
     private File ensureDb(String versionId) throws IOException {
+        // 1) 인메모리 캐시 확인
         File cached = dbCache.get(versionId);
         if (cached != null && cached.exists()) return cached;
+
+        // 2) 디스크 영속 파일 확인 (서버 재시작 후에도 SQLite 파일이 남아 있으면 재사용)
+        File stable = tileDbDir().resolve(sanitize(versionId) + ".db").toFile();
+        if (stable.exists()) {
+            dbCache.put(versionId, stable);
+            log.info("[NetworkTileService] 영속 SQLite 재사용 {} → {}", versionId, stable.getAbsolutePath());
+            return stable;
+        }
 
         ReentrantLock lock = buildLocks.computeIfAbsent(versionId, k -> new ReentrantLock());
         lock.lock();
         try {
             cached = dbCache.get(versionId);
             if (cached != null && cached.exists()) return cached;
+            if (stable.exists()) { dbCache.put(versionId, stable); return stable; }
 
             // 전체 네트워크 1회 로드 (서버 측 1회성 비용, 빌드 후 캐시되어 재사용)
             NetworkXml xml = networkService.getNetworkXmlByVersionId(versionId);
+            // 스트리밍 변환 XML은 WGS84 coordinates 없이 로컬 shape만 저장됨.
+            // baseLat/baseLon이 있으면 역변환해서 bboxOfLink()가 null 반환하지 않도록 보정.
+            applyCoordinatesIfMissing(xml);
             NetworkResponse resp = networkMapper.toResponse(xml);
             return ingest(versionId, resp);
         } finally {
@@ -290,15 +360,24 @@ public class NetworkTileService {
     /**
      * 주어진 NetworkResponse 로 versionId 의 SQLite(.db) 를 직접 빌드·캐시한다 (SFTP 비의존).
      * 테스트, 그리고 단계 4(import-time 빌드)에서 재사용하는 공개 진입점.
+     * 빌드된 파일은 ~/.iitp-tiles/{versionId}.db 에 영속 저장 → 서버 재시작 후에도 재임포트 불필요.
      */
     public File ingest(String versionId, NetworkResponse resp) throws IOException {
-        File db = Files.createTempFile("network_tile_" + sanitize(versionId) + "_", ".db").toFile();
-        db.deleteOnExit();
-        buildDb(db, resp);
-        dbCache.put(versionId, db);
-        log.info("[NetworkTileService] SQLite 빌드 완료 {} ({} links, {} nodes) → {}",
-                versionId, resp.getLinks().size(), resp.getNodes().size(), db.getAbsolutePath());
-        return db;
+        ReentrantLock lock = buildLocks.computeIfAbsent(versionId, k -> new ReentrantLock());
+        lock.lock();
+        try {
+            File db = tileDbDir().resolve(sanitize(versionId) + ".db").toFile();
+            // 기존 영속 파일이 있으면 삭제 — 그대로 두면 CREATE TABLE 충돌로 빌드 실패 (재임포트 회귀)
+            dbCache.remove(versionId);
+            Files.deleteIfExists(db.toPath());
+            buildDb(db, resp);
+            dbCache.put(versionId, db);
+            log.info("[NetworkTileService] SQLite 빌드 완료 {} ({} links, {} nodes) → {}",
+                    versionId, resp.getLinks().size(), resp.getNodes().size(), db.getAbsolutePath());
+            return db;
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** NetworkResponse → SQLite(.db): links/nodes 테이블(JSON blob) + RTree 공간 인덱스 */
@@ -386,8 +465,63 @@ public class NetworkTileService {
         return 2;                                // 국지
     }
 
+    /**
+     * 스트리밍 변환 XML처럼 WGS84 coordinates가 없는 경우 baseLat/baseLon으로 역변환 보정.
+     * 소형 KTDB(applyCoordinates 호출됨)·OSM XML은 이미 coordinates가 있어 스킵.
+     */
+    private static void applyCoordinatesIfMissing(NetworkXml xml) {
+        Double baseLat = xml.getBaseLat();
+        Double baseLon = xml.getBaseLon();
+        if (baseLat == null || baseLon == null || (baseLat == 0.0 && baseLon == 0.0)) return;
+
+        if (xml.getNodes() != null) {
+            for (NodeXml node : xml.getNodes()) {
+                if (node.getCoordinates() != null) continue;
+                List<Coordinates> coords = CoordinateUtils.parseAndTransform(node.getCenter(), baseLon, baseLat);
+                if (!coords.isEmpty()) node.setCoordinates(coords.get(0));
+            }
+        }
+        if (xml.getLinks() != null) {
+            for (LinkXml link : xml.getLinks()) {
+                if (link.getCoordinates() != null && !link.getCoordinates().isEmpty()) continue;
+                link.setCoordinates(CoordinateUtils.parseAndTransform(link.getShape(), baseLon, baseLat));
+            }
+        }
+    }
+
     private String sanitize(String s) {
         return s == null ? "null" : s.replaceAll("[^a-zA-Z0-9_-]", "_");
+    }
+
+    /**
+     * KTDB 스트리밍 임포트 후 SFTP XML(포트·커넥션·커넥션 shape 포함)로 SQLite를 재빌드한다.
+     * 간이 임포트 응답(simplified, 포트·커넥션 없음) 대신 SFTP에 저장된 전체 데이터를 사용해
+     * detail 줌에서 노드·포트·커넥션이 표시되도록 한다.
+     * buildLocks 으로 ensureDb() 와 직렬화 — 동시 빌드 방지.
+     */
+    public void rebuildFromXml(String versionId) {
+        ReentrantLock lock = buildLocks.computeIfAbsent(versionId, k -> new ReentrantLock());
+        lock.lock();
+        try {
+            log.info("[NetworkTileService] SFTP XML 기반 재빌드 시작 {}", versionId);
+            // 기존 캐시·파일 제거 (lock 보유 중이므로 ensureDb 재진입 차단됨)
+            dbCache.remove(versionId);
+            try {
+                Path stable = tileDbDir().resolve(sanitize(versionId) + ".db");
+                Files.deleteIfExists(stable);
+            } catch (IOException ignored) {}
+            // SFTP XML 로드 → full 재빌드
+            NetworkXml xml = networkService.getNetworkXmlByVersionId(versionId);
+            applyCoordinatesIfMissing(xml);
+            NetworkResponse resp = networkMapper.toResponse(xml);
+            ingest(versionId, resp);
+            log.info("[NetworkTileService] SFTP XML 기반 재빌드 완료 {} (links={} nodes={})",
+                    versionId, resp.getLinks().size(), resp.getNodes().size());
+        } catch (Exception e) {
+            log.warn("[NetworkTileService] SFTP XML 재빌드 실패 {}: {}", versionId, e.getMessage());
+        } finally {
+            lock.unlock();
+        }
     }
 
     /** 편집 저장 등으로 네트워크가 바뀌면 캐시 무효화 (재빌드 유도). */
@@ -396,6 +530,11 @@ public class NetworkTileService {
         if (db != null) {
             try { Files.deleteIfExists(db.toPath()); } catch (IOException ignored) {}
         }
+        // 영속 파일도 삭제 (서버 재시작 후에도 구 SQLite를 재사용하지 않도록)
+        try {
+            Path stable = tileDbDir().resolve(sanitize(versionId) + ".db");
+            Files.deleteIfExists(stable);
+        } catch (IOException ignored) {}
     }
 
     /**

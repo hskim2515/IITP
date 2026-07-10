@@ -126,13 +126,34 @@ public class NetworkController {
             }
 
             NetworkResponse result = networkTileService.queryByBbox(versionId, west, south, east, north, lodEnum);
-            return ResponseEntity.ok(result);
+            // no-store: 재임포트 후 브라우저 캐시의 이전 네트워크 타일 재사용 방지 (tiles.mvt 와 동일)
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                    .body(result);
         } catch (NumberFormatException e) {
             return ResponseEntity.badRequest().build();
         } catch (java.io.FileNotFoundException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (Exception e) {
             log.error("[NetworkController] 타일 조회 오류 versionId={}", versionId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * 네트워크 전체 bbox — 타일 모드에서 카메라를 네트워크 위치로 이동시키는 용도.
+     * 응답: { west, south, east, north }. 네트워크 없으면 404.
+     */
+    @GetMapping("/{versionId}/extent")
+    public ResponseEntity<java.util.Map<String, Double>> getNetworkExtent(@PathVariable String versionId) {
+        try {
+            double[] e = networkTileService.getExtent(versionId);
+            if (e == null) return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+            return ResponseEntity.ok(java.util.Map.of("west", e[0], "south", e[1], "east", e[2], "north", e[3]));
+        } catch (java.io.FileNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            log.error("[NetworkController] extent 조회 오류 versionId={}", versionId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
@@ -157,8 +178,11 @@ public class NetworkController {
             }
             byte[] mvt = networkTileService.queryMvt(versionId, z, x, y, lodEnum);
             if (mvt.length == 0) return ResponseEntity.noContent().build();
+            // no-store: 네트워크 재임포트 후에도 브라우저 HTTP 캐시의 이전 타일이
+            // 재사용되어 "새로고침해도 옛 네트워크가 보이는" 문제 방지 (OL 이 세션 내 캐시 담당)
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_TYPE, "application/x-protobuf")
+                    .header(HttpHeaders.CACHE_CONTROL, "no-store")
                     .body(mvt);
         } catch (java.io.FileNotFoundException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
@@ -324,6 +348,9 @@ public class NetworkController {
                 .orElse(versionId);
         fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), scenarioKey, "network.xml");
         log.info("SFTP 업로드 완료: {}/network.xml (scenarioKey={}, versionId={})", scenarioKey, scenarioKey, versionId);
+        // GET /network 은 DB(xml_layer_versions) 우선 — 옛 편집본 레코드를 지워야 새 XML이 반영된다
+        xmlLayerVersionService.deleteVersion(LAYER_KEY, versionId);
+        if (!scenarioKey.equals(versionId)) xmlLayerVersionService.deleteVersion(LAYER_KEY, scenarioKey);
 
         // 좌표를 파라미터로 받았다면 DB에 영구 저장 (이후 로드 시에도 동일 좌표 사용)
         if (latitude != null && longitude != null) {
