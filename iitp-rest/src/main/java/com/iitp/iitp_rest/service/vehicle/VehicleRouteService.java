@@ -19,6 +19,10 @@ public class VehicleRouteService {
         return repository.findByVersionId(versionId);
     }
 
+    public void deleteRoute(VehicleRoute route) {
+        repository.delete(route);
+    }
+
     public VehicleRoute saveRoute(String versionId, Object czml, Object features, Object positions, long startTime, String dataPath) throws JsonProcessingException {
         ObjectMapper mapper = new ObjectMapper();
 

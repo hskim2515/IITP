@@ -7,5 +7,6 @@ import java.util.Optional;
 
 public interface VehicleRouteRepository extends JpaRepository<VehicleRoute, String> {
     Optional<VehicleRoute> findByVersionId(String versionId);
+    void deleteByVersionId(String versionId);
 }
 

@@ -14,6 +14,7 @@ import com.iitp.iitp_rest.model.vehicle.route.VehicleRequest;
 import com.iitp.iitp_rest.model.scenario.Scenario;
 import com.iitp.iitp_rest.model.signal.SignalTimelineResponse;
 import com.iitp.iitp_rest.service.network.NetworkService;
+import com.iitp.iitp_rest.service.network.NetworkTileService;
 import com.iitp.iitp_rest.util.FileStorageService;
 import com.iitp.iitp_rest.service.scenario.ScenarioService;
 import com.iitp.iitp_rest.service.signal.SignalTimelineService;
@@ -67,6 +68,7 @@ public class VehicleController {
     private final VehicleRouteService vehicleRouteService;
     private final SignalTimelineService signalTimelineService;
     private final NetworkService networkService;
+    private final NetworkTileService networkTileService;
     private final DummyVehicleGenerator dummyVehicleGenerator;
     private final DummySignalGenerator dummySignalGenerator;
     private final FileStorageService fileStorage;
@@ -82,6 +84,11 @@ public class VehicleController {
 
     @Value("${database.vehicle_sim.remoteUrl}")
     private String remoteUrl;
+
+    /** in-memory 더미 생성 한계 — 초과 시 SQLite 스트리밍 생성으로 전환 (이벤트 List 미보유) */
+    private static final int LARGE_DUMMY_THRESHOLD = 10_000;
+    /** 이벤트가 이보다 많으면 전체 CZML 빌드 생략(heap 보호) — viewport 스트리밍이 서빙 */
+    private static final long LARGE_EVENT_THRESHOLD = 5_000_000L;
 
     @PostMapping("/generate-vehicle-route/{scenarioKey}")
     public ResponseEntity<Map<String, Object>> generateVehicleRoute(
@@ -136,11 +143,28 @@ public class VehicleController {
         });
         logger.info("[PERF] CoordinateConverter 생성: {}ms, {} converters", System.currentTimeMillis() - _tConv, converterCache.size());
 
+        stageMap.put(scenarioKey, "시뮬레이션 데이터 확인 중...");
+        // 대용량 가드: 이벤트 수천만 건을 전부 로드해 CZML 을 빌드하면 heap OOM.
+        // 대용량 DB 는 전체 CZML 을 만들지 않고 viewport 스트리밍이 서빙한다.
+        long existingEvents = vehicleDataReader.countEvents(scenarioKey);
+        if (existingEvents > LARGE_EVENT_THRESHOLD) {
+            logger.info("[generateVehicleRoute] {} 대용량 DB (이벤트 {}건) — 전체 CZML 생략, viewport 스트리밍 사용", scenarioKey, existingEvents);
+            stageMap.remove(scenarioKey);
+            return ResponseEntity.ok(Map.of("status", "ok", "largeMode", true, "events", existingEvents));
+        }
+
         stageMap.put(scenarioKey, "시뮬레이션 데이터 로드 중...");
         long _tRead = System.currentTimeMillis();
-        List<VehicleEvent> vehicleEvents = vehicleDataReader.readVehicleEvent(scenarioKey);
+        List<VehicleEvent> vehicleEvents = existingEvents > 0
+                ? vehicleDataReader.readVehicleEvent(scenarioKey)
+                : new ArrayList<>();
         logger.info("[PERF] readVehicleEvent: {}ms, {} events", System.currentTimeMillis() - _tRead, vehicleEvents.size());
         if (vehicleEvents.isEmpty()) {
+            // 더미 생성은 명시적 요청(generateDummy=true)일 때만 — 로드 경로 POST가 더미를 만들지 않도록
+            if (!request.isGenerateDummy()) {
+                logger.info("[generateVehicleRoute] {} vehicle_sim.db 없음 — 명시적 생성 요청이 아니므로 더미 생성 안 함", scenarioKey);
+                throw new java.io.FileNotFoundException("시뮬레이션 결과 파일(vehicle_sim.db)이 없습니다: " + scenarioKey);
+            }
             logger.info("[generateVehicleRoute] {} vehicle_sim.db 없음 — 네트워크 기반 더미 데이터 생성 후 SFTP 저장", scenarioKey);
             try {
                 NetworkXml networkXml = networkService.getNetworkXmlByVersionId(scenarioKey);
@@ -161,9 +185,32 @@ public class VehicleController {
                     logger.info("[generateVehicleRoute] {} 면적 기반 차량 수 자동 계산: 도로 연장 {}km → {}대",
                             scenarioKey, String.format("%.1f", totalLengthM / 1000.0), numVehicles);
                 }
-                stageMap.put(scenarioKey, "더미 차량 경로 생성 중... (차량 " + numVehicles + "대)");
+
                 DummyVehicleGenerator.SignalContext signalCtx =
                         buildSignalContext(networkXml, remoteUrl + scenarioKey + "/signal.xml");
+
+                // ── 대량(전국급): 이벤트를 메모리에 안 들고 SQLite 로 직접 스트리밍 생성 ──
+                // (in-memory 는 186K대=4,800만 건에서 OOM 실측. 전체 CZML 도 생략 → viewport 가 서빙)
+                if (numVehicles > LARGE_DUMMY_THRESHOLD) {
+                    stageMap.put(scenarioKey, "대량 더미 생성 중... (차량 " + numVehicles + "대, 스트리밍)");
+                    DummyVehicleGenerator.StreamGenResult gen = dummyVehicleGenerator.generateToSqlite(
+                            networkXml, roadMap, numVehicles, 600, 42L, signalCtx,
+                            done -> stageMap.put(scenarioKey, "대량 더미 생성 중... (" + done + "/" + numVehicles + "대)"));
+                    stageMap.put(scenarioKey, "서버 업로드 중... (이벤트 " + gen.eventCount() + "건)");
+                    try (InputStream dbStream = new FileInputStream(gen.dbFile())) {
+                        fileStorage.uploadFile(dbStream, scenarioKey, "vehicle_sim.db");
+                    } finally {
+                        gen.dbFile().delete();
+                    }
+                    vehicleDataReader.invalidateDbCache(scenarioKey);
+                    viewportCtxCache.remove(scenarioKey);
+                    logger.info("[generateVehicleRoute] {} 대량 더미 업로드 완료 ({}대, {}건) — viewport 스트리밍 사용", scenarioKey, numVehicles, gen.eventCount());
+                    stageMap.remove(scenarioKey);
+                    return ResponseEntity.ok(Map.of("status", "ok", "largeMode", true,
+                            "vehicles", numVehicles, "events", gen.eventCount()));
+                }
+
+                stageMap.put(scenarioKey, "더미 차량 경로 생성 중... (차량 " + numVehicles + "대)");
                 vehicleEvents = dummyVehicleGenerator.generate(networkXml, roadMap, numVehicles, 600, 42L, signalCtx);
                 if (!vehicleEvents.isEmpty()) {
                     stageMap.put(scenarioKey, "SQLite 파일 생성 및 서버 업로드 중... (이벤트 " + vehicleEvents.size() + "건)");
@@ -171,6 +218,8 @@ public class VehicleController {
                         fileStorage.uploadFile(dbStream, scenarioKey, "vehicle_sim.db");
                         logger.info("[generateVehicleRoute] {} vehicle_sim.db SFTP 업로드 완료", scenarioKey);
                     }
+                    vehicleDataReader.invalidateDbCache(scenarioKey);
+                    viewportCtxCache.remove(scenarioKey);
                 }
             } catch (Exception e) {
                 logger.error("[generateVehicleRoute] 더미 데이터 생성/업로드 실패", e);
@@ -210,6 +259,60 @@ public class VehicleController {
         stageMap.put(scenarioKey, "CZML 좌표 변환 중... (차량 " + grouped.size() + "대)");
         List<SignalTimelineResponse> signalTimeline = signalTimelineService.generateSignalTimeline(baseEpoch, "0", scenarioKey, simulationDuration);
 
+        Instant[] range = buildVehiclePackets(grouped, roadMap, converterCache, scenario, baseEpoch,
+                startTime, vehicleInfoMap, czml, featureList, vehiclePathList);
+        Instant globalStart = range[0];
+        Instant globalStop  = range[1];
+
+        if (globalStart == null || globalStop == null) {
+            throw new java.io.FileNotFoundException(
+                "차량 경로 생성 실패: 유효한 좌표가 없습니다 (roadMap에 링크가 없거나 vehicle_sim.db가 비어있음) — scenarioKey=" + scenarioKey);
+        }
+
+        Map<String, Object> documentPacket = Map.of(
+                "id", "document",
+                "name", "Vehicle Movement",
+                "version", "1.0",
+                "clock", Map.of(
+                        "interval", globalStart + "/" + globalStop,
+                        "currentTime", globalStart.toString(),
+                        "multiplier", 1,
+                        "range", "CLAMPED",
+                        "step", "SYSTEM_CLOCK_MULTIPLIER"
+                )
+        );
+        czml.addFirst(documentPacket);
+
+        stageMap.put(scenarioKey, "DB 저장 중...");
+        vehicleRouteService.saveRoute(scenarioKey, czml, featureList, vehiclePathList, baseEpoch, scenarioKey);
+        stageMap.remove(scenarioKey);
+
+        Map<String, Object> response = new HashMap<>();
+        response.put("czml", czml);
+        response.put("features", featureList);
+        response.put("positions", vehiclePathList);
+
+        response.put("signalTimeline", signalTimeline);
+
+        return ResponseEntity.ok(response);
+    }
+
+    /**
+     * 차량 이벤트 그룹 → CZML 패킷/feature/positions 빌드 (generateVehicleRoute·viewport 공용).
+     * @return [earliestStart, latestStop] — 유효 차량이 없으면 [null, null]
+     */
+    private Instant[] buildVehiclePackets(
+            Map<String, List<VehicleEvent>> grouped,
+            Map<String, RoadResponse.Road> roadMap,
+            Map<String, CoordinateConverter> converterCache,
+            Scenario scenario,
+            long baseEpoch,
+            Instant startTime,
+            Map<String, VehicleInfo> vehicleInfoMap,
+            List<Map<String, Object>> czml,
+            List<Map<String, Object>> featureList,
+            List<Map<String, Object>> vehiclePathList) {
+
         AtomicReference<Instant> earliestStartRef = new AtomicReference<>(null);
         AtomicReference<Instant> latestStopRef = new AtomicReference<>(null);
 
@@ -221,11 +324,8 @@ public class VehicleController {
             double firstTimestep = vehicles.get(0).getTimestep();
             double lastTimestep = vehicles.get(vehicles.size() - 1).getTimestep();
 
-            long startEpoch = baseEpoch + (long) firstTimestep;
-            long stopEpoch = baseEpoch + (long) lastTimestep;
-
-            Instant vehicleStart = Instant.ofEpochSecond(startEpoch);
-            Instant vehicleStop = Instant.ofEpochSecond(stopEpoch);
+            Instant vehicleStart = Instant.ofEpochSecond(baseEpoch + (long) firstTimestep);
+            Instant vehicleStop = Instant.ofEpochSecond(baseEpoch + (long) lastTimestep);
 
             earliestStartRef.updateAndGet(current ->
                     (current == null || vehicleStart.isBefore(current)) ? vehicleStart : current);
@@ -327,12 +427,6 @@ public class VehicleController {
                             "interpolationDegree", 1,
                             "cartesian", cartesianArray
                     ),
-//                    "orientation", Map.of(
-//                        "interpolationAlgorithm", "LINEAR",
-//                        "interpolationDegree", 1,
-//                        "epoch", startTime.toString(),
-//                        "unitQuaternion", unitQuaternionArray
-//                    )
                     "orientation", Map.of("velocityReference", "#position")
             );
 
@@ -363,40 +457,169 @@ public class VehicleController {
             vehiclePathList.add(vehicleEntry);
         });
 
-        Instant globalStart = earliestStartRef.get();
-        Instant globalStop  = latestStopRef.get();
+        return new Instant[]{ earliestStartRef.get(), latestStopRef.get() };
+    }
 
-        if (globalStart == null || globalStop == null) {
-            throw new java.io.FileNotFoundException(
-                "차량 경로 생성 실패: 유효한 좌표가 없습니다 (roadMap에 링크가 없거나 vehicle_sim.db가 비어있음) — scenarioKey=" + scenarioKey);
+    // ─────────────── 차량 viewport+시간창 스트리밍 (개별 차량 near LOD) ───────────────
+
+    /** scenarioKey → 스트리밍 컨텍스트 (roadMap/converter/기준시각 — network.xml 파싱 1회 캐시) */
+    private final ConcurrentHashMap<String, ViewportCtx> viewportCtxCache = new ConcurrentHashMap<>();
+
+    private record ViewportCtx(Map<String, RoadResponse.Road> roadMap,
+                               Map<String, CoordinateConverter> converterCache,
+                               Scenario scenario,
+                               Map<String, VehicleInfo> vehicleInfoMap,
+                               long baseEpoch, double simMin, double simMax) {}
+
+    private ViewportCtx ensureViewportCtx(String scenarioKey) throws IOException {
+        ViewportCtx c = viewportCtxCache.get(scenarioKey);
+        if (c != null) return c;
+        synchronized (viewportCtxCache) {
+            c = viewportCtxCache.get(scenarioKey);
+            if (c != null) return c;
+
+            Scenario scenario = scenarioService.getScenarioByKey(scenarioKey);
+            if (scenario == null || scenario.getLatitude() == null || scenario.getLongitude() == null) {
+                throw new IOException("시나리오 기준 좌표 없음: " + scenarioKey);
+            }
+            long t0 = System.currentTimeMillis();
+            byte[] networkBytes;
+            try (InputStream raw = new URL(remoteUrl + scenarioKey + "/network.xml").openStream()) {
+                networkBytes = raw.readAllBytes();
+            }
+            List<RoadResponse.Road> roads = GeoJsonUtils.parseXmlToRoads(new ByteArrayInputStream(networkBytes));
+            Map<String, RoadResponse.Road> roadMap = roads.stream().collect(Collectors.toMap(
+                    RoadResponse.Road::getLinkId, Function.identity(), (r1, r2) -> r1));
+            Map<String, CoordinateConverter> converters = new ConcurrentHashMap<>();
+            roadMap.forEach((key, road) -> {
+                CoordinateConverter converter = new CoordinateConverter();
+                converter.setBasePoint(scenario.getLongitude(), scenario.getLatitude());
+                converter.setRoadPoint(road.getBaseEasting(), road.getBaseNorthing(),
+                        road.getTargetEasting(), road.getTargetNorthing(), road.getHalfWidth());
+                converters.put(key, converter);
+            });
+            double[] simRange = vehicleDataReader.readSimTimeRange(scenarioKey);
+            Map<String, VehicleInfo> infoMap = vehicleDataReader.readVehicleInfoMap(scenarioKey);
+            // baseEpoch은 컨텍스트 수명 동안 고정 → viewport 요청 간 CZML epoch/clock 이 일치 (재생 연속성)
+            long baseEpoch = Instant.now().getEpochSecond();
+            c = new ViewportCtx(roadMap, converters, scenario, infoMap, baseEpoch, simRange[0], simRange[1]);
+            viewportCtxCache.put(scenarioKey, c);
+            logger.info("[viewport] {} 컨텍스트 빌드 완료 ({}ms, roads={}, simRange={}~{})",
+                    scenarioKey, System.currentTimeMillis() - t0, roadMap.size(), simRange[0], simRange[1]);
+            return c;
         }
+    }
 
-        Map<String, Object> documentPacket = Map.of(
-                "id", "document",
-                "name", "Vehicle Movement",
-                "version", "1.0",
-                "clock", Map.of(
-                        "interval", globalStart + "/" + globalStop,
-                        "currentTime", globalStart.toString(),
-                        "multiplier", 1,
-                        "range", "CLAMPED",
-                        "step", "SYSTEM_CLOCK_MULTIPLIER"
-                )
-        );
-        czml.addFirst(documentPacket);
+    /** viewport 요청당 선별 차량 기본 상한 (응답 폭주 방지). numVehicle 로 요청별 조정 가능 */
+    private static final int VIEWPORT_DEFAULT_MAX_VEHICLES = 3000;
+    /** 요청이 아무리 커도 넘지 못하는 하드캡 (~260MB 응답 방지) */
+    private static final int VIEWPORT_HARD_CAP = 10_000;
 
-        stageMap.put(scenarioKey, "DB 저장 중...");
-        vehicleRouteService.saveRoute(scenarioKey, czml, featureList, vehiclePathList, baseEpoch, scenarioKey);
-        stageMap.remove(scenarioKey);
+    /**
+     * viewport(bbox) + 재생 시간창의 차량 궤적만 반환 (대용량 시나리오 개별 차량 스트리밍).
+     * 캐시/더미 생성 없음 — vehicle_sim.db 가 없으면 404.
+     * body: { bbox: "w,s,e,n", fromTime?, toTime?, bufferSec? }
+     */
+    @PostMapping("/vehicle-route/{scenarioKey}/viewport")
+    public ResponseEntity<Map<String, Object>> getVehicleRouteViewport(
+            @RequestBody VehicleRequest request,
+            @PathVariable String scenarioKey) {
+        try {
+            if (request.getBbox() == null || request.getBbox().isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "bbox 파라미터가 필요합니다"));
+            }
+            String[] p = request.getBbox().split(",");
+            if (p.length != 4) {
+                return ResponseEntity.badRequest().body(Map.of("error", "bbox 형식: west,south,east,north"));
+            }
+            double west = Double.parseDouble(p[0].trim());
+            double south = Double.parseDouble(p[1].trim());
+            double east = Double.parseDouble(p[2].trim());
+            double north = Double.parseDouble(p[3].trim());
 
-        Map<String, Object> response = new HashMap<>();
-        response.put("czml", czml);
-        response.put("features", featureList);
-        response.put("positions", vehiclePathList);
+            if (!fileStorage.exists(scenarioKey + "/vehicle_sim.db")) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("error", "vehicle_sim.db 없음: " + scenarioKey));
+            }
 
-        response.put("signalTimeline", signalTimeline);
+            ViewportCtx ctx = ensureViewportCtx(scenarioKey);
 
-        return ResponseEntity.ok(response);
+            // 1) bbox 내 링크 (네트워크 SQLite RTree 재사용 — link-traffic 과 동일 협업)
+            List<String> linkIds = new ArrayList<>();
+            for (var link : networkTileService.queryByBbox(
+                    scenarioKey, west, south, east, north, NetworkTileService.Lod.NEAR).getLinks()) {
+                if (link.getId() != null) linkIds.add(String.valueOf(link.getId()));
+            }
+
+            // 2) 시간창 (버퍼 포함) — fromTime/toTime 없으면 전체
+            int buffer = request.getBufferSec() != null ? request.getBufferSec() : 60;
+            double from = 0, to = 0;
+            if (request.getFromTime() != null && request.getToTime() != null) {
+                from = Math.max(0, request.getFromTime() - buffer);
+                to = request.getToTime() + (double) buffer;
+            }
+
+            // 3) 차량 선별 + 궤적 슬라이싱 → CZML 빌드 (캐시 저장 없음).
+            //    상한: 요청 numVehicle(>0) 우선, 하드캡 이내로 제한
+            int maxVehicles = request.getNumVehicle() > 0
+                    ? Math.min(request.getNumVehicle(), VIEWPORT_HARD_CAP)
+                    : VIEWPORT_DEFAULT_MAX_VEHICLES;
+            long t0 = System.currentTimeMillis();
+            VehicleDataReader.FilteredVehicleEvents filtered = vehicleDataReader.readVehicleEventsFiltered(
+                    scenarioKey, linkIds, from, to, maxVehicles);
+            List<VehicleEvent> events = filtered.events();
+            Map<String, List<VehicleEvent>> grouped = events.stream()
+                    .collect(Collectors.groupingBy(VehicleEvent::getId));
+
+            List<Map<String, Object>> czml = Collections.synchronizedList(new ArrayList<>());
+            List<Map<String, Object>> featureList = Collections.synchronizedList(new ArrayList<>());
+            List<Map<String, Object>> vehiclePathList = Collections.synchronizedList(new ArrayList<>());
+            buildVehiclePackets(grouped, ctx.roadMap(), ctx.converterCache(), ctx.scenario(),
+                    ctx.baseEpoch(), Instant.ofEpochSecond(ctx.baseEpoch()), ctx.vehicleInfoMap(),
+                    czml, featureList, vehiclePathList);
+
+            // document clock 은 전체 시뮬 시간 범위 (viewport 마다 달라지지 않음 → 재생 clock 안정)
+            Instant globalStart = Instant.ofEpochSecond(ctx.baseEpoch() + (long) ctx.simMin());
+            Instant globalStop = Instant.ofEpochSecond(ctx.baseEpoch() + (long) Math.ceil(ctx.simMax()));
+            Map<String, Object> documentPacket = Map.of(
+                    "id", "document",
+                    "name", "Vehicle Movement",
+                    "version", "1.0",
+                    "clock", Map.of(
+                            "interval", globalStart + "/" + globalStop,
+                            "currentTime", globalStart.toString(),
+                            "multiplier", 1,
+                            "range", "CLAMPED",
+                            "step", "SYSTEM_CLOCK_MULTIPLIER"
+                    )
+            );
+            czml.addFirst(documentPacket);
+
+            boolean truncated = filtered.totalVehicles() > maxVehicles;
+            logger.info("[viewport] {} bbox=({},{},{},{}) window={}~{} → 차량 {}/{}대{}, 이벤트 {}건 ({}ms)",
+                    scenarioKey, west, south, east, north, from, to,
+                    grouped.size(), filtered.totalVehicles(), truncated ? " (상한 초과)" : "",
+                    events.size(), System.currentTimeMillis() - t0);
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("czml", czml);
+            response.put("features", featureList);
+            response.put("positions", vehiclePathList);
+            response.put("simRange", List.of(ctx.simMin(), ctx.simMax()));
+            response.put("window", Map.of("fromTime", from, "toTime", to, "bufferSec", buffer));
+            response.put("totalVehicles", filtered.totalVehicles());
+            response.put("truncated", truncated);
+            return ResponseEntity.ok(response);
+
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", "bbox 숫자 형식 오류"));
+        } catch (java.io.FileNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("[viewport] {} 요청 실패", scenarioKey, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage() != null ? e.getMessage() : "알 수 없는 오류"));
+        }
     }
 
     @GetMapping("/signal-timeline/{scenarioKey}")
@@ -463,6 +686,9 @@ public class VehicleController {
 
         // 캐시된 차량 경로 데이터 삭제 → 다음 재생 시 새 DB로 재생성
         vehicleRouteService.getByVersionId(versionId).ifPresent(vehicleRouteService::deleteRoute);
+        // viewport 스트리밍 컨텍스트/DB 사본 캐시도 무효화 (새 DB 반영)
+        viewportCtxCache.remove(versionId);
+        vehicleDataReader.invalidateDbCache(versionId);
 
         return ResponseEntity.ok(Map.of("status", "ok"));
     }
@@ -522,12 +748,17 @@ public class VehicleController {
     public ResponseEntity<Map<String, Object>> checkVehicleRouteExists(@PathVariable String scenarioKey) {
         boolean exists = vehicleRouteService.getByVersionId(scenarioKey).isPresent();
         boolean generating = generatingSet.containsKey(scenarioKey);
-        return ResponseEntity.ok(Map.of("exists", exists, "generating", generating));
+        // 시뮬 원본(vehicle_sim.db) 존재 여부 — CZML 캐시가 없어도 원본이 있으면 로드 가능
+        // (프론트가 "데이터 있을 때만 POST" 판단에 사용 → 더미 자동 생성 방지)
+        boolean simDbExists = exists || fileStorage.exists(scenarioKey + "/vehicle_sim.db");
+        return ResponseEntity.ok(Map.of("exists", exists, "generating", generating, "simDbExists", simDbExists));
     }
 
     @DeleteMapping("/vehicle-route/{scenarioKey}")
     public ResponseEntity<Void> deleteVehicleRoute(@PathVariable String scenarioKey) {
         generatingSet.remove(scenarioKey);
+        viewportCtxCache.remove(scenarioKey);
+        vehicleDataReader.invalidateDbCache(scenarioKey);
         vehicleRouteService.getByVersionId(scenarioKey).ifPresent(vehicleRouteService::deleteRoute);
         try {
             fileStorage.deleteFile(scenarioKey + "/vehicle_sim.db");
@@ -547,6 +778,8 @@ public class VehicleController {
             logger.info("[vehicle-route] {} 강제 재생성 요청 — CZML 캐시 및 vehicle_sim.db 삭제", scenarioKey);
             vehicleRouteService.getByVersionId(scenarioKey).ifPresent(vehicleRouteService::deleteRoute);
             failedSet.remove(scenarioKey);
+            viewportCtxCache.remove(scenarioKey);
+            vehicleDataReader.invalidateDbCache(scenarioKey);
             try {
                 fileStorage.deleteFile(scenarioKey + "/vehicle_sim.db");
                 logger.info("[vehicle-route] {} vehicle_sim.db 삭제 완료", scenarioKey);
@@ -558,6 +791,16 @@ public class VehicleController {
         Optional<VehicleRoute> optional = vehicleRouteService.getByVersionId(scenarioKey);
 
         if (optional.isEmpty()) {
+            // 대용량 DB: 전체 CZML 캐시를 만들지 않는 정책 → 생성 재시작 없이 largeMode 즉시 반환.
+            // (없으면 폴링이 매번 '캐시 없음 → 재생성'을 반복하는 무한 루프가 됨)
+            if (!generatingSet.containsKey(scenarioKey)) {
+                long evCount = vehicleDataReader.countEvents(scenarioKey);
+                if (evCount > LARGE_EVENT_THRESHOLD) {
+                    logger.info("[vehicle-route] {} 대용량 DB (이벤트 {}건) — largeMode 응답 (viewport 스트리밍 사용)", scenarioKey, evCount);
+                    return ResponseEntity.ok(Map.of("status", "ok", "largeMode", true, "events", evCount));
+                }
+            }
+
             // 이전 생성 실패 에러가 있으면 반환
             String failMsg = failedSet.remove(scenarioKey);
             if (failMsg != null) {
@@ -577,6 +820,14 @@ public class VehicleController {
                                 "stage", stage,
                                 "elapsed", elapsedSec,
                                 "message", stage));
+            }
+            // 명시적 생성 요청이 아니고 시뮬 원본(vehicle_sim.db)도 없으면 생성 스레드를 띄우지 않는다
+            // (로드 경로 POST가 더미 생성을 유발하지 않도록 — 생성은 프론트 생성 버튼 전용)
+            if (!request.isGenerateDummy() && !fileStorage.exists(scenarioKey + "/vehicle_sim.db")) {
+                logger.info("[vehicle-route] {} 시뮬 원본 없음 + 비명시 요청 — 404 반환 (더미 생성 안 함)", scenarioKey);
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("status", "no-data",
+                                "message", "시뮬레이션 데이터가 없습니다. 시뮬레이션 생성 버튼으로 생성하세요."));
             }
             // 비동기 생성 시작 후 202 반환
             generatingSet.put(scenarioKey, true);
@@ -598,9 +849,11 @@ public class VehicleController {
                         throw new RuntimeException(errMsg);
                     }
                     logger.info("[vehicle-route] {} 생성 완료", scenarioKey);
-                } catch (Exception e) {
+                } catch (Throwable e) {
+                    // Exception 만 잡으면 OutOfMemoryError 가 failedSet 에 등록되지 않아
+                    // 프론트 폴링이 생성을 무한 재시작 → OOM 반복. Throwable 로 잡아 실패 확정.
                     logger.error("[vehicle-route] {} 생성 실패: {}", scenarioKey, e.getMessage());
-                    failedSet.put(scenarioKey, e.getMessage() != null ? e.getMessage() : "알 수 없는 오류");
+                    failedSet.put(scenarioKey, e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
                 } finally {
                     generatingSet.remove(scenarioKey);
                     startTimeMap.remove(scenarioKey);

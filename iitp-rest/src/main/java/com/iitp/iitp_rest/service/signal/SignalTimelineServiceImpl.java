@@ -10,6 +10,7 @@ import org.w3c.dom.NodeList;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.FileNotFoundException;
 import java.io.InputStream;
 import java.net.URL;
 import java.time.Instant;
@@ -18,10 +19,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Arrays;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 @Service
 @RequiredArgsConstructor
 public class SignalTimelineServiceImpl implements SignalTimelineService {
 
+    private static final Logger logger = LoggerFactory.getLogger(SignalTimelineServiceImpl.class);
     private static final DateTimeFormatter formatter = DateTimeFormatter.ISO_INSTANT;
 
     @Value("${database.vehicle_sim.remoteUrl}")
@@ -56,13 +61,16 @@ public class SignalTimelineServiceImpl implements SignalTimelineService {
                     turn.setType(turnEl.getAttribute("type"));
 
                     String connListStr = turnEl.getAttribute("connList");
-                    List<String> connList = connListStr.isEmpty() ? new ArrayList<>() : Arrays.asList(connListStr.trim().split("\\s+"));
+                    if (connListStr.isEmpty()) connListStr = turnEl.getAttribute("conn_list");
+                    List<String> connList = connListStr.isBlank() ? new ArrayList<>() : Arrays.asList(connListStr.trim().split("\\s+"));
                     turn.setConnList(connList);
 
                     turnInfoList.add(turn);
                 }
 
-                NodeList planList = ((Element) nodeElement.getElementsByTagName("planList").item(0)).getElementsByTagName("plan");
+                org.w3c.dom.Node planListNode = nodeElement.getElementsByTagName("planList").item(0);
+                if (planListNode == null) continue;
+                NodeList planList = ((Element) planListNode).getElementsByTagName("plan");
                 if (planList.getLength() == 0) continue;
 
                 // targetPlanId에 맞는 plan 찾기
@@ -97,7 +105,9 @@ public class SignalTimelineServiceImpl implements SignalTimelineService {
                     for (int j = 0; j < phaseList.getLength(); j++) {
                         Element phaseElement = (Element) phaseList.item(j);
                         int duration = Integer.parseInt(phaseElement.getAttribute("duration"));
-                        String[] turnList = phaseElement.getAttribute("turnList").trim().split("\\s+");
+                        String turnListStr = phaseElement.getAttribute("turnList");
+                        if (turnListStr.isEmpty()) turnListStr = phaseElement.getAttribute("turn_list");
+                        String[] turnList = turnListStr.isBlank() ? new String[0] : turnListStr.trim().split("\\s+");
 
                         Instant endTime = currentTime.plusSeconds(duration);
 
@@ -142,8 +152,10 @@ public class SignalTimelineServiceImpl implements SignalTimelineService {
                 timelines.add(response);
             }
 
+        } catch (FileNotFoundException e) {
+            logger.warn("[SignalTimeline] signal.xml 없음 (신호 타임라인 생략): {}", xmlUrl);
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("[SignalTimeline] signal.xml 파싱 오류: {}", xmlUrl, e);
         }
 
         return timelines;

@@ -1,5 +1,7 @@
 package com.iitp.iitp_rest.model.analytics;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.iitp.iitp_rest.model.geometry.Coordinates;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -28,5 +30,15 @@ public class LinkTrafficResponse {
         private String linkId;
         private int volume;     // 시간창 내 고유 차량 수
         private double avgSpeed; // 평균 속도 (km/h)
+
+        /** 링크 중심선 좌표 (네트워크 타일 모드에서 클라이언트가 링크 지오메트리를 별도 보유하지 않으므로 동봉) */
+        @JsonInclude(JsonInclude.Include.NON_NULL)
+        private List<Coordinates> coordinates;
+
+        public LinkTraffic(String linkId, int volume, double avgSpeed) {
+            this.linkId = linkId;
+            this.volume = volume;
+            this.avgSpeed = avgSpeed;
+        }
     }
 }

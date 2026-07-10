@@ -67,12 +67,24 @@ public class AnalyticsController {
             NetworkResponse net = networkTileService.queryByBbox(
                     versionId, west, south, east, north, NetworkTileService.Lod.MID);
             List<String> linkIds = new ArrayList<>();
+            java.util.Map<String, LinkResponse> linkById = new java.util.HashMap<>();
             for (LinkResponse l : net.getLinks()) {
-                if (l.getId() != null) linkIds.add(String.valueOf(l.getId()));
+                if (l.getId() != null) {
+                    String id = String.valueOf(l.getId());
+                    linkIds.add(id);
+                    linkById.put(id, l);
+                }
             }
 
             // 2) 차량 SQLite 에서 그 링크들의 집계
             LinkTrafficResponse result = vehicleDataReader.readLinkTraffic(versionId, linkIds, fromTime, toTime);
+
+            // 3) 링크 좌표 동봉 — 네트워크 타일 모드에서 클라이언트가 전체 링크 지오메트리를
+            //    보유하지 않으므로, 히트맵 렌더에 필요한 중심선 좌표를 집계 응답에 함께 내린다.
+            for (LinkTrafficResponse.LinkTraffic lt : result.getLinks()) {
+                LinkResponse link = linkById.get(lt.getLinkId());
+                if (link != null) lt.setCoordinates(link.getCoordinates());
+            }
             return ResponseEntity.ok(result);
         } catch (NumberFormatException e) {
             return ResponseEntity.badRequest().build();
