@@ -149,11 +149,11 @@ INSERT INTO public.vehicle_type VALUES (4, '트럭',    'off', '0', '2',  'TRUCK
 INSERT INTO public.vehicle_type VALUES (5, '이륜차',  'off', '0', '1',  'MOTO');
 
 -- vehicle_type_model: id, color, file_name, file_path, name, length, vehicle_type_id
-INSERT INTO public.vehicle_type_model VALUES (1, '#3a86ff', 'model_12.glb',         '/models/model_12.glb',         '승용차 기본', '4.5',  1);
-INSERT INTO public.vehicle_type_model VALUES (2, '#ef0000', 'CesiumMilkTruck3.glb', '/models/CesiumMilkTruck3.glb', '택시 기본',   '4.8',  2);
-INSERT INTO public.vehicle_type_model VALUES (3, '#2ec4b6', 'CesiumMilkTruck.glb',  '/models/CesiumMilkTruck.glb',  '버스 기본',   '12.0', 3);
-INSERT INTO public.vehicle_type_model VALUES (4, '#f4a261', 'CesiumMilkTruck.glb',  '/models/CesiumMilkTruck.glb',  '트럭 기본',   '8.0',  4);
-INSERT INTO public.vehicle_type_model VALUES (5, '#8338ec', 'model_12.glb',         '/models/model_12.glb',         '이륜차 기본', '2.0',  5);
+INSERT INTO public.vehicle_type_model VALUES (1, '#3a86ff', 'model_12.glb',        '/models/model_12.glb',        '승용차 기본', '4.5',  1);
+INSERT INTO public.vehicle_type_model VALUES (2, '#ef0000', 'tusan.glb',            '/models/tusan.glb',            '택시 기본',   '4.8',  2);
+INSERT INTO public.vehicle_type_model VALUES (3, '#2ec4b6', 'CesiumMilkTruck.glb', '/models/CesiumMilkTruck.glb', '버스 기본',   '12.0', 3);
+INSERT INTO public.vehicle_type_model VALUES (4, '#f4a261', 'CesiumMilkTruck.glb', '/models/CesiumMilkTruck.glb', '트럭 기본',   '8.0',  4);
+INSERT INTO public.vehicle_type_model VALUES (5, '#8338ec', 'model_12.glb',        '/models/model_12.glb',        '이륜차 기본', '2.0',  5);
 
 -- vehicle_type_parameter: id, vehicle_type_id, parameter_name, mean, sd, min, max, dist
 

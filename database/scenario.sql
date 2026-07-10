@@ -24,7 +24,7 @@ CREATE TABLE scenario_version (
 
 -- scenario 삽입
 INSERT INTO scenario (key, longitude, latitude, label, description) VALUES
-                                         ('scenario1', 126.7325, 37.4928, '출근 시간대 시뮬레이션', '오전 7시 ~ 9시 혼잡도 분석'),
+                                         ('scenario1', 126.752828, 37.505937, '출근 시간대 시뮬레이션', '오전 7시 ~ 9시 혼잡도 분석'),
                                          ('scenario2', 126.9000, 37.4800, '퇴근 시간대 시뮬레이션', '오후 6시 ~ 8시 교차로 체증 분석'),
                                          ('scenario3', 127.0000, 37.5700, '이벤트 발생 시뮬레이션', '도심 내 대형 행사에 따른 우회 경로 분석');
 

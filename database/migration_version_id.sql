@@ -49,6 +49,7 @@ BEGIN
               AND column_name  = 'version_id'
             ORDER BY table_name
         LOOP
+            -- (1) 정확히 scenario.key 인 레코드 → 기본 version.key
             EXECUTE format(
                 'UPDATE public.%I SET version_id = %L WHERE version_id = %L',
                 tbl, scen.default_version_key, scen.scenario_key
@@ -58,8 +59,20 @@ BEGIN
                 RAISE NOTICE '  % : % → %  (% rows)',
                     tbl, scen.scenario_key, scen.default_version_key, updated_cnt;
             END IF;
-        END LOOP;
-    END LOOP;
+
+            -- (2) origin 접미사 레코드: "{scenario.key}:origin" → "{version.key}:origin"
+            --     (백엔드 XmlLayerVersionService 가 versionId + ":origin" 으로 편집 전 원본 조회)
+            EXECUTE format(
+                'UPDATE public.%I SET version_id = %L WHERE version_id = %L',
+                tbl, scen.default_version_key || ':origin', scen.scenario_key || ':origin'
+            );
+            GET DIAGNOSTICS updated_cnt = ROW_COUNT;
+            IF updated_cnt > 0 THEN
+                RAISE NOTICE '  % : %:origin → %:origin  (% rows)',
+                    tbl, scen.scenario_key, scen.default_version_key, updated_cnt;
+            END IF;
+        END LOOP;   -- 테이블 순회 종료
+    END LOOP;       -- scenario 순회 종료
 END $$;
 
 COMMIT;
