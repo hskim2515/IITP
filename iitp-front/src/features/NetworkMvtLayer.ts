@@ -6,6 +6,7 @@ import type { FeatureLike } from "ol/Feature";
 import { createXYZ } from "ol/tilegrid";
 import { NETWORK_TILING, getNetworkLodTierByResolution } from "@utils/lodConstants";
 import { useNetworkEditStore } from "@stores/useNetworkEditStore";
+import { getActiveVersionId } from "@utils/versionId";
 
 /**
  * 네트워크 MVT(PBF) 레이어 (단계 3) — overview/mid 2D 도로망을 OL VectorTile 로 렌더.
@@ -36,8 +37,13 @@ export default class NetworkMvtLayer extends VectorTileLayer {
         stroke: new Stroke({ color: "rgba(30,30,35,0.6)", width: 0.4 }),
     });
 
+    /** 캐시 무효화 세대 홀더 — refreshTiles() 시 증가해 타일 URL 을 바꿔 OL/브라우저 캐시를 모두 우회
+     *  (tileUrlFunction 이 super() 전에 정의되므로 this 대신 홀더 객체로 참조) */
+    private readonly revBox: { rev: number };
+
     constructor(versionId: string, apiBaseUrl: string) {
         const tileGrid = createXYZ({ maxZoom: 22 });
+        const revBox = { rev: 0 };
         const source = new VectorTileSource({
             format: new MVT(),
             tileGrid,
@@ -49,7 +55,10 @@ export default class NetworkMvtLayer extends VectorTileLayer {
                 const y = tileCoord[2] ?? 0;
                 const res = tileGrid.getResolution(z);
                 const lod = getNetworkLodTierByResolution(res); // overview/mid/near (3D와 동일 함수)
-                return `${apiBaseUrl}/network/${versionId}/tiles.mvt?z=${z}&x=${x}&y=${y}&lod=${lod}`;
+                // versionId 는 생성 시점 고정이 아니라 매 요청 시 동적 조회 —
+                // 시나리오/버전 전환 시 이전 버전 타일(이전 네트워크)이 계속 보이는 것 방지
+                const vid = getActiveVersionId() ?? versionId;
+                return `${apiBaseUrl}/network/${vid}/tiles.mvt?z=${z}&x=${x}&y=${y}&lod=${lod}&rev=${revBox.rev}`;
             },
             // 빈 타일(204)도 정상 처리되도록 — OL 은 빈 응답을 빈 타일로 취급
         });
@@ -63,6 +72,17 @@ export default class NetworkMvtLayer extends VectorTileLayer {
             renderMode: "hybrid",
             style: (feature, resolution) => this.styleFunction(feature, resolution),
         });
+        this.revBox = revBox;
+    }
+
+    /**
+     * 네트워크 교체(임포트) 후 호출 — OL 내부 타일 캐시와 브라우저 HTTP 캐시를 모두 무효화.
+     * rev 증가로 타일 URL 이 바뀌므로 이미 로드된 stale 타일이 새 데이터로 재요청된다.
+     */
+    public refreshTiles(): void {
+        this.revBox.rev++;
+        try { this.getSource()?.refresh(); } catch (_) {}
+        this.changed();
     }
 
     private styleFunction(feature: FeatureLike, resolution: number): Style | undefined {
@@ -72,13 +92,17 @@ export default class NetworkMvtLayer extends VectorTileLayer {
         // MVT RenderFeature 는 getType()/getId() 가 있으나 FeatureLike 타입엔 없어 any 캐스팅.
         const f = feature as any;
         const tier = getNetworkLodTierByResolution(resolution);
-        // 편집 삭제 마스킹: 삭제된 링크(저장 전)는 서버 MVT 에 아직 남아있으므로 클라이언트에서 숨김.
+        // 편집 마스킹: 삭제/수정된 링크(저장 전)는 서버 MVT 에 옛 형상으로 남아있으므로 숨김.
+        //   삭제 → 완전 숨김. 수정 → 델타 오버레이가 새 형상을 그리므로 원본을 숨겨 이중 렌더 방지.
         //   feature id: 중심선/도로=linkId, 차선폴리곤=linkId*100+laneIdx → /100 으로 링크 id 복원.
-        const deleted = useNetworkEditStore.getState().deletedLinkIds;
-        if (deleted.size > 0) {
+        const editState = useNetworkEditStore.getState();
+        const deleted = editState.deletedLinkIds;
+        const edited = editState.editedLinkIds;
+        if (deleted.size > 0 || edited.size > 0) {
             const rawId = Number(f.getId?.() ?? -1);
             const linkId = (f.getType?.() === "Polygon" && tier === "detail") ? Math.floor(rawId / 100) : rawId;
-            if (deleted.has(String(linkId))) return undefined; // 삭제된 링크 → 렌더 생략
+            const key = String(linkId);
+            if (deleted.has(key) || edited.has(key)) return undefined; // 삭제/수정 링크 → 렌더 생략
         }
         if (f.getType?.() === "Polygon") {
             if (tier === "detail") {

@@ -42,6 +42,8 @@ export const LOD_RES = {
     NETWORK_LINK_ONLY:      1.5,
     /** 네트워크: 외곽선만                                   ↔ Cesium ~8000m */
     NETWORK_OUTLINE_ONLY:   8,
+    /** 네트워크: 광역 조망 — 고속도로 골격만 (macro)         ↔ Cesium ~26km+ */
+    NETWORK_MACRO:         25,
     /** 신호: 전체 아이콘 표시                               ↔ Cesium ~1300m */
     SIGNAL_ICON:            1.3,
     /** 신호: 단순 dot 표시                                  ↔ Cesium ~4200m */
@@ -142,14 +144,18 @@ export const NETWORK_EXTENT_GATING = {
  */
 export const NETWORK_TILING = {
     /** 타일링 활성화 (기본 off — 단계적 도입) */
-    ENABLED: false,
+    // 상시 타일 모드 — 전체-로드(수십~수백MB 다운로드+파싱) 경로를 항상 우회.
+    // 시나리오 규모와 무관하게 viewport 타일 + extent flyTo 로 동작한다.
+    ENABLED: true,
     /** 타일 격자 크기(도) ≈ 2.5km. 고밀도 도시 detail 타일이 5km면 ~6.8MB/3천링크라 커서 축소.
      *  (CHUNK_DEG가 이 값을 참조 → Cesium 청크도 함께 작아짐) */
     TILE_DEG: 0.025,
     /** viewport 주변 선읽기 링 수 (팬 끊김 방지) */
     PREFETCH_RING: 1,
-    /** 메모리 보유 최대 타일 수 (LRU; 되돌아가기 캐시) */
-    LRU_MAX_TILES: 64,
+    /** 메모리 보유 최대 타일 수 (LRU; 되돌아가기 캐시).
+     *  detail 타일은 파싱된 JSON(cachedNode/LinkMap)+프리미티브로 개당 수 MB —
+     *  64개면 힙 수백 MB까지 커져 32로 축소 (32타일 ≈ 200km² 커버, 재방문은 refetch) */
+    LRU_MAX_TILES: 32,
     /**
      * MVT(PBF) 레이어 활성화 (단계 3) — overview/mid 2D 를 OL VectorTile 로 가속.
      * ON 이면 NetworkFeatureLayer 는 overview/mid 에서 링크 중심선 렌더를 MVT 에 양보한다.
@@ -187,8 +193,8 @@ export function networkLodParam(resolution: number): NetworkLodTier {
  *   기본 off. 자세한 설계: docs/data-scaling-strategy.md
  */
 export const SIGNAL_TILING = {
-    /** 신호 타일링 활성화 (기본 off) */
-    ENABLED: false,
+    /** 신호 타일링 활성화 — 네트워크 타일 모드와 함께 운용 (신호 위치는 네트워크 노드 파생) */
+    ENABLED: true,
     /** near tier 이상(확대)에서만 신호 타일 fetch — 멀리선 신호 자체가 dot/숨김이라 불필요 */
     MIN_TIER: 'near' as NetworkLodTier,
 } as const;
@@ -200,13 +206,42 @@ export const SIGNAL_TILING = {
  * near(확대)에서는 기존 개별 차량 경로 유지. 기본 off — 기존 동작 무변화.
  */
 export const VEHICLE_AGGREGATION = {
-    ENABLED: false,
+    ENABLED: true,
     /** 이 resolution 이상(멀리)에서 집계 모드 활성 — 미만(near)은 개별 차량 */
     MIN_RESOLUTION: LOD_RES.NETWORK_LANE_DETAIL, // = 0.3 (near 이상)
     /** 재생 현재 시각 기준 ± 집계 시간창 (초) */
     TIME_WINDOW_SEC: 60,
     /** moveend/재생 집계 호출 최소 간격 (ms, throttle) */
     THROTTLE_MS: 1000,
+} as const;
+
+/**
+ * 차량 궤적 viewport+시간창 스트리밍 (개별 차량 near LOD, 대용량 시나리오 전용).
+ * 네트워크 tileMode 시나리오에서 전체 czml(수백MB~GB) 대신
+ * POST /vehicle/vehicle-route/{key}/viewport 로 viewport+재생 시간창 분만 로드.
+ * 소형 시나리오(tileMode=false)는 기존 전체-로드 경로 유지.
+ */
+export const VEHICLE_STREAMING = {
+    ENABLED: true,
+    /** 로드할 시간창 길이 (초) — 현재 재생 시각부터 */
+    TIME_WINDOW_SEC: 120,
+    /** 시간창 양쪽 버퍼 (초, 보간 연속성 — 서버가 창 확장) */
+    BUFFER_SEC: 60,
+    /** 재생 시각이 창 끝에서 이 초만큼 남으면 다음 창 prefetch */
+    REFETCH_REMAIN_SEC: 30,
+    /** 카메라 정착 후 fetch 디바운스 (ms) */
+    DEBOUNCE_MS: 800,
+    /** bbox 한 변 최대 (도) — 이보다 넓으면(줌아웃) 개별 차량 fetch 생략 (집계 히트맵 담당) */
+    MAX_BBOX_DEG: 0.15,
+    /** 요청당 차량 상한 (서버 하드캡 10,000). 초과 시 viewport 체류시간 긴 차량 우선 선별 후
+     *  집계 히트맵으로 전환. czml 엔티티는 개당 매 프레임 위치 보간 비용 — 1,500대 ≈ 60fps 예산,
+     *  3,000대에서 FPS 한 자리 실측. */
+    MAX_VEHICLES: 1500,
+    /** 밀집(히트맵) 모드 해제 임계 비율 — 진입은 total > MAX, 해제는 total < MAX×이 값.
+     *  경계(3,000 부근)에서 팬마다 히트맵↔개별차량이 왕복 진동하는 것 방지 (히스테리시스) */
+    DENSE_EXIT_RATIO: 0.8,
+    /** 모드 전환 최소 간격 (ms) — 연속 전환으로 인한 레이어 깜빡임 방지 */
+    MODE_SWITCH_MIN_MS: 4000,
 } as const;
 
 /**

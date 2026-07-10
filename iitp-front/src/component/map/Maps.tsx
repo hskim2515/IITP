@@ -25,11 +25,13 @@ import { useOsmBboxDraw } from "@hooks/useOsmBboxDraw";
 import useNetworkStationModify from "@hooks/useNetworkStationModify";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import NodeContextMenu from "@component/tool/NodeContextMenu";
+import LinkContextMenu from "@component/tool/LinkContextMenu";
 import { useCoordPick } from "@hooks/useCoordPick";
 import { useOsmBboxStore } from "@stores/useOsmBboxStore";
 import { useNetworkTileStore } from "@stores/useNetworkTileStore";
 import { useBackgroundTaskStore } from "@stores/useBackgroundTaskStore";
 import { useVehicleStore } from "@stores/useVehicleStore";
+import EditGuidePanel from "@component/util/EditGuidePanel";
 
 // 3D 전용 테스트 모드 — true로 설정 시 OpenLayers 비활성화, Cesium만 실행
 const ONLY_3D = false;
@@ -192,6 +194,7 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
             ref={containerRef}
             className={`${styles['container']} ${useStackedLayout ? styles['containerSingle'] : ''}`}
         >
+            <EditGuidePanel/>
             {coordPickActive && (
                 <div style={{
                     position: 'absolute', top: 0, left: 0, right: 0, zIndex: 10001,
@@ -274,6 +277,7 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
             )}
             <ToolsPanel/>
             <NodeContextMenu/>
+            <LinkContextMenu/>
 
             {!ONLY_3D && (
                 <div className={styles.mapModeToggle} title={isNetworkEditActive ? '편집 모드 중 전환 불가' : undefined}>

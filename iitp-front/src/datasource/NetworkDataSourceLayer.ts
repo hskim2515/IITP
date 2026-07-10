@@ -125,7 +125,7 @@ export function pickNetworkAtPosition(
 
 /** 도로 몸체 클릭 지점의 레인 역산 — 레인 채움면은 시점 아티팩트로 렌더에서 제거되어
  *  직접 pick 이 불가하므로, 지면점의 중심선 대비 우측 오프셋으로 레인 인덱스를 계산한다.
- *  buildLinkInstances 의 오프셋 규칙(dirOffset + ((laneCount-1)/2 - i)*laneWidth)과 정합. */
+ *  buildLinkInstances 의 오프셋 규칙(중앙정렬, (i - (laneCount-1)/2)*laneWidth, 차선0=최좌측)과 정합. */
 export function pickLaneAtPosition(scene: Cesium.Scene, position: Cesium.Cartesian2, link: any): any | null {
     const lanes = link?.lanes ?? [];
     const coords = (link?.coordinates ?? []).filter((c: any) => c && isFinite(c.lng) && isFinite(c.lat));
@@ -139,8 +139,7 @@ export function pickLaneAtPosition(scene: Cesium.Scene, position: Cesium.Cartesi
     const roadWidth = link.width ?? 7;
     const laneCount = lanes.length;
     const laneWidth = roadWidth / laneCount;
-    const dirOffset = roadWidth / 2; // 렌더와 동일한 우측 반폭 이동
-    const idx = Math.round((laneCount - 1) / 2 - (near.signed - dirOffset) / laneWidth);
+    const idx = Math.round(near.signed / laneWidth + (laneCount - 1) / 2); // 중앙정렬
     if (idx < 0 || idx >= laneCount) return null; // 몸체 밖 (외곽 그림자 등)
     const lane = lanes[idx];
     return lane ? { ...lane, _laneIdx: idx } : null; // _laneIdx: 하이라이트/셀 계산용 레인 인덱스
@@ -184,14 +183,16 @@ export default class NetworkDataSourceLayer {
     // (타일별 개별 폴리라인 추적은 제거됨 — 중심선은 mid 베이스레이어가 전담, 타일은 청크 primitive만)
     /** tileKey → home 링크/노드 id (evict 정리용). manager가 payload를 드롭하므로 자체 추적 */
     private tileHomeIds: Map<string, { nodeIds: string[]; linkIds: string[] }> = new Map();
+    /** 링크/노드 id → 빌드한(소유) 타일. home 타일이 안 로드된 경계 횡단 지오메트리를
+     *  payload에 포함한 타일이 대신 빌드(claim)할 때 중복 빌드 방지용 */
+    private linkOwnerTile: Map<string, string> = new Map();
+    private nodeOwnerTile: Map<string, string> = new Map();
     /** tileKey → 빌드된 tier 순서 (near=2/detail=3) — tier 승격 시 무공백 스왑 판단용 */
     private chunkTiers: Map<string, number> = new Map();
     /** fullBuild 산출물 존재 여부 — 타일 모드 load() 재진입 시 전면 wipe 를 모드 전환 때만 하도록 */
     private hasFullBuildArtifacts = false;
     /** globe.pick 실패(지형 미로딩) 시 updateTiles 재시도 타이머 */
     private pickRetryTimer: ReturnType<typeof setTimeout> | null = null;
-    /** 노드/포트/커넥션 엔티티가 빌드되어 있는 타일 (거리 기반 생명주기 관리) */
-    private entityTiles = new Set<string>();
     /** 마지막 updateTiles 의 pixelSize 기반 tier — 엔티티 표시 게이팅용 (alt 기반 currentLod 와 별개) */
     private lastPixelTier: NetworkLodTier | 'unknown' = 'unknown';
     /** 마지막으로 near 이상 tier 였던 시각 — 경계 플랩 시 전체 clear 방지 (히스테리시스) */
@@ -582,23 +583,42 @@ export default class NetworkDataSourceLayer {
         for (const node of payload.nodes) this.cachedNodeMap.set(String(node.id), node);
         for (const link of payload.links) this.cachedLinkMap.set(String(link.id), link);
 
-        // evict 정리용 home id 기록 (await 이전 — 빌드 중 evict돼도 캐시 정리 가능)
-        this.tileHomeIds.set(tileKey, {
-            nodeIds: payload.nodes.filter(nd => this.nodeChunkKey(nd) === tileKey).map(nd => String(nd.id)),
-            linkIds: payload.links.filter(lk => this.linkChunkKey(lk) === tileKey).map(lk => String(lk.id)),
-        });
+        // 소유권 결정 — home 타일(첫 좌표 기준)이 빌드하는 게 원칙이지만, home 타일이
+        // 로드되지 않은 경계 횡단 링크/노드는 payload에 포함한 이 타일이 대신 빌드(claim).
+        // detail은 ring=0이라 home 타일이 viewport 밖이면 영영 안 그려져
+        // 도로/차선이 타일 경계에서 잘려 보이던 원인. owner 맵으로 중복 빌드 방지.
+        const claim = (id: string, homeKey: string, owner: Map<string, string>): boolean => {
+            const cur = owner.get(id);
+            if (cur === tileKey) return true;                               // 같은 타일 재빌드(tier 승격)
+            if (cur !== undefined && this.tileHomeIds.has(cur)) return false; // 다른 살아있는 청크가 소유
+            if (homeKey === tileKey || !this.tileHomeIds.has(homeKey)) {
+                owner.set(id, tileKey);
+                return true;
+            }
+            return false; // home 타일이 로드되어 있으면 그쪽이 빌드
+        };
+        const ownedNodeIds = payload.nodes
+            .filter(nd => claim(String(nd.id), this.nodeChunkKey(nd), this.nodeOwnerTile))
+            .map(nd => String(nd.id));
+        const ownedLinkIds = payload.links
+            .filter(lk => claim(String(lk.id), this.linkChunkKey(lk), this.linkOwnerTile))
+            .map(lk => String(lk.id));
+
+        // evict 정리용 소유 id 기록 (await 이전 — 빌드 중 evict돼도 캐시 정리 가능)
+        this.tileHomeIds.set(tileKey, { nodeIds: ownedNodeIds, linkIds: ownedLinkIds });
 
         // (지형 고도 샘플링 불필요 — GroundPrimitive 클램프가 지형 위 렌더를 보장 → 타일 빌드 즉시 진행)
         if (this.tileManager && !this.tileManager.hasTile(tileKey)) return; // 빌드 중 evict 방지
 
-        // home 링크만(첫 좌표 기준 청크키 == 타일키) → 청크 인스턴스 빌드
+        // 소유 링크(home + claim)만 청크 인스턴스 빌드
         // (타일별 중심선 폴리라인은 추가하지 않음 — near 이상에서도 mid 베이스레이어가 상시 유지되어 중복)
+        const ownedLinkSet = new Set(ownedLinkIds);
         const outlineInst: Cesium.GeometryInstance[] = [];
         const linkInst: Cesium.GeometryInstance[] = [];
         const laneInst: Cesium.GeometryInstance[] = [];
         const lineInst: Cesium.GeometryInstance[] = []; // 구분선+중앙선 (GroundPolyline)
         for (const link of payload.links) {
-            if (this.linkChunkKey(link) !== tileKey) continue;
+            if (!ownedLinkSet.has(String(link.id))) continue;
             this.buildLinkInstances(link, this.cachedNodeMap, outlineInst, linkInst, laneInst, lineInst, lineInst);
         }
         this.buildChunkPrimitives(tileKey, outlineInst, linkInst, laneInst, lineInst);
@@ -607,8 +627,9 @@ export default class NetworkDataSourceLayer {
         // 여기서 즉시 빌드하지 않는다. (LRU 64타일 누적 시 엔티티 수천 개가 CPU를 매 프레임
         // 소모해 FPS 한 자리로 추락. DDC는 GPU 컬링만 하고 CPU 비용은 총량에 비례)
         if (tierOrder === undefined) {
-            // 비타일 모드: 기존처럼 전부 빌드
-            const homeNodes = payload.nodes.filter(nd => this.nodeChunkKey(nd) === tileKey);
+            // 비타일 모드: 기존처럼 전부 빌드 (소유 노드 = home + claim)
+            const ownedNodeSet = new Set(ownedNodeIds);
+            const homeNodes = payload.nodes.filter(nd => ownedNodeSet.has(String(nd.id)));
             if (homeNodes.length > 0) {
                 this.nodeBuildQueue.set(tileKey, homeNodes);
                 this.scheduleNodeBuild();
@@ -626,41 +647,54 @@ export default class NetworkDataSourceLayer {
      * 노드/포트/커넥션 엔티티 거리 기반 생명주기 — 카메라 1km 진입 시 빌드, 1.3km 이탈 시 제거.
      * 엔티티 총량을 viewport 주변 수백 개로 제한 (총량이 CPU 프레임 비용을 결정).
      * 노드 데이터는 cachedNodeMap 에 남아 있어 재진입 시 재빌드 가능.
+     *
+     * 판정은 **노드 단위** 거리. 타일 단위(중심/영역 근사)는 둘 다 실패했던 이력:
+     * 중심 기준 → 타일 가장자리 노드가 영영 안 빌드(반대각 ~1.8km > BUILD_R),
+     * 영역 근사(중심−반대각) → 대각 이웃까지 과통과 → 밀집 지역 엔티티 1만+ 적체로 FPS 붕괴.
      */
     private syncNodeEntities(): void {
         const detailOrder = NETWORK_LOD_TIER_ORDER.detail;
         const cam = this.viewer.scene.camera.positionWC;
         const BUILD_R = 1000, DROP_R = 1300; // 히스테리시스
+        const toDrop: string[] = [];
         for (const [key, home] of this.tileHomeIds) {
-            const center = this.chunkCenters.get(key);
-            if (!center) continue;
-            const d = Cesium.Cartesian3.distance(cam, center);
-            const has = this.entityTiles.has(key);
-            if (!has && d <= BUILD_R && (this.chunkTiers.get(key) ?? 0) >= detailOrder) {
-                const nodes = home.nodeIds.map((id) => this.cachedNodeMap.get(id)).filter(Boolean);
-                if (nodes.length > 0) {
-                    this.nodeBuildQueue.set(key, nodes);
-                    this.scheduleNodeBuild();
+            if ((this.chunkTiers.get(key) ?? 0) < detailOrder) continue;
+            let buildList: any[] | null = null;
+            for (const nodeId of home.nodeIds) {
+                const node = this.cachedNodeMap.get(nodeId);
+                const c = node?.coordinates;
+                if (!c || c.lng == null || c.lat == null) continue;
+                // 노드 위치 Cartesian 캐시 (settle마다 fromDegrees 재계산 방지)
+                let pos: Cesium.Cartesian3 = node.__pos3d;
+                if (!pos) { pos = Cesium.Cartesian3.fromDegrees(c.lng, c.lat); node.__pos3d = pos; }
+                const d = Cesium.Cartesian3.distance(cam, pos);
+                const has = this.nodeEntityIds.has(nodeId);
+                if (!has && d <= BUILD_R) {
+                    (buildList ??= []).push(node);
+                } else if (has && d > DROP_R) {
+                    toDrop.push(nodeId);
                 }
-                this.entityTiles.add(key);
-            } else if (has && d > DROP_R) {
-                this.nodeBuildQueue.delete(key);
-                this.dataSource.entities.suspendEvents();
-                try {
-                    for (const nodeId of home.nodeIds) {
-                        const ids = this.nodeEntityIds.get(nodeId);
-                        if (ids) {
-                            for (const id of ids) {
-                                const ent = this.dataSource.entities.getById(id);
-                                if (ent) this.dataSource.entities.remove(ent);
-                            }
-                            this.nodeEntityIds.delete(nodeId);
+            }
+            if (buildList && buildList.length > 0) {
+                this.nodeBuildQueue.set(key, buildList);
+                this.scheduleNodeBuild();
+            }
+        }
+        if (toDrop.length > 0) {
+            this.dataSource.entities.suspendEvents();
+            try {
+                for (const nodeId of toDrop) {
+                    const ids = this.nodeEntityIds.get(nodeId);
+                    if (ids) {
+                        for (const id of ids) {
+                            const ent = this.dataSource.entities.getById(id);
+                            if (ent) this.dataSource.entities.remove(ent);
                         }
+                        this.nodeEntityIds.delete(nodeId);
                     }
-                } finally {
-                    this.dataSource.entities.resumeEvents();
                 }
-                this.entityTiles.delete(key);
+            } finally {
+                this.dataSource.entities.resumeEvents();
             }
         }
     }
@@ -730,6 +764,7 @@ export default class NetworkDataSourceLayer {
                 this.nodeEntityIds.delete(nodeId);
             }
             this.cachedNodeMap.delete(nodeId);
+            this.nodeOwnerTile.delete(nodeId);
         }
         for (const linkId of home?.linkIds ?? []) {
             // 픽 속성 맵도 함께 정리 — 남겨두면 evict 된(화면에 없는) 링크가
@@ -742,9 +777,9 @@ export default class NetworkDataSourceLayer {
                 }
             }
             this.cachedLinkMap.delete(linkId);
+            this.linkOwnerTile.delete(linkId);
         }
         this.tileHomeIds.delete(tileKey);
-        this.entityTiles.delete(tileKey);
         try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
@@ -839,13 +874,13 @@ export default class NetworkDataSourceLayer {
             const roadWidth = props.width ?? 7;
             const laneCount = props.lanes?.length || props.numLane || 1;
             // 레인 지정 시: 그 레인만(폭=laneWidth, 중심 오프셋). 아니면 링크 전체(폭=roadWidth, 우측 반폭).
-            //   렌더 규약(dirOffset=roadWidth/2 + ((laneCount-1)/2 - i)*laneWidth)과 정합.
+            //   렌더 규약(중앙정렬, (i - (laneCount-1)/2)*laneWidth, 차선0=최좌측)과 정합.
             const isLane = laneIdx != null && laneIdx >= 0 && laneIdx < laneCount;
             const laneWidth = roadWidth / laneCount;
             const width = isLane ? laneWidth : roadWidth;
             const offset = isLane
-                ? roadWidth / 2 + ((laneCount - 1) / 2 - laneIdx!) * laneWidth
-                : roadWidth / 2;
+                ? (laneIdx! - (laneCount - 1) / 2) * laneWidth
+                : 0;
             const shifted = this.computeOffsetPositions(coords, offset);
             this.highlightPrimitive = new Cesium.GroundPrimitive({
                 geometryInstances: new Cesium.GeometryInstance({
@@ -1370,13 +1405,12 @@ export default class NetworkDataSourceLayer {
 
         const roadWidth = link.width ?? 7;
 
-        // ── 방향별 우측 오프셋 ──────────────────────────────────
-        // KTDB 표준노드링크는 상/하행이 **같은 도로 중심선 지오메트리를 공유하는 별도 링크**.
-        // 중심선 기준 전체 폭으로 그리면 반대 방향 도로 폭 전체가 겹치고 차선 줄무늬가
-        // 교차로 얽혀 "방향이 안 맞는" 형상이 됨 → 진행방향 오른쪽으로 반폭 이동해 분리.
-        // (단방향 도로는 살짝 오른쪽으로 치우칠 뿐 시각 영향 미미)
-        const dirOffset = roadWidth / 2;
-        const shiftedCenter = this.computeOffsetPositions(validCoords, dirOffset);
+        // ── 중앙정렬 (2D/백엔드 규약과 통일) ──────────────────────
+        // 링크 shape = 그 방향 도로의 중심선. KTDB 상하행 역방향 링크쌍 실측(301쌍):
+        // 지오메트리 공유 0건, 전부 자체 중심선(이격 중앙값 12m) → 우측 반폭 시프트는
+        // 이중 시프트가 되어 커넥션/포트/정지선/2D MVT(모두 중앙정렬)와 반폭 어긋났음.
+        // OSM 변환 왕복(지오메트리 공유)은 겹쳐 보이지만 2D와 동일한 기존 모습(좌우 일관).
+        const shiftedCenter = this.computeOffsetPositions(validCoords, 0);
 
         // ── 1. 외곽 그림자 (도로 폭보다 약간 크게, 어두운 색) ─────
         linkOutlineInstances.push(new Cesium.GeometryInstance({
@@ -1416,7 +1450,9 @@ export default class NetworkDataSourceLayer {
         for (let i = 0; i < link.lanes.length; i++) {
             const lane = link.lanes[i];
             if (!lane) continue;
-            const lateralOffset = dirOffset + ((laneCount - 1) / 2 - i) * laneWidth;
+            // 차선 0 = 최좌측(중앙선 쪽) — 2D lane-edit·백엔드 커넥션 shape 규약과 동일.
+            // right(+) 법선 기준이므로 좌측은 음수: (i - (n-1)/2). 중앙정렬(dirOffset 없음).
+            const lateralOffset = (i - (laneCount - 1) / 2) * laneWidth;
 
             const lanePositions = this.computeOffsetPositions(validCoords, lateralOffset);
             this.lanePositionMap.set(`${link.id}_${i}`, {
@@ -1435,7 +1471,7 @@ export default class NetworkDataSourceLayer {
             // 0.15m corridor 분류볼륨은 시선각 따라 슬리버로 투영되어
             // "카메라 방향에 따라 형상이 바뀌는" 아티팩트 → 폴리라인으로 대체
             if (i < link.lanes.length - 1 && lane.__guid) {
-                const boundaryOffset = lateralOffset - laneWidth / 2;
+                const boundaryOffset = lateralOffset + laneWidth / 2; // i와 i+1(더 우측) 사이 경계
                 const boundaryPositions = this.computeOffsetPositions(validCoords, boundaryOffset);
                 dividerInstances.push(new Cesium.GeometryInstance({
                     id: `${lane.__guid}_divider`,
@@ -1452,9 +1488,10 @@ export default class NetworkDataSourceLayer {
             }
         }
 
-        // ── 5. 중앙선 (황색, GroundPolyline 픽셀 폭 — 공유 중심선 위치) ──
+        // ── 5. 중앙선 (황색, GroundPolyline 픽셀 폭) ──────────────
+        // 중앙정렬 렌더에서 방향성 링크의 중앙선(대향차로 경계) = 좌측 가장자리 = -rw/2
         if (laneCount >= 2) {
-            const centerPositions = this.computeOffsetPositions(validCoords, 0);
+            const centerPositions = this.computeOffsetPositions(validCoords, -roadWidth / 2);
             centerLineInstances.push(new Cesium.GeometryInstance({
                 id: `${link.__guid}_center`,
                 geometry: new Cesium.GroundPolylineGeometry({
@@ -1575,29 +1612,40 @@ export default class NetworkDataSourceLayer {
         const toLink = this.cachedLinkMap.get(String(conn.toLink));
         if (!fromLink || !toLink || !conn.__guid) return;
 
-        let fromPt: Cesium.Cartesian3;
-        let toPt: Cesium.Cartesian3;
-
-        if (conn.coordinates?.length >= 2) {
-            const c0 = conn.coordinates[0];
-            const cL = conn.coordinates[conn.coordinates.length - 1];
-            if (!c0 || !cL) return;
-            fromPt = Cesium.Cartesian3.fromDegrees(c0.lng, c0.lat);
-            toPt = Cesium.Cartesian3.fromDegrees(cL.lng, cL.lat);
-        } else {
-            const fromPos = this.lanePositionMap.get(`${String(fromLink.id)}_${conn.fromLane}`);
-            const toPos = this.lanePositionMap.get(`${String(toLink.id)}_${conn.toLane}`);
-            if (!fromPos || !toPos) return;
-            fromPt = fromPos.target;
-            toPt = toPos.source;
+        // 3점 이상 = 변환기가 내부링크 경로(교통섬 순환·회전 동선)로 생성한 실제 폴리라인 —
+        // 베지어 합성 없이 그대로 사용. 2점(구 데이터/직결)만 베지어 폴백.
+        let positions: Cesium.Cartesian3[] | null = null;
+        if (conn.coordinates?.length > 2) {
+            const pts = conn.coordinates.filter((c: any) => c && c.lng != null && c.lat != null);
+            if (pts.length >= 2) {
+                positions = pts.map((c: any) => Cesium.Cartesian3.fromDegrees(c.lng, c.lat));
+            }
         }
+        if (!positions) {
+            let fromPt: Cesium.Cartesian3;
+            let toPt: Cesium.Cartesian3;
 
-        const ctrlPt = node.coordinates?.lng && node.coordinates?.lat
-            ? Cesium.Cartesian3.fromDegrees(node.coordinates.lng, node.coordinates.lat)
-            : Cesium.Cartesian3.midpoint(fromPt, toPt, new Cesium.Cartesian3());
-        const positions = conn.turning === 'Straight'
-            ? [fromPt, toPt]
-            : this.generateQuadraticBezierCurve(fromPt, ctrlPt, toPt);
+            if (conn.coordinates?.length >= 2) {
+                const c0 = conn.coordinates[0];
+                const cL = conn.coordinates[conn.coordinates.length - 1];
+                if (!c0 || !cL) return;
+                fromPt = Cesium.Cartesian3.fromDegrees(c0.lng, c0.lat);
+                toPt = Cesium.Cartesian3.fromDegrees(cL.lng, cL.lat);
+            } else {
+                const fromPos = this.lanePositionMap.get(`${String(fromLink.id)}_${conn.fromLane}`);
+                const toPos = this.lanePositionMap.get(`${String(toLink.id)}_${conn.toLane}`);
+                if (!fromPos || !toPos) return;
+                fromPt = fromPos.target;
+                toPt = toPos.source;
+            }
+
+            const ctrlPt = node.coordinates?.lng && node.coordinates?.lat
+                ? Cesium.Cartesian3.fromDegrees(node.coordinates.lng, node.coordinates.lat)
+                : Cesium.Cartesian3.midpoint(fromPt, toPt, new Cesium.Cartesian3());
+            positions = conn.turning === 'Straight'
+                ? [fromPt, toPt]
+                : this.generateQuadraticBezierCurve(fromPt, ctrlPt, toPt);
+        }
 
         this.dataSource.entities.add({
             id: conn.__guid as string,

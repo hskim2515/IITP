@@ -39,11 +39,18 @@ class TileLayerManager {
                 finalUrl = url.replace("${API_KEY}", apiKey ?? "");
             }
 
+            // 스타일별 실측 최대 제공 줌 (초과 요청 시 VWorld 는 200 + 빈타일(565B) 반환 → 배경 사라짐).
+            // 위성/일반/하이브리드 z19, midnight z18. 초과 줌은 OL 이 최대줌 타일을 업스케일.
+            const MAX_ZOOM_BY_KEY: Record<string, number> = {
+                satellite: 19, base: 19, hybrid: 19, midnight: 18, osm: 19,
+            };
+
             const layer = new TileLayer({
                 visible: basic,
                 zIndex: 1,
                 source: new XYZ({
-                    url: finalUrl
+                    url: finalUrl,
+                    maxZoom: MAX_ZOOM_BY_KEY[key] ?? 18,
                 })
             })
             this.olMap.addLayer(layer);

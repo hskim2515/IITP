@@ -28,6 +28,9 @@ export class SignalTileManager {
     private tiles = new Map<string, TileEntry>();
     private inFlight = new Map<string, Promise<void>>();
     private seq = 0;
+    /** 404 = 이 버전에 신호 파일 자체가 없음(버전 단위) → 카메라 이동마다 타일별 404 재요청 방지.
+     *  clear()(줌아웃)에서 리셋되므로 신호 임포트 후 줌인하면 자연 재시도. */
+    private noSignalData = false;
 
     constructor(
         private versionId: string,
@@ -69,6 +72,7 @@ export class SignalTileManager {
     }
 
     private updateForLngLat(west: number, south: number, east: number, north: number): void {
+        if (this.noSignalData) return;
         const D = NETWORK_TILING.TILE_DEG, ring = NETWORK_TILING.PREFETCH_RING;
         const txMin = Math.floor(west / D), txMax = Math.floor(east / D);
         const tyMin = Math.floor(south / D), tyMax = Math.floor(north / D);
@@ -104,7 +108,9 @@ export class SignalTileManager {
                 this.callbacks.onTileLoaded(key, payload);
             })
             .catch((err) => {
-                if (err?.response?.status !== 404) {
+                if (err?.response?.status === 404) {
+                    this.noSignalData = true; // 버전에 신호 없음 — 이후 fetch 중단
+                } else {
                     console.warn(`[SignalTileManager] 타일 fetch 실패 ${key}`, err);
                 }
             })
@@ -130,5 +136,6 @@ export class SignalTileManager {
         for (const [key, entry] of this.tiles) this.callbacks.onTileEvicted(key, entry.payload);
         this.tiles.clear();
         this.inFlight.clear();
+        this.noSignalData = false;
     }
 }

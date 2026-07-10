@@ -2,6 +2,7 @@ import { toLonLat } from "ol/proj";
 import type { Extent } from "ol/extent";
 import { NETWORK_TILING, networkLodParam, NETWORK_LOD_TIER_ORDER, type NetworkLodTier } from "@utils/lodConstants";
 import axiosInstance from "@api/axiosInstance";
+import { useNetworkTileStore } from "@stores/useNetworkTileStore";
 
 /** 한 타일의 서버 응답 페이로드 (NetworkResponse 부분집합) */
 export interface NetworkTilePayload {
@@ -12,11 +13,14 @@ export interface NetworkTilePayload {
 interface TileEntry {
     payload: NetworkTilePayload;
     lastUsed: number;
+    /** 이 타일을 받아온 LOD tier 순서 (near=2 < detail=3). detail 요청 시 near 타일은 재요청 필요(차선 stripped) */
+    tierOrder: number;
 }
 
 export interface NetworkTileManagerCallbacks {
-    /** 타일이 새로 로드됨 — 소비자(OL/Cesium)가 피처/프리미티브를 빌드 */
-    onTileLoaded: (tileKey: string, payload: NetworkTilePayload) => void;
+    /** 타일이 새로 로드됨 — 소비자(OL/Cesium)가 피처/프리미티브를 빌드.
+     *  tierOrder: 이 타일을 받아온 LOD tier 순서 (near=2, detail=3) — detail에서만 무거운 리소스(엔티티) 빌드용 */
+    onTileLoaded: (tileKey: string, payload: NetworkTilePayload, tierOrder: number) => void;
     /** 타일이 evict됨 — 소비자가 해당 타일 피처/프리미티브를 destroy (id 기준 refcount는 소비자 책임) */
     onTileEvicted: (tileKey: string, payload: NetworkTilePayload) => void;
 }
@@ -37,11 +41,16 @@ export class NetworkTileManager {
     private tiles = new Map<string, TileEntry>();
     /** in-flight fetch (중복 요청 방지) */
     private inFlight = new Map<string, Promise<void>>();
+    /** in-flight abort 컨트롤러 — viewport 를 벗어난 stale 요청 취소용 */
+    private inFlightCtrl = new Map<string, AbortController>();
     private seq = 0;
 
     constructor(
         private versionId: string,
         private callbacks: NetworkTileManagerCallbacks,
+        /** dropPayloadAfterLoad: onTileLoaded 후 payload 참조를 버려 heap 절감.
+         *  소비자가 evict 정리 정보를 자체 추적할 때만 사용 (onTileEvicted의 payload가 빈 배열이 됨). */
+        private options: { dropPayloadAfterLoad?: boolean } = {},
     ) {}
 
     /** "tx,ty" 타일 키 (경위도 격자 인덱스) */
@@ -89,7 +98,6 @@ export class NetworkTileManager {
      * @param lod NetworkLodTier 또는 서버 lod 파라미터 문자열
      */
     updateForBbox(west: number, south: number, east: number, north: number, lod: string): void {
-        if (!NETWORK_TILING.ENABLED) return;
         const D = NETWORK_TILING.TILE_DEG;
         this.updateForTileRange({
             txMin: Math.floor(west / D), txMax: Math.floor(east / D),
@@ -132,39 +140,73 @@ export class NetworkTileManager {
 
         const now = ++this.seq;
 
-        // 1) 필요 타일 fetch (미보유 + 미요청만)
+        // 0) viewport 를 벗어난 in-flight 요청 abort — 줌 애니메이션 중 중간 줌 레벨의
+        //    타일 요청 수백 개가 큐잉되어 "무한 로딩" + 브라우저 동시연결(6) 고갈되던 문제.
+        for (const [key, ctrl] of this.inFlightCtrl) {
+            if (!needed.has(key)) {
+                ctrl.abort();
+                this.inFlightCtrl.delete(key);
+                this.inFlight.delete(key);
+            }
+        }
+
+        // 1) 필요 타일 fetch (미보유 + 미요청만).
+        //    보유 중이라도 더 낮은 tier로 받은 타일(예: near, 차선 stripped)에 detail 요청이 오면
+        //    재요청 → 레인이 detail 줌에서 표시되도록. 기존 청크는 새 타일 도착 후 교체
+        //    (선-evict 시 도로가 사라졌다 다시 그려져 로딩이 느려 보임 → 무공백 스왑).
         for (const key of needed) {
             const entry = this.tiles.get(key);
-            if (entry) { entry.lastUsed = now; continue; }
+            if (entry) {
+                entry.lastUsed = now;
+                if (entry.tierOrder >= tierOrder) continue;
+                if (this.inFlight.has(key)) continue;
+                this.fetchTile(key, lod, now, tierOrder); // tier 업그레이드 (소비자가 무공백 스왑)
+                continue;
+            }
             if (this.inFlight.has(key)) continue;
-            this.fetchTile(key, lod, now);
+            this.fetchTile(key, lod, now, tierOrder);
         }
 
         // 2) evict: 필요하지 않으면서 LRU 한도 초과분 제거
         this.evictExtra(needed);
     }
 
-    private fetchTile(key: string, lod: string, stamp: number): void {
+    private fetchTile(key: string, lod: string, stamp: number, tierOrder: number): void {
         const [tx, ty] = key.split(",").map(Number);
         const bbox = this.tileBbox(tx!, ty!);
+        useNetworkTileStore.getState().incLoading(); // 로딩 스피너 (서버 SQLite 재빌드 시 수십 초 걸릴 수 있음)
+        const ctrl = new AbortController();
+        this.inFlightCtrl.set(key, ctrl);
         const p = axiosInstance
-            .get(`/network/${this.versionId}/tiles`, { params: { bbox, lod } })
+            .get(`/network/${this.versionId}/tiles`, { params: { bbox, lod }, signal: ctrl.signal })
             .then((res) => {
                 const payload: NetworkTilePayload = {
                     links: res.data?.links ?? [],
                     nodes: res.data?.nodes ?? [],
                 };
-                this.tiles.set(key, { payload, lastUsed: stamp });
-                this.callbacks.onTileLoaded(key, payload);
+                // tier 업그레이드 스왑: onTileEvicted 를 부르지 않고 엔트리만 교체.
+                // (여기서 즉시 evict 하면 새 GroundPrimitive 비동기 빌드(수 초) 동안 도로가 사라지는
+                //  공백 발생 — 기존 청크의 지연 제거는 소비자(addTileChunk 승격 경로)가 담당)
+                this.tiles.set(key, { payload, lastUsed: stamp, tierOrder });
+                this.callbacks.onTileLoaded(key, payload, tierOrder);
+                // heap 절감: 소비자가 빌드를 마친 뒤 대형 payload(파싱된 링크/노드 JSON) 참조를 버린다.
+                // LRU 64타일 × 수 MB가 evict 콜백용으로만 유지되던 것을 제거 (detail 타일 기준 수백 MB).
+                if (this.options.dropPayloadAfterLoad) {
+                    const entry = this.tiles.get(key);
+                    if (entry) entry.payload = { links: [], nodes: [] };
+                }
             })
             .catch((err) => {
-                // 404/네트워크 오류는 빈 타일로 간주 (재요청 가능하도록 캐시엔 넣지 않음)
-                if (err?.response?.status !== 404) {
+                // abort(stale)·404·네트워크 오류는 빈 타일로 간주 (캐시에 넣지 않아 재요청 가능)
+                const aborted = err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || ctrl.signal.aborted;
+                if (!aborted && err?.response?.status !== 404) {
                     console.warn(`[NetworkTileManager] 타일 fetch 실패 ${key}`, err);
                 }
             })
             .finally(() => {
                 this.inFlight.delete(key);
+                this.inFlightCtrl.delete(key);
+                useNetworkTileStore.getState().decLoading();
             });
         this.inFlight.set(key, p);
     }
@@ -206,6 +248,8 @@ export class NetworkTileManager {
             this.callbacks.onTileEvicted(key, entry.payload);
         }
         this.tiles.clear();
+        for (const ctrl of this.inFlightCtrl.values()) ctrl.abort();
+        this.inFlightCtrl.clear();
         this.inFlight.clear();
     }
 }

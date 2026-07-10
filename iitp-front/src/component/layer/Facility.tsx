@@ -14,6 +14,7 @@ import { NETWORK_TILING } from '@utils/lodConstants';
 import { assignPropertyToResponseData } from '@utils/guid';
 import { generateDummySignals } from '@utils/signal';
 import { generateDummyPavementMarkings } from '@utils/pavementMarking';
+import { getNetworkForDummyGeneration } from '@utils/generationNetwork';
 import { autoSaveChangedLayers } from '@utils/autoSave';
 import { showAlert, showConfirm } from '@utils/dialog';
 import styles from "@css/ToolsPanel.module.css";
@@ -23,14 +24,15 @@ export interface FacilityProps {
 }
 
 // 더미 생성을 지원하는 레이어 키 → 생성 함수
-const DUMMY_GENERATORS: Partial<Record<string, () => any>> = {
-    signal: () => {
-        const network = useNetworkStore.getState().currentJsonData as any;
+// 타일 모드에서는 네트워크 store 가 viewport 분(차선 stripped 가능)뿐이라 전체 네트워크를 임시 fetch
+const DUMMY_GENERATORS: Partial<Record<string, () => Promise<any>>> = {
+    signal: async () => {
+        const network = await getNetworkForDummyGeneration();
         const signals = generateDummySignals(network);
         return signals.length > 0 ? { signals } : null;
     },
-    pavementMarking: () => {
-        const network = useNetworkStore.getState().currentJsonData as any;
+    pavementMarking: async () => {
+        const network = await getNetworkForDummyGeneration();
         const markings = generateDummyPavementMarkings(network);
         return markings.length > 0 ? { pavementMarkings: markings } : null;
     },
@@ -68,8 +70,10 @@ const Facility = ({ fields }: FacilityProps) => {
         if (!scenarioKey) return;
         const base = import.meta.env.VITE_API_URL;
         fetch(`${base}/vehicle/vehicle-route/${scenarioKey}/exists`)
-            .then(res => res.ok ? res.json() : { exists: false })
-            .then(({ exists }) => setVehicleExists(exists))
+            .then(res => res.ok ? res.json() : null)
+            // exists(CZML 캐시)만 보면 원본(vehicle_sim.db)만 있는 경우를 "없음"으로 오판
+            // → useSimulation/useLayerInit 로드 판단과 동일하게 원본 기준으로 통일
+            .then(info => setVehicleExists(!!(info?.exists || info?.generating || info?.simDbExists)))
             .catch(() => setVehicleExists(false));
     }, []);
 
@@ -200,7 +204,7 @@ const Facility = ({ fields }: FacilityProps) => {
         if (!generator || !store) return;
         setGeneratingKey(field.key);
         try {
-            const data = generator();
+            const data = await generator();
             if (!data) {
                 await showAlert(`${field.label} 더미 데이터를 생성할 수 없습니다. 네트워크 데이터를 먼저 가져오세요.`);
                 return;
@@ -264,7 +268,7 @@ const Facility = ({ fields }: FacilityProps) => {
             fetch(`${base}/vehicle/vehicle-route/${scenarioKey}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ numVehicle: 0, regenerate: retryCount === 0 }),
+                body: JSON.stringify({ numVehicle: 0, regenerate: retryCount === 0, generateDummy: true }),
             })
                 .then(res => {
                     if (res.status === 202) {

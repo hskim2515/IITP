@@ -148,6 +148,10 @@ const useLayerInit = (): void => {
     const cesiumViewer = useCesiumStore.state.viewer();
     const setLayerManager = useLayerStore.getState().setLayerManager;
 
+    // 버전 선택 전 init 금지 — Maps는 VersionPopup 뒤에 이미 마운트되어 있어서,
+    // 여기서 기다리지 않으면 getActiveVersionId()가 scenario.key로 폴백해
+    // 이전(원본) 네트워크를 먼저 로드했다가 버전 선택 후 현재 버전으로 갈아치우는 깜빡임 발생.
+    const selectedVersion = useScenarioStore((state) => state.selectedScenarioVersion);
     const activeVersionId = getActiveVersionId();
     const menuCodes = Object.keys(propertyFormSchema as Record<string, PropertyFormSchemaProps>);
     const layerGroups = useLayerSchemaStore.state.groups();
@@ -157,10 +161,10 @@ const useLayerInit = (): void => {
     const isInitializingRef = useRef(false);
 
     useEffect(() => {
-        if (cesiumViewer && layerGroups?.length > 0 && !isInitializedRef.current && !isInitializingRef.current) {
+        if (cesiumViewer && layerGroups?.length > 0 && selectedVersion && !isInitializedRef.current && !isInitializingRef.current) {
             init();
         }
-    }, [layerGroups, olMap, cesiumViewer]);
+    }, [layerGroups, olMap, cesiumViewer, selectedVersion]);
 
     const init = async () => {
         if (!cesiumViewer) return;
@@ -298,7 +302,10 @@ const useLayerInit = (): void => {
                 const base = import.meta.env.VITE_API_URL;
                 const res = await fetch(`${base}/vehicle/vehicle-route/${getActiveVersionId()}/exists`);
                 if (res.ok) {
-                    const { exists: hasVehicleRoute } = await res.json();
+                    // exists(CZML 캐시)만 보면 원본(vehicle_sim.db)이 있어도 "데이터 없음"으로 안내됨
+                    // → useSimulation 로드 판단과 동일하게 원본 기준으로 통일
+                    const info = await res.json();
+                    const hasVehicleRoute = !!(info.exists || info.generating || info.simDbExists);
                     if (!hasVehicleRoute || !hasSignal) {
                         useOnboardingStore.getState().setNeedSimulation(!hasSignal, !hasVehicleRoute);
                     }

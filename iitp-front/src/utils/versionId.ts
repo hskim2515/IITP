@@ -13,12 +13,18 @@ import { useScenarioStore } from "@stores/useScenarioStore";
  * ⚠️ 이 함수는 "데이터 접근 식별자"만 반환한다. scenario 고유 속성
  *    (longitude/latitude 지도 초기 위치, id 버전목록 조회)은 selectedScenario 에서 직접 읽을 것.
  */
+const warnedFallbackKeys = new Set<string>();
+
 export function getActiveVersionId(): string | undefined {
     const s = useScenarioStore.getState();
     const key = s.selectedScenarioVersion?.key ?? s.selectedScenario?.key ?? undefined;
     if (key != null && s.selectedScenarioVersion?.key == null && s.selectedScenario?.key != null) {
-        // 버전 미선택 → scenario.key 폴백 (정상 흐름에선 드묾)
-        console.warn("[versionId] 버전 미선택 → scenario.key 폴백:", s.selectedScenario?.key);
+        // 버전 미선택 → scenario.key 폴백. Maps가 VersionPopup 뒤에 먼저 마운트되므로
+        // 버전 선택 전 렌더 단계에서 정상적으로 여러 번 지나감 — 키당 1회만 경고.
+        if (!warnedFallbackKeys.has(String(key))) {
+            warnedFallbackKeys.add(String(key));
+            console.warn("[versionId] 버전 미선택 → scenario.key 폴백:", s.selectedScenario?.key);
+        }
     }
     return key != null ? String(key) : undefined;
 }

@@ -124,6 +124,8 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
         // });
 
         setViewer(cesiumViewer);
+        // dev 전용: E2E 테스트(Playwright)에서 카메라 제어/상태 검사용 노출
+        if (import.meta.env.DEV) (window as any).__cesiumViewer = cesiumViewer;
 
         fetch("CesiumMilkTruck.glb")
             .then(res => res.arrayBuffer())

@@ -9,6 +9,7 @@ interface State {
     isOLSyncingState: boolean;
     currentBaseMap: BaseMapType;
     mapViewMode: MapViewMode;
+    coordPickCallback: ((lat: number, lng: number) => void) | null;
 }
 
 interface Actions {
@@ -16,6 +17,8 @@ interface Actions {
     setOLSyncing: (syncing: boolean) => void;
     setCurrentBaseMap: (baseMap: BaseMapType) => void;
     setMapViewMode: (mode: MapViewMode) => void;
+    startCoordPick: (cb: (lat: number, lng: number) => void) => void;
+    cancelCoordPick: () => void;
 }
 
 const initialState: State = {
@@ -23,6 +26,7 @@ const initialState: State = {
     isOLSyncingState: false,
     currentBaseMap: undefined,
     mapViewMode: 'split',
+    coordPickCallback: null,
 }
 
 export const useMapStore = createSelectors(
@@ -36,6 +40,8 @@ export const useMapStore = createSelectors(
             setOLSyncing: (syncing: boolean) => set({isCesiumSyncingState: !syncing, isOLSyncingState: syncing}),
             setCurrentBaseMap: (baseMap: BaseMapType) => set({currentBaseMap: baseMap}),
             setMapViewMode: (mode: MapViewMode) => set({mapViewMode: mode}),
+            startCoordPick: (cb) => set({ coordPickCallback: cb }),
+            cancelCoordPick: () => set({ coordPickCallback: null }),
         })
     )
 );

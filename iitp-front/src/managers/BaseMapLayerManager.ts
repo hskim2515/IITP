@@ -33,7 +33,14 @@ class BaseMapLayerManager {
             const apiKey = process.env.REACT_APP_VWORLD_API_KEY;
             const finalUrl = url.replace("${API_KEY}", apiKey ?? "");
 
-            const provider = new Cesium.UrlTemplateImageryProvider({ url : finalUrl });
+            // maximumLevel 제한: 미설정 시 없는 타일 무한 요청("Failed to obtain image tile" 폭주).
+            // 스타일별 실측 최대 제공 줌: 위성/일반/하이브리드 z19, midnight z18 (2D TileLayerManager 와 동일)
+            const MAX_LEVEL_BY_KEY: Record<string, number> = {
+                satellite: 19, base: 19, hybrid: 19, midnight: 18, osm: 19,
+            };
+            const provider = new Cesium.UrlTemplateImageryProvider({
+                url: finalUrl, maximumLevel: MAX_LEVEL_BY_KEY[key] ?? 18,
+            });
             const imageryLayer = new Cesium.ImageryLayer(provider, { show: basic });
 
             this.viewer.imageryLayers.add(imageryLayer);

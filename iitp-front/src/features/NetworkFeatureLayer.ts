@@ -10,6 +10,7 @@ import { Coordinate } from "ol/coordinate";
 import { Network } from "@type/Network";
 import { FeatureLike } from "ol/Feature";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
+import { useModeStore } from "@stores/useModeStore";
 import { useNetworkEditStore } from "@stores/useNetworkEditStore";
 import { usePropertyStore } from "@stores/usePropertyStore";
 import {
@@ -150,6 +151,18 @@ export default class NetworkFeatureLayer extends VectorLayer {
         }
     }
 
+    /**
+     * 네트워크 교체(임포트) 후 호출 — MVT 타일 캐시 무효화 + JSON viewport 타일 재fetch.
+     * 없으면 OL VectorTile 내부 캐시의 이전 네트워크 타일이 새 데이터와 섞여 표시된다.
+     */
+    public refreshNetworkTiles(): void {
+        try { this.mvtLayer?.refreshTiles(); } catch (_) {}
+        try { this.tileManager?.clear(); } catch (_) {}
+        const map = this.getMapInternal();
+        if (map) { try { this.updateTiles(map); } catch (_) {} }
+        try { map?.render(); } catch (_) {}
+    }
+
     /** OL이 레이어를 map에 추가/제거할 때 호출. moveend 구독을 붙이고 초기 갱신 수행. */
     override setMapInternal(map: OLMap | null): void {
         if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
@@ -190,7 +203,11 @@ export default class NetworkFeatureLayer extends VectorLayer {
             // 편집 델타 변경 시 오버레이 재렌더(edited) + MVT 재렌더(deleted 마스킹 반영).
             const unsubEdited = useNetworkEditStore.subscribe(
                 (s) => s.editedLinkIds,
-                () => this.renderEditOverlay(),
+                () => {
+                    this.renderEditOverlay();
+                    // 수정 링크는 MVT 에서 숨김(styleFunction) → 집합 변경 시 MVT 리렌더 필요
+                    try { this.mvtLayer?.changed(); } catch (_) {}
+                },
                 { equalityFn: (a, b) => a === b },
             );
             const unsubDeleted = useNetworkEditStore.subscribe(
@@ -198,7 +215,15 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 () => { try { this.mvtLayer?.changed(); } catch (_) {} try { this.getMapInternal()?.render(); } catch (_) {} },
                 { equalityFn: (a, b) => a === b },
             );
-            this.unsubscribeEdit = () => { unsubEdited(); unsubDeleted(); };
+            // 노드 편집(커넥션 생성/삭제·이동·포트 재배선) → 해당 노드의 OL 피처(노드 점·커넥션
+            // 곡선·포트) 즉시 재빌드. 피처는 타일 페이로드 기준으로 빌드되어 store 편집이
+            // 반영되지 않던 문제(커넥션 지워도 곡선 잔존) 해결.
+            const unsubNodeEdits = useNetworkEditStore.subscribe(
+                (s) => [s.editedNodeIds, s.deletedNodeIds] as const,
+                ([edited, deleted]) => this.refreshEditedNodeFeatures(edited, deleted),
+                { equalityFn: (a, b) => a[0] === b[0] && a[1] === b[1] },
+            );
+            this.unsubscribeEdit = () => { unsubEdited(); unsubDeleted(); unsubNodeEdits(); };
             this.renderEditOverlay();
         }
 
@@ -241,11 +266,19 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const resolution = view.getResolution();
         if (!size || resolution == null) return;
 
-        // [PoC] MVT 모드: detail(충분히 확대)에서만 viewport 타일 fetch — 노드/커넥션/포트 등
-        //   편집요소 데이터 확보용(도로/차선은 MVT 전담). detail 벗어나면 회수.
-        if (NETWORK_TILING.USE_MVT_2D && getNetworkLodTierByResolution(resolution) !== 'detail') {
-            this.tileManager?.clear();
-            return;
+        // [PoC] MVT 모드: 편집요소 데이터(노드/커넥션/포트) 확보용 viewport 타일 fetch 게이트.
+        //   보기 모드: detail(완전 근접)에서만 — 도로/차선은 MVT 전담이라 그 외 불필요(메모리 절약).
+        //   편집 모드: near 부터 — 그리기 스냅·기존 링크 분할·커넥션 편집이 store 의 기존 네트워크
+        //   데이터를 필요로 하는데, detail 전용이면 통상 편집 줌(near)에서 store 가 비어
+        //   기존 네트워크와 상호작용 불가(신규 도로만 그려짐)했던 근본 원인.
+        if (NETWORK_TILING.USE_MVT_2D) {
+            const tier = getNetworkLodTierByResolution(resolution);
+            const editMode = useModeStore.getState().appMode === 'edit';
+            const fetchOk = tier === 'detail' || (editMode && tier === 'near');
+            if (!fetchOk) {
+                this.tileManager?.clear();
+                return;
+            }
         }
 
         // 활성 그리기/커넥션/배치 중에만 타일 갱신 동결 — 진행 중 편집 대상이 evict/덮어써지는 것 방지.
@@ -377,9 +410,91 @@ export default class NetworkFeatureLayer extends VectorLayer {
         }
         const prev = useNetworkEditStore.getState();
         // 참조 안정: 내용 동일하면 set 안 함(불필요 재렌더 방지)
-        if (edited.size === prev.editedLinkIds.size &&
-            [...edited].every((id) => prev.editedLinkIds.has(id))) return;
-        try { useNetworkEditStore.getState().setEdits(edited, prev.deletedLinkIds); } catch (_) {}
+        const linksSame = edited.size === prev.editedLinkIds.size &&
+            [...edited].every((id) => prev.editedLinkIds.has(id));
+        if (!linksSame) {
+            try { useNetworkEditStore.getState().setEdits(edited, prev.deletedLinkIds); } catch (_) {}
+        }
+
+        // 노드 편집 감지 (이동·포트 재배선·커넥션 편집) — 서버 타일 노드와 해시 비교.
+        // 미추적 시 타일 동기화(scheduleStoreSync)가 노드 편집을 서버 원본으로 되돌린다.
+        // 양쪽에 존재하는 id 만 내용 비교(신규 노드는 동기화가 어차피 prev 보존 경로로 유지).
+        const nodes: any[] = (store?.getState() as any)?.currentJsonData?.nodes ?? [];
+        const editedNodes = new Set<string>();
+        const sigParts: string[] = [];
+        for (const n of nodes) {
+            const id = String(n.id);
+            const cached = this.cachedNodeMap.get(id);
+            const hash = NetworkFeatureLayer.nodeEditHash(n);
+            if (!cached) { editedNodes.add(id); sigParts.push(id + ':' + hash); continue; } // 신규(그리기/분할) 노드
+            if (NetworkFeatureLayer.nodeEditHash(cached) !== hash) {
+                editedNodes.add(id);
+                sigParts.push(id + ':' + hash);
+            }
+        }
+        // id 집합이 아니라 내용 시그니처로 비교 — 같은 노드를 연속 편집(커넥션 추가→또 추가)해도
+        // 집합은 동일하므로, 내용 변화까지 봐야 재빌드(refreshEditedNodeFeatures)가 발동한다.
+        const sig = sigParts.sort().join('|');
+        if (sig !== this.lastEditedNodesSig) {
+            this.lastEditedNodesSig = sig;
+            try { useNetworkEditStore.getState().setNodeEdits(editedNodes); } catch (_) {}
+        }
+    }
+
+    /** 직전 노드 편집 시그니처 (id:hash 정렬 조인) — 내용 변화 감지용 */
+    private lastEditedNodesSig = "";
+
+    /**
+     * 편집/삭제된 노드의 OL 피처를 store(currentJsonData) 기준으로 재빌드/제거.
+     * 통상 피처는 서버 타일 페이로드로 빌드되므로, 커넥션 편집·노드 이동이 화면에
+     * 즉시 반영되려면 편집된 노드만 store 데이터로 다시 그려야 한다.
+     * (신규 노드도 editedNodeIds 에 포함되어 그리기 직후 노드·커넥션이 바로 보임)
+     */
+    private refreshEditedNodeFeatures(edited: Set<string>, deleted: Set<string>): void {
+        if (!NETWORK_TILING.ENABLED) return;
+        const store = layerNameToStoreMap[this.LAYER_NAME];
+        const nodes: any[] = (store?.getState() as any)?.currentJsonData?.nodes ?? [];
+        const nodeById = new Map(nodes.map((n: any) => [String(n.id), n]));
+
+        const removeFeats = (id: string) => {
+            const feats = this.nodeFeaturesMap.get(id);
+            if (feats) {
+                for (const f of feats) if (this.source.hasFeature(f)) this.source.removeFeature(f);
+                this.nodeFeaturesMap.delete(id);
+            }
+            this.addedNodeFeatures.delete(id); // extent 게이팅 버킷도 정리 (이중 관리 방지)
+        };
+
+        let touched = false;
+        for (const id of deleted) {
+            if (this.nodeFeaturesMap.has(id)) { removeFeats(id); touched = true; }
+        }
+        for (const id of edited) {
+            const node = nodeById.get(id);
+            if (!node) continue;
+            removeFeats(id);
+            try {
+                const feats = this.buildNodeFeatures(node, this.cachedLinkMap);
+                this.nodeFeaturesMap.set(id, feats);
+                this.source.addFeatures(feats);
+                touched = true;
+            } catch (_) { /* 좌표 불완전 등 — 스킵 */ }
+        }
+        if (touched) {
+            this.reconcile(); // extent 게이팅 멤버십 재정렬 (직접 add 한 피처 포함)
+            try { this.getMapInternal()?.render(); } catch (_) {}
+        }
+    }
+
+    /** 노드의 편집 감지 해시 — 좌표 + 포트 배선 + 커넥션 목록 (내용 순서 포함) */
+    private static nodeEditHash(node: any): string {
+        const c = node?.coordinates;
+        const coord = c ? `${c.lng},${c.lat}` : "";
+        const ports = (node?.ports ?? [])
+            .map((p: any) => `${p.type}:${p.linkId}`).join(",");
+        const conns = (node?.connections ?? [])
+            .map((cn: any) => `${cn.fromLink}_${cn.fromLane}>${cn.toLink}_${cn.toLane}`).join(",");
+        return `${coord}|${ports}|${conns}`;
     }
 
     /** 편집 오버레이 스타일: 편집된 도로를 눈에 띄게(도로 몸체 + 강조 외곽). */
@@ -455,8 +570,10 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const lanes = link?.lanes ?? [];
         const laneCount = lanes.length;
         if (laneCount === 0 || laneIdx < 0 || laneIdx >= laneCount) return null;
-        const laneW = (link.width ?? 7) / laneCount;
-        const off = ((laneCount - 1) / 2 - laneIdx) * laneW;
+        const roadW = link.width ?? 7;
+        const laneW = roadW / laneCount;
+        // MVT/3D 렌더 정합: 중앙정렬 + 차선0=최좌측. 우측(+) 법선(아래 nx=dy,ny=-dx) 기준 좌측은 음수.
+        const off = (laneIdx - (laneCount - 1) / 2) * laneW;
         const half = laneW / 2;
         let pts: number[][] = (link.coordinates ?? []).map((c: any) => fromLonLat([c.lng, c.lat]));
         if (pts.length < 2) return null;
@@ -481,7 +598,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
             const next = pts[Math.min(pts.length - 1, i + 1)]!;
             const sdx = next[0]! - prev[0]!, sdy = next[1]! - prev[1]!;
             const sl = Math.hypot(sdx, sdy) || 1;
-            const nx = -sdy / sl, ny = sdx / sl;
+            const nx = sdy / sl, ny = -sdx / sl; // 우측 법선(3D right 정합)
             const cx = pts[i]![0]! + nx * off, cy = pts[i]![1]! + ny * off;
             left.push([cx + nx * half, cy + ny * half]);
             right.push([cx - nx * half, cy - ny * half]);
@@ -571,6 +688,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
             const prev: any = store.getState().currentJsonData ?? {};
             const edit = useNetworkEditStore.getState();
             const editedIds = edit.editedLinkIds, deletedIds = edit.deletedLinkIds;
+            const editedNodeIds = edit.editedNodeIds, deletedNodeIds = edit.deletedNodeIds;
 
             // viewport 타일 링크(서버 최신) + 편집된 링크(prev 에서 보존). 삭제된 링크는 제외.
             const linkById = new Map<string, any>();
@@ -582,10 +700,16 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
             const nodeById = new Map<string, any>();
             for (const n of this.cachedNodeMap.values()) nodeById.set(String(n.id), n);
+            // 편집된 노드(이동·포트 재배선·커넥션 편집)는 prev 값으로 덮어씀(보존) —
+            // 없으면 다음 동기화가 서버 타일 원본으로 되돌려 편집 유실
+            for (const n of (prev.nodes ?? [])) {
+                if (editedNodeIds.has(String(n.id))) nodeById.set(String(n.id), n);
+            }
             // 편집 링크가 참조하는 노드는 prev 에서 보존(신규 노드가 타일에 없을 수 있음)
             if (editedIds.size > 0) {
                 for (const n of (prev.nodes ?? [])) if (!nodeById.has(String(n.id))) nodeById.set(String(n.id), n);
             }
+            for (const id of deletedNodeIds) nodeById.delete(id); // 삭제 노드 제외 (되살아남 방지)
 
             const next = { ...prev, links: [...linkById.values()], nodes: [...nodeById.values()] };
             // setCurrentJsonData 는 구독 트리거 → 의존 레이어 재로드 (자기 load()는 타일모드 가드로 no-op)
@@ -1166,31 +1290,39 @@ export default class NetworkFeatureLayer extends VectorLayer {
             const newConns = nextNode.connections.slice(prevNode.connections.length);
             const nodePt = fromLonLat([nextNode.coordinates.lng, nextNode.coordinates.lat]);
             for (const conn of newConns) {
-                let fromPt: number[], toPt: number[];
-                if (conn.coordinates?.length >= 2) {
-                    fromPt = fromLonLat([conn.coordinates[0].lng, conn.coordinates[0].lat]);
-                    toPt   = fromLonLat([conn.coordinates[conn.coordinates.length - 1].lng, conn.coordinates[conn.coordinates.length - 1].lat]);
-                } else {
-                    const fromLaneFeat = this.laneMap.get(`${conn.fromLink}_${conn.fromLane}`);
-                    const toLaneFeat   = this.laneMap.get(`${conn.toLink}_${conn.toLane}`);
-                    if (fromLaneFeat && toLaneFeat) {
-                        fromPt = fromLaneFeat.get('laneTarget');
-                        toPt   = toLaneFeat.get('laneSource');
-                    } else {
-                        const fromLink = this.cachedLinkMap.get(String(conn.fromLink));
-                        const toLink   = this.cachedLinkMap.get(String(conn.toLink));
-                        if (!fromLink || !toLink) continue;
-                        const fp = this.computeLaneEndpoint(fromLink, conn.fromLane, 'target');
-                        const tp = this.computeLaneEndpoint(toLink, conn.toLane, 'source');
-                        if (!fp || !tp) continue;
-                        fromPt = fp;
-                        toPt   = tp;
-                    }
+                // 3점 이상 = 내부링크 경로 실제 폴리라인 — 그대로 사용 (베지어 합성 없음)
+                let coord: number[][] | null = null;
+                if (conn.coordinates?.length > 2) {
+                    const pts = conn.coordinates.filter((c: any) => c && c.lng != null && c.lat != null);
+                    if (pts.length >= 2) coord = pts.map((c: any) => fromLonLat([c.lng, c.lat]));
                 }
-                if (!fromPt || !toPt) continue;
-                const coord = conn.turning === 'Straight'
-                    ? [fromPt, toPt]
-                    : this.generateQuadraticBezierCurve(fromPt, nodePt, toPt);
+                if (!coord) {
+                    let fromPt: number[], toPt: number[];
+                    if (conn.coordinates?.length >= 2) {
+                        fromPt = fromLonLat([conn.coordinates[0].lng, conn.coordinates[0].lat]);
+                        toPt   = fromLonLat([conn.coordinates[conn.coordinates.length - 1].lng, conn.coordinates[conn.coordinates.length - 1].lat]);
+                    } else {
+                        const fromLaneFeat = this.laneMap.get(`${conn.fromLink}_${conn.fromLane}`);
+                        const toLaneFeat   = this.laneMap.get(`${conn.toLink}_${conn.toLane}`);
+                        if (fromLaneFeat && toLaneFeat) {
+                            fromPt = fromLaneFeat.get('laneTarget');
+                            toPt   = toLaneFeat.get('laneSource');
+                        } else {
+                            const fromLink = this.cachedLinkMap.get(String(conn.fromLink));
+                            const toLink   = this.cachedLinkMap.get(String(conn.toLink));
+                            if (!fromLink || !toLink) continue;
+                            const fp = this.computeLaneEndpoint(fromLink, conn.fromLane, 'target');
+                            const tp = this.computeLaneEndpoint(toLink, conn.toLane, 'source');
+                            if (!fp || !tp) continue;
+                            fromPt = fp;
+                            toPt   = tp;
+                        }
+                    }
+                    if (!fromPt || !toPt) continue;
+                    coord = conn.turning === 'Straight'
+                        ? [fromPt, toPt]
+                        : this.generateQuadraticBezierCurve(fromPt, nodePt, toPt);
+                }
                 if (!coord || coord.length < 2) continue;
                 const connFeature = new Feature(new LineString(coord));
                 connFeature.setProperties({ ...conn, featureType: 'connections', fromNodeType: nextNode.type, nodeId: nextNode.id });
@@ -1381,33 +1513,42 @@ export default class NetworkFeatureLayer extends VectorLayer {
         features.push(nodeFeature);
 
         for (const conn of (node.connections ?? [])) {
-            let fromPt: Coordinate, toPt: Coordinate;
-
-            if (conn.coordinates?.length >= 2) {
-                fromPt = fromLonLat([conn.coordinates[0].lng, conn.coordinates[0].lat]);
-                toPt = fromLonLat([conn.coordinates[conn.coordinates.length - 1].lng, conn.coordinates[conn.coordinates.length - 1].lat]);
-            } else {
-                const fromLaneFeat = this.laneMap.get(`${conn.fromLink}_${conn.fromLane}`);
-                const toLaneFeat = this.laneMap.get(`${conn.toLink}_${conn.toLane}`);
-                if (fromLaneFeat && toLaneFeat) {
-                    fromPt = fromLaneFeat.get("laneTarget");
-                    toPt = toLaneFeat.get("laneSource");
-                } else {
-                    const fromLink = linkMap.get(String(conn.fromLink));
-                    const toLink = linkMap.get(String(conn.toLink));
-                    if (!fromLink || !toLink) continue;
-                    const fp = this.computeLaneEndpoint(fromLink, conn.fromLane, 'target');
-                    const tp = this.computeLaneEndpoint(toLink, conn.toLane, 'source');
-                    if (!fp || !tp) continue;
-                    fromPt = fp;
-                    toPt = tp;
-                }
+            // 3점 이상 = 변환기가 내부링크 경로(교통섬 순환·회전 동선)로 생성한 실제 폴리라인 —
+            // 베지어 합성 없이 그대로 사용. 2점(구 데이터/직결)만 베지어 폴백.
+            let coord: Coordinate[] | null = null;
+            if (conn.coordinates?.length > 2) {
+                const pts = conn.coordinates.filter((c: any) => c && c.lng != null && c.lat != null);
+                if (pts.length >= 2) coord = pts.map((c: any) => fromLonLat([c.lng, c.lat]));
             }
-            if (!fromPt || !toPt) continue;
+            if (!coord) {
+                let fromPt: Coordinate, toPt: Coordinate;
 
-            const coord: Coordinate[] = conn.turning === "Straight"
-                ? [fromPt, toPt]
-                : this.generateQuadraticBezierCurve(fromPt, fromLonLat([node.coordinates.lng, node.coordinates.lat]), toPt);
+                if (conn.coordinates?.length >= 2) {
+                    fromPt = fromLonLat([conn.coordinates[0].lng, conn.coordinates[0].lat]);
+                    toPt = fromLonLat([conn.coordinates[conn.coordinates.length - 1].lng, conn.coordinates[conn.coordinates.length - 1].lat]);
+                } else {
+                    const fromLaneFeat = this.laneMap.get(`${conn.fromLink}_${conn.fromLane}`);
+                    const toLaneFeat = this.laneMap.get(`${conn.toLink}_${conn.toLane}`);
+                    if (fromLaneFeat && toLaneFeat) {
+                        fromPt = fromLaneFeat.get("laneTarget");
+                        toPt = toLaneFeat.get("laneSource");
+                    } else {
+                        const fromLink = linkMap.get(String(conn.fromLink));
+                        const toLink = linkMap.get(String(conn.toLink));
+                        if (!fromLink || !toLink) continue;
+                        const fp = this.computeLaneEndpoint(fromLink, conn.fromLane, 'target');
+                        const tp = this.computeLaneEndpoint(toLink, conn.toLane, 'source');
+                        if (!fp || !tp) continue;
+                        fromPt = fp;
+                        toPt = tp;
+                    }
+                }
+                if (!fromPt || !toPt) continue;
+
+                coord = conn.turning === "Straight"
+                    ? [fromPt, toPt]
+                    : this.generateQuadraticBezierCurve(fromPt, fromLonLat([node.coordinates.lng, node.coordinates.lat]), toPt);
+            }
             if (!coord || coord.length < 2) continue;
 
             const connFeature = new Feature(new LineString(coord));
