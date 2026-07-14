@@ -167,6 +167,8 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
             setMessage({ type: 'info', text: '저장 완료' });
         } catch (error) {
             setMessage({ type: 'error', text: '저장 실패: ' + error });
+            // SaveVersionModal 이 실패를 인지해야 버전 전환/유령 버전 생성을 막는다
+            throw error;
         }
     };
 
@@ -217,8 +219,9 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         <SaveVersionModal
             open={versionModalOpen}
             onConfirm={async (versionKey) => {
-                setVersionModalOpen(false);
+                // 저장 성공 후에만 모달 닫기 — 실패 시 모달이 에러를 표시해야 함
                 await doSave(versionKey);
+                setVersionModalOpen(false);
             }}
             onCancel={() => setVersionModalOpen(false)}
         />

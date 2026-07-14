@@ -156,6 +156,7 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
     }, [downloadBackup, setMessage]);
 
     // ── 서버 저장 ──────────────────────────────────────────────────
+    // 실패 시 throw — SaveVersionModal 이 실패를 인지해야 버전 전환/유령 버전 생성을 막는다.
     const doSaveLayer = async (cfg: LayerCfg, versionKey: string) => {
         // 네트워크는 diff 저장 단일 진입점 — 타일 모드에서 전체 저장은 viewport 일부가
         // 전국 데이터를 덮어쓰므로 금지 (실패 시에도 전체 저장 폴백 없음)
@@ -166,12 +167,13 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
                 const result = await saveNetworkDiffTileAware(versionKey);
                 if (result === 'skipped') {
                     setImportStatus({ type: 'error', text: `${cfg.label} diff 저장 불가 — 데이터 없음` });
-                } else {
-                    cfg.historyStore.getState().resetUpdateLogs();
-                    setImportStatus({ type: 'ok', text: `${cfg.label} 저장 완료 (diff)` });
+                    throw new Error(`${cfg.label} diff 저장 불가 — 데이터 없음`);
                 }
-            } catch {
+                cfg.historyStore.getState().resetUpdateLogs();
+                setImportStatus({ type: 'ok', text: `${cfg.label} 저장 완료 (diff)` });
+            } catch (e) {
                 setImportStatus({ type: 'error', text: `${cfg.label} 저장 실패` });
+                throw e;
             } finally {
                 setSavingKeys(prev => { const s = new Set(prev); s.delete(cfg.key); return s; });
             }
@@ -195,8 +197,9 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
             cfg.historyStore.getState().resetUpdateLogs();
             cfg.store.getState().setChange(false);
             setImportStatus({ type: 'ok', text: `${cfg.label} 저장 완료` });
-        } catch {
+        } catch (e) {
             setImportStatus({ type: 'error', text: `${cfg.label} 저장 실패` });
+            throw e;
         } finally {
             setSavingKeys(prev => { const s = new Set(prev); s.delete(cfg.key); return s; });
         }
@@ -474,11 +477,12 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
             <SaveVersionModal
                 open={versionModalOpen}
                 onConfirm={async (versionKey) => {
-                    setVersionModalOpen(false);
+                    // 저장 성공 후에만 모달 닫기 — 실패 시 모달이 에러를 표시해야 함
                     if (pendingSaveRef.current) {
                         await pendingSaveRef.current(versionKey);
                         pendingSaveRef.current = null;
                     }
+                    setVersionModalOpen(false);
                 }}
                 onCancel={() => {
                     setVersionModalOpen(false);

@@ -108,6 +108,21 @@ public class ScenarioServiceImpl implements ScenarioService {
     }
 
     @Override
+    public void deleteVersion(Long scenarioId, Long versionId) {
+        ScenarioVersion version = versionRepository.findById(versionId)
+                .orElseThrow(() -> new IllegalArgumentException("Version not found: " + versionId));
+        if (!version.getScenario().getId().equals(scenarioId)) {
+            throw new IllegalArgumentException("Version does not belong to scenario: " + scenarioId);
+        }
+        List<ScenarioVersion> siblings = versionRepository.findByScenarioId(scenarioId);
+        if (siblings.size() <= 1) {
+            throw new IllegalArgumentException("마지막 버전은 삭제할 수 없습니다.");
+        }
+        versionRepository.deleteById(versionId);
+        log.info("[ScenarioService] 버전 삭제: id={}, key={}", versionId, version.getKey());
+    }
+
+    @Override
     public Scenario createScenario(Scenario scenario) {
         if (!scenario.getKey().matches("[A-Za-z0-9_]+")) {
             throw new IllegalArgumentException("시나리오 키는 영문자, 숫자, 밑줄(_)만 허용됩니다.");

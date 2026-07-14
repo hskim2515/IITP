@@ -61,16 +61,38 @@ const SaveVersionModal: React.FC<SaveVersionModalProps> = ({ open, onConfirm, on
         if (!validate() || !selectedScenario) return;
         setSaving(true);
         setError(null);
+        let newVersion: ScenarioVersions | null = null;
+        let createdNow = false;
         try {
-            const response = await axiosInstance({
-                method: 'POST',
-                url: `/scenario/${selectedScenario.id}/versions`,
-                data: { key: keyVal, label: labelVal },
-            });
-            const newVersion: ScenarioVersions = response.data;
-            setVersion(newVersion);
-            await onConfirm(newVersion.key);
+            try {
+                const response = await axiosInstance({
+                    method: 'POST',
+                    url: `/scenario/${selectedScenario.id}/versions`,
+                    data: { key: keyVal, label: labelVal },
+                });
+                newVersion = response.data;
+                createdNow = true;
+            } catch (createErr) {
+                // 멱등 처리: 이전 저장 시도가 버전 레코드만 만들고 실패하면(유령 버전)
+                // 재시도가 중복 키 400 에 영구 차단됨 → 같은 키의 기존 버전을 찾아 재사용.
+                const listResp = await axiosInstance.get(`/scenario/${selectedScenario.id}/versions`);
+                const existing = (listResp.data as ScenarioVersions[]).find(v => v.key === keyVal);
+                if (!existing) throw createErr;
+                newVersion = existing;
+            }
+            // ⚠️ 저장이 끝나기 전에 setVersion() 금지 — 활성 버전이 새 키로 바뀌면
+            // diff 저장의 baseVersionId(기준 버전) 판별이 무너져 서버가 아직 없는
+            // 새 버전에서 로드하려다 404가 난다. 저장 성공 후에만 전환한다.
+            await onConfirm(newVersion!.key);
+            setVersion(newVersion!);
         } catch (err: unknown) {
+            // 이번 시도에서 만든 버전 레코드는 롤백 (유령 버전 방지)
+            const rollback = newVersion as ScenarioVersions | null;
+            if (rollback && createdNow) {
+                try {
+                    await axiosInstance.delete(`/scenario/${selectedScenario.id}/versions/${rollback.id}`);
+                } catch (_) { /* 롤백 실패 시 멱등 재사용 경로가 처리 */ }
+            }
             const message = err instanceof Error ? err.message : '버전 생성 실패';
             setError(message);
         } finally {
