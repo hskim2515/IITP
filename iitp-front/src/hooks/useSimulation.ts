@@ -144,7 +144,7 @@ const useSimulation = () => {
     const czml = useVehicleStore((state) => state.czml);
     const czmlDataSourceRef = useRef(null);
     const vehicleDataRef = useRef(null);
-    const vehicleRouteStartEndRef = useRef(null);
+    const vehicleRouteStartEndRef = useRef<any[] | null>(null);
     const needsReinitRef = useRef(false);
 
     // 최신 speed와 speedFactor를 참조하기 위한 ref
@@ -619,7 +619,17 @@ const useSimulation = () => {
 
     // Cesium과 OpenLayers 시뮬레이션 통합: 후처리 및 Cesium 관련 설정
     useEffect(() => {
-        if (!Array.isArray(vehicleRoute) || vehicleRoute.length === 0) return;
+        if (!Array.isArray(vehicleRoute)) return;
+        if (vehicleRoute.length === 0) {
+            // 스트리밍 viewport 0대 응답(차량 없는 지역 팬/밀집 전환): 조기 반환만 하면
+            // 이전 viewport 차량들이 마지막 위치에 그려진 채 남는다 → 차량 계열 레이어 제거.
+            // ('analyze/traffic' 집계 히트맵은 removeSimulationLayers 대상이 아니라 밀집 모드 안전)
+            vehicleRouteStartEndRef.current = [];
+            lastPositionsRef.current = [];
+            czmlPositionWorkerRef.current?.postMessage({ type: 'init', czmlPackets: [], currentTime: 0 });
+            layerManager?.removeSimulationLayers();
+            return;
+        }
 
         // 신규 포맷({path, type, ...})과 레거시 포맷(flat array) 모두 처리
         const rawPaths = vehicleRoute.map((entry: any) =>
