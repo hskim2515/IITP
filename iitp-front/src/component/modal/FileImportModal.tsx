@@ -214,7 +214,10 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             cfg.store.getState().setCurrentJsonDataWithFullBuild(responseData);
             cfg.store.getState().setChange(true);
             if (versionId) await autoSaveChangedLayers(versionId);
-            if (xmlImport.selectedKey === 'network') useOnboardingStore.getState().setStep('need-dummy');
+            if (xmlImport.selectedKey === 'network') {
+                refreshNetworkTiles(); // 타일 모드: 2D/3D 타일 캐시 무효화 (없으면 이전 네트워크 잔존)
+                useOnboardingStore.getState().setStep('need-dummy');
+            }
             setStatus({ type: 'ok', text: `${cfg.label} XML 가져오기 완료` });
             setXmlImport(null);
         } catch (e) {

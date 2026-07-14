@@ -905,6 +905,24 @@ export default class NetworkDataSourceLayer {
         try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
+    /**
+     * 네트워크 교체(임포트) 후 호출 — 3D 타일/간선 캐시 무효화 + 현재 카메라 기준 재fetch.
+     * 타일 매니저 LRU 는 타일 키가 같으면 "이미 로드됨"으로 재fetch 를 건너뛰고,
+     * 간선 중심선도 bbox-skip 캐시(overviewFetchedBbox)로 유지되므로, 여기서 비우지
+     * 않으면 임포트 후에도 3D 에 이전 네트워크가 계속 남는다 (2D 는 OL 쪽 refreshNetworkTiles 가 처리).
+     */
+    public refreshNetworkTiles(): void {
+        // clear() 가 타일마다 onTileEvicted→removeTileChunk 를 호출해
+        // 청크 primitive/노드 엔티티/cached 맵/픽 속성 맵까지 함께 정리된다.
+        this.tileManager?.clear();
+        this.clearRoadOverview();
+        this.overviewArterialsActive = false;
+        this.overviewFetchedBbox = null;
+        this.lastNearTs = 0; // 줌아웃 히스테리시스 무시 — 즉시 재fetch 허용
+        this.updateTiles();
+        try { this.viewer.scene.requestRender(); } catch (_) {}
+    }
+
     // ─────────────────────────────────────────────
     // 진입점
     // ─────────────────────────────────────────────

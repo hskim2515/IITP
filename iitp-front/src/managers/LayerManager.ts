@@ -469,6 +469,11 @@ export class LayerManager {
         return this.vectorLayerManager?.getLayerByName(layerName) ?? null;
     }
 
+    /** Cesium 레이어 래퍼 인스턴스(XxxDataSourceLayer) 조회 — public 메서드 호출용 */
+    getDataSourceLayerByName(layerName: string) {
+        return this.dataSourceLayerManager?.getInstanceByName(layerName) ?? null;
+    }
+
     private _removeLayers(groupName: string, ...layers: string[]): void {
         layers.forEach((layerName) => {
             this.getManagersByGroupAndLayerName(groupName, layerName).forEach((manager) => {
