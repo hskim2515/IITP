@@ -95,12 +95,14 @@ export function getNetworkLodTierByResolution(resolution: number): NetworkLodTie
     return 'detail';
 }
 
-/** Cesium 카메라 고도(m) → 네트워크 LOD tier (2D와 동일한 단계 의미) */
+/**
+ * Cesium 카메라 고도(m) → 네트워크 LOD tier.
+ * 고도를 ×1040 규칙으로 해상도(m/px)로 환산해 2D와 **동일한 경계**를 쓴다.
+ * (실제 3D 타일/엔티티 게이팅은 화면 중앙 지면거리 기반 pixelSize 를 쓰므로
+ *  이 함수는 근사치 — 디버그 표시(PerformancePanel) 등 참고용)
+ */
 export function getNetworkLodTierByAltitude(altitude: number): NetworkLodTier {
-    if (altitude > LOD_ALT.NETWORK_OUTLINE_ONLY) return 'overview';
-    if (altitude > LOD_ALT.NETWORK_LINK_ONLY)    return 'mid';
-    // 고도 기반에는 아직 별도 차선 디테일 임계값이 없으므로 LINK_ONLY 이하를 detail로 본다.
-    return 'detail';
+    return getNetworkLodTierByResolution(altitude / 1040);
 }
 
 /**
