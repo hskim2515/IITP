@@ -117,11 +117,37 @@ export async function flyToNetworkExtent(cesiumViewer: any, olMap: any): Promise
 
     const centerLat = (minLat + maxLat) / 2;
     const centerLng = (minLng + maxLng) / 2;
-    // 네트워크 가로/세로 범위 중 큰 쪽을 기준으로 카메라 높이 결정
+    // 네트워크 가로/세로 범위 중 큰 쪽을 기준으로 카메라 높이 결정 (OL 없을 때 폴백)
     const latExtentM  = (maxLat - minLat) * 111000;
     const lngExtentM  = (maxLng - minLng) * 88000;
     const extentM     = Math.max(latExtentM, lngExtentM, 500); // 최소 500m
-    const cameraHeight = extentM * 2.0;
+    let cameraHeight = extentM * 2.0;
+
+    // OpenLayers 뷰 이동 (Cesium보다 먼저 — fit 결과 해상도로 카메라 높이를 정합시키기 위함)
+    const padding = 0.0005; // 약 50m 여백
+    const extent3857 = transformExtent(
+        [minLng - padding, minLat - padding, maxLng + padding, maxLat + padding],
+        'EPSG:4326', 'EPSG:3857'
+    );
+    if (olMap) {
+        const view = olMap.getView();
+        view.fit(extent3857, { duration: 1000, padding: [40, 40, 40, 40] });
+
+        // 2D/3D 축척 정합: fit 이 만들 해상도(3857 units/px)를 지면 m/px 로 보정한 뒤
+        // useMapSync 와 동일한 변환(height = res × canvasH / (2·tan(fovy/2)))으로 카메라 높이 결정.
+        // 기존 extentM×2.0 은 OL fit 과 무관한 자체 계산이라 진입 직후 두 지도의 축척이 달랐다.
+        const size = olMap.getSize();
+        const canvas = cesiumViewer?.scene.canvas;
+        if (size && size[0] > 80 && size[1] > 80 && canvas) {
+            const fitRes3857 = view.getResolutionForExtent(extent3857, [size[0] - 80, size[1] - 80]);
+            const groundRes = fitRes3857 * Math.cos(centerLat * Math.PI / 180);
+            const frustum: any = cesiumViewer.camera.frustum;
+            const fovy = frustum?.fovy ?? Math.PI / 3;
+            const canvasH = canvas.clientHeight || 900;
+            const h = groundRes * canvasH / (2 * Math.tan(fovy / 2));
+            if (isFinite(h) && h > 0) cameraHeight = h;
+        }
+    }
 
     // Cesium 카메라 이동
     if (cesiumViewer) {
@@ -129,16 +155,6 @@ export async function flyToNetworkExtent(cesiumViewer: any, olMap: any): Promise
             destination: Cesium.Cartesian3.fromDegrees(centerLng, centerLat, cameraHeight),
             duration: 1.5,
         });
-    }
-
-    // OpenLayers 뷰 이동
-    if (olMap) {
-        const padding = 0.0005; // 약 50m 여백
-        const extent3857 = transformExtent(
-            [minLng - padding, minLat - padding, maxLng + padding, maxLat + padding],
-            'EPSG:4326', 'EPSG:3857'
-        );
-        olMap.getView().fit(extent3857, { duration: 1000, padding: [40, 40, 40, 40] });
     }
 }
 

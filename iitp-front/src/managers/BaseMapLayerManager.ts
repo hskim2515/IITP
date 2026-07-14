@@ -50,6 +50,9 @@ class BaseMapLayerManager {
 
             group.push(imageryLayer);
         });
+        // requestRenderMode: 이미지리 추가 후 렌더 요청 없으면 다음 카메라 조작까지
+        // 배경이 회색(globe baseColor)으로 남는다.
+        try { this.viewer.scene.requestRender(); } catch (_) {}
         return group;
     }
 
@@ -63,6 +66,7 @@ class BaseMapLayerManager {
             const name = layer["layer"];
             layer.show = visibleLayers.includes(name);
         });
+        try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
     public hide(groupName: string, layerName: string): void {
@@ -75,6 +79,7 @@ class BaseMapLayerManager {
                 layer.show = false;
             }
         });
+        try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
     public toggle(groupName: string, layerName: string): void {
@@ -89,6 +94,7 @@ class BaseMapLayerManager {
                     layer.show = newState;
                 }
             });
+            try { this.viewer.scene.requestRender(); } catch (_) {}
         }
     }
 

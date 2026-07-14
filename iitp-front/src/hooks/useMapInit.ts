@@ -101,8 +101,9 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
         cesiumViewer.cesiumWidget.creditDisplay.container.style.display = "none";
 
         // 지형 LOD: 기본(2)은 매우 정밀 → 줌아웃 시 넓은 영역을 고해상도 메시로 그려 부하 폭증.
-        //   줌아웃이 더 느린 역설의 유력 원인. 16은 시뮬 가시화에 충분한 품질/성능 균형.
-        cesiumViewer.scene.globe.maximumScreenSpaceError = 16;
+        //   단 16까지 올리면 배경 이미지리가 2D 대비 ~3레벨 낮게 그려져 "3D만 흐릿"해짐
+        //   (SSE 2배 ≈ 타일 1레벨 코스). 4 = 2D 대비 ~1레벨 코스로 체감 선명도 유지 + 기본 대비 부하 절감.
+        cesiumViewer.scene.globe.maximumScreenSpaceError = 4;
         cesiumViewer.scene.globe.depthTestAgainstTerrain = true;
         cesiumViewer.scene.useDepthPicking = true
 
