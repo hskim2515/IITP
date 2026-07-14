@@ -8,6 +8,7 @@ import { Style, Icon } from "ol/style";
 import * as Cesium from "cesium";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import { useCesiumStore } from "@stores/useCesiumStore";
+import { useMapStore } from "@stores/useMapStore";
 import { useModeStore } from "@stores/useModeStore";
 import { useMessageStore } from "@stores/useMessageStore";
 import { networkPrimitivePropertiesMap } from "@datasource/NetworkDataSourceLayer";
@@ -80,6 +81,10 @@ export function useNaverPanorama(
 
     useEffect(() => {
         if (!enabled || !containerRef.current || !olView) return;
+        // 파노라마가 Cesium 캔버스를 덮는 동안 useMapSync 의 Cesium→OL 동기화를 차단
+        // (followCamera 의 프로그램적 카메라 이동이 사용자 조작으로 오인되어
+        //  로드뷰가 끝없이 자동 이동하는 순환 방지)
+        useMapStore.getState().setPanoramaActive(true);
         let disposed = false;
         let syncing = false;               // 루프 차단 guard
         let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -385,6 +390,7 @@ export function useNaverPanorama(
 
         return () => {
             disposed = true;
+            useMapStore.getState().setPanoramaActive(false);
             if (debounceTimer) clearTimeout(debounceTimer);
             if (removeKeyListener) removeKeyListener();
             if (cleanupResize) cleanupResize();

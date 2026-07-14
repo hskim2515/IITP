@@ -81,6 +81,11 @@ const useMapSync = () => {
     };
 
     const syncCesiumToOL = () => {
+        // 로드뷰(파노라마) 표시 중엔 Cesium 캔버스가 가려져 사용자 조작이 불가능한데도
+        // isCesiumSyncing 이 이전 상태로 남아 있을 수 있다. 이때 파노라마 훅의 followCamera 가
+        // 옮긴 카메라(위치=로드뷰 지점, pitch 유지)의 "바라보는 지점"을 OL center 로 밀면
+        // 로드뷰→카메라→OL→로드뷰 순환으로 로드뷰가 끝없이 걸어가는 루프가 된다 → 차단.
+        if (useMapStore.getState().panoramaActive) return;
         if (isCesiumSyncing.current) {
             const scene = cesiumViewer.scene;
             const canvas = scene.canvas;
