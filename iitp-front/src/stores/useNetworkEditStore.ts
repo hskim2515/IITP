@@ -32,6 +32,10 @@ interface NetworkEditState {
     addDeleted: (ids: (string | number)[]) => void;
     /** 삭제된 노드 id 누적(삭제 조작 지점에서 호출). */
     addDeletedNodes: (ids: (string | number)[]) => void;
+    /** 삭제 마스크 해제 (undo 로 삭제가 취소될 때 — 없으면 복원된 링크가 MVT 에서 계속 숨겨짐). */
+    removeDeleted: (ids: (string | number)[]) => void;
+    /** 삭제 노드 마스크 해제 (undo 용). */
+    removeDeletedNodes: (ids: (string | number)[]) => void;
     /** 저장/리로드 시 초기화. */
     clear: () => void;
 }
@@ -58,6 +62,18 @@ export const useNetworkEditStore = create<NetworkEditState>()(
             const edited = new Set(s.editedNodeIds);
             for (const id of ids) edited.delete(String(id));
             return { deletedNodeIds: next, editedNodeIds: edited };
+        }),
+        removeDeleted: (ids) => set((s) => {
+            if (ids.length === 0) return s;
+            const next = new Set(s.deletedLinkIds);
+            for (const id of ids) next.delete(String(id));
+            return { deletedLinkIds: next };
+        }),
+        removeDeletedNodes: (ids) => set((s) => {
+            if (ids.length === 0) return s;
+            const next = new Set(s.deletedNodeIds);
+            for (const id of ids) next.delete(String(id));
+            return { deletedNodeIds: next };
         }),
         clear: () => set({
             editedLinkIds: new Set<string>(), deletedLinkIds: new Set<string>(),

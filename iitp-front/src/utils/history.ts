@@ -77,11 +77,34 @@ export function mergeJsonWithLogRecursive(
         return Array.from(map.values());
     }
 
+    // 타일 모드 합성 guid(tileGuid.ts) 해석: T_L{id} / T_N{id} /
+    // T_L{id}_lane{i} / T_L{id}_lane{i}_cell{j} / T_L{id}_lane{i}_seg{j} /
+    // T_N{id}_port{i} / T_N{id}_conn{i}. 경로 기반이 아니라서 아래의 점-경로
+    // 파싱으로는 부모 배열을 못 찾음 → 타일모드 추가/삭제 undo 무동작의 원인.
+    const TILE_CHILD_KEYS: Record<string, string> = {
+        lane: "lanes", cell: "cells", seg: "segments", port: "ports", conn: "connections",
+    };
+    function resolveTileGuid(guid: string): { parentObj: any; childKey: string; index: number } | null {
+        if (!guid.startsWith("T_")) return null;
+        const m = guid.match(/_(lane|cell|seg|port|conn)(\d+)$/);
+        if (!m) {
+            // 톱레벨: 배열 내 위치는 의미 없음(id 기반) → 끝에 추가
+            if (/^T_L[^_]+$/.test(guid)) return { parentObj: clonedData, childKey: "links", index: Number.MAX_SAFE_INTEGER };
+            if (/^T_N[^_]+$/.test(guid)) return { parentObj: clonedData, childKey: "nodes", index: Number.MAX_SAFE_INTEGER };
+            return null;
+        }
+        const parentObj = findByGuid(clonedData, guid.slice(0, guid.length - m[0].length));
+        if (!parentObj) return null;
+        return { parentObj, childKey: TILE_CHILD_KEYS[m[1]!]!, index: parseInt(m[2]!, 10) };
+    }
+
     function resolveParentAndIndex(guid: string): {
         parentObj: any;
         childKey: string;
         index: number;
     } | null {
+        const tileResolved = resolveTileGuid(guid);
+        if (tileResolved) return tileResolved;
         const parts = guid.split(".");
 
         if (parts.length === 1) {

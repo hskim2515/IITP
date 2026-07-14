@@ -39,6 +39,9 @@ export interface Actions<T> {
     resetData: () => void;
     // 타일 모드 diff 저장 후 삭제 누적 초기화
     clearDeletedRecords: () => void;
+    // undo/redo 정합: 삭제 취소 시 해당 레코드 제거 / 삭제 재적용 시 재누적
+    removeDeletedRecordsByGuid: (guids: (string | number)[]) => void;
+    addDeletedRecords: (records: any[]) => void;
 }
 
 
@@ -248,6 +251,13 @@ const createFeatureStore = <T>() => {
                     },
                         setChange: (changed: boolean) => set({isChanged: changed}),
                         clearDeletedRecords: () => set({ deletedRecords: [] }),
+                        removeDeletedRecordsByGuid: (guids: (string | number)[]) => {
+                            const keys = new Set(guids.map(String));
+                            set({ deletedRecords: get().deletedRecords.filter((r: any) => !keys.has(String(r?.__guid))) });
+                        },
+                        addDeletedRecords: (records: any[]) => {
+                            if (records.length > 0) set({ deletedRecords: [...get().deletedRecords, ...records] });
+                        },
                         initCurrentData: () => {
                             const originData = get().originData;
                             if (originData) set({

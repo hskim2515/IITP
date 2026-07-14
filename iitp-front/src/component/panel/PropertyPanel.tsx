@@ -23,6 +23,7 @@ import { useEventStore } from "@stores/useEventStore";
 import { modifyFeatureEventHandlers } from "@handler/modifyFeatureEventHandlers";
 import { extractFeatureTypeFromGuid } from "@utils/guid";
 import { saveNetworkDiffTileAware } from "@utils/networkDiff";
+import { reconcileNetworkHistoryTileState } from "@utils/networkHistory";
 import { NETWORK_TILING } from "@utils/lodConstants";
 import { MenuTreeResponse } from "@type/openapi.gen";
 import styles from "@css/PropertyPanel.module.css";
@@ -200,6 +201,11 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         const currentJsonData = store.getState().currentJsonData;
         const mergeJsonData = mergeJsonWithLogRecursive(currentJsonData, updateHistory, isUndo);
         store.getState().setCurrentJsonData(mergeJsonData);
+
+        // 타일 모드 네트워크: 삭제 마스크(MVT)·diff 삭제 목록도 로그 의미에 맞게 되돌림/재적용
+        if (activeSubmenu.menuCode === 'NETWORK') {
+            reconcileNetworkHistoryTileState(updateHistory, isUndo);
+        }
 
         // updateLogs가 비었으면(모두 되돌림) isChanged 해제
         const remainingLogs = historyStore.getState().updateLogs;
