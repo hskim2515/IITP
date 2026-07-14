@@ -204,9 +204,13 @@ public class NetworkController {
                 versionId, request.getUpsertLinks().size(), request.getDeleteLinkIds().size(),
                 request.getUpsertNodes().size(), request.getDeleteNodeIds().size());
         try {
-            // 1) 전체 네트워크에 diff 적용 → 갱신된 NetworkResponse
+            // 1) 전체 네트워크에 diff 적용 → 갱신된 NetworkResponse.
+            //    "새 버전으로 저장"이면 대상(versionId)에 network.xml 이 아직 없으므로
+            //    baseVersionId(편집 중이던 기준 버전)에서 로드해 적용한다.
+            String loadFrom = (request.getBaseVersionId() != null && !request.getBaseVersionId().isBlank())
+                    ? request.getBaseVersionId() : versionId;
             NetworkResponse merged = networkTileService.applyDiff(
-                    versionId,
+                    loadFrom,
                     request.getUpsertLinks(), request.getUpsertNodes(),
                     request.getDeleteLinkIds(), request.getDeleteNodeIds());
 

@@ -15,6 +15,14 @@ import java.util.List;
  */
 @Data
 public class NetworkDiffRequest {
+    /**
+     * diff 를 적용할 기준 네트워크의 versionId (옵션).
+     * "새 버전으로 저장" 시 대상 versionId 에는 아직 network.xml 이 없으므로,
+     * 기준 버전(현재 편집 중이던 버전)에서 로드해 diff 적용 후 대상으로 저장한다.
+     * null 이면 대상 versionId 자체가 기준 (기존 버전에 덮어 저장).
+     */
+    private String baseVersionId;
+
     private List<LinkResponse> upsertLinks = new ArrayList<>();
     private List<NodeResponse> upsertNodes = new ArrayList<>();
     private List<Long> deleteLinkIds = new ArrayList<>();

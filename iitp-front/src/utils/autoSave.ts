@@ -92,10 +92,32 @@ export async function backupAndResetDependentLayers(versionKey: string): Promise
 
 /**
  * isChanged=true 인 레이어를 versionKey 버전으로 전부 저장한다.
+ *
+ * ⚠️ 네트워크는 diff 저장 단일 진입점(saveNetworkDiffTileAware)만 사용 —
+ * 타일 모드에서 currentJsonData 는 viewport 일부라, 전체 저장 API 로 보내면
+ * 전국 데이터를 덮어쓴다 (데이터 파괴). 실패 시에도 전체 저장 폴백 금지.
  */
 export async function autoSaveChangedLayers(versionKey: string): Promise<void> {
     for (const cfg of LAYER_CONFIG) {
         if (!cfg.store.getState().isChanged) continue;
+
+        if (cfg.key === 'network') {
+            try {
+                const { saveNetworkDiffTileAware } = await import('@utils/networkDiff');
+                const result = await saveNetworkDiffTileAware(versionKey);
+                if (result !== 'skipped') {
+                    cfg.historyStore.getState().resetUpdateLogs();
+                    useLogStore.getState().addLog('info', `${cfg.label} 자동 저장 완료 (diff)`);
+                } else {
+                    useLogStore.getState().addLog('warn', `${cfg.label} diff 저장 불가 — 수동 저장하세요`);
+                }
+            } catch (e) {
+                useLogStore.getState().addLog('warn', `${cfg.label} 자동 저장 실패 — 수동 저장하세요`);
+                console.warn(`[autoSave] ${cfg.label} diff 저장 실패`, e);
+            }
+            continue;
+        }
+
         const api = apiConfig[cfg.menuCode as ApiMenuKey]?.update;
         if (!api) continue;
         const currentJson = cfg.store.getState().currentJsonData;

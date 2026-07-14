@@ -22,7 +22,7 @@ import { useShallow } from "zustand/react/shallow";
 import { useEventStore } from "@stores/useEventStore";
 import { modifyFeatureEventHandlers } from "@handler/modifyFeatureEventHandlers";
 import { extractFeatureTypeFromGuid } from "@utils/guid";
-import { computeNetworkDiff, isNetworkDiffEmpty } from "@utils/networkDiff";
+import { saveNetworkDiffTileAware } from "@utils/networkDiff";
 import { NETWORK_TILING } from "@utils/lodConstants";
 import { MenuTreeResponse } from "@type/openapi.gen";
 import styles from "@css/PropertyPanel.module.css";
@@ -151,12 +151,15 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         const payloadData = submenu.item?.fullData ? currentJson : Object.values(currentJson)[0];
         const payload = { data: payloadData, logs: mergedLog };
         try {
-            // 네트워크는 도메인 id 기반 diff 저장 시도 (전국 규모 대비 payload 축소).
-            // 실패 시 기존 전체 저장으로 안전하게 폴백.
-            const savedByDiff = activeSubmenu.menuCode === 'NETWORK'
-                ? await trySaveNetworkDiff(versionKey)
-                : false;
-            if (!savedByDiff) {
+            if (activeSubmenu.menuCode === 'NETWORK') {
+                // 네트워크는 diff 저장 단일 진입점 (변경분만 전송 + 타일모드 삭제 id 합집합).
+                // ⚠️ 타일 모드에서 전체 저장 폴백 금지 — viewport 일부가 전국 데이터를 덮어씀.
+                const result = await saveNetworkDiffTileAware(versionKey);
+                if (result === 'skipped') {
+                    if (NETWORK_TILING.ENABLED) throw new Error('diff 저장 불가 (타일 모드 — 전체 저장 폴백 금지)');
+                    await axiosInstance({ method: api.method, url: api.url + '/' + versionKey, data: payload });
+                }
+            } else {
                 await axiosInstance({ method: api.method, url: api.url + '/' + versionKey, data: payload });
             }
             historyStore.getState().resetUpdateLogs();
@@ -164,47 +167,6 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
             setMessage({ type: 'info', text: '저장 완료' });
         } catch (error) {
             setMessage({ type: 'error', text: '저장 실패: ' + error });
-        }
-    };
-
-    /**
-     * 네트워크 diff 저장 시도. 성공 시 true, 미적용/실패 시 false(→ 호출측이 전체 저장 폴백).
-     * originData(서버 원본) vs currentJsonData(편집본)를 id로 비교한 변경분만 전송.
-     */
-    const trySaveNetworkDiff = async (versionKey: string): Promise<boolean> => {
-        try {
-            const current = store.getState().currentJsonData as any;
-            if (!current) return false;
-
-            let diff;
-            if (NETWORK_TILING.ENABLED) {
-                // 타일 모드: originData(빈)와 비교 불가. viewport 링크/노드를 upsert(편집 안 한 것도
-                // 동일값 upsert = 백엔드 id 교체라 무해), 삭제는 누적된 deletedRecords에서 id 추출.
-                const deleted = (store.getState() as any).deletedRecords ?? [];
-                diff = {
-                    upsertLinks: current.links ?? [],
-                    upsertNodes: current.nodes ?? [],
-                    deleteLinkIds: deleted.filter((r: any) => r.featureType === 'links' && r.id != null).map((r: any) => r.id),
-                    deleteNodeIds: deleted.filter((r: any) => r.featureType === 'nodes' && r.id != null).map((r: any) => r.id),
-                };
-                if (isNetworkDiffEmpty(diff)) return true;
-            } else {
-                // 비-타일 모드: originData vs current 전체 비교 (기존)
-                const origin = store.getState().originData as any;
-                if (!origin) return false;
-                diff = computeNetworkDiff(origin, current);
-                if (isNetworkDiffEmpty(diff)) return true;
-            }
-            await axiosInstance({
-                method: 'POST',
-                url: `/network/${versionKey}/diff`,
-                data: diff,
-            });
-            (store.getState() as any).clearDeletedRecords?.(); // 저장 성공 → 삭제 누적 초기화
-            return true;
-        } catch (e) {
-            console.warn('[PropertyPanel] diff 저장 실패 → 전체 저장 폴백', e);
-            return false;
         }
     };
 

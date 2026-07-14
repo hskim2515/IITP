@@ -157,6 +157,26 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
 
     // ── 서버 저장 ──────────────────────────────────────────────────
     const doSaveLayer = async (cfg: LayerCfg, versionKey: string) => {
+        // 네트워크는 diff 저장 단일 진입점 — 타일 모드에서 전체 저장은 viewport 일부가
+        // 전국 데이터를 덮어쓰므로 금지 (실패 시에도 전체 저장 폴백 없음)
+        if (cfg.key === 'network') {
+            setSavingKeys(prev => new Set(prev).add(cfg.key));
+            try {
+                const { saveNetworkDiffTileAware } = await import('@utils/networkDiff');
+                const result = await saveNetworkDiffTileAware(versionKey);
+                if (result === 'skipped') {
+                    setImportStatus({ type: 'error', text: `${cfg.label} diff 저장 불가 — 데이터 없음` });
+                } else {
+                    cfg.historyStore.getState().resetUpdateLogs();
+                    setImportStatus({ type: 'ok', text: `${cfg.label} 저장 완료 (diff)` });
+                }
+            } catch {
+                setImportStatus({ type: 'error', text: `${cfg.label} 저장 실패` });
+            } finally {
+                setSavingKeys(prev => { const s = new Set(prev); s.delete(cfg.key); return s; });
+            }
+            return;
+        }
         const api = apiConfig[cfg.menuCode as ApiMenuKey]?.update;
         if (!api) return;
         const currentJson = cfg.store.getState().currentJsonData;
