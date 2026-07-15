@@ -38,7 +38,10 @@ public class ScenarioServiceImpl implements ScenarioService {
 
     @Override
     public Scenario getScenarioByKey(String key) {
+        // 버전별 격리 이후 호출측(차량 생성/viewport/임포트)은 version key 를 넘긴다.
+        // scenario 직접 조회 → 없으면 version key 로 부모 scenario 해석 (좌표 등 시나리오 속성용).
         return scenarioRepository.findByKey(key)
+                .or(() -> versionRepository.findByKeyWithScenario(key).map(ScenarioVersion::getScenario))
                 .orElseThrow(() -> new RuntimeException("Scenario not found key: " + key));
     }
 
