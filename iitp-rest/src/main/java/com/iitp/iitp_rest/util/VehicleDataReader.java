@@ -31,6 +31,14 @@ public class VehicleDataReader {
     /** versionId → 로컬 캐시된 DB 사본 (viewport 스트리밍 등 반복 조회용 — 요청마다 GB급 재다운로드 방지) */
     private final Map<String, File> dbFileCache = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** 무효화 연쇄 리스너 — 파생 캐시(VehicleController ViewportCtx 등)가 등록해 함께 비워진다 */
+    private final java.util.List<java.util.function.Consumer<String>> invalidationListeners =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    public void addInvalidationListener(java.util.function.Consumer<String> listener) {
+        invalidationListeners.add(listener);
+    }
+
     /** 캐시 우선 DB 파일 준비. 반복 조회(viewport 스트리밍) 전용 — 호출측은 파일을 삭제하면 안 된다. */
     private File prepareDbFileCached(String versionId) throws IOException {
         File cached = dbFileCache.get(versionId);
@@ -46,6 +54,9 @@ public class VehicleDataReader {
         if (f != null && (localPath == null || localPath.isBlank()
                 || !f.getAbsolutePath().equals(new File(localPath).getAbsolutePath()))) {
             try { f.delete(); } catch (Exception ignored) {}
+        }
+        for (var l : invalidationListeners) {
+            try { l.accept(versionId); } catch (Exception ignored) {}
         }
     }
 

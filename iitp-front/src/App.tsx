@@ -87,6 +87,17 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const [generatingVehicle, setGeneratingVehicle] = useState(false);
     const [signalDone, setSignalDone] = useState(false);
     const [vehicleDone, setVehicleDone] = useState(false);
+    // NextSim 실행 상태: unknown(미확인) / off(러너 미설정) / idle / running
+    const [nextsimState, setNextsimState] = useState<'unknown' | 'off' | 'idle' | 'running'>('unknown');
+
+    // 러너 설정 여부 1회 확인 (미설정 서버에선 버튼 숨김)
+    useEffect(() => {
+        if (step !== 'need-simulation' || nextsimState !== 'unknown') return;
+        fetch(`${import.meta.env.VITE_API_URL}/simulation/available`)
+            .then(r => r.ok ? r.json() : { available: false })
+            .then((b: any) => setNextsimState(b?.available ? 'idle' : 'off'))
+            .catch(() => setNextsimState('off'));
+    }, [step, nextsimState]);
 
     if (step === 'idle') return null;
 
@@ -182,6 +193,54 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
         };
 
         poll(0);
+    };
+
+    /** NextSim 시뮬레이터 실행 — 완료되면 vehicle_sim.db 갱신 → 기존 차량 파이프라인이 소비 */
+    const handleRunNextSim = () => {
+        setNextsimState('running');
+        useLogStore.getState().addLog('info', '[NextSim] 시뮬레이션 실행 시작...');
+        const setTask = (label: string | null) =>
+            useBackgroundTaskStore.getState().setTask('nextsim-run', label);
+
+        fetch(`${import.meta.env.VITE_API_URL}/simulation/${scenarioKey}/run`, { method: 'POST' })
+            .then(async (res) => {
+                if (res.status !== 202 && res.status !== 409) {
+                    const body: any = await res.json().catch(() => ({}));
+                    throw new Error(body?.message ?? `서버 오류 (${res.status})`);
+                }
+                const poll = (n: number) => {
+                    fetch(`${import.meta.env.VITE_API_URL}/simulation/${scenarioKey}/status`)
+                        .then(r => r.json())
+                        .then((s: any) => {
+                            if (s.state === 'RUNNING') {
+                                setTask(`NextSim 실행 중 — ${s.stage ?? ''} (${s.elapsedSeconds ?? 0}초)`);
+                                if (n < 2400) setTimeout(() => poll(n + 1), 3000);
+                                else { setTask(null); setNextsimState('idle'); useLogStore.getState().addLog('warn', '[NextSim] 대기 시간 초과'); }
+                            } else if (s.state === 'DONE') {
+                                setTask(null);
+                                setNextsimState('idle');
+                                setVehicleDone(true);
+                                useLogStore.getState().addLog('info', '[NextSim] 시뮬레이션 완료 — 결과를 불러옵니다...');
+                                useVehicleStore.getState().triggerRefetch();
+                                if (step === 'need-simulation' && (!missingSignal || signalDone)) setStep('idle');
+                            } else if (s.state === 'ERROR') {
+                                setTask(null);
+                                setNextsimState('idle');
+                                useLogStore.getState().addLog('error', `[NextSim] 실행 실패: ${s.error ?? '알 수 없는 오류'}`);
+                            } else { // IDLE — 서버 재시작 등
+                                setTask(null);
+                                setNextsimState('idle');
+                            }
+                        })
+                        .catch(() => { if (n < 2400) setTimeout(() => poll(n + 1), 5000); });
+                };
+                poll(0);
+            })
+            .catch((e) => {
+                setNextsimState('idle');
+                setTask(null);
+                useLogStore.getState().addLog('error', `[NextSim] 실행 요청 실패: ${e?.message ?? e}`);
+            });
     };
 
     const handleGenerateSignal = async () => {
@@ -289,6 +348,19 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: 6 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                         <span style={{ fontSize: 12, color: '#ccc' }}>🚗 차량 시뮬레이션</span>
+                                        <div style={{ display: 'flex', gap: 6 }}>
+                                        {(nextsimState === 'idle' || nextsimState === 'running') && (
+                                            <button
+                                                style={nextsimState === 'running'
+                                                    ? { ...obPrimaryBtn, opacity: 0.6, fontSize: 11 }
+                                                    : { ...obPrimaryBtn, fontSize: 11 }}
+                                                onClick={handleRunNextSim}
+                                                disabled={nextsimState === 'running' || vehicleDone}
+                                                title="NextSim 시뮬레이터로 실제 교통 시뮬레이션을 실행합니다 (OD 매트릭스 필요)"
+                                            >
+                                                {nextsimState === 'running' ? '시뮬 실행 중...' : 'NextSim 실행'}
+                                            </button>
+                                        )}
                                         <button
                                             style={vehicleDone
                                                 ? { ...obPrimaryBtn, fontSize: 11, background: 'rgba(78,203,141,0.15)', borderColor: 'rgba(78,203,141,0.4)', color: '#4ecb8d' }
@@ -300,6 +372,7 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                                         >
                                             {vehicleDone ? '생성 완료 ✓' : generatingVehicle ? '생성 중...' : '더미 생성'}
                                         </button>
+                                        </div>
                                     </div>
                                     {missingSignal && !signalDone && !vehicleDone && (
                                         <span style={{ fontSize: 10, color: '#666' }}>

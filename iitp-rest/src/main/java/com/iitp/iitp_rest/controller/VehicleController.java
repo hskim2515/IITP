@@ -73,6 +73,12 @@ public class VehicleController {
     private final DummySignalGenerator dummySignalGenerator;
     private final FileStorageService fileStorage;
 
+    /** vehicle_sim.db 무효화 연쇄 — NextSim 재실행 등 외부 갱신 시 ViewportCtx 도 함께 비움 */
+    @jakarta.annotation.PostConstruct
+    private void registerInvalidationListener() {
+        vehicleDataReader.addInvalidationListener(viewportCtxCache::remove);
+    }
+
     /** 현재 비동기 생성 중인 scenarioKey 집합 */
     private final java.util.concurrent.ConcurrentHashMap<String, Boolean> generatingSet = new java.util.concurrent.ConcurrentHashMap<>();
     /** 마지막 생성 실패 메시지 (scenarioKey → 에러메시지) */
