@@ -183,15 +183,28 @@ public class NextSimRunner {
         Files.writeString(networkDir.resolve("mode.xml"), mode.toString(), StandardCharsets.UTF_8);
         log.info("[NextSimRunner] mode.xml 생성: meso 링크 {}개", linkIds.size());
 
-        // 5) 네트워크 종속이지만 플랫폼 미관리 파일 — 빈 템플릿 (배포판 bucheon 스키마 준수)
+        // 5) 네트워크 종속이지만 플랫폼 미관리 파일 — 빈 템플릿 (배포판 bucheon 스키마 준수,
+        //    아래 형태들은 실행 이진탐색으로 무해 검증됨)
         writeIfAbsent(networkDir, "events.xml", xml("<Events />"));
         writeIfAbsent(networkDir, "passenger.xml", xml("<Passenger>\n\t<od_pax>\n\t</od_pax>\n</Passenger>"));
         writeIfAbsent(networkDir, "footpathNetwork.xml", xml("<Network id=\"0\">\n    <nodes>\n    </nodes>\n    <links>\n    </links>\n</Network>"));
         writeIfAbsent(networkDir, "roadPTline.xml", xml("<Lines mode=\"Bus\">\n</Lines>"));
-        writeIfAbsent(networkDir, "railPTline.xml", xml("<Mode type=\"subway\">\n</Mode>"));
         writeIfAbsent(networkDir, "roadStation.xml", xml("<PublicTransit>\n  <Stations>\n  </Stations>\n</PublicTransit>"));
         writeIfAbsent(networkDir, "railStation.xml", xml("<RailPublicTransit>\n</RailPublicTransit>"));
         writeIfAbsent(networkDir, "backgroundTraffic.xml", xml("<BackgroundTraffics>\n</BackgroundTraffics>"));
+        // ⚠️ railPTline.xml 은 자체 제작 빈 XML(<Mode/> 루트, 주석-only 둘 다)이 nextsim 을
+        //    SIGSEGV 로 죽인다(실측 — 파서가 이 파일을 특수 처리). 배포판 예시 파일(내용 전체가
+        //    주석이라 네트워크 무관 = 사실상 빈 노선)을 그대로 복사하는 것만 안전.
+        if (!Files.exists(networkDir.resolve("railPTline.xml"))) {
+            Path bundled = Path.of(nextsimHome, "SimulationInput", "datasets", BRANCH,
+                    "network_xml_bucheon", "railPTline.xml");
+            if (Files.exists(bundled)) {
+                Files.copy(bundled, networkDir.resolve("railPTline.xml"));
+            } else {
+                throw new IOException("배포판 railPTline.xml 예시가 없습니다: " + bundled +
+                        " — 버전에 railPTline.xml 을 직접 추가하세요.");
+            }
+        }
     }
 
     /** scenario.xml 내용을 config_scenario.json 으로 미러링 (배포판이 양쪽을 두는 관례 준수) */
