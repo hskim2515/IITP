@@ -155,6 +155,10 @@ public class NextSimRunner {
         //    network.xml 필수, odmatrix.xml 필수(수요 없으면 시뮬 무의미), 나머지는 폴백 생성
         copyRequired(versionId, "network.xml", networkDir,
                 "network.xml 이 없습니다 — 네트워크를 먼저 가져오기/저장하세요.");
+        // KTDB 변환 네트워크 호환 보정: NextSim 파서가 <port direction> / <node v2x> 를
+        // 필수 속성으로 요구("Element should have 'direction' attribute" 실측).
+        // 기존 저장본에는 없을 수 있어 스테이징 사본에 빈 값으로 주입한다.
+        injectRequiredNetworkAttrs(networkDir.resolve("network.xml"));
         copyRequired(versionId, "odmatrix.xml", networkDir,
                 "odmatrix.xml 이 없습니다 — OD 매트릭스 메뉴에서 수요를 생성/저장하세요.");
 
@@ -231,6 +235,44 @@ public class NextSimRunner {
     private static String attr(String attrs, String name, String def) {
         Matcher m = Pattern.compile(name + "\\s*=\\s*\"([^\"]*)\"").matcher(attrs);
         return m.find() ? m.group(1) : def;
+    }
+
+    /**
+     * NextSim 필수 속성 주입 (스테이징 사본 in-place, 원본 무변경).
+     * 태그 단위 스트림 처리 — 수백 MB 파일 대응 (DOM 금지). shape 속성이 수십 KB 인
+     * 태그도 있으므로 '<'~'>' 를 온전히 모아 태그 단위로 변환한다.
+     */
+    private void injectRequiredNetworkAttrs(Path networkXml) throws IOException {
+        Path tmp = networkXml.resolveSibling(networkXml.getFileName() + ".compat");
+        long injected = 0;
+        try (var reader = Files.newBufferedReader(networkXml, StandardCharsets.UTF_8);
+             var writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
+            StringBuilder tag = null;
+            int c;
+            while ((c = reader.read()) >= 0) {
+                char ch = (char) c;
+                if (tag == null) {
+                    if (ch == '<') { tag = new StringBuilder("<"); } else { writer.write(ch); }
+                    continue;
+                }
+                tag.append(ch);
+                if (ch != '>') continue;
+                String t = tag.toString();
+                tag = null;
+                // "<port " 공백 포함 매칭 — "<ports>"/"<nodes>" 래퍼 태그 오주입 방지
+                if (t.startsWith("<port ") && !t.contains("direction=")) {
+                    t = t.replaceFirst("(/?>)$", " direction=\"\"$1");
+                    injected++;
+                } else if (t.startsWith("<node ") && !t.contains("v2x=")) {
+                    t = t.replaceFirst("(/?>)$", " v2x=\"\"$1");
+                    injected++;
+                }
+                writer.write(t);
+            }
+            if (tag != null) writer.write(tag.toString()); // 비정상 트레일링 보존
+        }
+        Files.move(tmp, networkXml, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        if (injected > 0) log.info("[NextSimRunner] network.xml 호환 보정: 필수 속성 {}건 주입", injected);
     }
 
     /** network.xml 에서 링크 id 추출 — 수백 MB 파일 대비 청크 스트림 스캔 (DOM 로드 금지) */
