@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.service.simulation;
 
+import com.iitp.iitp_rest.repository.ScenarioVersionRepository;
 import com.iitp.iitp_rest.util.FileStorageService;
 import com.iitp.iitp_rest.util.VehicleDataReader;
 import lombok.RequiredArgsConstructor;
@@ -72,6 +73,7 @@ public class NextSimRunner {
 
     private final FileStorageService fileStorage;
     private final VehicleDataReader vehicleDataReader;
+    private final ScenarioVersionRepository scenarioVersionRepository;
 
     public boolean isConfigured() {
         return !nextsimHome.isBlank() && Files.isDirectory(Path.of(nextsimHome, "Captain", "build", "bin"));
@@ -310,15 +312,35 @@ public class NextSimRunner {
         }
     }
 
-    /** 버전 스토리지 → 스테이징 복사. 존재하면 true. (대용량 대비 스트림 복사) */
+    /**
+     * 버전 스토리지 → 스테이징 복사. 존재하면 true.
+     *
+     * <p>odmatrix.xml/signalTOD.xml/scenario.xml 은 관리 서비스(OdMatrixService 등)가
+     * **scenario key 폴더**에 저장한다(버전별 격리 이전의 시나리오 공유 레이어).
+     * versionId 폴더에 없으면 scenario key 폴더로 폴백해야 UI 로 만든 데이터를 찾는다.
+     */
     private boolean copyOptional(String versionId, String fileName, Path dstDir) throws IOException {
-        String key = versionId + "/" + fileName;
-        if (!fileStorage.exists(key)) return false;
-        byte[] bytes = fileStorage.readFile(key);
-        try (InputStream in = new ByteArrayInputStream(bytes)) {
-            Files.copy(in, dstDir.resolve(fileName), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        for (String dir : candidateDirs(versionId)) {
+            String key = dir + "/" + fileName;
+            if (!fileStorage.exists(key)) continue;
+            byte[] bytes = fileStorage.readFile(key);
+            try (InputStream in = new ByteArrayInputStream(bytes)) {
+                Files.copy(in, dstDir.resolve(fileName), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            if (!dir.equals(versionId)) {
+                log.info("[NextSimRunner] {} → scenario key 폴더({})에서 사용", fileName, dir);
+            }
+            return true;
         }
-        return true;
+        return false;
+    }
+
+    /** versionId 우선, scenario key 폴백 (다르면) */
+    private List<String> candidateDirs(String versionId) {
+        String scenarioKey = scenarioVersionRepository.findByKeyWithScenario(versionId)
+                .map(v -> v.getScenario().getKey())
+                .orElse(versionId);
+        return scenarioKey.equals(versionId) ? List.of(versionId) : List.of(versionId, scenarioKey);
     }
 
     private static void writeIfAbsent(Path dir, String name, String content) throws IOException {
