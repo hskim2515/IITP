@@ -54,6 +54,14 @@ public class NextSimRunner {
     @Value("${nextsim.home:}")
     private String nextsimHome;
 
+    /**
+     * 실행 모드: docker(기본) / native.
+     * native 는 배포판 바이너리를 직접 exec — Linux x86_64 서버 전용 (mac 에선 실행 불가).
+     * mac 개발기의 amd64 에뮬레이션 오버헤드가 없어 대규모 네트워크에서 수 배 빠르다.
+     */
+    @Value("${nextsim.execution-mode:docker}")
+    private String executionMode;
+
     /** 바이너리가 Ubuntu 22.04 x86_64 빌드 → 동일 계열 이미지 + amd64 에뮬레이션(mac) */
     @Value("${nextsim.docker.image:ubuntu:22.04}")
     private String dockerImage;
@@ -87,8 +95,9 @@ public class NextSimRunner {
     private final java.util.Set<String> cancelRequested = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /**
-     * 실행 취소 요청. docker CLI 프로세스만 죽이면 컨테이너가 계속 돌므로
-     * 컨테이너를 이름으로 강제 제거한 뒤 CLI 프로세스도 종료한다.
+     * 실행 취소 요청.
+     * docker: CLI 프로세스만 죽이면 컨테이너가 계속 돌므로 컨테이너를 이름으로 강제 제거.
+     * native: 바이너리 프로세스(+자식)를 직접 종료.
      */
     public boolean requestCancel(String versionId) {
         if (!versionId.equals(activeVersionId)) return false;
@@ -102,8 +111,11 @@ public class NextSimRunner {
             }
         }
         Process p = activeProcess;
-        if (p != null) p.destroyForcibly();
-        log.info("[NextSimRunner] 취소 요청 처리: versionId={}, container={}", versionId, container);
+        if (p != null) {
+            p.descendants().forEach(ProcessHandle::destroyForcibly); // native: 바이너리 자식까지
+            p.destroyForcibly();
+        }
+        log.info("[NextSimRunner] 취소 요청 처리: versionId={}, mode={}, container={}", versionId, executionMode, container);
         return true;
     }
 
@@ -156,7 +168,7 @@ public class NextSimRunner {
                 log.info("[NextSimRunner] 경로 캐시 히트: {} (hash={})", versionId, inputsHash.substring(0, 12));
             } else {
                 progress.accept("경로 생성 중 (route-generator)...");
-                String routeLog = runInDocker(versionId, workDir, "./route-generator -tc=\"RouteGenerator\"", progress);
+                String routeLog = runStage(versionId, workDir, "route-generator", "RouteGenerator", progress);
                 if (!Files.exists(routeJson)) {
                     throw new RuntimeException("route-generator 가 Route.json 을 생성하지 않았습니다. " +
                             "odmatrix.xml 의 source/sink 노드가 네트워크와 일치하는지 확인하세요.\n" + tail(routeLog, 800));
@@ -164,7 +176,7 @@ public class NextSimRunner {
             }
 
             progress.accept("시뮬레이션 실행 중 (nextsim)...");
-            String simLog = runInDocker(versionId, workDir, "./nextsim -tc=\"Simulation\"", progress);
+            String simLog = runStage(versionId, workDir, "nextsim", "Simulation", progress);
 
             Path resultDb = outputDir.resolve("simulation_output.db");
             if (!Files.exists(resultDb) || Files.size(resultDb) == 0) {
@@ -403,30 +415,52 @@ public class NextSimRunner {
         return ids;
     }
 
-    // ─────────────────────────── Docker 실행 ───────────────────────────
+    // ─────────────────────────── 단계 실행 (docker / native) ───────────────────────────
 
-    private String runInDocker(String versionId, Path workDir, String command, Consumer<String> progress) throws Exception {
-        String container = "nextsim_" + sanitize(versionId) + "_" + System.currentTimeMillis();
-        List<String> cmd = List.of(
-                "docker", "run", "--rm",
-                "--name", container, // 취소 시 docker rm -f 대상 (CLI 만 죽이면 컨테이너가 계속 돎)
-                "--platform", dockerPlatform,
-                "-v", Path.of(nextsimHome, "Captain").toAbsolutePath() + ":/ns/Captain:ro",
-                "-v", workDir.resolve("SimulationInput").toAbsolutePath() + ":/ns/SimulationInput",
-                "-v", workDir.resolve("SimulationOutput").toAbsolutePath() + ":/ns/SimulationOutput",
-                "-w", "/ns/Captain/build/bin",
-                dockerImage,
-                "bash", "-lc", command
-        );
-        log.info("[NextSimRunner] docker 실행: {}", String.join(" ", cmd));
+    /**
+     * 배포판 바이너리 1개(route-generator/nextsim)를 실행 모드에 따라 수행.
+     *
+     * <p>NextSimIO 는 **cwd 에서 상위로 올라가며** SimulationInput 을 탐색한다
+     * (바이너리 위치 기준 아님 — docker 실행에서 cwd=/ns/Captain/build/bin,
+     * 입력=/ns/SimulationInput 으로 실측 확인). 따라서
+     * - docker: 워크스페이스를 /ns 에 마운트, cwd=/ns/Captain/build/bin
+     * - native: cwd=워크스페이스 루트, 바이너리는 배포판 절대경로로 exec
+     *   (cwd/SimulationInput 이 즉시 발견되고, 출력도 cwd/SimulationOutput 에 생성)
+     */
+    private String runStage(String versionId, Path workDir, String binary, String testCase, Consumer<String> progress) throws Exception {
+        boolean nativeMode = "native".equalsIgnoreCase(executionMode);
+        String container = null;
+        List<String> cmd;
+        if (nativeMode) {
+            Path bin = Path.of(nextsimHome, "Captain", "build", "bin", binary).toAbsolutePath();
+            cmd = List.of(bin.toString(), "-tc=" + testCase);
+        } else {
+            container = "nextsim_" + sanitize(versionId) + "_" + System.currentTimeMillis();
+            cmd = List.of(
+                    "docker", "run", "--rm",
+                    "--name", container, // 취소 시 docker rm -f 대상 (CLI 만 죽이면 컨테이너가 계속 돎)
+                    "--platform", dockerPlatform,
+                    "-v", Path.of(nextsimHome, "Captain").toAbsolutePath() + ":/ns/Captain:ro",
+                    "-v", workDir.resolve("SimulationInput").toAbsolutePath() + ":/ns/SimulationInput",
+                    "-v", workDir.resolve("SimulationOutput").toAbsolutePath() + ":/ns/SimulationOutput",
+                    "-w", "/ns/Captain/build/bin",
+                    dockerImage,
+                    "bash", "-lc", "./" + binary + " -tc=\"" + testCase + "\""
+            );
+        }
+        log.info("[NextSimRunner] {} 실행: {}", nativeMode ? "native" : "docker", String.join(" ", cmd));
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
+        if (nativeMode) pb.directory(workDir.toFile()); // cwd=워크스페이스 루트 → 상향 탐색이 입력 발견
         pb.redirectErrorStream(true);
         Process process;
         try {
             process = pb.start();
         } catch (IOException e) {
-            throw new RuntimeException("Docker 실행 실패 — Docker 데몬이 실행 중인지 확인하세요: " + e.getMessage(), e);
+            throw new RuntimeException(nativeMode
+                    ? "NextSim 바이너리 실행 실패 — native 모드는 Linux x86_64 전용입니다 " +
+                      "(mac 개발기는 nextsim.execution-mode=docker 사용): " + e.getMessage()
+                    : "Docker 실행 실패 — Docker 데몬이 실행 중인지 확인하세요: " + e.getMessage(), e);
         }
         activeProcess = process;
         activeContainer = container;
@@ -457,8 +491,11 @@ public class NextSimRunner {
 
         boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
         if (!finished) {
+            process.descendants().forEach(ProcessHandle::destroyForcibly); // native: 바이너리 자식까지
             process.destroyForcibly();
-            try { new ProcessBuilder("docker", "rm", "-f", container).start(); } catch (Exception ignored) {}
+            if (container != null) {
+                try { new ProcessBuilder("docker", "rm", "-f", container).start(); } catch (Exception ignored) {}
+            }
             reader.join(5000);
             throw new RuntimeException("NextSim 실행 타임아웃 (" + timeoutSeconds + "초) — " +
                     "대규모 네트워크는 nextsim.timeout-seconds 상향 또는 Linux 서버 네이티브 실행을 고려하세요");
