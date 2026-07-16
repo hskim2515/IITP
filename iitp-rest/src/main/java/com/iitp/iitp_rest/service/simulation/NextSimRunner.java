@@ -76,6 +76,11 @@ public class NextSimRunner {
     @Value("${nextsim.workspace:${java.io.tmpdir}/nextsim-runs}")
     private String workspaceBase;
 
+    /** OD 가 참조하지 않는 터미널을 스테이징 사본에서 normal 로 전환 — route-generator 의
+     *  전 터미널 쌍 계산을 OD 관련 쌍으로 축소 (대규모 네트워크 실행 가능성의 핵심) */
+    @Value("${nextsim.prune-unused-terminals:true}")
+    private boolean pruneUnusedTerminals;
+
     private static final String BRANCH = "mesopt";
     private static final String NETWORK_NAME = "iitp";
 
@@ -151,9 +156,13 @@ public class NextSimRunner {
             progress.accept("입력 데이터 스테이징 중...");
             stageInputs(versionId, inputDir, networkDir);
 
-            // 경로 캐시: 경로는 (network.xml + odmatrix.xml) 의 함수 — 두 입력이 같으면
-            // 가장 비싼 단계인 route-generator 를 통째로 생략 (시나리오 시간만 바꾼 재실행 가속)
-            String inputsHash = sha256Of(networkDir.resolve("network.xml"), networkDir.resolve("odmatrix.xml"));
+            // 경로 캐시: route-generator 는 odmatrix 와 무관하게 **네트워크의 전 터미널 쌍**을
+            // 계산한다(실측 — 2-demand OD 와 2021-demand OD 의 Route.json 이 동일). 따라서
+            // 캐시 키 = 스테이징(보정·가지치기 후) network.xml 만. OD 의 flow 만 바뀐 재실행은
+            // 가장 비싼 단계인 route-generator 를 통째로 생략한다.
+            // (터미널 가지치기 사용 시 OD 의 터미널 집합이 바뀌면 스테이징 network 도 바뀌어
+            //  자연히 캐시 미스 → 정확성 유지)
+            String inputsHash = sha256Of(networkDir.resolve("network.xml"));
             Path cacheDir = routeCacheDir(versionId);
             Path routeJson = networkDir.resolve("Route.json");
             if (isRouteCacheHit(cacheDir, inputsHash)) {
@@ -293,12 +302,16 @@ public class NextSimRunner {
         //    network.xml 필수, odmatrix.xml 필수(수요 없으면 시뮬 무의미), 나머지는 폴백 생성
         copyRequired(versionId, "network.xml", networkDir,
                 "network.xml 이 없습니다 — 네트워크를 먼저 가져오기/저장하세요.");
-        // KTDB 변환 네트워크 호환 보정: NextSim 파서가 <port direction> / <node v2x> 를
-        // 필수 속성으로 요구("Element should have 'direction' attribute" 실측).
-        // 기존 저장본에는 없을 수 있어 스테이징 사본에 빈 값으로 주입한다.
-        injectRequiredNetworkAttrs(networkDir.resolve("network.xml"));
         copyRequired(versionId, "odmatrix.xml", networkDir,
                 "odmatrix.xml 이 없습니다 — OD 매트릭스 메뉴에서 수요를 생성/저장하세요.");
+        // KTDB 변환 네트워크 호환 보정 + 미사용 터미널 가지치기 (스테이징 사본, 단일 패스):
+        // - NextSim 파서가 <port direction>/<node v2x> 를 필수 속성으로 요구(실측) → 빈 값 주입
+        // - route-generator 는 odmatrix 무관 **전 터미널 쌍** 최단경로를 계산(실측 — 수도권
+        //   11,895 터미널 = ~3,500만 쌍으로 77분+ 미완의 근본 원인). OD 가 참조하지 않는
+        //   터미널을 normal 로 바꾸면 OD 관련 쌍만 계산된다. 미사용 터미널은 막다른 경계
+        //   노드라 어떤 경로도 통과하지 않음 → 수요가 참조하지 않는 한 시뮬 결과 불변.
+        Set<String> odNodeIds = pruneUnusedTerminals ? extractOdNodeIds(networkDir.resolve("odmatrix.xml")) : null;
+        injectRequiredNetworkAttrs(networkDir.resolve("network.xml"), odNodeIds);
 
         if (!copyOptional(versionId, "signal.xml", networkDir)) {
             Files.writeString(networkDir.resolve("signal.xml"),
@@ -376,13 +389,17 @@ public class NextSimRunner {
     }
 
     /**
-     * NextSim 필수 속성 주입 (스테이징 사본 in-place, 원본 무변경).
+     * NextSim 필수 속성 주입 + (옵션) 미사용 터미널 가지치기 (스테이징 사본 in-place, 원본 무변경).
      * 태그 단위 스트림 처리 — 수백 MB 파일 대응 (DOM 금지). shape 속성이 수십 KB 인
      * 태그도 있으므로 '<'~'>' 를 온전히 모아 태그 단위로 변환한다.
+     *
+     * @param keepNodeIds null 이면 가지치기 안 함. 아니면 이 집합에 없는 terminal 노드를
+     *                    type="normal" 로 전환 (route-generator 전 터미널 쌍 계산 축소)
      */
-    private void injectRequiredNetworkAttrs(Path networkXml) throws IOException {
+    private void injectRequiredNetworkAttrs(Path networkXml, Set<String> keepNodeIds) throws IOException {
         Path tmp = networkXml.resolveSibling(networkXml.getFileName() + ".compat");
-        long injected = 0;
+        long injected = 0, pruned = 0, keptTerminals = 0;
+        Pattern idAttr = Pattern.compile("\\bid=\"([^\"]+)\"");
         try (var reader = Files.newBufferedReader(networkXml, StandardCharsets.UTF_8);
              var writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
             StringBuilder tag = null;
@@ -401,9 +418,23 @@ public class NextSimRunner {
                 if (t.startsWith("<port ") && !t.contains("direction=")) {
                     t = t.replaceFirst("(/?>)$", " direction=\"\"$1");
                     injected++;
-                } else if (t.startsWith("<node ") && !t.contains("v2x=")) {
-                    t = t.replaceFirst("(/?>)$", " v2x=\"\"$1");
-                    injected++;
+                } else if (t.startsWith("<node ")) {
+                    if (!t.contains("v2x=")) {
+                        t = t.replaceFirst("(/?>)$", " v2x=\"\"$1");
+                        injected++;
+                    }
+                    if (keepNodeIds != null && t.contains("type=\"terminal\"")) {
+                        Matcher m = idAttr.matcher(t);
+                        if (m.find() && !keepNodeIds.contains(m.group(1))) {
+                            // garage: 막다른(단일 포트) 노드의 정식 타입 — "normal" 로 바꾸면
+                            // route-generator 가 std::out_of_range 크래시(실측, 통과 노드 가정),
+                            // garage 는 소스/싱크 열거에서 빠지면서 그래프 로드도 안전(실측 검증).
+                            t = t.replace("type=\"terminal\"", "type=\"garage\"");
+                            pruned++;
+                        } else {
+                            keptTerminals++;
+                        }
+                    }
                 }
                 writer.write(t);
             }
@@ -411,6 +442,19 @@ public class NextSimRunner {
         }
         Files.move(tmp, networkXml, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         if (injected > 0) log.info("[NextSimRunner] network.xml 호환 보정: 필수 속성 {}건 주입", injected);
+        if (keepNodeIds != null) {
+            log.info("[NextSimRunner] 터미널 가지치기: 유지 {} / 전환 {} (OD 참조 노드 {}개)",
+                    keptTerminals, pruned, keepNodeIds.size());
+        }
+    }
+
+    /** odmatrix.xml 의 source/sink 노드 id 집합 (가지치기 유지 대상) */
+    private static Set<String> extractOdNodeIds(Path odmatrixXml) throws IOException {
+        Set<String> ids = new LinkedHashSet<>();
+        String xml = Files.readString(odmatrixXml, StandardCharsets.UTF_8);
+        Matcher m = Pattern.compile("\\b(?:source|sink)=\"([^\"]+)\"").matcher(xml);
+        while (m.find()) ids.add(m.group(1));
+        return ids;
     }
 
     /** network.xml 에서 링크 id 추출 — 수백 MB 파일 대비 청크 스트림 스캔 (DOM 로드 금지) */
