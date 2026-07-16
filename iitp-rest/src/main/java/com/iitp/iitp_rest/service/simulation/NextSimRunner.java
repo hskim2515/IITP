@@ -75,6 +75,38 @@ public class NextSimRunner {
     private final VehicleDataReader vehicleDataReader;
     private final ScenarioVersionRepository scenarioVersionRepository;
 
+    /** 취소 요청으로 종료된 실행 (컨트롤러가 CANCELLED 로 구분) */
+    public static class CancelledException extends RuntimeException {
+        public CancelledException() { super("사용자 취소"); }
+    }
+
+    // 전역 1개 실행(컨트롤러 single executor) 전제의 활성 실행 추적 — 취소용
+    private volatile String activeVersionId;
+    private volatile String activeContainer;
+    private volatile Process activeProcess;
+    private final java.util.Set<String> cancelRequested = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * 실행 취소 요청. docker CLI 프로세스만 죽이면 컨테이너가 계속 돌므로
+     * 컨테이너를 이름으로 강제 제거한 뒤 CLI 프로세스도 종료한다.
+     */
+    public boolean requestCancel(String versionId) {
+        if (!versionId.equals(activeVersionId)) return false;
+        cancelRequested.add(versionId);
+        String container = activeContainer;
+        if (container != null) {
+            try {
+                new ProcessBuilder("docker", "rm", "-f", container).start().waitFor(15, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                log.warn("[NextSimRunner] 컨테이너 강제 제거 실패: {}", e.getMessage());
+            }
+        }
+        Process p = activeProcess;
+        if (p != null) p.destroyForcibly();
+        log.info("[NextSimRunner] 취소 요청 처리: versionId={}, container={}", versionId, container);
+        return true;
+    }
+
     public boolean isConfigured() {
         return !nextsimHome.isBlank() && Files.isDirectory(Path.of(nextsimHome, "Captain", "build", "bin"));
     }
@@ -101,20 +133,38 @@ public class NextSimRunner {
         Files.createDirectories(networkDir);
         Files.createDirectories(outputDir);
 
+        activeVersionId = versionId;
+        cancelRequested.remove(versionId);
         try {
             progress.accept("입력 데이터 스테이징 중...");
             stageInputs(versionId, inputDir, networkDir);
 
-            progress.accept("경로 생성 중 (route-generator)...");
-            String routeLog = runInDocker(workDir, "./route-generator -tc=\"RouteGenerator\"", progress);
+            // 경로 캐시: 경로는 (network.xml + odmatrix.xml) 의 함수 — 두 입력이 같으면
+            // 가장 비싼 단계인 route-generator 를 통째로 생략 (시나리오 시간만 바꾼 재실행 가속)
+            String inputsHash = sha256Of(networkDir.resolve("network.xml"), networkDir.resolve("odmatrix.xml"));
+            Path cacheDir = routeCacheDir(versionId);
             Path routeJson = networkDir.resolve("Route.json");
-            if (!Files.exists(routeJson)) {
-                throw new RuntimeException("route-generator 가 Route.json 을 생성하지 않았습니다. " +
-                        "odmatrix.xml 의 source/sink 노드가 네트워크와 일치하는지 확인하세요.\n" + tail(routeLog, 800));
+            if (isRouteCacheHit(cacheDir, inputsHash)) {
+                progress.accept("경로 캐시 재사용 — 경로 생성 생략");
+                Files.copy(cacheDir.resolve("Route.json"), routeJson,
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                Path cachedPt = cacheDir.resolve("PTRoute.json");
+                if (Files.exists(cachedPt)) {
+                    Files.copy(cachedPt, networkDir.resolve("PTRoute.json"),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                log.info("[NextSimRunner] 경로 캐시 히트: {} (hash={})", versionId, inputsHash.substring(0, 12));
+            } else {
+                progress.accept("경로 생성 중 (route-generator)...");
+                String routeLog = runInDocker(versionId, workDir, "./route-generator -tc=\"RouteGenerator\"", progress);
+                if (!Files.exists(routeJson)) {
+                    throw new RuntimeException("route-generator 가 Route.json 을 생성하지 않았습니다. " +
+                            "odmatrix.xml 의 source/sink 노드가 네트워크와 일치하는지 확인하세요.\n" + tail(routeLog, 800));
+                }
             }
 
             progress.accept("시뮬레이션 실행 중 (nextsim)...");
-            String simLog = runInDocker(workDir, "./nextsim -tc=\"Simulation\"", progress);
+            String simLog = runInDocker(versionId, workDir, "./nextsim -tc=\"Simulation\"", progress);
 
             Path resultDb = outputDir.resolve("simulation_output.db");
             if (!Files.exists(resultDb) || Files.size(resultDb) == 0) {
@@ -127,10 +177,68 @@ public class NextSimRunner {
                 fileStorage.uploadFile(in, versionId, "vehicle_sim.db");
             }
             vehicleDataReader.invalidateDbCache(versionId);
+
+            // 경로 캐시 갱신 — 다음 실행(같은 network/OD)은 route-generator 생략
+            saveRouteCache(cacheDir, inputsHash, routeJson, networkDir.resolve("PTRoute.json"));
+
             log.info("[NextSimRunner] 완료: versionId={}, result={} bytes", versionId, Files.size(resultDb));
             return tail(simLog, 2000);
         } finally {
+            activeVersionId = null;
+            activeProcess = null;
+            activeContainer = null;
             // 결과 회수 후 워크스페이스 정리 (실패 시엔 디버깅용으로 보존)
+        }
+    }
+
+    // ─────────────────────────── 경로 캐시 ───────────────────────────
+
+    private Path routeCacheDir(String versionId) {
+        return Path.of(workspaceBase, "route_cache", sanitize(versionId));
+    }
+
+    private boolean isRouteCacheHit(Path cacheDir, String inputsHash) {
+        try {
+            Path hashFile = cacheDir.resolve("inputs.sha256");
+            return Files.exists(hashFile)
+                    && inputsHash.equals(Files.readString(hashFile).trim())
+                    && Files.exists(cacheDir.resolve("Route.json"));
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private void saveRouteCache(Path cacheDir, String inputsHash, Path routeJson, Path ptRouteJson) {
+        try {
+            Files.createDirectories(cacheDir);
+            Files.copy(routeJson, cacheDir.resolve("Route.json"),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            if (Files.exists(ptRouteJson)) {
+                Files.copy(ptRouteJson, cacheDir.resolve("PTRoute.json"),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            Files.writeString(cacheDir.resolve("inputs.sha256"), inputsHash);
+        } catch (IOException e) {
+            log.warn("[NextSimRunner] 경로 캐시 저장 실패(무시): {}", e.getMessage());
+        }
+    }
+
+    /** 입력 파일들의 결합 SHA-256 (스트림 — 수백 MB 대응) */
+    private static String sha256Of(Path... files) throws IOException {
+        try {
+            var md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] buf = new byte[1 << 20];
+            for (Path f : files) {
+                try (InputStream in = Files.newInputStream(f)) {
+                    int n;
+                    while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
+                }
+            }
+            StringBuilder sb = new StringBuilder();
+            for (byte b : md.digest()) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
         }
     }
 
@@ -297,9 +405,11 @@ public class NextSimRunner {
 
     // ─────────────────────────── Docker 실행 ───────────────────────────
 
-    private String runInDocker(Path workDir, String command, Consumer<String> progress) throws Exception {
+    private String runInDocker(String versionId, Path workDir, String command, Consumer<String> progress) throws Exception {
+        String container = "nextsim_" + sanitize(versionId) + "_" + System.currentTimeMillis();
         List<String> cmd = List.of(
                 "docker", "run", "--rm",
+                "--name", container, // 취소 시 docker rm -f 대상 (CLI 만 죽이면 컨테이너가 계속 돎)
                 "--platform", dockerPlatform,
                 "-v", Path.of(nextsimHome, "Captain").toAbsolutePath() + ":/ns/Captain:ro",
                 "-v", workDir.resolve("SimulationInput").toAbsolutePath() + ":/ns/SimulationInput",
@@ -318,32 +428,52 @@ public class NextSimRunner {
         } catch (IOException e) {
             throw new RuntimeException("Docker 실행 실패 — Docker 데몬이 실행 중인지 확인하세요: " + e.getMessage(), e);
         }
+        activeProcess = process;
+        activeContainer = container;
 
-        // 출력 tail 유지 + 진행 로그 (대용량 출력으로 메모리 안 부풀도록)
+        // 출력 tail 유지 + 진행 로그 — 반드시 별도 스레드로.
+        // 메인 스레드에서 readLine 하면 프로세스가 출력 없이 살아있는 동안 블록돼
+        // waitFor(timeout) 에 도달하지 못한다 (타임아웃 무력화 — 수도권 77분 실행으로 실측).
         StringBuilder tailBuf = new StringBuilder();
-        try (var br = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()))) {
-            String line;
-            long lastProgressAt = 0;
-            while ((line = br.readLine()) != null) {
-                tailBuf.append(line).append('\n');
-                if (tailBuf.length() > 16000) tailBuf.delete(0, tailBuf.length() - 12000);
-                long now = System.currentTimeMillis();
-                if (now - lastProgressAt > 3000 && !line.isBlank()) {
-                    lastProgressAt = now;
-                    progress.accept(line.length() > 120 ? line.substring(0, 120) : line);
+        Thread reader = new Thread(() -> {
+            try (var br = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()))) {
+                String line;
+                long lastProgressAt = 0;
+                while ((line = br.readLine()) != null) {
+                    synchronized (tailBuf) {
+                        tailBuf.append(line).append('\n');
+                        if (tailBuf.length() > 16000) tailBuf.delete(0, tailBuf.length() - 12000);
+                    }
+                    long now = System.currentTimeMillis();
+                    if (now - lastProgressAt > 3000 && !line.isBlank()) {
+                        lastProgressAt = now;
+                        progress.accept(line.length() > 120 ? line.substring(0, 120) : line);
+                    }
                 }
-            }
-        }
+            } catch (IOException ignored) { /* 프로세스 종료로 스트림 닫힘 */ }
+        }, "nextsim-output-reader");
+        reader.setDaemon(true);
+        reader.start();
+
         boolean finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
         if (!finished) {
             process.destroyForcibly();
-            throw new RuntimeException("NextSim 실행 타임아웃 (" + timeoutSeconds + "초)");
+            try { new ProcessBuilder("docker", "rm", "-f", container).start(); } catch (Exception ignored) {}
+            reader.join(5000);
+            throw new RuntimeException("NextSim 실행 타임아웃 (" + timeoutSeconds + "초) — " +
+                    "대규모 네트워크는 nextsim.timeout-seconds 상향 또는 Linux 서버 네이티브 실행을 고려하세요");
         }
+        reader.join(5000); // 잔여 출력 수집
         int exit = process.exitValue();
-        if (exit != 0) {
-            throw new RuntimeException("NextSim 실행 실패 (exit=" + exit + "):\n" + tail(tailBuf.toString(), 1200));
+        String output;
+        synchronized (tailBuf) { output = tailBuf.toString(); }
+        if (cancelRequested.remove(versionId)) {
+            throw new CancelledException();
         }
-        return tailBuf.toString();
+        if (exit != 0) {
+            throw new RuntimeException("NextSim 실행 실패 (exit=" + exit + "):\n" + tail(output, 1200));
+        }
+        return output;
     }
 
     // ─────────────────────────── 유틸 ───────────────────────────

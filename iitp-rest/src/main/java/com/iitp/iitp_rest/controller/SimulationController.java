@@ -39,7 +39,7 @@ public class SimulationController {
         return t;
     });
 
-    public enum RunState { RUNNING, DONE, ERROR }
+    public enum RunState { RUNNING, DONE, ERROR, CANCELLED }
 
     public static final class RunStatus {
         public volatile RunState state = RunState.RUNNING;
@@ -47,6 +47,8 @@ public class SimulationController {
         public volatile String error;
         public final long startedAt = System.currentTimeMillis();
         public volatile long finishedAt;
+        /** 마지막 진행 출력 시각 — "멈춘 건지 도는 건지" 하트비트용 */
+        public volatile long lastStageAt = System.currentTimeMillis();
     }
 
     private final ConcurrentHashMap<String, RunStatus> statusMap = new ConcurrentHashMap<>();
@@ -72,10 +74,14 @@ public class SimulationController {
         executor.submit(() -> {
             try {
                 log.info("[SimulationController] NextSim 실행 시작: {}", versionId);
-                nextSimRunner.run(versionId, stage -> status.stage = stage);
+                nextSimRunner.run(versionId, stage -> { status.stage = stage; status.lastStageAt = System.currentTimeMillis(); });
                 nextSimRunner.cleanup(versionId);
                 status.state = RunState.DONE;
                 status.stage = "완료";
+            } catch (NextSimRunner.CancelledException e) {
+                log.info("[SimulationController] NextSim 실행 취소됨: {}", versionId);
+                status.state = RunState.CANCELLED;
+                status.stage = "취소됨";
             } catch (Exception e) {
                 log.error("[SimulationController] NextSim 실행 실패: {}", versionId, e);
                 status.state = RunState.ERROR;
@@ -87,6 +93,20 @@ public class SimulationController {
         return ResponseEntity.accepted().body(Map.of("message", "시뮬레이션 시작", "versionId", versionId));
     }
 
+    /** 실행 취소 — 컨테이너 강제 종료 후 상태는 실행 스레드가 CANCELLED 로 마감 */
+    @DeleteMapping("/{versionId}/run")
+    public ResponseEntity<Map<String, Object>> cancel(@PathVariable String versionId) {
+        RunStatus s = statusMap.get(versionId);
+        if (s == null || s.state != RunState.RUNNING) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", "실행 중이 아닙니다"));
+        }
+        boolean accepted = nextSimRunner.requestCancel(versionId);
+        if (!accepted) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("message", "취소할 활성 실행이 없습니다"));
+        }
+        return ResponseEntity.ok(Map.of("message", "취소 요청됨"));
+    }
+
     @GetMapping("/{versionId}/status")
     public ResponseEntity<Map<String, Object>> status(@PathVariable String versionId) {
         RunStatus s = statusMap.get(versionId);
@@ -96,6 +116,10 @@ public class SimulationController {
         body.put("state", s.state.name());
         body.put("stage", s.stage);
         body.put("elapsedSeconds", (end - s.startedAt) / 1000);
+        // 하트비트: 마지막 출력 후 경과 — 출력이 뜸한 단계(경로 생성 등)에서 살아있음 표시용
+        if (s.state == RunState.RUNNING) {
+            body.put("sinceOutputSeconds", (System.currentTimeMillis() - s.lastStageAt) / 1000);
+        }
         if (s.error != null) body.put("error", s.error);
         return ResponseEntity.ok(body);
     }

@@ -36,6 +36,7 @@ import { getNetworkForDummyGeneration } from "@utils/generationNetwork";
 import { usePavementMarkingStore } from "@stores/usePavementMarkingStore";
 import { autoSaveChangedLayers } from "@utils/autoSave";
 import { useBackgroundTaskStore } from "@stores/useBackgroundTaskStore";
+import { useNextSimRunStore, checkNextSimAvailable, startNextSimRun, cancelNextSimRun, resumeNextSimPollingIfRunning } from "@utils/nextsim";
 
 function VersionPopup({ scenarioId, onSelect }: { scenarioId: number; onSelect: (v: ScenarioVersions) => void }) {
     const [versions, setVersions] = useState<ScenarioVersions[] | null>(null);
@@ -87,17 +88,15 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const [generatingVehicle, setGeneratingVehicle] = useState(false);
     const [signalDone, setSignalDone] = useState(false);
     const [vehicleDone, setVehicleDone] = useState(false);
-    // NextSim 실행 상태: unknown(미확인) / off(러너 미설정) / idle / running
-    const [nextsimState, setNextsimState] = useState<'unknown' | 'off' | 'idle' | 'running'>('unknown');
+    // NextSim 실행 상태 — 전역 스토어(utils/nextsim): 모달이 닫혔다 열려도/재접속해도 유지
+    const nextsimAvailable = useNextSimRunStore((s) => s.available);
+    const nextsimRunningId = useNextSimRunStore((s) => s.runningVersionId);
+    const nextsimRunning = nextsimRunningId === scenarioKey;
 
     // 러너 설정 여부 1회 확인 (미설정 서버에선 버튼 숨김)
     useEffect(() => {
-        if (step !== 'need-simulation' || nextsimState !== 'unknown') return;
-        fetch(`${import.meta.env.VITE_API_URL}/simulation/available`)
-            .then(r => r.ok ? r.json() : { available: false })
-            .then((b: any) => setNextsimState(b?.available ? 'idle' : 'off'))
-            .catch(() => setNextsimState('off'));
-    }, [step, nextsimState]);
+        if (step === 'need-simulation') void checkNextSimAvailable();
+    }, [step]);
 
     if (step === 'idle') return null;
 
@@ -195,53 +194,10 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
         poll(0);
     };
 
-    /** NextSim 시뮬레이터 실행 — 완료되면 vehicle_sim.db 갱신 → 기존 차량 파이프라인이 소비 */
-    const handleRunNextSim = () => {
-        setNextsimState('running');
-        useLogStore.getState().addLog('info', '[NextSim] 시뮬레이션 실행 시작...');
-        const setTask = (label: string | null) =>
-            useBackgroundTaskStore.getState().setTask('nextsim-run', label);
-
-        fetch(`${import.meta.env.VITE_API_URL}/simulation/${scenarioKey}/run`, { method: 'POST' })
-            .then(async (res) => {
-                if (res.status !== 202 && res.status !== 409) {
-                    const body: any = await res.json().catch(() => ({}));
-                    throw new Error(body?.message ?? `서버 오류 (${res.status})`);
-                }
-                const poll = (n: number) => {
-                    fetch(`${import.meta.env.VITE_API_URL}/simulation/${scenarioKey}/status`)
-                        .then(r => r.json())
-                        .then((s: any) => {
-                            if (s.state === 'RUNNING') {
-                                setTask(`NextSim 실행 중 — ${s.stage ?? ''} (${s.elapsedSeconds ?? 0}초)`);
-                                if (n < 2400) setTimeout(() => poll(n + 1), 3000);
-                                else { setTask(null); setNextsimState('idle'); useLogStore.getState().addLog('warn', '[NextSim] 대기 시간 초과'); }
-                            } else if (s.state === 'DONE') {
-                                setTask(null);
-                                setNextsimState('idle');
-                                setVehicleDone(true);
-                                useLogStore.getState().addLog('info', '[NextSim] 시뮬레이션 완료 — 결과를 불러옵니다...');
-                                useVehicleStore.getState().triggerRefetch();
-                                if (step === 'need-simulation' && (!missingSignal || signalDone)) setStep('idle');
-                            } else if (s.state === 'ERROR') {
-                                setTask(null);
-                                setNextsimState('idle');
-                                useLogStore.getState().addLog('error', `[NextSim] 실행 실패: ${s.error ?? '알 수 없는 오류'}`);
-                            } else { // IDLE — 서버 재시작 등
-                                setTask(null);
-                                setNextsimState('idle');
-                            }
-                        })
-                        .catch(() => { if (n < 2400) setTimeout(() => poll(n + 1), 5000); });
-                };
-                poll(0);
-            })
-            .catch((e) => {
-                setNextsimState('idle');
-                setTask(null);
-                useLogStore.getState().addLog('error', `[NextSim] 실행 요청 실패: ${e?.message ?? e}`);
-            });
-    };
+    /** NextSim 시뮬레이터 실행 — 완료되면 vehicle_sim.db 갱신 → 기존 차량 파이프라인이 소비.
+     *  폴링/취소/재개는 utils/nextsim 전역 스토어가 담당 (모달 생명주기와 무관). */
+    const handleRunNextSim = () => { void startNextSimRun(scenarioKey); };
+    const handleCancelNextSim = () => { void cancelNextSimRun(scenarioKey); };
 
     const handleGenerateSignal = async () => {
         const network = await getNetworkForDummyGeneration();
@@ -349,17 +305,29 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                         <span style={{ fontSize: 12, color: '#ccc' }}>🚗 차량 시뮬레이션</span>
                                         <div style={{ display: 'flex', gap: 6 }}>
-                                        {(nextsimState === 'idle' || nextsimState === 'running') && (
+                                        {nextsimAvailable === true && !nextsimRunning && (
                                             <button
-                                                style={nextsimState === 'running'
-                                                    ? { ...obPrimaryBtn, opacity: 0.6, fontSize: 11 }
-                                                    : { ...obPrimaryBtn, fontSize: 11 }}
+                                                style={{ ...obPrimaryBtn, fontSize: 11 }}
                                                 onClick={handleRunNextSim}
-                                                disabled={nextsimState === 'running' || vehicleDone}
+                                                disabled={vehicleDone}
                                                 title="NextSim 시뮬레이터로 실제 교통 시뮬레이션을 실행합니다 (OD 매트릭스 필요)"
                                             >
-                                                {nextsimState === 'running' ? '시뮬 실행 중...' : 'NextSim 실행'}
+                                                NextSim 실행
                                             </button>
+                                        )}
+                                        {nextsimRunning && (
+                                            <>
+                                                <button style={{ ...obPrimaryBtn, opacity: 0.6, fontSize: 11 }} disabled>
+                                                    시뮬 실행 중...
+                                                </button>
+                                                <button
+                                                    style={{ ...obDismissBtn, fontSize: 11 }}
+                                                    onClick={handleCancelNextSim}
+                                                    title="진행 중인 시뮬레이션을 중단합니다"
+                                                >
+                                                    취소
+                                                </button>
+                                            </>
                                         )}
                                         <button
                                             style={vehicleDone
@@ -481,6 +449,13 @@ function App() {
     useEffect(() => {
         fetchSchema()
     }, [fetchSchema]);
+
+    // 재접속/리로드 복원: 서버에서 진행 중인 NextSim 실행이 있으면 폴링 재개
+    // (시뮬은 서버 사이드라 탭을 닫아도 계속 돎 — 진행 표시와 완료 시 차량 로드를 이어붙임)
+    useEffect(() => {
+        const vid = selectedScenarioVersion?.key;
+        if (vid) void resumeNextSimPollingIfRunning(String(vid));
+    }, [selectedScenarioVersion?.key]);
 
     return (
         !selectedScenario ? (
