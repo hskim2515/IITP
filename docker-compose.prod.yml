@@ -26,6 +26,19 @@ services:
     restart: unless-stopped
     depends_on:
       - postgres
+    # NextSim: rest 컨테이너(Ubuntu jammy = 바이너리 빌드 환경) 안에서 native 실행.
+    # 컨테이너 안에서 docker run 을 부르는 방식(-v 경로가 호스트 기준 해석)은 쓰지 않는다.
+    # 서버 준비(1회): /opt/nextsim-linux-x64-v1.0 에 배포판 압축 해제 후
+    #   chmod +x /opt/nextsim-linux-x64-v1.0/Captain/build/bin/*
+    volumes:
+      - /opt/nextsim-linux-x64-v1.0:/opt/nextsim:ro
+      - nextsim_runs:/var/nextsim-runs   # 실행 워크스페이스 + 경로 캐시(Route.json) 영속화
+    environment:
+      NEXTSIM_HOME: /opt/nextsim
+      NEXTSIM_EXECUTION_MODE: native
+      NEXTSIM_WORKSPACE: /var/nextsim-runs
+      NEXTSIM_TIMEOUT_SECONDS: "7200"
 
 volumes:
   postgres_data:
+  nextsim_runs:
