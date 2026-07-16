@@ -270,6 +270,24 @@ public class NextSimRunner {
         Path srcParam = Path.of(nextsimHome, "SimulationInput", "datasets", BRANCH, "parameter_xml");
         Path dstParam = inputDir.resolve("datasets").resolve(BRANCH).resolve("parameter_xml");
         copyDir(srcParam, dstParam);
+        // recordMode 플랫폼 튜닝: 백엔드 소비 경로는 VehicleEvent(Visualizer)뿐 —
+        //   Debugging(26컬럼/차량/timestep)·UniformEvent(CellEvent: 셀×timestep, 대규모에서 행 수 폭발)는
+        //   미소비 기록이라 끔 → 시뮬 쓰기 부하·결과 DB 크기 절감. Statistics(집계)는 가벼워 유지
+        //   (NEXTSIM_DATA_STRUCTURE.md: recordMode.xml 이 기록 테이블 제어 지점).
+        Files.writeString(dstParam.resolve("recordMode.xml"), xml(
+                "<RecordModes>\n" +
+                "    <VehicleEvent>\n" +
+                "        <Debugging active=\"f\" />\n" +
+                "        <Visualizer active=\"t\" />\n" +
+                "        <Statistics active=\"t\" />\n" +
+                "    </VehicleEvent>\n" +
+                "    <PassengerEvent active=\"t\" />\n" +
+                "    <UniformEvent active=\"f\" />\n" +
+                "    <StationEvent active=\"t\" />\n" +
+                "    <SinkEvent active=\"t\" />\n" +
+                "    <SignalEvent active=\"f\" />\n" +
+                "    <SignalControlEvent active=\"f\" />\n" +
+                "</RecordModes>"), StandardCharsets.UTF_8);
 
         // 3) 버전 스토리지 파일 (플랫폼이 NextSim 형식 그대로 관리 중)
         //    network.xml 필수, odmatrix.xml 필수(수요 없으면 시뮬 무의미), 나머지는 폴백 생성
