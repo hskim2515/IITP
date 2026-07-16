@@ -558,7 +558,13 @@ public class NetworkTileService {
         }
         if (upsertLinks != null) {
             for (LinkResponse l : upsertLinks) {
-                if (l.getId() != null && !delLinks.contains(l.getId())) linkMap.put(l.getId(), l);
+                if (l.getId() == null || delLinks.contains(l.getId())) continue;
+                // 디테일 보존: 타일 모드 클라이언트의 viewport 링크는 타일 서빙 시 경량화된
+                // 페이로드다 — near 는 lanes 전체, detail 도 lane 의 cells/segments/shape 가
+                // 제거돼 있다(queryBbox stripDetail). 그대로 통째 교체하면 CTM 셀 등 시뮬
+                // 필수 데이터가 조용히 소실된다. upsert 에 없는 하위 데이터는 기존 것을 유지.
+                restoreStrippedDetail(l, linkMap.get(l.getId()));
+                linkMap.put(l.getId(), l);
             }
         }
         net.setLinks(new ArrayList<>(linkMap.values()));
@@ -580,5 +586,42 @@ public class NetworkTileService {
                 upsertLinks != null ? upsertLinks.size() : 0, delLinks.size(),
                 upsertNodes != null ? upsertNodes.size() : 0, delNodes.size());
         return net;
+    }
+
+    /**
+     * upsert 링크에서 타일 서빙이 벗겨낸 하위 데이터를 기존 링크에서 복원.
+     * - lanes 자체가 없으면(near 타일) 기존 lanes 전체 유지
+     * - lanes 가 있으면(detail 타일) lane id 매칭으로 cells/segments/shape 복원
+     *   (upsert 쪽에 값이 있으면 편집으로 보고 그대로 둔다)
+     */
+    private static void restoreStrippedDetail(LinkResponse upsert, LinkResponse existing) {
+        if (existing == null) return; // 신규 링크 — 복원할 원본 없음
+        if (upsert.getLanes() == null || upsert.getLanes().isEmpty()) {
+            if (existing.getLanes() != null && !existing.getLanes().isEmpty()) {
+                upsert.setLanes(existing.getLanes());
+            }
+            return;
+        }
+        if (existing.getLanes() == null) return;
+        java.util.Map<Long, com.iitp.iitp_rest.model.network.lane.LaneResponse> byId = new java.util.HashMap<>();
+        for (var lane : existing.getLanes()) {
+            if (lane.getId() != null) byId.put(lane.getId(), lane);
+        }
+        for (var lane : upsert.getLanes()) {
+            var orig = lane.getId() != null ? byId.get(lane.getId()) : null;
+            if (orig == null) continue;
+            if ((lane.getCells() == null || lane.getCells().isEmpty()) && !orig.getCells().isEmpty()) {
+                lane.setCells(orig.getCells());
+            }
+            if ((lane.getSegments() == null || lane.getSegments().isEmpty()) && !orig.getSegments().isEmpty()) {
+                lane.setSegments(orig.getSegments());
+            }
+            if (lane.getShape() == null && orig.getShape() != null) {
+                lane.setShape(orig.getShape());
+            }
+        }
+        if (upsert.getShape() == null && existing.getShape() != null) {
+            upsert.setShape(existing.getShape());
+        }
     }
 }
