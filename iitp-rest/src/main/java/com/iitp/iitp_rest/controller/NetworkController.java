@@ -55,6 +55,7 @@ public class NetworkController {
 
     private final NetworkService networkService;
     private final NetworkTileService networkTileService;
+    private final com.iitp.iitp_rest.service.network.NetworkStreamingDiffService networkStreamingDiffService;
     private final NetworkMapper networkMapper;
     private final NetworkJaxbParser networkJaxbParser;
     private final FileStorageService fileStorage;
@@ -209,6 +210,21 @@ public class NetworkController {
             //    baseVersionId(편집 중이던 기준 버전)에서 로드해 적용한다.
             String loadFrom = (request.getBaseVersionId() != null && !request.getBaseVersionId().isBlank())
                     ? request.getBaseVersionId() : versionId;
+
+            // 대규모 네트워크(기본 100MB+): 전체 객체화가 힙을 초과(수도권 364MB 실측)하므로
+            // 스트리밍 diff 로 network.xml 만 갱신하고 DB jsonb 레이어는 stale 행 삭제로
+            // 파일 폴백을 보장한다 (getLatest 가 DB 없으면 XML 을 읽음).
+            byte[] baseXml = fileStorage.readFile(loadFrom + "/network.xml");
+            if (networkStreamingDiffService.isLarge(baseXml.length)) {
+                log.info("[NetworkController] 대규모 네트워크({}MB) — 스트리밍 diff 적용", baseXml.length / (1024 * 1024));
+                networkStreamingDiffService.applyDiffStreaming(baseXml, versionId,
+                        request.getUpsertLinks(), request.getUpsertNodes(),
+                        request.getDeleteLinkIds(), request.getDeleteNodeIds());
+                xmlLayerVersionService.deleteVersion(LAYER_KEY, versionId); // stale jsonb → 파일 폴백
+                networkTileService.invalidate(versionId);
+                return ResponseEntity.ok().build();
+            }
+
             NetworkResponse merged = networkTileService.applyDiff(
                     loadFrom,
                     request.getUpsertLinks(), request.getUpsertNodes(),

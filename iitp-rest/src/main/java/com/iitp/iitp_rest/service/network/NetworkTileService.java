@@ -594,7 +594,7 @@ public class NetworkTileService {
      * - lanes 가 있으면(detail 타일) lane id 매칭으로 cells/segments/shape 복원
      *   (upsert 쪽에 값이 있으면 편집으로 보고 그대로 둔다)
      */
-    private static void restoreStrippedDetail(LinkResponse upsert, LinkResponse existing) {
+    static void restoreStrippedDetail(LinkResponse upsert, LinkResponse existing) {
         if (existing == null) return; // 신규 링크 — 복원할 원본 없음
         if (upsert.getLanes() == null || upsert.getLanes().isEmpty()) {
             if (existing.getLanes() != null && !existing.getLanes().isEmpty()) {
