@@ -83,6 +83,7 @@ public class SftpFileStorageService implements FileStorageService {
     public byte[] readFile(String fileName) throws IOException {
         ChannelSftp ch = connect();
         try {
+            ch.cd(basePath); // 인터페이스 규약: basePath/{fileName} — 누락 시 로그인 홈 기준 상대 해석
             java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
             ch.get(fileName, baos);
             return baos.toByteArray();
@@ -98,6 +99,9 @@ public class SftpFileStorageService implements FileStorageService {
         ChannelSftp ch = null;
         try {
             ch = connect();
+            // basePath 기준 — 없으면 로그인 홈 기준 상대 해석돼 항상 false
+            // (NextSim 스테이징이 SFTP 스토리지에서 network.xml 을 못 찾던 원인)
+            ch.cd(basePath);
             ch.stat(fileName);
             return true;
         } catch (Exception e) {
