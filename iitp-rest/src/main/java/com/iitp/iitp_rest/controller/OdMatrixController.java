@@ -71,6 +71,15 @@ public class OdMatrixController {
         log.info("[OdMatrixController] POST versionId={}", versionId);
         try {
             xmlLayerVersionService.save(LAYER_KEY, versionId, request.getData(), request.getLogs());
+            // 파일 소비자(NextSim 시뮬 입력, XML export) 동기화 — DB 레이어만 쓰면
+            // UI 로 만든 OD 가 odmatrix.xml 로 존재하지 않아 시뮬 실행이 "OD 없음" 이 된다
+            try {
+                odMatrixService.saveByVersionId(versionId,
+                        XmlLayerConverter.fromMap(request.getData(),
+                                com.iitp.iitp_rest.model.odmatrix.OdMatrixXml.class));
+            } catch (Exception fileErr) {
+                log.warn("[OdMatrixController] odmatrix.xml 파일 동기화 실패(DB 저장은 완료): {}", fileErr.getMessage());
+            }
             return ResponseEntity.ok().build();
         } catch (Exception e) {
             log.error("[OdMatrixController] 저장 오류", e);

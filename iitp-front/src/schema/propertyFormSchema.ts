@@ -21,21 +21,7 @@ export interface PropertyFormSchemaProps {
  * }
  */
 export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
-    NETWORK_IMPORT: {
-        type:"",
-        fields: [
-            { name: "filePath", label: "filePath", type: "text" },
-            { name: "fileFormat", label: "fileFormat", type: "text" },
-        ],
-        inputFields: [],
-        rowFields: []
-    },
-    OSM_IMPORT: {
-        type:"",
-        fields: [],
-        inputFields: [],
-        rowFields: []
-    },
+    // NETWORK/KTDB/OSM 임포트는 FileImportModal(헤더 파일>가져오기)로 통합 — 스키마 엔트리 제거
     DEMAND_IMPORT: {
         type:"",
         fields: [

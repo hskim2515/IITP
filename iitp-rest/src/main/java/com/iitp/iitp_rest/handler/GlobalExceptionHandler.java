@@ -9,7 +9,10 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.FileNotFoundException;
+import java.net.ConnectException;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.time.Instant;
 
 @RestControllerAdvice(basePackages = {"com.iitp.iitp_rest.controller"})
@@ -38,8 +41,25 @@ public class GlobalExceptionHandler {
         return pd;
     }
 
+    @ExceptionHandler({FileNotFoundException.class, ConnectException.class, UnknownHostException.class})
+    public ProblemDetail handleRemoteResourceUnavailable(Exception ex, HttpServletRequest req) {
+        HttpStatus status = HttpStatus.NOT_FOUND;
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(status,
+                ex.getMessage() != null ? ex.getMessage() : "Resource not found");
+        pd.setTitle(status.getReasonPhrase());
+        pd.setType(URI.create("about:blank"));
+        pd.setInstance(URI.create(req.getRequestURI()));
+        enrich(pd, req, "not_found");
+        log.warn("[not_found] {} {} -> {}", req.getMethod(), req.getRequestURI(), pd.getDetail());
+        return pd;
+    }
+
     @ExceptionHandler(Exception.class)
     public ProblemDetail handleAny(Exception ex, HttpServletRequest req) {
+        // Unwrap RuntimeException wrapping an IOException (common lambda pattern in controllers)
+        if (ex instanceof RuntimeException && ex.getCause() instanceof java.io.IOException) {
+            return handleRemoteResourceUnavailable((Exception) ex.getCause(), req);
+        }
         HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(status,
                 (ex.getMessage() == null || ex.getMessage().isBlank()) ? "Unexpected error." : ex.getMessage());

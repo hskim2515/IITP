@@ -10,7 +10,7 @@ import com.iitp.iitp_rest.service.scenario.ScenarioService;
 import com.iitp.iitp_rest.model.publicTransit.bus.PublicTransitResponse;
 import com.iitp.iitp_rest.model.publicTransit.rail.RailPublicTransitResponse;
 import com.iitp.iitp_rest.util.CoordinateUtils;
-import com.iitp.iitp_rest.util.SftpFileManager;
+import com.iitp.iitp_rest.util.FileStorageService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -46,8 +46,9 @@ public class SumoImportController {
     private final NetworkJaxbParser    networkJaxbParser;
     private final NetworkMapper        networkMapper;
     private final OsmNetworkValidator  validator;
-    private final SftpFileManager      sftpFileManager;
+    private final FileStorageService fileStorage;
     private final ScenarioService      scenarioService;
+    private final com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService xmlLayerVersionService;
 
     // ── 공통 변환 로직 ────────────────────────────────────────────────────────
 
@@ -98,6 +99,12 @@ public class SumoImportController {
                 var coords = CoordinateUtils.parseAndTransform(
                         node.getCenter(), originLon, originLat);
                 if (!coords.isEmpty()) node.setCoordinates(coords.getFirst());
+                // 커넥션도 WGS 좌표 필요 — 누락 시 임포트 직후 응답에서 커넥션 위치가 비거나 어긋남
+                if (node.getConnections() != null) {
+                    node.getConnections().forEach(conn ->
+                            conn.setCoordinates(CoordinateUtils.parseAndTransform(
+                                    conn.getShape(), originLon, originLat)));
+                }
             });
         }
         if (networkXml.getLinks() != null) {
@@ -167,8 +174,10 @@ public class SumoImportController {
             networkXml.setBaseLon(ctx.originLon());
 
             byte[] xmlBytes = networkJaxbParser.marshal(networkXml);
-            sftpFileManager.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "network.xml");
+            fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "network.xml");
             log.info("SFTP 업로드 완료: {}/network.xml ({} bytes)", versionId, xmlBytes.length);
+            // GET /network 은 DB(xml_layer_versions) 우선 — 옛 편집본 레코드를 지워야 새 XML이 반영된다
+            xmlLayerVersionService.deleteVersion("network", versionId);
 
             // import 시 사용한 origin 좌표를 시나리오에 저장 → 재로드 시 일치 보장
             try {
@@ -190,7 +199,7 @@ public class SumoImportController {
                     networkResponse, validation.warnings(), List.of(),
                     ctx.result().signals(),
                     fac.busStations(), fac.railStations(),
-                    fac.busRoutes(), fac.railRoutes()));
+                    fac.busRoutes(), fac.railRoutes(), false));
 
         } catch (RuntimeException e) {
             log.error("SUMO Save 실패: {}", e.getMessage());

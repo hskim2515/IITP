@@ -77,6 +77,16 @@ class DataSourceLayerManager {
         return stored?.dataSource ?? stored;
     }
 
+    /** 레이어 래퍼 인스턴스(XxxDataSourceLayer)를 이름으로 조회 — 전 그룹 검색.
+     *  get()과 달리 .dataSource 로 벗기지 않고 인스턴스 자체를 반환 (public 메서드 호출용). */
+    getInstanceByName(layerName: string): any | null {
+        for (const group of Object.values(this.layerGroups)) {
+            const stored = group.get(layerName);
+            if (stored) return stored;
+        }
+        return null;
+    }
+
     getAllByGroup(groupName: string): Cesium.DataSource[] {
         const group = this.layerGroups[groupName];
         return group ? Array.from(group.values()) : [];

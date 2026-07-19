@@ -1,4 +1,5 @@
 import React, { useMemo, useState, useCallback } from 'react';
+import { getActiveVersionId } from "@utils/versionId";
 import { useSimulationStore } from '@stores/useSimulationStore';
 import { useVehicleStore } from '@stores/useVehicleStore';
 import { useScenarioStore } from '@stores/useScenarioStore';
@@ -191,7 +192,7 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
 
     const [activeTab, setActiveTab] = useState<TabType>('analytics');
 
-    const versionId = selectedScenarioVersion?.key ?? selectedScenario?.key ?? '';
+    const versionId = getActiveVersionId() ?? '';
 
     const handleFetchStats = useCallback(async () => {
         if (!versionId) return;

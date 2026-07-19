@@ -7,4 +7,5 @@ import java.util.Optional;
 
 public interface XmlLayerVersionRepository extends JpaRepository<XmlLayerVersion, Long> {
     Optional<XmlLayerVersion> findByLayerKeyAndVersionId(String layerKey, String versionId);
+    void deleteByLayerKeyAndVersionId(String layerKey, String versionId);
 }

@@ -33,7 +33,7 @@ public class RailStationController {
             RailPublicTransitXml xml = railStationService.getRailStationXmlByVersionId(versionId);
             RailPublicTransitResponse body = railStationMapper.toResponse(xml);
             return ResponseEntity.ok(body);
-        } catch (java.io.FileNotFoundException e) {
+        } catch (java.io.IOException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (Exception e) {
             log.error("[getRailStationsByVersionId] 오류", e);
@@ -48,7 +48,7 @@ public class RailStationController {
             RailPublicTransitXml xml = railStationService.getRailStationXmlByVersionId(versionId);
             RailPublicTransitResponse body = railStationMapper.toResponse(xml);
             return ResponseEntity.ok(body);
-        } catch (java.io.FileNotFoundException e) {
+        } catch (java.io.IOException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (Exception e) {
             log.error("[getOriginRailStations] 오류", e);

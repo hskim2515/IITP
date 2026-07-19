@@ -4,6 +4,7 @@ import {getFeaturesByProperties} from "@utils/feature";
 import {SignalTimelineResponse} from "@stores/useSignalTimelineStore";
 import {LayerManager} from "@deck.gl/core";
 import {Feature} from "ol";
+import {SignalData} from "@type/Signal";
 
 export type SignalState = "green" | "yellow" | "red" | "default";
 
@@ -137,7 +138,7 @@ export const applyCesiumSignalStyle = (viewer: Cesium.Viewer, guid: string, stat
     entity.polyline.clampToGround = true;
 };
 
-export const getNetworkGuid = (layerManager: LayerManager, signalGuid: string) => {
+export const getNetworkGuid = (layerManager: LayerManager | null, signalGuid: string) => {
     if (!layerManager) return null;
 
     const networkLayer = layerManager.getLayer("facility", "network")?.[0];
@@ -198,3 +199,59 @@ export const getSignalGuid = (layerManager: LayerManager, connectionGuid: string
 
     return signalFeature?.get("__guid") ?? null;
 }
+
+// 신호 phase 1개당 부여되는 길이(초)
+const DUMMY_PHASE_DURATION = 30;
+
+/**
+ * intersection 노드의 connection을 fromLink(진입로) 기준으로 그룹핑하여
+ * 더미 turnList(진입로별 turn 그룹) + planList(진입로 순환 신호 계획)를 생성한다.
+ * 각 노드의 plan은 진입로 수만큼의 phase를 30초씩 라운드로빈으로 순환한다.
+ */
+export const generateDummySignals = (network: any): Omit<SignalData, "__guid" | "featureType" | "id">[] => {
+    const signals: Omit<SignalData, "__guid" | "featureType" | "id">[] = [];
+
+    for (const node of network?.nodes ?? []) {
+        if (node.type?.toLowerCase() !== 'intersection') continue;
+        const conns = node.connections ?? [];
+        if (conns.length === 0) continue;
+
+        // fromLink(진입로) 기준 그룹핑 → 그룹 하나 = turn 그룹(approach)
+        const groups = new Map<string, any[]>();
+        for (const conn of conns) {
+            const key = String(conn.fromLink ?? 'default');
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key)!.push(conn);
+        }
+        const groupKeys = Array.from(groups.keys());
+
+        groupKeys.forEach((key, groupIdx) => {
+            const turnId = String(groupIdx);
+            groups.get(key)!.forEach((conn, i) => {
+                const entry: Omit<SignalData, "__guid" | "featureType" | "id"> = {
+                    nodeId: String(node.id),
+                    turnId,
+                    turning: conn.turning ?? 'S',
+                    type: conn.turning === 'R' ? 'RTOR' : 'None',
+                    connectionId: String(conn.id),
+                };
+                // 노드의 첫 번째 레코드에만 planList 부착
+                if (groupIdx === 0 && i === 0) {
+                    entry.plans = [{
+                        id: '0',
+                        cycle: String(groupKeys.length * DUMMY_PHASE_DURATION),
+                        offset: '0',
+                        phases: groupKeys.map((_, idx) => ({
+                            id: String(idx),
+                            duration: String(DUMMY_PHASE_DURATION),
+                            turnList: String(idx),
+                        })),
+                    }];
+                }
+                signals.push(entry);
+            });
+        });
+    }
+
+    return signals;
+};

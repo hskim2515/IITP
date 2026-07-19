@@ -6,6 +6,9 @@ import { Fill, Stroke, Style } from "ol/style";
 import { Point } from "ol/geom";
 import CircleStyle from "ol/style/Circle";
 import { FeatureLike } from "ol/Feature";
+import { getFacilityLodTierByResolution, isAtLeastFacilityTier } from "@utils/lodConstants";
+import { FacilityClusterOverlay } from "@features/facilityCluster";
+import type OLMap from "ol/Map";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { fromLonLat } from "ol/proj";
 import { RailPublicStationResponse } from "@type/Station";
@@ -18,6 +21,7 @@ export default class RailStationFeatureLayer extends VectorLayer {
     private readonly LAYER_NAME = "railStation";
     private unsubscribe: (() => void) | undefined;
     private needsReload = false;
+    private clusterOverlay: FacilityClusterOverlay;
 
     constructor() {
         const source = new VectorSource();
@@ -28,6 +32,12 @@ export default class RailStationFeatureLayer extends VectorLayer {
             style: (feature, resolution) => this.styleFunction(feature, resolution),
         });
         this.source = source;
+        // overview 클러스터 오버레이 (역 마커만 군집, 출구 제외)
+        this.clusterOverlay = new FacilityClusterOverlay(source, {
+            color: "rgb(0,102,255)",
+            zIndex: 399,
+            featureFilter: (f) => f.get("featureType") === "railStations",
+        });
         this.load();
 
         const store = layerNameToStoreMap[this.LAYER_NAME];
@@ -50,28 +60,51 @@ export default class RailStationFeatureLayer extends VectorLayer {
 
     override setVisible(visible: boolean): void {
         super.setVisible(visible);
+        this.clusterOverlay.setVisible(visible);
         if (visible && this.needsReload) this.load();
     }
 
-    public styleFunction(feature: FeatureLike, _resolution: number): Style[] {
+    override setMapInternal(map: OLMap | null): void {
+        super.setMapInternal(map);
+        if (map) {
+            this.clusterOverlay.attach(map);
+            this.clusterOverlay.setVisible(this.getVisible());
+        } else {
+            this.clusterOverlay.detach();
+        }
+    }
+
+    public styleFunction(feature: FeatureLike, resolution: number): Style[] {
+        const tier = getFacilityLodTierByResolution(resolution);
+        // cluster tier: 개별 마커 숨김 (원거리 — Cesium 아이콘/클러스터가 담당)
+        if (tier === 'cluster') return [];
+
         const props = feature.getProperties() ?? {};
-        const geom = feature.getGeometry();
+        const geom  = feature.getGeometry();
         const styles: Style[] = [];
 
+        // 'labeled' 이상(=근거리)에서 굵은 외곽선 + 출구 마커 표시
+        const isNear = isAtLeastFacilityTier(tier, 'labeled');
+
         if (geom instanceof Point && props.featureType === "railStations") {
+            // 해상도에 비례한 역 마커 크기 (최소 4px ↔ 최대 9px)
+            const radius = Math.min(9, Math.max(4, 6 / resolution));
+            const strokeW = isNear ? 2 : 1;
             styles.push(new Style({
                 image: new CircleStyle({
-                    radius: 7,
+                    radius,
                     fill: new Fill({ color: "rgb(0,102,255)" }),
-                    stroke: new Stroke({ color: "#ffffff", width: 2 }),
+                    stroke: new Stroke({ color: "#ffffff", width: strokeW }),
                 }),
             }));
         }
 
-        if (geom instanceof Point && props.featureType === "exits") {
+        // 출구 마커: 근거리(labeled+)에서만 표시 — 멀리서는 역 마커만 보이면 충분
+        if (isNear && geom instanceof Point && props.featureType === "exits") {
+            const radius = Math.min(5, Math.max(2, 2.5 / resolution));
             styles.push(new Style({
                 image: new CircleStyle({
-                    radius: 4,
+                    radius,
                     fill: new Fill({ color: "rgb(153,0,255)" }),
                     stroke: new Stroke({ color: "rgba(0,0,0,0)", width: 0 }),
                 }),
@@ -150,6 +183,7 @@ export default class RailStationFeatureLayer extends VectorLayer {
 
     public dispose(): void {
         this.unsubscribe?.();
+        this.clusterOverlay.dispose();
         super.dispose();
     }
 }

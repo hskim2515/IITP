@@ -2,7 +2,7 @@ package com.iitp.iitp_rest.service.odmatrix;
 
 import com.iitp.iitp_rest.model.odmatrix.OdMatrixXml;
 import com.iitp.iitp_rest.repository.ScenarioVersionRepository;
-import com.iitp.iitp_rest.util.SftpFileManager;
+import com.iitp.iitp_rest.util.FileStorageService;
 import jakarta.xml.bind.JAXBContext;
 import jakarta.xml.bind.JAXBException;
 import jakarta.xml.bind.Marshaller;
@@ -24,7 +24,7 @@ import java.net.URL;
 @RequiredArgsConstructor
 public class OdMatrixService {
 
-    private final SftpFileManager sftpFileManager;
+    private final FileStorageService fileStorage;
     private final ScenarioVersionRepository scenarioVersionRepository;
 
     @Value("${database.vehicle_sim.remoteUrl}")
@@ -49,7 +49,7 @@ public class OdMatrixService {
     public void saveByVersionId(String versionId, OdMatrixXml odMatrix) throws Exception {
         String scenarioKey = resolveScenarioKey(versionId);
         byte[] xmlBytes = marshal(odMatrix);
-        sftpFileManager.uploadFile(new ByteArrayInputStream(xmlBytes), scenarioKey, "odmatrix.xml");
+        fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), scenarioKey, "odmatrix.xml");
         log.info("[OdMatrixService] SFTP 저장 완료: {}/odmatrix.xml (versionId={}, scenarioKey={})", scenarioKey, versionId, scenarioKey);
     }
 

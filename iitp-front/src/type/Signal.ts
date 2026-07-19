@@ -7,14 +7,29 @@ export const FEATURE_TYPE = {
     SIGNAL: 'signal',
 }
 
+export interface SignalPhase {
+    id: string;
+    duration: string;
+    turnList: string;
+}
+
+export interface SignalPlan {
+    id: string;
+    cycle: string;
+    offset: string;
+    phases: SignalPhase[];
+}
+
 export interface SignalData {
     __guid: string | undefined;
     featureType: string;
     id: string | undefined;
     nodeId: string | undefined;
+    turnId?: string;
     turning: string | null;
     type: string | null;
     connectionId: string | undefined;
+    plans?: SignalPlan[];
 
 }
 

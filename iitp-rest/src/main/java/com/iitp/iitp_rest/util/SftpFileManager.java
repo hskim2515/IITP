@@ -9,8 +9,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
 
+/** @deprecated {@link FileStorageService} 를 주입받아 사용하세요. */
+@Deprecated
 @Slf4j
-@Component
 public class SftpFileManager {
 
     @Value("${sftp.host}")

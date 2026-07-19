@@ -3,36 +3,40 @@ import { Color, Entity, CustomDataSource, Viewer } from "cesium";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { FEATURE_TYPE, RailPublicStationResponse, TRANSIT_MODE } from "@type/Station";
 import { computePositionAtOffsetCesium } from "@utils/offset";
+import { LOD_ALT } from "@utils/lodConstants";
+import { CesiumFacilityCluster } from "@datasource/cesiumFacilityCluster";
 
 /* ── 치수 ── */
-const POLE_HEIGHT    = 5.5;   // 폴 높이 (m)
+const POLE_HEIGHT    = 5.5;
 const POLE_RADIUS    = 0.10;
-const DISC_R         = 0.85;  // 원형 표지판 반경
-const DISC_THICK     = 0.14;  // 표지판 두께
-const SLAB_R_MAJ     = 2.0;   // 지면 슬래브 장반경
-const SLAB_R_MIN     = 1.5;   // 지면 슬래브 단반경
-const SLAB_H         = 0.25;  // 슬래브 높이
-const STATION_R      = 7.0;   // 역 중심 지면 원 반경
-const LANE_WIDTH      = 3.5;  // 차선 폭 (m)
-const SIDEWALK_MARGIN = 2.0;  // 인도 여유 폭 (m)
+const DISC_R         = 0.85;
+const DISC_THICK     = 0.14;
+const SLAB_R_MAJ     = 2.0;
+const SLAB_R_MIN     = 1.5;
+const SLAB_H         = 0.25;
+const STATION_R      = 7.0;
+const LANE_WIDTH      = 3.5;
+const SIDEWALK_MARGIN = 2.0;
 
 /* ── 색상 ── */
-const C_SUBWAY_BLUE  = Color.fromCssColorString("#0052a5");       // 한국 지하철 파랑
-const C_DISC_INNER   = Color.fromCssColorString("#ffffff").withAlpha(0.9); // 원 내부 흰색
-const C_POLE         = Color.fromCssColorString("#546e7a");       // 스틸 그레이
+const C_SUBWAY_BLUE  = Color.fromCssColorString("#0052a5");
+const C_DISC_INNER   = Color.fromCssColorString("#ffffff").withAlpha(0.9);
+const C_POLE         = Color.fromCssColorString("#546e7a");
 const C_SLAB         = Color.fromCssColorString("#0052a5").withAlpha(0.85);
 const C_STATION_RING = Color.fromCssColorString("#0052a5").withAlpha(0.35);
-const C_MARKER_EXIT  = Color.fromCssColorString("#1976d2");
-const C_MARKER_STA   = Color.fromCssColorString("#0d47a1");
 
 /* ── LOD ── */
-const LOD_3D      = new Cesium.DistanceDisplayCondition(0.0, 400.0);
+const LOD_3D      = new Cesium.DistanceDisplayCondition(0.0, LOD_ALT.FACILITY_DETAIL);
 const LOD_LABEL   = new Cesium.DistanceDisplayCondition(0.0, 600.0);
 const LOD_EXIT_LB = new Cesium.DistanceDisplayCondition(0.0, 180.0);
-const MARKER_SCALE_EX  = new Cesium.NearFarScalar(30, 2.0, 3000, 0.2);
-const FADE_OUT_EX = new Cesium.NearFarScalar(3000, 1.0, 5000, 0.0);
+const MARKER_SCALE_EX = new Cesium.NearFarScalar(30, 2.0, 3000, 0.2);
+const FADE_OUT_EX     = new Cesium.NearFarScalar(3000, 1.0, 5000, 0.0);
+const STATION_BB_DDC  = new Cesium.DistanceDisplayCondition(LOD_ALT.FACILITY_DETAIL, LOD_ALT.FACILITY_ICON);
 
-/* ── 역 중심 마커 아이콘 (모듈 레벨, 1회 생성) ── */
+/** 카메라 컬링 반경 */
+const CULL_RADIUS = LOD_ALT.FACILITY_ICON * 1.1;
+
+/* ── 역 중심 마커 아이콘 ── */
 const RAIL_STATION_ICON = (() => {
     const size = 24;
     const c = document.createElement("canvas");
@@ -49,10 +53,26 @@ const RAIL_STATION_ICON = (() => {
     return c.toDataURL();
 })();
 
-/* 역 중심 아이콘 표시 거리 (3D 모델이 사라지는 시점 이후) */
-const STATION_BB_NEAR = 400;
-const STATION_BB_FAR  = 10000;
-const STATION_BB_DDC  = new Cesium.DistanceDisplayCondition(STATION_BB_NEAR, STATION_BB_FAR);
+interface ExitData { lng: number; lat: number; exitId: string; exitH: number; }
+
+interface RailStationEntry {
+    key: string;
+    stationName: string;
+    centroidLng: number;
+    centroidLat: number;
+    centroidH: number;
+    exits: ExitData[];
+    properties: any;
+    /** 카메라 거리 컬링용 */
+    cartesian: Cesium.Cartesian3;
+}
+
+interface ActiveRailRecord {
+    billboard:  Cesium.Billboard | null;
+    exitPoints: Cesium.PointPrimitive[];
+    labels:     Cesium.Label[];
+    entities:   Cesium.Entity[];
+}
 
 export default class RailStationDataSourceLayer {
     private readonly LAYER_NAME = "railStation";
@@ -60,20 +80,29 @@ export default class RailStationDataSourceLayer {
     private stationMarkers: Cesium.BillboardCollection;
     private exitMarkers:    Cesium.PointPrimitiveCollection;
     private labelCollection: Cesium.LabelCollection;
+    private clusterLayer: CesiumFacilityCluster;
     private unsubscribes: Array<() => void> = [];
     private destroyed = false;
     private needsReload = false;
 
+    private allEntries:    RailStationEntry[] = [];
+    private activeRecords: Map<string, ActiveRailRecord> = new Map();
+    private cullTimer:     ReturnType<typeof setTimeout> | null = null;
+    private onCameraChanged = () => this.scheduleCull();
+
     constructor(private viewer: Viewer) {
-        this.dataSource     = new CustomDataSource(this.LAYER_NAME);
-        this.stationMarkers = new Cesium.BillboardCollection();
-        this.exitMarkers    = new Cesium.PointPrimitiveCollection();
+        this.dataSource      = new CustomDataSource(this.LAYER_NAME);
+        this.stationMarkers  = new Cesium.BillboardCollection();
+        this.exitMarkers     = new Cesium.PointPrimitiveCollection();
         this.labelCollection = new Cesium.LabelCollection();
 
         this.viewer.dataSources.add(this.dataSource);
         this.viewer.scene.primitives.add(this.stationMarkers);
         this.viewer.scene.primitives.add(this.exitMarkers);
         this.viewer.scene.primitives.add(this.labelCollection);
+        this.clusterLayer = new CesiumFacilityCluster(this.viewer, { color: "#1565c0" });
+
+        this.viewer.scene.camera.changed.addEventListener(this.onCameraChanged);
 
         this.load();
 
@@ -100,6 +129,7 @@ export default class RailStationDataSourceLayer {
         this.stationMarkers.show  = visible;
         this.exitMarkers.show     = visible;
         this.labelCollection.show = visible;
+        this.clusterLayer.setVisible(visible);
         if (visible && this.needsReload) this.load();
     }
 
@@ -108,16 +138,11 @@ export default class RailStationDataSourceLayer {
     }
 
     private async loadAsync(): Promise<void> {
-        // 레이어가 꺼진 상태면 스킵, 켜질 때 재로드
-        if (!this.dataSource.show) {
-            this.needsReload = true;
-            return;
-        }
+        if (!this.dataSource.show) { this.needsReload = true; return; }
         this.needsReload = false;
 
-        this.stationMarkers.removeAll();
-        this.exitMarkers.removeAll();
-        this.labelCollection.removeAll();
+        this.clearAllActive();
+        this.allEntries = [];
 
         const store        = layerNameToStoreMap[this.LAYER_NAME];
         const networkStore = layerNameToStoreMap["network"];
@@ -129,7 +154,7 @@ export default class RailStationDataSourceLayer {
         const networkData: any = networkStore.getState().currentJsonData;
         if (!networkData?.links) return;
 
-        /* ── linkId → {start, end, laneCount} 맵 ── */
+        /* ── linkId → {start, end, laneCount} ── */
         const linkCoordMap = new Map<string, { start: Cesium.Cartesian3; end: Cesium.Cartesian3; laneCount: number }>();
         for (const link of networkData.links) {
             if (!link.coordinates || link.coordinates.length < 2) continue;
@@ -144,30 +169,21 @@ export default class RailStationDataSourceLayer {
         }
 
         /* ── 역별 exit 위치 계산 ── */
-        interface ExitEntry { lng: number; lat: number; exitId: string; }
-        interface StationEntry {
-            stationName: string;
-            centroidLng: number;
-            centroidLat: number;
-            exits: ExitEntry[];
-            properties: any;
-        }
-        const entries: StationEntry[] = [];
+        const rawEntries: Omit<RailStationEntry, 'centroidH' | 'cartesian'>[] = [];
 
         for (const station of response.railStations) {
             const rawExits = station.exits ?? [];
-            const resolved: ExitEntry[] = [];
+            const resolved: Omit<ExitData, 'exitH'>[] = [];
 
             for (const exit of rawExits) {
                 const link = linkCoordMap.get(String(exit.linkRef));
                 if (!link || exit.offset == null) continue;
                 const { offsetPosition: onLinkPos } = computePositionAtOffsetCesium(link.start, link.end, exit.offset);
 
-                // 링크 방향 벡터 → 수직(인도 방향) 오프셋 (lane 수 기반)
                 const sidewalkOffset = link.laneCount * LANE_WIDTH + SIDEWALK_MARGIN;
                 const dir = Cesium.Cartesian3.subtract(link.end, link.start, new Cesium.Cartesian3());
                 Cesium.Cartesian3.normalize(dir, dir);
-                const up = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(onLinkPos, new Cesium.Cartesian3());
+                const up   = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(onLinkPos, new Cesium.Cartesian3());
                 const perp = Cesium.Cartesian3.cross(dir, up, new Cesium.Cartesian3());
                 Cesium.Cartesian3.normalize(perp, perp);
                 const move = Cesium.Cartesian3.multiplyByScalar(perp, sidewalkOffset, new Cesium.Cartesian3());
@@ -182,221 +198,278 @@ export default class RailStationDataSourceLayer {
             }
             if (resolved.length === 0) continue;
 
-            // exit 없으면 coordinates 직접 사용
-            let centroidLng: number, centroidLat: number;
-            if (resolved.length > 0) {
-                centroidLng = resolved.reduce((s, e) => s + e.lng, 0) / resolved.length;
-                centroidLat = resolved.reduce((s, e) => s + e.lat, 0) / resolved.length;
-            } else if ((station as any).coordinates?.lng && (station as any).coordinates?.lat) {
-                centroidLng = (station as any).coordinates.lng;
-                centroidLat = (station as any).coordinates.lat;
-            } else {
-                continue; // 위치 없으면 건너뜀
-            }
-            const stationName  = (station as any).address ?? (station as any).center ?? String(station.id ?? "");
-            entries.push({ stationName, centroidLng, centroidLat, exits: resolved, properties: station });
-        }
+            const centroidLng = resolved.reduce((s, e) => s + e.lng, 0) / resolved.length;
+            const centroidLat = resolved.reduce((s, e) => s + e.lat, 0) / resolved.length;
+            const stationName = (station as any).address ?? (station as any).center ?? String(station.id ?? "");
+            const key         = String(station.id ?? `${centroidLng.toFixed(6)},${centroidLat.toFixed(6)}`);
 
-        if (entries.length === 0) return;
+            rawEntries.push({ key, stationName, centroidLng, centroidLat, exits: resolved as ExitData[], properties: station });
+        }
+        if (!rawEntries.length) return;
 
         /* ── 지형 고도 샘플링 ── */
-        const terrainHeightMap = new Map<string, number>();
-        const hasRealTerrain   = !(this.viewer.terrainProvider instanceof Cesium.EllipsoidTerrainProvider);
-        const coordKey = (lng: number, lat: number) => `${lng.toFixed(5)},${lat.toFixed(5)}`;
+        const terrainMap   = new Map<string, number>();
+        const hasRealTerrain = !(this.viewer.terrainProvider instanceof Cesium.EllipsoidTerrainProvider);
+        const tkey = (lng: number, lat: number) => `${lng.toFixed(5)},${lat.toFixed(5)}`;
 
         if (hasRealTerrain) {
             const seen = new Set<string>();
-            const keys: string[] = [];
-            const cartos: Cesium.Cartographic[] = [];
-            for (const entry of entries) {
-                const addPt = (lng: number, lat: number) => {
-                    const k = coordKey(lng, lat);
-                    if (seen.has(k)) return;
-                    seen.add(k); keys.push(k);
-                    cartos.push(Cesium.Cartographic.fromDegrees(lng, lat));
-                };
-                entry.exits.forEach(e => addPt(e.lng, e.lat));
-                addPt(entry.centroidLng, entry.centroidLat);
+            const keys: string[] = [], cartos: Cesium.Cartographic[] = [];
+            const addPt = (lng: number, lat: number) => {
+                const k = tkey(lng, lat);
+                if (seen.has(k)) return;
+                seen.add(k); keys.push(k);
+                cartos.push(Cesium.Cartographic.fromDegrees(lng, lat));
+            };
+            for (const e of rawEntries) {
+                addPt(e.centroidLng, e.centroidLat);
+                e.exits.forEach(ex => addPt(ex.lng, ex.lat));
             }
             try {
                 await Cesium.sampleTerrainMostDetailed(this.viewer.terrainProvider, cartos);
-                keys.forEach((k, i) => terrainHeightMap.set(k, cartos[i]!.height ?? 0));
+                keys.forEach((k, i) => terrainMap.set(k, cartos[i]!.height ?? 0));
             } catch {
                 console.warn("[RailStationDataSourceLayer] 지형 고도 샘플링 실패");
             }
         }
 
-        /* ── 엔티티 생성 ── */
+        this.allEntries = rawEntries.map(e => {
+            const centroidH = terrainMap.get(tkey(e.centroidLng, e.centroidLat)) ?? 0;
+            const exitsWithH: ExitData[] = e.exits.map(ex => ({
+                ...ex,
+                exitH: terrainMap.get(tkey(ex.lng, ex.lat)) ?? centroidH,
+            }));
+            return {
+                ...e,
+                exits: exitsWithH,
+                centroidH,
+                cartesian: Cesium.Cartesian3.fromDegrees(e.centroidLng, e.centroidLat, centroidH + 1.0),
+            };
+        });
+
+        console.log(`[RailStationDataSourceLayer] ${this.allEntries.length}개 역 준비`);
+        this.clusterLayer.setPoints(this.allEntries.map(e => ({ lng: e.centroidLng, lat: e.centroidLat })));
+        this.updateVisibleStations();
+    }
+
+    private scheduleCull(): void {
+        if (this.cullTimer) return;
+        this.cullTimer = setTimeout(() => {
+            this.cullTimer = null;
+            this.updateVisibleStations();
+        }, 200);
+    }
+
+    private updateVisibleStations(): void {
+        if (!this.dataSource.show || this.allEntries.length === 0) return;
+
+        // overview(원거리) 군집 갱신 — 카메라 변경 흐름에 편승 (cluster tier에서만 표시)
+        this.clusterLayer.update();
+
+        const camPos = this.viewer.scene.camera.positionWC;
+        const r2     = CULL_RADIUS * CULL_RADIUS;
+
+        const wantKeys = new Set<string>();
+        for (const e of this.allEntries) {
+            const dx = camPos.x - e.cartesian.x;
+            const dy = camPos.y - e.cartesian.y;
+            const dz = camPos.z - e.cartesian.z;
+            if (dx*dx + dy*dy + dz*dz <= r2) wantKeys.add(e.key);
+        }
+
+        /* 범위 밖 제거 */
+        for (const [key, rec] of this.activeRecords) {
+            if (!wantKeys.has(key)) {
+                rec.entities.forEach(ent => this.dataSource.entities.remove(ent));
+                if (rec.billboard) this.stationMarkers.remove(rec.billboard);
+                rec.exitPoints.forEach(p  => this.exitMarkers.remove(p));
+                rec.labels.forEach(lb     => this.labelCollection.remove(lb));
+                this.activeRecords.delete(key);
+            }
+        }
+
+        /* 새로 진입한 것 추가 */
+        let added = 0;
         this.dataSource.entities.suspendEvents();
         try {
-            this.dataSource.entities.removeAll();
-
-            for (const entry of entries) {
-                const { stationName, centroidLng, centroidLat, exits, properties } = entry;
-                const stH = terrainHeightMap.get(coordKey(centroidLng, centroidLat)) ?? 0;
-
-                /* ── 역 중심 ── */
-
-                // ① 역 중심 대형 지면 원 (반투명)
-                this.dataSource.entities.add(new Entity({
-                    position: Cesium.Cartesian3.fromDegrees(centroidLng, centroidLat, stH),
-                    ellipse: {
-                        semiMajorAxis:  STATION_R,
-                        semiMinorAxis:  STATION_R,
-                        height:         stH,
-                        extrudedHeight: stH + 0.15,
-                        material:       C_STATION_RING,
-                        outline:        true,
-                        outlineColor:   C_SUBWAY_BLUE,
-                        outlineWidth:   3,
-                    },
-                    properties: {
-                        ...properties,
-                        transitMode: properties.transitMode ?? TRANSIT_MODE.SUBWAY,
-                        featureType: FEATURE_TYPE.RAIL_STATION,
-                    },
-                }));
-
-                // ② 역 중심 원거리 아이콘 ("R" 빌보드)
-                this.stationMarkers.add({
-                    position:                 Cesium.Cartesian3.fromDegrees(centroidLng, centroidLat, stH + 1.0),
-                    image:                    RAIL_STATION_ICON,
-                    width:                    24,
-                    height:                   24,
-                    distanceDisplayCondition: STATION_BB_DDC,
-                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                });
-
-                // ③ 역 이름 라벨
-                if (stationName) {
-                    this.labelCollection.add({
-                        position:                 Cesium.Cartesian3.fromDegrees(centroidLng, centroidLat, stH + POLE_HEIGHT + DISC_R + 1.5),
-                        text:                     stationName,
-                        font:                     "bold 15px sans-serif",
-                        fillColor:                Cesium.Color.WHITE,
-                        outlineColor:             Cesium.Color.BLACK,
-                        outlineWidth:             2.5,
-                        style:                    Cesium.LabelStyle.FILL_AND_OUTLINE,
-                        horizontalOrigin:         Cesium.HorizontalOrigin.CENTER,
-                        verticalOrigin:           Cesium.VerticalOrigin.BOTTOM,
-                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                        distanceDisplayCondition: LOD_LABEL,
-                        scaleByDistance:          new Cesium.NearFarScalar(100, 1.2, 600, 0.7),
-                    });
-                }
-
-                /* ── 출구별 3D 모델 ── */
-                for (const ex of exits) {
-                    const exH = terrainHeightMap.get(coordKey(ex.lng, ex.lat)) ?? stH;
-
-                    // ① 출구 원거리 마커
-                    this.exitMarkers.add({
-                        position:                 Cesium.Cartesian3.fromDegrees(ex.lng, ex.lat, exH + 0.5),
-                        color:                    C_MARKER_EXIT,
-                        pixelSize:               8,
-                        outlineColor:             Cesium.Color.WHITE,
-                        outlineWidth:             1.5,
-                        scaleByDistance:          MARKER_SCALE_EX,
-                        translucencyByDistance:   FADE_OUT_EX,
-                        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                    });
-
-                    // ② 지면 슬래브 — 출구 개구부 (LOD)
-                    const slabE = new Entity({
-                        position: Cesium.Cartesian3.fromDegrees(ex.lng, ex.lat, exH),
-                        ellipse: {
-                            semiMajorAxis:  SLAB_R_MAJ,
-                            semiMinorAxis:  SLAB_R_MIN,
-                            height:         exH,
-                            extrudedHeight: exH + SLAB_H,
-                            material:       C_SLAB,
-                            outline:        false,
-                        },
-                        properties: { featureType: FEATURE_TYPE.RAIL_STATION_EXIT, exitId: ex.exitId },
-                    });
-                    (slabE as any).distanceDisplayCondition = LOD_3D;
-                    this.dataSource.entities.add(slabE);
-
-                    // ③ 폴 (LOD)
-                    const poleE = new Entity({
-                        position: Cesium.Cartesian3.fromDegrees(ex.lng, ex.lat, exH + SLAB_H + POLE_HEIGHT / 2),
-                        cylinder: {
-                            length:       POLE_HEIGHT,
-                            topRadius:    POLE_RADIUS,
-                            bottomRadius: POLE_RADIUS,
-                            material:     C_POLE,
-                            outline:      false,
-                        },
-                    });
-                    (poleE as any).distanceDisplayCondition = LOD_3D;
-                    this.dataSource.entities.add(poleE);
-
-                    // ④ 원형 표지판 — 파랑 디스크 (LOD)
-                    const discTop = exH + SLAB_H + POLE_HEIGHT + DISC_R;
-                    const discE = new Entity({
-                        position: Cesium.Cartesian3.fromDegrees(ex.lng, ex.lat, discTop),
-                        ellipse: {
-                            semiMajorAxis:  DISC_R,
-                            semiMinorAxis:  DISC_R,
-                            height:         discTop - DISC_THICK,
-                            extrudedHeight: discTop,
-                            material:       C_SUBWAY_BLUE,
-                            outline:        false,
-                        },
-                    });
-                    (discE as any).distanceDisplayCondition = LOD_3D;
-                    this.dataSource.entities.add(discE);
-
-                    // ⑤ 표지판 내부 흰 원 (M자 느낌)
-                    const innerR = DISC_R * 0.55;
-                    const innerE = new Entity({
-                        position: Cesium.Cartesian3.fromDegrees(ex.lng, ex.lat, discTop),
-                        ellipse: {
-                            semiMajorAxis:  innerR,
-                            semiMinorAxis:  innerR,
-                            height:         discTop,
-                            extrudedHeight: discTop + 0.02,
-                            material:       C_DISC_INNER,
-                            outline:        false,
-                        },
-                    });
-                    (innerE as any).distanceDisplayCondition = LOD_3D;
-                    this.dataSource.entities.add(innerE);
-
-                    // ⑥ 출구 번호 라벨 (근거리)
-                    if (ex.exitId) {
-                        this.labelCollection.add({
-                            position:                 Cesium.Cartesian3.fromDegrees(ex.lng, ex.lat, discTop + 0.5),
-                            text:                     ex.exitId,
-                            font:                     "bold 16px sans-serif",
-                            fillColor:                Cesium.Color.WHITE,
-                            outlineColor:             C_SUBWAY_BLUE,
-                            outlineWidth:             3,
-                            style:                    Cesium.LabelStyle.FILL_AND_OUTLINE,
-                            horizontalOrigin:         Cesium.HorizontalOrigin.CENTER,
-                            verticalOrigin:           Cesium.VerticalOrigin.CENTER,
-                            disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                            distanceDisplayCondition: LOD_EXIT_LB,
-                        });
-                    }
+            for (const e of this.allEntries) {
+                if (wantKeys.has(e.key) && !this.activeRecords.has(e.key)) {
+                    this.addStation(e);
+                    added++;
                 }
             }
-
-            console.log(`[RailStationDataSourceLayer] 완료: ${entries.length}개 역`);
+            if (added > 0) {
+                this.stationMarkers.show  = this.dataSource.show;
+                this.exitMarkers.show     = this.dataSource.show;
+                this.labelCollection.show = this.dataSource.show;
+                if (this.dataSource.entities.values.length > 0) this.dataSource.show = true;
+            }
         } finally {
             this.dataSource.entities.resumeEvents();
-            try { this.viewer.scene.requestRender(); } catch (_) {}
+            if (added > 0) {
+                try { this.viewer.scene.requestRender(); } catch (_) {}
+            }
         }
+    }
+
+    private addStation(e: RailStationEntry): void {
+        const { centroidLng, centroidLat, centroidH, stationName, exits, properties } = e;
+        const entities: Cesium.Entity[]            = [];
+        const exitPoints: Cesium.PointPrimitive[]  = [];
+        const labels: Cesium.Label[]               = [];
+
+        /* ① 역 중심 지면 원 */
+        entities.push(this.dataSource.entities.add(new Entity({
+            position: Cesium.Cartesian3.fromDegrees(centroidLng, centroidLat, centroidH),
+            ellipse: {
+                semiMajorAxis: STATION_R, semiMinorAxis: STATION_R,
+                height: centroidH, extrudedHeight: centroidH + 0.15,
+                material: C_STATION_RING, outline: true,
+                outlineColor: C_SUBWAY_BLUE, outlineWidth: 3,
+            },
+            properties: {
+                ...properties,
+                transitMode: properties.transitMode ?? TRANSIT_MODE.SUBWAY,
+                featureType: FEATURE_TYPE.RAIL_STATION,
+            },
+        })));
+
+        /* ② 역 중심 원거리 아이콘 */
+        const billboard = this.stationMarkers.add({
+            position:                 Cesium.Cartesian3.fromDegrees(centroidLng, centroidLat, centroidH + 1.0),
+            image:                    RAIL_STATION_ICON,
+            width:                    24,
+            height:                   24,
+            distanceDisplayCondition: STATION_BB_DDC,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        }) as unknown as Cesium.Billboard;
+
+        /* ③ 역 이름 라벨 */
+        if (stationName) {
+            labels.push(this.labelCollection.add({
+                position:                 Cesium.Cartesian3.fromDegrees(centroidLng, centroidLat, centroidH + POLE_HEIGHT + DISC_R + 1.5),
+                text:                     stationName,
+                font:                     "bold 15px sans-serif",
+                fillColor:                Cesium.Color.WHITE,
+                outlineColor:             Cesium.Color.BLACK,
+                outlineWidth:             2.5,
+                style:                    Cesium.LabelStyle.FILL_AND_OUTLINE,
+                horizontalOrigin:         Cesium.HorizontalOrigin.CENTER,
+                verticalOrigin:           Cesium.VerticalOrigin.BOTTOM,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                distanceDisplayCondition: LOD_LABEL,
+                scaleByDistance:          new Cesium.NearFarScalar(100, 1.2, 600, 0.7),
+            }) as unknown as Cesium.Label);
+        }
+
+        /* ── 출구별 3D 모델 ── */
+        for (const ex of exits) {
+            const { lng, lat, exitH, exitId } = ex;
+
+            /* 출구 원거리 마커 */
+            exitPoints.push(this.exitMarkers.add({
+                position:                 Cesium.Cartesian3.fromDegrees(lng, lat, exitH + 0.5),
+                color:                    Color.fromCssColorString("#1976d2"),
+                pixelSize:               8,
+                outlineColor:             Cesium.Color.WHITE,
+                outlineWidth:             1.5,
+                scaleByDistance:          MARKER_SCALE_EX,
+                translucencyByDistance:   FADE_OUT_EX,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            }) as unknown as Cesium.PointPrimitive);
+
+            /* 지면 슬래브 */
+            const slabE = new Entity({
+                position: Cesium.Cartesian3.fromDegrees(lng, lat, exitH),
+                ellipse: {
+                    semiMajorAxis: SLAB_R_MAJ, semiMinorAxis: SLAB_R_MIN,
+                    height: exitH, extrudedHeight: exitH + SLAB_H,
+                    material: C_SLAB, outline: false,
+                },
+                properties: { featureType: FEATURE_TYPE.RAIL_STATION_EXIT, exitId },
+            });
+            (slabE as any).distanceDisplayCondition = LOD_3D;
+            entities.push(this.dataSource.entities.add(slabE));
+
+            /* 폴 */
+            const poleE = new Entity({
+                position: Cesium.Cartesian3.fromDegrees(lng, lat, exitH + SLAB_H + POLE_HEIGHT / 2),
+                cylinder: {
+                    length: POLE_HEIGHT, topRadius: POLE_RADIUS, bottomRadius: POLE_RADIUS,
+                    material: C_POLE, outline: false,
+                },
+            });
+            (poleE as any).distanceDisplayCondition = LOD_3D;
+            entities.push(this.dataSource.entities.add(poleE));
+
+            /* 원형 표지판 */
+            const discTop = exitH + SLAB_H + POLE_HEIGHT + DISC_R;
+            const discE = new Entity({
+                position: Cesium.Cartesian3.fromDegrees(lng, lat, discTop),
+                ellipse: {
+                    semiMajorAxis: DISC_R, semiMinorAxis: DISC_R,
+                    height: discTop - DISC_THICK, extrudedHeight: discTop,
+                    material: C_SUBWAY_BLUE, outline: false,
+                },
+            });
+            (discE as any).distanceDisplayCondition = LOD_3D;
+            entities.push(this.dataSource.entities.add(discE));
+
+            /* 표지판 내부 흰 원 */
+            const innerR = DISC_R * 0.55;
+            const innerE = new Entity({
+                position: Cesium.Cartesian3.fromDegrees(lng, lat, discTop),
+                ellipse: {
+                    semiMajorAxis: innerR, semiMinorAxis: innerR,
+                    height: discTop, extrudedHeight: discTop + 0.02,
+                    material: C_DISC_INNER, outline: false,
+                },
+            });
+            (innerE as any).distanceDisplayCondition = LOD_3D;
+            entities.push(this.dataSource.entities.add(innerE));
+
+            /* 출구 번호 라벨 */
+            if (exitId) {
+                labels.push(this.labelCollection.add({
+                    position:                 Cesium.Cartesian3.fromDegrees(lng, lat, discTop + 0.5),
+                    text:                     exitId,
+                    font:                     "bold 16px sans-serif",
+                    fillColor:                Cesium.Color.WHITE,
+                    outlineColor:             C_SUBWAY_BLUE,
+                    outlineWidth:             3,
+                    style:                    Cesium.LabelStyle.FILL_AND_OUTLINE,
+                    horizontalOrigin:         Cesium.HorizontalOrigin.CENTER,
+                    verticalOrigin:           Cesium.VerticalOrigin.CENTER,
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                    distanceDisplayCondition: LOD_EXIT_LB,
+                }) as unknown as Cesium.Label);
+            }
+        }
+
+        this.activeRecords.set(e.key, { billboard, exitPoints, labels, entities });
+    }
+
+    private clearAllActive(): void {
+        this.dataSource.entities.suspendEvents();
+        try { this.dataSource.entities.removeAll(); } finally { this.dataSource.entities.resumeEvents(); }
+        this.stationMarkers.removeAll();
+        this.exitMarkers.removeAll();
+        this.labelCollection.removeAll();
+        this.activeRecords.clear();
+        this.clusterLayer?.setPoints([]);
     }
 
     public destroy(): void {
         if (this.destroyed) return;
         this.destroyed = true;
+        if (this.cullTimer) { clearTimeout(this.cullTimer); this.cullTimer = null; }
+        this.viewer.scene.camera.changed.removeEventListener(this.onCameraChanged);
         this.unsubscribes.forEach(u => u());
         this.unsubscribes = [];
         this.viewer.dataSources.remove(this.dataSource, true);
         this.viewer.scene.primitives.remove(this.stationMarkers);
         this.viewer.scene.primitives.remove(this.exitMarkers);
         this.viewer.scene.primitives.remove(this.labelCollection);
+        this.clusterLayer.destroy();
     }
 }

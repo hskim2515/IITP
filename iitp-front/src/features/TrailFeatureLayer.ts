@@ -16,18 +16,16 @@ const TRAIL_LENGTH = 80;
  */
 const MAX_JUMP_SQ = 10_000 * 10_000;
 
-/** VehicleFeatureLayer / TailPrimitive 와 동일한 색상 */
-const TYPE_COLORS: Record<string, [number, number, number, number]> = {
-    'CAR':     [100, 160, 255, 0.92],
-    'TAXI':    [255, 220,   0, 0.92],
-    'BUS':     [255,  90,  90, 0.92],
-    'TRUCK':   [180, 120,  60, 0.92],
-    'MOTO':    [ 80, 220, 130, 0.92],
-    'default': [251, 188,  96, 0.92],
-};
+const DEFAULT_TRAIL_COLOR: [number, number, number, number] = [251, 188, 96, 0.92];
 
-function buildTrailStyle(vehicleType: string) {
-    const [r, g, b, a] = TYPE_COLORS[vehicleType] ?? TYPE_COLORS['default'];
+function hexToRgba(hex: string, alpha = 0.92): [number, number, number, number] | null {
+    const m = hex.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    if (!m || !m[1] || !m[2] || !m[3]) return null;
+    return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16), alpha];
+}
+
+function buildTrailStyle(modelColor?: string) {
+    const [r, g, b, a] = (modelColor ? hexToRgba(modelColor) : null) ?? DEFAULT_TRAIL_COLOR;
     return {
         "stroke-color": [
             "interpolate", ["linear"], ["line-metric"],
@@ -61,11 +59,11 @@ export default class TrailFeatureLayer extends WebGLVectorLayer {
     /** 직전 tick에서 null 이었던 인덱스 — 재활성 시 이전 trail 제거용 */
     private prevNullSet = new Set<number>();
 
-    constructor(_vehicleRoute: number[][][], _speed: number, running: boolean, vehicleType = 'default') {
+    constructor(_vehicleRoute: number[][][], _speed: number, running: boolean, vehicleType = 'default', modelColor?: string) {
         const source = new VectorSource();
         super({
             source,
-            style: buildTrailStyle(vehicleType),
+            style: buildTrailStyle(modelColor),
             visible: useLayerStore.getState().activeLayerName?.includes("trip") ?? false,
             zIndex: 500,
             disableHitDetection: true,

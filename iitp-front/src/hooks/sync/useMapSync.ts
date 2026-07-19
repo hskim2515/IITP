@@ -7,6 +7,9 @@ import * as olProj from "ol/proj";
 import {Coordinate} from "ol/coordinate";
 import {useMapStore} from "@stores/useMapStore";
 
+/** EPSG:3857 zoom 0 해상도 (m/px, 256px 타일) */
+const BASE_RES = 156543.03392804097;
+
 const useMapSync = () => {
 
     let cesiumCamera: Camera;
@@ -63,7 +66,26 @@ const useMapSync = () => {
 
     }, [olMap, olView, cesiumViewer]);
 
+    /**
+     * OL 해상도(m/px) ↔ Cesium 카메라-지면 거리(m) 변환 계수.
+     * distance = resolution × factor. 화면 픽셀 높이와 수직 FOV에서 유도 —
+     * (기존 하드코딩 26.3/26.5 지수는 방향별로 달라 왕복마다 0.2줌씩 어긋나고,
+     *  화면 높이·위도에 따라 3D가 더 확대되어 보이는 편차의 원인이었음)
+     */
+    const distancePerResolution = (): number => {
+        const canvas = cesiumViewer.scene.canvas;
+        const h = canvas.clientHeight || 800;
+        const frustum: any = cesiumCamera.frustum;
+        const fovy: number = frustum?.fovy ?? Cesium.Math.PI_OVER_THREE;
+        return h / (2 * Math.tan(fovy / 2));
+    };
+
     const syncCesiumToOL = () => {
+        // 로드뷰(파노라마) 표시 중엔 Cesium 캔버스가 가려져 사용자 조작이 불가능한데도
+        // isCesiumSyncing 이 이전 상태로 남아 있을 수 있다. 이때 파노라마 훅의 followCamera 가
+        // 옮긴 카메라(위치=로드뷰 지점, pitch 유지)의 "바라보는 지점"을 OL center 로 밀면
+        // 로드뷰→카메라→OL→로드뷰 순환으로 로드뷰가 끝없이 걸어가는 루프가 된다 → 차단.
+        if (useMapStore.getState().panoramaActive) return;
         if (isCesiumSyncing.current) {
             const scene = cesiumViewer.scene;
             const canvas = scene.canvas;
@@ -89,10 +111,11 @@ const useMapSync = () => {
 
                 if (rayIntersection) {
                     const cameraToCenterDistance = Cesium.Cartesian3.distance(cameraPosition, rayIntersection);
-                    const zoom = Math.max(0, 18 - Math.log2(cameraToCenterDistance) + 8.5);
-                    if (zoom !== undefined) {
-                        olView.setZoom(zoom);
-                    }
+                    // 지면 m/px = 거리 / factor. OL zoom = log2(BASE_RES·cos(lat) / res)
+                    // (EPSG:3857 해상도는 위도 보정 필요 — 같은 화면 배율이 되도록 cos(lat) 반영)
+                    const res = cameraToCenterDistance / distancePerResolution();
+                    const zoom = Math.max(0, Math.log2((BASE_RES * Math.cos(cartographic.latitude)) / res));
+                    olView.setZoom(zoom);
                 }
 
                 const heading = cesiumCamera.heading;
@@ -107,7 +130,10 @@ const useMapSync = () => {
             const zoom = olView.getZoom();
             const center = olView.getCenter();
             const [lon, lat] = olProj.toLonLat(center as Coordinate);
-            const distance = Math.pow(2, 26.3-zoom);
+            // syncCesiumToOL 의 역변환 (동일 공식 — 왕복 드리프트 없음)
+            const latRad = (lat ?? 0) * Math.PI / 180;
+            const res = (BASE_RES * Math.cos(latRad)) / Math.pow(2, zoom ?? 16);
+            const distance = res * distancePerResolution();
             const newDestination = Cartesian3.fromDegrees(lon, lat, distance);
 
             cesiumCamera.setView({

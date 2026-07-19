@@ -5,15 +5,16 @@ import { Point } from "ol/geom";
 import { fromLonLat } from "ol/proj";
 import { Cartographic, Ellipsoid } from "cesium";
 import * as Cesium from "cesium";
+import { buffer, containsXY, getHeight, getWidth, type Extent } from "ol/extent";
+import { VEHICLE_CULLING } from "@utils/lodConstants";
 
-const TYPE_COLORS: Record<string, [number, number, number]> = {
-    'CAR':     [100, 160, 255],
-    'TAXI':    [255, 220,   0],
-    'BUS':     [255,  90,  90],
-    'TRUCK':   [180, 120,  60],
-    'MOTO':    [ 80, 220, 130],
-    'default': [251, 188,  96],
-};
+const DEFAULT_VEHICLE_COLOR: [number, number, number] = [251, 188, 96];
+
+function hexToRgb255(hex: string): [number, number, number] | null {
+    const m = hex.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    if (!m || !m[1] || !m[2] || !m[3]) return null;
+    return [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)];
+}
 
 export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private source: VectorSource;
@@ -27,8 +28,13 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private readonly LERP_DURATION = 50;
     public readonly vehicleType: string;
 
-    constructor(vehicleRoute: any[], vectorSource: VectorSource, speed: number, running: boolean, vehicleType: string = 'default') {
-        const [r, g, b] = TYPE_COLORS[vehicleType] ?? TYPE_COLORS['default']!;
+    // viewport culling: 화면 밖 차량은 좌표 업데이트/렌더 건너뜀 (VEHICLE_CULLING.ENABLED)
+    private cullExtent: Extent | null = null;
+    private cullExtentAt = 0;
+    private hiddenIdx: Set<number> = new Set();
+
+    constructor(vehicleRoute: any[], vectorSource: VectorSource, speed: number, running: boolean, vehicleType: string = 'default', modelColor?: string) {
+        const [r, g, b] = (modelColor ? hexToRgb255(modelColor) : null) ?? DEFAULT_VEHICLE_COLOR;
 
         super({
             source: vectorSource,
@@ -88,12 +94,17 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
     }
 
     setLatestPositions(latestPositions: { positions: (number[] | undefined)[]; headings?: (number | null)[] }) {
+        // 화면 밖 차량은 좌표 변환(convertToEPSG3857: 측지 연산, 1000대면 16ms) 자체를 스킵 →
+        // 줌인 시 화면 내 소수만 변환. 이전 3857 위치로 화면 판정(margin 포함 cullExtent).
+        this.refreshCullExtent();
         const converted = latestPositions.positions.map((pos, idx) => {
             if (!pos) return this.positions[idx] ?? null;
+            const prev = this.positions[idx];
+            if (prev && this.isCulled(prev)) return prev; // 화면 밖: 변환 생략, 이전 위치 유지
             try {
                 return this.convertToEPSG3857(pos);
             } catch {
-                return this.positions[idx] ?? null;
+                return prev ?? null;
             }
         });
 
@@ -108,22 +119,64 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
         }
     }
 
+    /** 현재 viewport extent(+margin) 갱신. 비활성/맵없음 시 null → culling 안 함 */
+    private refreshCullExtent(): void {
+        if (!VEHICLE_CULLING.ENABLED) { this.cullExtent = null; return; }
+        const now = performance.now();
+        if (now - this.cullExtentAt < 250 && this.cullExtent) return; // 짧은 throttle
+        this.cullExtentAt = now;
+        const map = this.getMapInternal();
+        const size = map?.getSize();
+        const view = map?.getView();
+        if (!map || !size || !view) { this.cullExtent = null; return; }
+        const raw = view.calculateExtent(size);
+        const margin = Math.max(getWidth(raw), getHeight(raw)) * VEHICLE_CULLING.MARGIN_RATIO;
+        this.cullExtent = buffer(raw, margin);
+    }
+
+    /** target 좌표가 viewport 밖이면 true (culling 대상). extent 없으면 항상 false */
+    private isCulled(target: number[]): boolean {
+        if (!this.cullExtent) return false;
+        return !containsXY(this.cullExtent, target[0]!, target[1]!);
+    }
+
     private _syncFeatures() {
+        this.refreshCullExtent();
         this.features.forEach((feature, index) => {
             const geom = feature.getGeometry() as Point;
             const target = this.positions[index];
             if (!geom || !target) return;
+            if (this.applyCull(feature, index, target)) return;
             geom.setCoordinates(target);
         });
     }
 
+    /** culling 적용: 화면 밖이면 feature 숨김(빈 geometry) 후 true. 화면 안이면 복원 후 false */
+    private applyCull(feature: Feature<Point>, index: number, target: number[]): boolean {
+        if (!this.cullExtent) {
+            if (this.hiddenIdx.size > 0) this.hiddenIdx.clear();
+            return false;
+        }
+        if (this.isCulled(target)) {
+            if (!this.hiddenIdx.has(index)) {
+                (feature.getGeometry() as Point)?.setCoordinates([]); // 빈 좌표 → 렌더 제외
+                this.hiddenIdx.add(index);
+            }
+            return true;
+        }
+        if (this.hiddenIdx.has(index)) this.hiddenIdx.delete(index);
+        return false;
+    }
+
     private updateAnimation = () => {
         const t = Math.min((performance.now() - this.lerpStartTime) / this.LERP_DURATION, 1.0);
+        this.refreshCullExtent();
 
         this.features.forEach((feature, index) => {
             const geom = feature.getGeometry() as Point;
             const target = this.positions[index];
             if (!geom || !target) return;
+            if (this.applyCull(feature, index, target)) return;
 
             const prev = this.prevPositions[index];
             if (prev && t < 1.0) {
@@ -139,7 +192,9 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
             }
         });
 
-        if (this.running) {
+        // 보간이 완료(t>=1.0)되면 다음 위치가 도착(setLatestPositions)할 때까지 루프를 멈춘다.
+        // 같은 좌표를 매 프레임 재설정/재렌더하던 idle 스핀을 제거 (양쪽 지도 공통 절감).
+        if (this.running && t < 1.0) {
             this.animationId = requestAnimationFrame(this.updateAnimation);
         } else {
             this.animationId = null;

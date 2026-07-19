@@ -10,7 +10,7 @@ import com.iitp.iitp_rest.service.scenario.ScenarioService;
 import com.iitp.iitp_rest.model.publicTransit.bus.PublicTransitResponse;
 import com.iitp.iitp_rest.model.publicTransit.rail.RailPublicTransitResponse;
 import com.iitp.iitp_rest.util.CoordinateUtils;
-import com.iitp.iitp_rest.util.SftpFileManager;
+import com.iitp.iitp_rest.util.FileStorageService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -48,8 +48,9 @@ public class OsmImportController {
     private final NetworkJaxbParser   networkJaxbParser;
     private final NetworkMapper       networkMapper;
     private final OsmNetworkValidator validator;
-    private final SftpFileManager     sftpFileManager;
+    private final FileStorageService fileStorage;
     private final ScenarioService     scenarioService;
+    private final com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService xmlLayerVersionService;
 
     // ── 공통 변환 로직 ────────────────────────────────────────────────────────
 
@@ -99,6 +100,12 @@ public class OsmImportController {
                 var coords = CoordinateUtils.parseAndTransform(
                         node.getCenter(), originLon, originLat);
                 if (!coords.isEmpty()) node.setCoordinates(coords.getFirst());
+                // 커넥션도 WGS 좌표 필요 — 누락 시 임포트 직후 응답에서 커넥션 위치가 비거나 어긋남
+                if (node.getConnections() != null) {
+                    node.getConnections().forEach(conn ->
+                            conn.setCoordinates(CoordinateUtils.parseAndTransform(
+                                    conn.getShape(), originLon, originLat)));
+                }
             });
         }
         if (networkXml.getLinks() != null) {
@@ -167,7 +174,7 @@ public class OsmImportController {
 
     @Operation(summary = "OSM bbox → 검증 + network.xml SFTP 저장 + OsmSaveResponse",
                description = "신호등 connection 정보가 signals 필드로 함께 반환됩니다.")
-    @GetMapping("/osm/save")
+    @PostMapping(value = "/osm/save", consumes = org.springframework.http.MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<OsmSaveResponse> importAndSave(
             @Parameter(description = "남쪽 위도") @RequestParam double south,
             @Parameter(description = "서쪽 경도") @RequestParam double west,
@@ -176,7 +183,7 @@ public class OsmImportController {
             @Parameter(description = "원점 위도") @RequestParam(required = false) Double baseLat,
             @Parameter(description = "원점 경도") @RequestParam(required = false) Double baseLon,
             @Parameter(description = "Network id (기본: 0)") @RequestParam(defaultValue = "0") int networkId,
-            @Parameter(description = "시나리오 버전 키 (SFTP 저장 경로)") @RequestParam String versionId
+            @Parameter(description = "시나리오 버전 키 (SFTP 저장 경로, 선택)") @RequestParam(required = false) String versionId
     ) throws Exception {
         log.info("OSM Save: bbox=({},{},{},{}), versionId={}", south, west, north, east, versionId);
         try {
@@ -191,32 +198,33 @@ public class OsmImportController {
                         .body(new OsmSaveResponse(null, validation.errors()));
             }
 
-            // base 좌표를 XML에 기록 → 재로드 시 동일한 origin 사용
             networkXml.setBaseLat(ctx.originLat());
             networkXml.setBaseLon(ctx.originLon());
 
-            // SFTP 업로드
-            byte[] xmlBytes = networkJaxbParser.marshal(networkXml);
-            sftpFileManager.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "network.xml");
-            log.info("SFTP 업로드 완료: {}/network.xml ({} bytes)", versionId, xmlBytes.length);
-
-            // import 시 사용한 origin 좌표를 시나리오에 저장 → 재로드 시 일치 보장
-            try {
-                scenarioService.updateCoordinatesByKey(versionId, ctx.originLat(), ctx.originLon());
-                log.info("시나리오 좌표 업데이트: ({}, {})", ctx.originLat(), ctx.originLon());
-            } catch (Exception e) {
-                log.warn("시나리오 좌표 업데이트 실패 (무시): {}", e.getMessage());
+            // versionId가 있을 때만 SFTP 업로드
+            if (versionId != null && !versionId.isBlank()) {
+                byte[] xmlBytes = networkJaxbParser.marshal(networkXml);
+                fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "network.xml");
+                log.info("SFTP 업로드 완료: {}/network.xml ({} bytes)", versionId, xmlBytes.length);
+                // GET /network 은 DB(xml_layer_versions) 우선 — 옛 편집본 레코드를 지워야 새 XML이 반영된다
+                xmlLayerVersionService.deleteVersion("network", versionId);
+                try {
+                    scenarioService.updateCoordinatesByKey(versionId, ctx.originLat(), ctx.originLon());
+                    log.info("시나리오 좌표 업데이트: ({}, {})", ctx.originLat(), ctx.originLon());
+                } catch (Exception e) {
+                    log.warn("시나리오 좌표 업데이트 실패 (무시): {}", e.getMessage());
+                }
             }
 
             NetworkResponse networkResponse = networkMapper.toResponse(networkXml);
 
-            // 시설물 추출 (save에서만 실행)
+            // 시설물 추출
             OsmOverpassService.FacilityQueryResult facilityRaw =
                     overpassService.queryFacilities(south, west, north, east);
             OsmFacilityConverter.FacilityResult fac =
                     facilityConverter.convert(facilityRaw, networkXml, ctx.originLat(), ctx.originLon(), new double[]{south, west, north, east});
 
-            log.info("저장 완료: 노드 {}개, 링크 {}개, 신호 {}개, 버스정류장 {}개, 경고 {}개",
+            log.info("변환 완료: 노드 {}개, 링크 {}개, 신호 {}개, 버스정류장 {}개, 경고 {}개",
                     networkResponse.getNodes().size(), networkResponse.getLinks().size(),
                     ctx.result().signals().size(),
                     fac.busStations() != null ? fac.busStations().getBusStations().size() : 0,
@@ -226,7 +234,7 @@ public class OsmImportController {
                     networkResponse, validation.warnings(), List.of(),
                     ctx.result().signals(),
                     fac.busStations(), fac.railStations(),
-                    fac.busRoutes(), fac.railRoutes()));
+                    fac.busRoutes(), fac.railRoutes(), false));
 
         } catch (RuntimeException e) {
             log.error("OSM Save 실패: {}", e.getMessage());

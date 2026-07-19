@@ -32,7 +32,7 @@ const ScenarioSelector = () => {
     const debounceRef                       = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const fetchScenarios = () => {
-        fetch(process.env.VITE_API_URL + "/scenario", {
+        fetch(import.meta.env.VITE_API_URL + "/scenario", {
             method: "GET",
             headers: { "Content-Type": "application/json" },
         })
@@ -53,7 +53,7 @@ const ScenarioSelector = () => {
         debounceRef.current = setTimeout(async () => {
             try {
                 const res = await fetch(
-                    `${process.env.VITE_API_URL}/scenario/check-key?key=${encodeURIComponent(val)}`
+                    `${import.meta.env.VITE_API_URL}/scenario/check-key?key=${encodeURIComponent(val)}`
                 );
                 const exists: boolean = await res.json();
                 setKeyStatus(exists ? "duplicate" : "ok");
@@ -109,7 +109,7 @@ const ScenarioSelector = () => {
     const handleDelete = async () => {
         if (!deleteConfirm) return;
         try {
-            const res = await fetch(`${process.env.VITE_API_URL}/scenario/${deleteConfirm.id}`, {
+            const res = await fetch(`${import.meta.env.VITE_API_URL}/scenario/${deleteConfirm.id}`, {
                 method: "DELETE",
             });
             if (!res.ok) throw new Error("삭제 실패");
@@ -135,8 +135,8 @@ const ScenarioSelector = () => {
         setSubmitting(true);
         try {
             const url    = modalMode === "edit"
-                ? `${process.env.VITE_API_URL}/scenario/${editingId}`
-                : `${process.env.VITE_API_URL}/scenario`;
+                ? `${import.meta.env.VITE_API_URL}/scenario/${editingId}`
+                : `${import.meta.env.VITE_API_URL}/scenario`;
             const method = modalMode === "edit" ? "PUT" : "POST";
 
             const body: Record<string, unknown> = {

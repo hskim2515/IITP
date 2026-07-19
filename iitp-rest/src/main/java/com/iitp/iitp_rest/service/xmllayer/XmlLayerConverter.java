@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.service.xmllayer;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.Map;
@@ -10,7 +11,8 @@ import java.util.Map;
  */
 public final class XmlLayerConverter {
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    private static final ObjectMapper MAPPER = new ObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     private XmlLayerConverter() {}
 

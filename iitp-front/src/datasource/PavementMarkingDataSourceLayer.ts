@@ -13,6 +13,12 @@ export default class PavementMarkingDataSourceLayer {
     private readonly LAYER_NAME = "pavementMarking";
     private dataSource: GeoJsonDataSource;
     private unsubscribe: () => void;
+    private networkUnsubscribe: (() => void) | null = null;
+    private reloadTimer: ReturnType<typeof setTimeout> | null = null;
+    /** 보간 실패(차선 타일 미로드)로 스킵된 마킹 존재 여부 — 네트워크 동기화 시 재로드 트리거 */
+    private hasUnresolved = false;
+    /** load() 재진입 가드 — rotateImage await 중 겹친 이전 로드가 stale dataSource 를 add 하는 것 방지 */
+    private loadSeq = 0;
 
     constructor(private viewer: Viewer) {
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
@@ -29,12 +35,40 @@ export default class PavementMarkingDataSourceLayer {
             },
             { fireImmediately: true }
         );
+
+        // 타일 모드: 마킹 좌표는 OL network 레이어의 lane-edit 피처(=detail LOD viewport 타일)에서
+        // 보간되므로, 로드 시점에 차선이 없던 마킹은 스킵됨. 타일 로드 후 네트워크 store 동기화를
+        // 구독해 미해결 마킹이 있을 때만 재로드한다.
+        const networkStore = layerNameToStoreMap["network"] as any;
+        this.networkUnsubscribe = networkStore?.subscribe(
+            (state: any) => state.currentJsonData,
+            () => {
+                if (!this.hasUnresolved) return;
+                this.scheduleReload();
+            },
+        ) ?? null;
+    }
+
+    private scheduleReload(): void {
+        if (this.reloadTimer) return;
+        this.reloadTimer = setTimeout(async () => {
+            this.reloadTimer = null;
+            const markings = (layerNameToStoreMap[this.LAYER_NAME] as any)?.getState().currentJsonData?.pavementMarkings;
+            if (!markings?.length) return;
+            try {
+                await this.load(markings);
+            } catch (error) {
+                console.error("[PavementMarkingDataSourceLayer] 재보간 로드 실패:", error);
+            }
+        }, 300);
     }
 
     private async load(pavementMarkings: Record<string, any>[]): Promise<void> {
+        const seq = ++this.loadSeq;
         // 기존 데이터 제거 후 초기화
         this.viewer.dataSources.remove(this.dataSource, true);
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
+        const dataSource = this.dataSource;
 
         const features = pavementMarkings
             .map((data) => this.createFeature(data))
@@ -45,6 +79,12 @@ export default class PavementMarkingDataSourceLayer {
             .map(f => convertFeatureToRecord(f))
             .filter(r => r.id !== undefined && !isNaN(Number(r.id)))
             .sort((a, b) => Number(a.id) - Number(b.id));
+
+        // 보간 실패 마킹([0,0]→toLonLat→lng/lat 0)이 남아 있으면 네트워크 타일 로드 시 재시도 대상
+        this.hasUnresolved = flatRows.some(r => {
+            const c = r.coordinates?.[0];
+            return !c?.lng || !c?.lat;
+        });
 
         for (const pavementMarking of flatRows) {
             const { coordinates, id, selected = 0, markingType, angle } = pavementMarking;
@@ -61,8 +101,9 @@ export default class PavementMarkingDataSourceLayer {
             const length = 2;
             const polygonCoords = this.computeRectangleAround(lng, lat, angle, width, length);
             const rotateImg = await this.rotateImage(url, angle);
+            if (seq !== this.loadSeq) return; // 더 새로운 load 가 시작됨 — stale 로드 중단
 
-            this.dataSource.entities.add({
+            dataSource.entities.add({
                 id: `pavementMarking-${id}`,
                 polygon: {
                     hierarchy: Cesium.Cartesian3.fromDegreesArray(polygonCoords),
@@ -76,12 +117,18 @@ export default class PavementMarkingDataSourceLayer {
             });
         }
 
-        this.viewer.dataSources.add(this.dataSource);
-        console.log("[PavementMarking] 로드 완료: ", this.dataSource.entities.values.length);
+        if (seq !== this.loadSeq) return; // stale 로드는 add 하지 않음 (중복 dataSource 방지)
+        this.viewer.dataSources.add(dataSource);
+        console.log("[PavementMarking] 로드 완료: ", dataSource.entities.values.length);
     }
 
     public destroy(): void {
         this.unsubscribe?.();
+        this.networkUnsubscribe?.();
+        if (this.reloadTimer) {
+            clearTimeout(this.reloadTimer);
+            this.reloadTimer = null;
+        }
         this.viewer.dataSources.remove(this.dataSource, true);
     }
 

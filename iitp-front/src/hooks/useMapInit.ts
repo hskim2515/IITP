@@ -100,6 +100,10 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
 
         cesiumViewer.cesiumWidget.creditDisplay.container.style.display = "none";
 
+        // 지형 LOD: 기본(2)은 매우 정밀 → 줌아웃 시 넓은 영역을 고해상도 메시로 그려 부하 폭증.
+        //   단 16까지 올리면 배경 이미지리가 2D 대비 ~3레벨 낮게 그려져 "3D만 흐릿"해짐
+        //   (SSE 2배 ≈ 타일 1레벨 코스). 4 = 2D 대비 ~1레벨 코스로 체감 선명도 유지 + 기본 대비 부하 절감.
+        cesiumViewer.scene.globe.maximumScreenSpaceError = 4;
         cesiumViewer.scene.globe.depthTestAgainstTerrain = true;
         cesiumViewer.scene.useDepthPicking = true
 
@@ -109,11 +113,20 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
         cesiumViewer.scene.globe.baseColor = Cesium.Color.DARKGRAY;
         cesiumViewer.scene.globe.enableLighting = false;
 
+        // ── 렌더 경량화: 매 프레임 안티앨리어싱/안개 패스 비용 절감 (이 스케일에선 화질 영향 미미) ──
+        cesiumViewer.scene.msaaSamples = 1;                       // MSAA 비활성 (기본 4 → 1): 풀스크린 멀티샘플 패스 제거
+        if (cesiumViewer.scene.postProcessStages.fxaa) {
+            cesiumViewer.scene.postProcessStages.fxaa.enabled = false; // FXAA 포스트프로세스 패스 제거
+        }
+        cesiumViewer.scene.fog.enabled = false;                   // 거리 안개 계산 제거
+
         // cesiumViewer.scene.light = new Cesium.DirectionalLight({
         //     direction: new Cesium.Cartesian3(0.0, 0.0, 0.0) // 빛 없음
         // });
 
         setViewer(cesiumViewer);
+        // dev 전용: E2E 테스트(Playwright)에서 카메라 제어/상태 검사용 노출
+        if (import.meta.env.DEV) (window as any).__cesiumViewer = cesiumViewer;
 
         fetch("CesiumMilkTruck.glb")
             .then(res => res.arrayBuffer())

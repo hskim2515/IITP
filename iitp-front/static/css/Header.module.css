@@ -194,13 +194,6 @@
     font-weight: 500;
 }
 
-.simDivider {
-    width: 1px;
-    height: 16px;
-    background: rgba(255, 255, 255, 0.1);
-    flex-shrink: 0;
-}
-
 /* ── Model Selector ────────────────────────────── */
 .modelSelectorWrap {
     display: flex;

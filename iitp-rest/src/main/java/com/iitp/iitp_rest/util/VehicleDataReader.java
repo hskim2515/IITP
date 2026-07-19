@@ -3,6 +3,7 @@ package com.iitp.iitp_rest.util;
 import com.iitp.iitp_rest.model.VehicleEvent;
 import com.iitp.iitp_rest.model.VehicleInfo;
 import com.iitp.iitp_rest.model.analytics.LinkStatsResponse;
+import com.iitp.iitp_rest.model.analytics.LinkTrafficResponse;
 import com.iitp.iitp_rest.model.analytics.OverallSummaryResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,6 +27,38 @@ public class VehicleDataReader {
 
     @Value("${database.vehicle_sim.localPath:}")
     private String localPath;
+
+    /** versionId → 로컬 캐시된 DB 사본 (viewport 스트리밍 등 반복 조회용 — 요청마다 GB급 재다운로드 방지) */
+    private final Map<String, File> dbFileCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 무효화 연쇄 리스너 — 파생 캐시(VehicleController ViewportCtx 등)가 등록해 함께 비워진다 */
+    private final java.util.List<java.util.function.Consumer<String>> invalidationListeners =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    public void addInvalidationListener(java.util.function.Consumer<String> listener) {
+        invalidationListeners.add(listener);
+    }
+
+    /** 캐시 우선 DB 파일 준비. 반복 조회(viewport 스트리밍) 전용 — 호출측은 파일을 삭제하면 안 된다. */
+    private File prepareDbFileCached(String versionId) throws IOException {
+        File cached = dbFileCache.get(versionId);
+        if (cached != null && cached.exists()) return cached;
+        File fresh = prepareDbFile(versionId);
+        dbFileCache.put(versionId, fresh);
+        return fresh;
+    }
+
+    /** vehicle_sim.db 재생성/삭제 시 캐시 무효화 (localPath 직접 파일은 삭제하지 않음) */
+    public void invalidateDbCache(String versionId) {
+        File f = dbFileCache.remove(versionId);
+        if (f != null && (localPath == null || localPath.isBlank()
+                || !f.getAbsolutePath().equals(new File(localPath).getAbsolutePath()))) {
+            try { f.delete(); } catch (Exception ignored) {}
+        }
+        for (var l : invalidationListeners) {
+            try { l.accept(versionId); } catch (Exception ignored) {}
+        }
+    }
 
     private File prepareDbFile(String versionId) throws IOException {
         // 로컬 파일이 설정되어 있으면 원격 다운로드 없이 직접 사용
@@ -152,11 +185,131 @@ public class VehicleDataReader {
         return vehicleEventList;
     }
 
+    /** viewport 필터 조회 결과 — events + 상한 적용 전 전체 매칭 차량 수 (밀집 판단용) */
+    public record FilteredVehicleEvents(List<VehicleEvent> events, int totalVehicles) {}
+
+    /**
+     * viewport(bbox 내 링크) + 시간창 필터 차량 이벤트 조회 (개별 차량 near LOD 스트리밍).
+     *
+     * <p>차량 선별: 시간창 내에 주어진 링크 중 하나라도 지난 veh_id.
+     * 궤적 슬라이싱: 선별 차량의 시간창 내 이벤트 전부(링크 무관 — bbox 밖 구간도 보간 연속성 위해 포함).
+     * IN 절 대신 temp table 사용 — SQLite 변수 한도(999) 및 대량 링크/차량 대응.
+     *
+     * @param linkIds  bbox 내 링크 id (비면 빈 결과)
+     * @param fromTime 시간창 시작(초, 버퍼 포함), toTime 끝. 둘 다 0 이면 전체 시간.
+     * @param maxVehicles 선별 차량 수 상한 (0 이면 무제한) — 응답 폭주 방지
+     */
+    public FilteredVehicleEvents readVehicleEventsFiltered(String versionId, List<String> linkIds,
+                                                           double fromTime, double toTime, int maxVehicles) {
+        List<VehicleEvent> out = new ArrayList<>();
+        int total = 0;
+        if (linkIds == null || linkIds.isEmpty()) return new FilteredVehicleEvents(out, 0);
+
+        try {
+            File dbFile = prepareDbFileCached(versionId); // 반복 조회 — 삭제 금지
+            try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:");
+                 Statement stmt = conn.createStatement()) {
+                stmt.execute("ATTACH DATABASE '" + dbFile.getAbsolutePath() + "' AS vehicle_sim_db");
+
+                boolean isNewSchema = tableExists(conn, "vehicle_sim_db", "VehicleEvent");
+                String tableName = isNewSchema ? "VehicleEvent" : "VehicleEventDebugging";
+                boolean useTimeWindow = !(fromTime == 0 && toTime == 0);
+                String timeFilter = useTimeWindow ? " AND e.timestep >= " + fromTime + " AND e.timestep < " + toTime : "";
+
+                // 1) bbox 링크 temp table
+                stmt.execute("CREATE TEMP TABLE bbox_links (id TEXT PRIMARY KEY)");
+                try (PreparedStatement ps = conn.prepareStatement("INSERT OR IGNORE INTO bbox_links(id) VALUES (?)")) {
+                    for (String id : linkIds) { ps.setString(1, id); ps.addBatch(); }
+                    ps.executeBatch();
+                }
+
+                // 2) 시간창 내 bbox 링크를 지난 차량 전체 집합 (1회 스캔 → 전체 수 + 상한 선별에 재사용).
+                //    상한 초과 시 우선순위 = viewport 체류시간(창 내 bbox 링크 이벤트 수) 내림차순
+                //    → 밀집 지역에서 화면을 스쳐가는 차보다 오래 보이는 차를 우선 표시.
+                //    veh_id 2차 정렬로 결정적(deterministic) → 창 갱신 간 선별 집합이 안정적.
+                stmt.execute("CREATE TEMP TABLE all_sel AS " +
+                        "SELECT e.veh_id AS id, COUNT(*) AS cnt FROM vehicle_sim_db." + tableName + " e " +
+                        "JOIN bbox_links b ON e.link_id = b.id WHERE 1=1" + timeFilter +
+                        " GROUP BY e.veh_id");
+                try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM all_sel")) {
+                    if (rs.next()) total = rs.getInt(1);
+                }
+                String limitClause = maxVehicles > 0 ? " LIMIT " + maxVehicles : "";
+                stmt.execute("CREATE TEMP TABLE sel_vehicles AS " +
+                        "SELECT id FROM all_sel ORDER BY cnt DESC, id" + limitClause);
+
+                // 3) 선별 차량의 시간창 내 전체 이벤트 (링크 무관)
+                String dataSql = "SELECT e.veh_id, e.timestep, e.link_id, e.lane_id, e.pos_x, e.pos_y " +
+                        "FROM vehicle_sim_db." + tableName + " e JOIN sel_vehicles s ON e.veh_id = s.id " +
+                        "WHERE 1=1" + timeFilter + " ORDER BY e.veh_id, e.timestep";
+                try (ResultSet rs = stmt.executeQuery(dataSql)) {
+                    while (rs.next()) {
+                        VehicleEvent v = new VehicleEvent();
+                        v.setId(rs.getString("veh_id"));
+                        v.setTimestep(rs.getDouble("timestep"));
+                        v.setLinkId(rs.getString("link_id"));
+                        v.setLaneId(rs.getString("lane_id"));
+                        v.setPosX(rs.getFloat("pos_x"));
+                        v.setPosY(rs.getFloat("pos_y"));
+                        out.add(v);
+                    }
+                }
+            }
+        } catch (SQLException | IOException e) {
+            logger.error("[readVehicleEventsFiltered] 필터 조회 실패 versionId={}", versionId, e);
+        }
+        return new FilteredVehicleEvents(out, total);
+    }
+
+    /** 이벤트 총 건수 (DB 없으면 0). 대용량 전체-로드 가드/largeMode 판단용 */
+    public long countEvents(String versionId) {
+        try {
+            File dbFile = prepareDbFileCached(versionId);
+            try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:");
+                 Statement stmt = conn.createStatement()) {
+                stmt.execute("ATTACH DATABASE '" + dbFile.getAbsolutePath() + "' AS vehicle_sim_db");
+                boolean isNewSchema = tableExists(conn, "vehicle_sim_db", "VehicleEvent");
+                String tableName = isNewSchema ? "VehicleEvent" : "VehicleEventDebugging";
+                try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM vehicle_sim_db." + tableName)) {
+                    if (rs.next()) return rs.getLong(1);
+                }
+            }
+        } catch (FileNotFoundException e) {
+            return 0; // DB 없음
+        } catch (SQLException | IOException e) {
+            logger.error("[countEvents] 조회 실패 versionId={}", versionId, e);
+        }
+        return 0;
+    }
+
+    /** 시뮬레이션 전체 시간 범위 [min,max] (초). 실패 시 [0,600] */
+    public double[] readSimTimeRange(String versionId) {
+        try {
+            File dbFile = prepareDbFileCached(versionId); // 반복 조회 — 삭제 금지
+            try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:");
+                 Statement stmt = conn.createStatement()) {
+                stmt.execute("ATTACH DATABASE '" + dbFile.getAbsolutePath() + "' AS vehicle_sim_db");
+                boolean isNewSchema = tableExists(conn, "vehicle_sim_db", "VehicleEvent");
+                String tableName = isNewSchema ? "VehicleEvent" : "VehicleEventDebugging";
+                try (ResultSet rs = stmt.executeQuery(
+                        "SELECT MIN(timestep) AS mn, MAX(timestep) AS mx FROM vehicle_sim_db." + tableName)) {
+                    if (rs.next()) {
+                        return new double[]{ rs.getDouble("mn"), rs.getDouble("mx") };
+                    }
+                }
+            }
+        } catch (SQLException | IOException e) {
+            logger.error("[readSimTimeRange] 조회 실패 versionId={}", versionId, e);
+        }
+        return new double[]{0, 600};
+    }
+
     /** veh_id → VehicleInfo (length, width 등) 맵 반환 */
     public Map<String, VehicleInfo> readVehicleInfoMap(String versionId) {
         Map<String, VehicleInfo> map = new HashMap<>();
         try {
-            File dbFile = prepareDbFile(versionId);
+            // ⚠️ prepareDbFile(비캐시)은 호출마다 120MB temp 사본 생성 + 미삭제로 디스크 누수 (70GB 실사고)
+            File dbFile = prepareDbFileCached(versionId);
             String memoryUrl = "jdbc:sqlite::memory:";
             try (Connection conn = DriverManager.getConnection(memoryUrl);
                  Statement stmt = conn.createStatement()) {
@@ -176,16 +329,77 @@ public class VehicleDataReader {
                     }
                 }
             }
-        } catch (SQLException | IOException e) {
+        } catch (SQLException e) {
+            // VehicleInfo 테이블이 없는 더미 DB에서는 정상 — 빈 map 반환
+            if (e.getMessage() != null && e.getMessage().contains("no such table")) {
+                logger.debug("VehicleInfo 테이블 없음 (더미 DB): {}", versionId);
+            } else {
+                logger.error("Error while reading VehicleInfo", e);
+            }
+        } catch (IOException e) {
             logger.error("Error while reading VehicleInfo", e);
         }
         return map;
     }
 
+    /**
+     * 주어진 링크 집합 + 시간창에 대한 링크별 교통량 집계 (차량 overview LOD).
+     * bbox 내 링크 id 는 호출측(네트워크 RTree)에서 구해 전달한다 → 두 SQLite 협업.
+     * 개별 차량 이벤트를 로드하지 않고 SQLite GROUP BY 로 집계해 메모리 무관.
+     *
+     * @param linkIds  집계 대상 링크 id (비면 빈 결과)
+     * @param fromTime 시간창 시작(초), toTime 끝(초). 둘 다 0 이면 전체 시간.
+     */
+    public LinkTrafficResponse readLinkTraffic(String versionId, List<String> linkIds, int fromTime, int toTime) {
+        LinkTrafficResponse out = new LinkTrafficResponse();
+        out.setFromTime(fromTime);
+        out.setToTime(toTime);
+        if (linkIds == null || linkIds.isEmpty()) return out;
+
+        try {
+            // 히트맵 집계가 1초 간격 폴링 → 반드시 캐시 사용 (비캐시는 호출마다 120MB 사본 → 디스크 누수)
+            File tempDbFile = prepareDbFileCached(versionId);
+            String memoryUrl = "jdbc:sqlite::memory:";
+            try (Connection conn = DriverManager.getConnection(memoryUrl);
+                 Statement stmt = conn.createStatement()) {
+                stmt.execute("ATTACH DATABASE '" + tempDbFile.getAbsolutePath() + "' AS vehicle_sim_db");
+
+                boolean hasDebugging = tableExists(conn, "vehicle_sim_db", "VehicleEventDebugging");
+                boolean hasEvent = !hasDebugging && tableExists(conn, "vehicle_sim_db", "VehicleEvent");
+                if (!hasDebugging && !hasEvent) return out; // vehicle_sim 테이블 형식은 미지원(좌표 기반) → 빈 결과
+                String tableName = hasEvent ? "VehicleEvent" : "VehicleEventDebugging";
+                boolean hasSpd = hasDebugging;
+
+                String inClause = String.join(",", Collections.nCopies(linkIds.size(), "?"));
+                boolean useTimeWindow = !(fromTime == 0 && toTime == 0);
+                String timeFilter = useTimeWindow ? " AND timestep >= ? AND timestep < ? " : " ";
+                String speedExpr = hasSpd ? "ROUND(AVG(spd) * 3.6, 2)" : "0.0";
+                String sql = "SELECT link_id, COUNT(DISTINCT veh_id) AS volume, " + speedExpr + " AS avg_speed "
+                        + "FROM vehicle_sim_db." + tableName + " WHERE link_id IN (" + inClause + ")"
+                        + timeFilter + "GROUP BY link_id";
+
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    int idx = 1;
+                    for (String id : linkIds) ps.setString(idx++, id);
+                    if (useTimeWindow) { ps.setInt(idx++, fromTime); ps.setInt(idx++, toTime); }
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            out.getLinks().add(new LinkTrafficResponse.LinkTraffic(
+                                    rs.getString("link_id"), rs.getInt("volume"), rs.getDouble("avg_speed")));
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error("[readLinkTraffic] 집계 실패 versionId={}", versionId, e);
+        }
+        return out;
+    }
+
     // 링크별 교통량 통계 집계 (SQLite GROUP BY 활용 - 전체 이벤트 로드 없이 효율적으로 처리)
     public LinkStatsResponse readLinkStats(String versionId, int interval, int topN) {
         try {
-            File tempDbFile = prepareDbFile(versionId);
+            File tempDbFile = prepareDbFileCached(versionId); // 비캐시는 호출마다 사본 → 디스크 누수
 
             String memoryUrl = "jdbc:sqlite::memory:";
             try (Connection conn = DriverManager.getConnection(memoryUrl);
@@ -394,7 +608,7 @@ public class VehicleDataReader {
     /** 시뮬레이션 전체 요약 통계 */
     public OverallSummaryResponse readOverallSummary(String versionId) {
         try {
-            File dbFile = prepareDbFile(versionId);
+            File dbFile = prepareDbFileCached(versionId); // 비캐시는 호출마다 사본 → 디스크 누수
             String memoryUrl = "jdbc:sqlite::memory:";
             try (Connection conn = DriverManager.getConnection(memoryUrl);
                  Statement stmt = conn.createStatement()) {

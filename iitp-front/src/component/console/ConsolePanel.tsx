@@ -23,7 +23,11 @@ const HEADER_H = 30;
 const DEFAULT_H = 200;
 const MIN_H = 80;
 
-export const ConsolePanel: React.FC = () => {
+interface ConsolePanelProps {
+    embedded?: boolean;
+}
+
+export const ConsolePanel: React.FC<ConsolePanelProps> = ({ embedded = false }) => {
     const entries = useLogStore((s) => s.entries);
     const clear   = useLogStore((s) => s.clear);
 
@@ -82,6 +86,63 @@ export const ConsolePanel: React.FC = () => {
     };
 
     const fmt = (d: Date) => d.toTimeString().slice(0, 8);
+
+    if (embedded) {
+        return (
+            <div style={{
+                background: '#0b0d17',
+                borderTop: '1px solid rgba(255,255,255,0.09)',
+                display: 'flex',
+                flexDirection: 'column',
+                fontFamily: 'Pretendard, "Apple SD Gothic Neo", sans-serif',
+                fontSize: 12,
+                marginTop: 8,
+            }}>
+                {/* 헤더 */}
+                <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    padding: '6px 10px',
+                    gap: 6,
+                    flexShrink: 0,
+                    borderBottom: '1px solid rgba(255,255,255,0.07)',
+                    cursor: 'pointer',
+                }} onClick={() => setOpen(v => !v)}>
+                    <span style={{ fontSize: 8, color: '#555' }}>{open ? '▼' : '▲'}</span>
+                    <span style={{ color: '#666', fontSize: 11, fontWeight: 600, letterSpacing: 1 }}>로그</span>
+                    {errorCount > 0 && (
+                        <span style={{ fontSize: 10, fontWeight: 700, color: '#f06060',
+                            background: 'rgba(240,96,96,0.1)', padding: '1px 6px', borderRadius: 3 }}>
+                            ✕ {errorCount}
+                        </span>
+                    )}
+                    {warnCount > 0 && (
+                        <span style={{ fontSize: 10, fontWeight: 700, color: '#f0b840',
+                            background: 'rgba(240,184,64,0.1)', padding: '1px 6px', borderRadius: 3 }}>
+                            ▲ {warnCount}
+                        </span>
+                    )}
+                    <div style={{ flex: 1 }} />
+                    <button
+                        onClick={(e) => { e.stopPropagation(); clear(); }}
+                        style={{ ...tabBtnStyle, color: '#444', fontSize: 10 }}
+                        title="로그 지우기"
+                    >
+                        지우기
+                    </button>
+                </div>
+                {open && (
+                    <div ref={bodyRef} style={{ maxHeight: 180, overflowY: 'auto', overflowX: 'hidden' }}>
+                        {entries.length === 0 ? (
+                            <div style={{ padding: '10px 12px', color: '#333', fontSize: 11 }}>표시할 로그가 없습니다.</div>
+                        ) : (
+                            [...entries].reverse().map(e => <LogRow key={e.id} entry={e} fmt={fmt} />)
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    }
 
     return (
         <div style={{

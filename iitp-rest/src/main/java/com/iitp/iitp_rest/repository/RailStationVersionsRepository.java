@@ -12,5 +12,6 @@ public interface RailStationVersionsRepository extends JpaRepository<RailStation
 
     Optional<RailStationVersion> findByVersionId(String versionId);
 
+    void deleteByVersionId(String versionId);
 }
 

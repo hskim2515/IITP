@@ -22,6 +22,9 @@ import { useShallow } from "zustand/react/shallow";
 import { useEventStore } from "@stores/useEventStore";
 import { modifyFeatureEventHandlers } from "@handler/modifyFeatureEventHandlers";
 import { extractFeatureTypeFromGuid } from "@utils/guid";
+import { saveNetworkDiffTileAware } from "@utils/networkDiff";
+import { reconcileNetworkHistoryTileState } from "@utils/networkHistory";
+import { NETWORK_TILING } from "@utils/lodConstants";
 import { MenuTreeResponse } from "@type/openapi.gen";
 import styles from "@css/PropertyPanel.module.css";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
@@ -149,12 +152,24 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         const payloadData = submenu.item?.fullData ? currentJson : Object.values(currentJson)[0];
         const payload = { data: payloadData, logs: mergedLog };
         try {
-            await axiosInstance({ method: api.method, url: api.url + '/' + versionKey, data: payload });
+            if (activeSubmenu.menuCode === 'NETWORK') {
+                // 네트워크는 diff 저장 단일 진입점 (변경분만 전송 + 타일모드 삭제 id 합집합).
+                // ⚠️ 타일 모드에서 전체 저장 폴백 금지 — viewport 일부가 전국 데이터를 덮어씀.
+                const result = await saveNetworkDiffTileAware(versionKey);
+                if (result === 'skipped') {
+                    if (NETWORK_TILING.ENABLED) throw new Error('diff 저장 불가 (타일 모드 — 전체 저장 폴백 금지)');
+                    await axiosInstance({ method: api.method, url: api.url + '/' + versionKey, data: payload });
+                }
+            } else {
+                await axiosInstance({ method: api.method, url: api.url + '/' + versionKey, data: payload });
+            }
             historyStore.getState().resetUpdateLogs();
             setReloadFlag(prev => !prev);
             setMessage({ type: 'info', text: '저장 완료' });
         } catch (error) {
             setMessage({ type: 'error', text: '저장 실패: ' + error });
+            // SaveVersionModal 이 실패를 인지해야 버전 전환/유령 버전 생성을 막는다
+            throw error;
         }
     };
 
@@ -187,6 +202,11 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         const mergeJsonData = mergeJsonWithLogRecursive(currentJsonData, updateHistory, isUndo);
         store.getState().setCurrentJsonData(mergeJsonData);
 
+        // 타일 모드 네트워크: 삭제 마스크(MVT)·diff 삭제 목록도 로그 의미에 맞게 되돌림/재적용
+        if (activeSubmenu.menuCode === 'NETWORK') {
+            reconcileNetworkHistoryTileState(updateHistory, isUndo);
+        }
+
         // updateLogs가 비었으면(모두 되돌림) isChanged 해제
         const remainingLogs = historyStore.getState().updateLogs;
         const remainingSnapshot = historyStore.getState().snapshotUpdateLogs;
@@ -205,8 +225,9 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         <SaveVersionModal
             open={versionModalOpen}
             onConfirm={async (versionKey) => {
-                setVersionModalOpen(false);
+                // 저장 성공 후에만 모달 닫기 — 실패 시 모달이 에러를 표시해야 함
                 await doSave(versionKey);
+                setVersionModalOpen(false);
             }}
             onCancel={() => setVersionModalOpen(false)}
         />

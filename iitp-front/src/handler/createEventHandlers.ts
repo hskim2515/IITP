@@ -685,9 +685,9 @@ const featureTypeHandlersInternal = {
         return cleanup;
     },
 
-    /** 신호 추가: 교차로 노드를 클릭하여 신호 배치 */
+    /** 신호 추가: 교차로 in 포트(정지선)를 클릭하여 신호 배치 */
     signals: (record: Record<string, any>) => {
-        setMessage({ type: "info", text: "신호를 배치할 교차로 노드를 클릭하세요." });
+        setMessage({ type: "info", text: "신호를 배치할 교차로 정지선(in 포트)을 클릭하세요." });
 
         const { olEventManager, cesiumEventManager } = useEventStore.getState();
 
@@ -700,6 +700,13 @@ const featureTypeHandlersInternal = {
             setMessage({ type: "info", text: `신호가 추가되었습니다. (노드 ID: ${nodeId})` });
         };
 
+        // in 포트의 linkId → link.toNode 로 nodeId 도출
+        const resolveNodeIdFromPort = (linkId: string | number): string | number | null => {
+            const network = useNetworkStore.getState().currentJsonData;
+            const link = network?.links.find((l) => String(l.id) === String(linkId));
+            return link ? link.toNode : null;
+        };
+
         const olDrawend = (e: DrawEvent) => {
             const olMap = useOpenLayersStore.getState().map;
             if (!olMap) return;
@@ -707,9 +714,27 @@ const featureTypeHandlersInternal = {
             if (!(geom instanceof Point)) return;
             const coord = geom.getCoordinates();
             const pixel = olMap.getPixelFromCoordinate(coord);
+
+            // in 포트 피처 우선 피킹
+            const portFeature = pickFromOpenLayers(
+                olMap, pixel,
+                (f) => f.get('featureType') === 'ports' && f.get('type') === 'in'
+            );
+            if (portFeature) {
+                const nodeId = resolveNodeIdFromPort(portFeature.get('linkId'));
+                if (nodeId == null) {
+                    setMessage({ type: "warn", text: "포트에 연결된 링크를 찾을 수 없습니다." });
+                    return;
+                }
+                processAndStoreSignal(nodeId);
+                e.target.abortDrawing();
+                return;
+            }
+
+            // in 포트 없으면 노드 폴백
             const nodeFeature = pickFromOpenLayers(olMap, pixel, (f) => f.get('featureType') === 'nodes');
             if (!nodeFeature) {
-                setMessage({ type: "warn", text: "네트워크 노드 위를 클릭해주세요." });
+                setMessage({ type: "warn", text: "교차로 정지선(포트) 또는 노드를 클릭해주세요." });
                 return;
             }
             processAndStoreSignal(nodeFeature.get('id'));
@@ -719,15 +744,33 @@ const featureTypeHandlersInternal = {
         const cesiumClick = (e: Cesium.ScreenSpaceEventHandler.PositionedEvent) => {
             const viewer = useCesiumStore.getState().viewer;
             if (!viewer) return;
-            const picked = pickFromCesium(
+
+            // in 포트 엔티티 우선 피킹 (cylinder + type === 'in')
+            const portPicked = pickFromCesium(
+                viewer, e.position,
+                (p) => p.id instanceof Cesium.Entity && p.id.cylinder != null && p.id.properties?.getValue()?.type === 'in'
+            );
+            if (portPicked) {
+                const portData = portPicked.id.properties.getValue(viewer.clock.currentTime);
+                const nodeId = resolveNodeIdFromPort(portData.linkId);
+                if (nodeId == null) {
+                    setMessage({ type: "warn", text: "포트에 연결된 링크를 찾을 수 없습니다." });
+                    return;
+                }
+                processAndStoreSignal(nodeId);
+                return;
+            }
+
+            // 노드 폴백
+            const nodePicked = pickFromCesium(
                 viewer, e.position,
                 (p) => p.id instanceof Cesium.Entity && p.id.properties?.getValue()?.featureType === 'nodes'
             );
-            if (!picked) {
-                setMessage({ type: "warn", text: "네트워크 노드를 클릭해주세요." });
+            if (!nodePicked) {
+                setMessage({ type: "warn", text: "교차로 정지선(포트) 또는 노드를 클릭해주세요." });
                 return;
             }
-            const nodeData = picked.id.properties.getValue(viewer.clock.currentTime);
+            const nodeData = nodePicked.id.properties.getValue(viewer.clock.currentTime);
             processAndStoreSignal(nodeData.id);
         };
 
@@ -748,7 +791,8 @@ const featureTypeHandlersInternal = {
         const snapLayerName = "network";
         olEventManager?.bind(`draw:${record.featureType}:end`, olDrawHandler, { drawGeometryType: GeometryType.POINT });
         const snapLayer = useLayerStore.getState().layerManager?.getLayerByName(snapLayerName);
-        const snapFeatures = getFeaturesByProperties(snapLayer ?? undefined, { featureType: "nodes" });
+        // in 포트에 스냅 (정지선 포인트 피처)
+        const snapFeatures = getFeaturesByProperties(snapLayer ?? undefined, { featureType: "ports", type: "in" });
         olEventManager?.bind(`snap:${record.featureType}`, olSnap, { features: snapFeatures ?? new Collection<Feature<Geometry>>() });
         cesiumEventManager?.bind("singleclick", cesiumClickHandler);
 

@@ -1,7 +1,7 @@
 package com.iitp.iitp_rest.service.signal;
 
 import com.iitp.iitp_rest.model.signal.SignalTodXml;
-import com.iitp.iitp_rest.util.SftpFileManager;
+import com.iitp.iitp_rest.util.FileStorageService;
 import jakarta.xml.bind.JAXBContext;
 import jakarta.xml.bind.JAXBException;
 import jakarta.xml.bind.Marshaller;
@@ -22,7 +22,7 @@ import java.net.URL;
 @RequiredArgsConstructor
 public class SignalTodService {
 
-    private final SftpFileManager sftpFileManager;
+    private final FileStorageService fileStorage;
 
     @Value("${database.vehicle_sim.remoteUrl}")
     private String remoteUrl;
@@ -37,7 +37,7 @@ public class SignalTodService {
 
     public void saveByScenarioKey(String scenarioKey, SignalTodXml data) throws Exception {
         byte[] xmlBytes = marshalToXml(data, SignalTodXml.class);
-        sftpFileManager.uploadFile(new ByteArrayInputStream(xmlBytes), scenarioKey, "signalTOD.xml");
+        fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), scenarioKey, "signalTOD.xml");
         log.info("[SignalTodService] SFTP 저장 완료: {}/signalTOD.xml", scenarioKey);
     }
 

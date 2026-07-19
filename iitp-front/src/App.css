@@ -552,20 +552,25 @@ body {
 /*timeline*/
 .timeline-container {
   position: absolute;
-  top: 5px;
-  right: 600px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
   flex-direction: column;
   justify-content: center;
   gap: 2px;
+  width: 600px;
   color: #ccc;
   font-family: 'Segoe UI', sans-serif;
+  pointer-events: auto;
 }
 
 .ruler {
   display: flex;
   position: relative;
+  width: 600px;
   height: 12px;
+  overflow: hidden;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
@@ -573,14 +578,16 @@ body {
   width: 100px;
   text-align: center;
   font-size: 9px;
-  color: #555;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  color: #aaa;
+  border-left: 1px solid rgba(255, 255, 255, 0.2);
   line-height: 12px;
 }
 
 .track {
   position: relative;
+  width: 600px;
   height: 16px;
+  overflow: hidden;
   background-color: rgba(255, 255, 255, 0.04);
   border-radius: 3px;
 }

@@ -15,15 +15,16 @@ public record OsmSaveResponse(
         PublicTransitResponse busStations,
         RailPublicTransitResponse railStations,
         Map<String, Object> busRoutes,
-        Map<String, Object> railRoutes
+        Map<String, Object> railRoutes,
+        boolean simplified   // true = 간소화 응답 (전국 등 대형 bbox)
 ) {
     /** 기존 호출부 호환: 경고만 */
     public OsmSaveResponse(NetworkResponse network, List<String> warnings) {
-        this(network, warnings, List.of(), List.of(), null, null, null, null);
+        this(network, warnings, List.of(), List.of(), null, null, null, null, false);
     }
 
     /** 에러 포함 */
     public OsmSaveResponse(NetworkResponse network, List<String> warnings, List<String> errors) {
-        this(network, warnings, errors, List.of(), null, null, null, null);
+        this(network, warnings, errors, List.of(), null, null, null, null, false);
     }
 }

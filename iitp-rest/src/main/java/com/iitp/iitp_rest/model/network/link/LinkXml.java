@@ -43,6 +43,9 @@ public class LinkXml {
     @XmlAttribute
     @XmlJavaTypeAdapter(LinkTypeAdapter.class)
     private LinkType type;
+    /** 도로명 (표준노드링크 ROAD_NAME 등 원본 유래, 옵셔널) */
+    @XmlAttribute
+    private String name;
     @XmlAttribute
     private String layer;
     @XmlAttribute(name = "stop_line")

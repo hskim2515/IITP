@@ -42,7 +42,7 @@ public class SignalTodController {
             );
             return ResponseEntity.ok(result);
         } catch (RuntimeException e) {
-            if (e.getCause() instanceof java.io.FileNotFoundException)
+            if (e.getCause() instanceof java.io.IOException)
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
             log.error("[SignalTodController] 조회 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
@@ -56,7 +56,7 @@ public class SignalTodController {
         try {
             Map<String, Object> result = XmlLayerConverter.toMap(signalTodService.getByScenarioKey(scenarioKey));
             return ResponseEntity.ok(result);
-        } catch (java.io.FileNotFoundException e) {
+        } catch (java.io.IOException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (Exception e) {
             log.error("[SignalTodController] origin 조회 오류", e);

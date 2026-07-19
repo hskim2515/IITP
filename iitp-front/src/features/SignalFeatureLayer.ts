@@ -1,4 +1,5 @@
 import VectorSource from "ol/source/Vector";
+import { getActiveVersionId } from "@utils/versionId";
 import VectorLayer from "ol/layer/Vector";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { Feature } from "ol";
@@ -16,6 +17,12 @@ import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import { Style, Icon, Circle as CircleStyle, Fill, Text, Stroke } from "ol/style";
 import { FeatureLike } from "ol/Feature";
 import { signalRenderState } from "@stores/signalRenderState";
+import { getSignalLodTierByResolution, SIGNAL_TILING } from "@utils/lodConstants";
+import { SignalTileManager } from "@managers/SignalTileManager";
+import { SignalTileMembership } from "@managers/signalTileMembership";
+import { unByKey } from "ol/Observable";
+import type { EventsKey } from "ol/events";
+import type OLMap from "ol/Map";
 
 /* ── 신호등 캔버스 아이콘 (정적) ── */
 function createTrafficLightIcon(): HTMLCanvasElement {
@@ -59,7 +66,11 @@ function utcHHMMSS(jd: JulianDate): string {
     return `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
 }
 
-function signalStyle(feature: FeatureLike): Style[] {
+function signalStyle(feature: FeatureLike, resolution: number): Style[] {
+    const tier = getSignalLodTierByResolution(resolution);
+    // cluster tier: 완전 숨김 (원거리)
+    if (tier === 'cluster') return [];
+
     const nodeId    = String(feature.get("nodeId") ?? "");
     const connGuids = (feature.get("connGuids") as string[]) ?? [];
     const connIds   = (feature.get("connIds")   as string[]) ?? [];
@@ -77,9 +88,15 @@ function signalStyle(feature: FeatureLike): Style[] {
         dotColor = "#ff0000";
     }
 
-    // anchor [0.5, 1.0] → feature 좌표가 아이콘 하단 중앙
-    // 초록 램프: 아이콘 H=34 기준 top에서 27px → 하단에서 7px 위
-    // 화살표는 초록 램프 위치에 오버레이 (offsetY = -7)
+    // marker tier(SIGNAL_DOT ~ SIGNAL_ICON): 컬러 dot만 표시
+    if (tier === 'marker') {
+        const dotR = Math.min(5, Math.max(2, 2.5 / resolution));
+        return [new Style({
+            image: new CircleStyle({ radius: dotR, fill: new Fill({ color: dotColor }) }),
+        })];
+    }
+
+    // 근거리(< SIGNAL_ICON): 신호등 아이콘 + 컬러 dot + 방향 화살표
     const arrowParts: string[] = [];
     if (turnings.includes("U_Turn") || turnings.includes("UTurn"))       arrowParts.push("↩");
     if (turnings.includes("Left_Turn") || turnings.includes("Left"))     arrowParts.push("←");
@@ -118,6 +135,12 @@ export class SignalFeatureLayer extends VectorLayer {
     private colorInterval: ReturnType<typeof setInterval> | null = null;
     private lastWallClock = "";
 
+    // ── 신호 타일링 (SIGNAL_TILING.ENABLED 일 때만; 읽기 전용) ──
+    // viewport 신호 데이터(nodeId → signal)만 메모리 보유. feature 위치는 네트워크 링크에서 파생.
+    private tileManager: SignalTileManager | null = null;
+    private membership = new SignalTileMembership();
+    private moveEndKey: EventsKey | null = null;
+
     constructor() {
         const source = new VectorSource();
         super({
@@ -126,7 +149,7 @@ export class SignalFeatureLayer extends VectorLayer {
             zIndex: 400,
             updateWhileAnimating: true,
             updateWhileInteracting: true,
-            style: (feature: FeatureLike) => signalStyle(feature),
+            style: (feature: FeatureLike, resolution: number) => signalStyle(feature, resolution),
         });
 
         this.source = source;
@@ -201,7 +224,10 @@ export class SignalFeatureLayer extends VectorLayer {
         this.source.clear();
         if (!currentJsonData) return;
 
-        const { signals } = currentJsonData;
+        // 타일 모드: viewport 신호만 사용. 비-타일 모드: store 전체 신호 사용.
+        const signals: any[] = SIGNAL_TILING.ENABLED
+            ? this.membership.values()
+            : (currentJsonData.signals ?? []);
         if (!signals?.length) return;
 
         const networkData = useNetworkStore.getState().currentJsonData;
@@ -292,11 +318,43 @@ export class SignalFeatureLayer extends VectorLayer {
         return FEATURE_TYPE.SIGNAL;
     }
 
+    /** OL이 레이어를 map에 추가/제거할 때 — 타일 모드면 moveend 구독 + 초기 갱신 */
+    override setMapInternal(map: OLMap | null): void {
+        if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
+        super.setMapInternal(map);
+        if (map && SIGNAL_TILING.ENABLED) {
+            this.moveEndKey = map.on('moveend', () => this.updateTiles(map));
+            this.updateTiles(map);
+        } else if (!map) {
+            this.tileManager?.clear();
+            this.tileManager = null;
+        }
+    }
+
+    private updateTiles(map: OLMap): void {
+        const view = map.getView();
+        const size = map.getSize();
+        const resolution = view.getResolution();
+        if (!size || resolution == null) return;
+        if (!this.tileManager) {
+            const versionId = getActiveVersionId();
+            if (!versionId) return;
+            this.tileManager = new SignalTileManager(String(versionId), {
+                onTileLoaded: (_k, payload) => { if (this.membership.add(payload)) this.load(); },
+                onTileEvicted: (_k, payload) => { if (this.membership.remove(payload)) this.load(); },
+            });
+        }
+        this.tileManager.update(view.calculateExtent(size), resolution);
+    }
+
     public destroy() {
         if (this.colorInterval !== null) {
             clearInterval(this.colorInterval);
             this.colorInterval = null;
         }
+        if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
+        this.tileManager?.clear();
+        this.tileManager = null;
         this.unsubscribes.forEach(u => u());
         this.unsubscribes = [];
     }

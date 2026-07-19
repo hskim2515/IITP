@@ -44,13 +44,8 @@ public class KtdbOsmService {
             throw new IllegalArgumentException("해당 bbox에 KTDB 데이터가 없습니다. DB import 여부를 확인하세요.");
         }
 
-        // 사용된 노드 ID 수집 → 일괄 조회
-        Set<String> nodeIds = new HashSet<>();
-        for (KtdbLink lk : links) {
-            nodeIds.add(lk.getFNode());
-            nodeIds.add(lk.getTNode());
-        }
-        Map<String, KtdbNode> nodeMap = nodeRepo.findByNodeIdIn(nodeIds)
+        // bbox JOIN 쿼리로 노드 조회 — IN 파라미터 65535 한도 초과 방지
+        Map<String, KtdbNode> nodeMap = nodeRepo.findNodesForBboxLinks(west, east, south, north)
                 .stream().collect(Collectors.toMap(KtdbNode::getNodeId, n -> n));
 
         long skipped = links.stream()

@@ -8,6 +8,8 @@ import com.iitp.iitp_rest.model.pavementMarking.PavementMarkingVersion;
 import com.iitp.iitp_rest.repository.PavementMarkingLogsRepository;
 import com.iitp.iitp_rest.repository.PavementMarkingVersionsRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.w3c.dom.Document;
@@ -16,11 +18,14 @@ import org.w3c.dom.NodeList;
 
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.FileNotFoundException;
 import java.io.InputStream;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class PavementMarkingService {
@@ -28,6 +33,8 @@ public class PavementMarkingService {
     private final PavementMarkingVersionsRepository pavementMarkingVersionsRepository;
     private final PavementMarkingLogsRepository pavementMarkingLogsRepository;
 
+    @Value("${database.vehicle_sim.remoteUrl}")
+    private String remoteUrl;
 
     public PavementMarkingVersion getPavementMarking(String id) {
         return pavementMarkingVersionsRepository.findByVersionId(id).orElse(new PavementMarkingVersion());
@@ -78,10 +85,7 @@ public class PavementMarkingService {
     public List<PavementMarkingData> getDataFromXml(String versionId) throws Exception {
         List<PavementMarkingData> markingResponses = new ArrayList<>();
 
-        try (InputStream is = getClass().getClassLoader().getResourceAsStream(versionId + "/pavementMarking.xml")) {
-            if (is == null) {
-                return markingResponses;
-            }
+        try (InputStream is = new URL(remoteUrl + versionId + "/pavementMarking.xml").openStream()) {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document doc = builder.parse(is);
@@ -101,6 +105,9 @@ public class PavementMarkingService {
 
                 markingResponses.add(response);
             }
+        } catch (FileNotFoundException e) {
+            log.warn("[PavementMarking] pavementMarking.xml 없음: {}{}/pavementMarking.xml", remoteUrl, versionId);
+            return markingResponses;
         }
 
         // ORIGIN 버전 없는 경우 최초 저장

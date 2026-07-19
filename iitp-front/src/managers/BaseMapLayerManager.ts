@@ -33,7 +33,14 @@ class BaseMapLayerManager {
             const apiKey = process.env.REACT_APP_VWORLD_API_KEY;
             const finalUrl = url.replace("${API_KEY}", apiKey ?? "");
 
-            const provider = new Cesium.UrlTemplateImageryProvider({ url : finalUrl });
+            // maximumLevel 제한: 미설정 시 없는 타일 무한 요청("Failed to obtain image tile" 폭주).
+            // 스타일별 실측 최대 제공 줌: 위성/일반/하이브리드 z19, midnight z18 (2D TileLayerManager 와 동일)
+            const MAX_LEVEL_BY_KEY: Record<string, number> = {
+                satellite: 19, base: 19, hybrid: 19, midnight: 18, osm: 19,
+            };
+            const provider = new Cesium.UrlTemplateImageryProvider({
+                url: finalUrl, maximumLevel: MAX_LEVEL_BY_KEY[key] ?? 18,
+            });
             const imageryLayer = new Cesium.ImageryLayer(provider, { show: basic });
 
             this.viewer.imageryLayers.add(imageryLayer);
@@ -43,6 +50,9 @@ class BaseMapLayerManager {
 
             group.push(imageryLayer);
         });
+        // requestRenderMode: 이미지리 추가 후 렌더 요청 없으면 다음 카메라 조작까지
+        // 배경이 회색(globe baseColor)으로 남는다.
+        try { this.viewer.scene.requestRender(); } catch (_) {}
         return group;
     }
 
@@ -56,6 +66,7 @@ class BaseMapLayerManager {
             const name = layer["layer"];
             layer.show = visibleLayers.includes(name);
         });
+        try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
     public hide(groupName: string, layerName: string): void {
@@ -68,6 +79,7 @@ class BaseMapLayerManager {
                 layer.show = false;
             }
         });
+        try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
     public toggle(groupName: string, layerName: string): void {
@@ -82,6 +94,7 @@ class BaseMapLayerManager {
                     layer.show = newState;
                 }
             });
+            try { this.viewer.scene.requestRender(); } catch (_) {}
         }
     }
 

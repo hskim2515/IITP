@@ -27,6 +27,9 @@ public class NodeXml {
     private V2x v2x;
     @XmlAttribute
     private String center;
+    /** 교차로 명칭 (표준노드링크 NODE_NAME 등 원본 유래, 옵셔널) */
+    @XmlAttribute
+    private String name;
     @XmlElement(name = "port")
     private List<PortXml> ports = new ArrayList<>();
     @XmlElement(name = "connection")

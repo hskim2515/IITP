@@ -1,4 +1,6 @@
 import {Point} from "ol/geom";
+import {toLonLat} from "ol/proj";
+import {getDistance} from "ol/sphere";
 import {useOpenLayersStore} from "@stores/useOpenLayersStore";
 import {convertFeatureToRecord, createFeature} from "@utils/feature";
 import {Feature} from "ol";
@@ -67,7 +69,10 @@ function interpolateAlongLine(coords: number[][], offset: number): { point: [num
     for (let i = 1; i < coords.length; i++) {
         const [x1, y1] = coords[i - 1];
         const [x2, y2] = coords[i];
-        const segLen = Math.hypot(x2 - x1, y2 - y1);
+        // 지오메트리는 EPSG:3857인데 offset(셀 length 합)은 실제 미터 —
+        // 메르카토르 평면거리(hypot)는 위도 37°에서 실제의 ~1.25배라 실제 거리로 누적해야 함
+        const segLen = getDistance(toLonLat([x1, y1]), toLonLat([x2, y2]));
+        if (segLen === 0) continue;
 
         if (accumulated + segLen >= offset) {
             const ratio = (offset - accumulated) / segLen;
@@ -77,6 +82,12 @@ function interpolateAlongLine(coords: number[][], offset: number): { point: [num
             return { point: [x, y], angle };
         }
         accumulated += segLen;
+    }
+    // offset이 셀 길이 합 오차 등으로 지오메트리 전체 길이를 살짝 넘으면 끝점으로 클램프
+    if (coords.length >= 2) {
+        const [x1, y1] = coords[coords.length - 2];
+        const [x2, y2] = coords[coords.length - 1];
+        return { point: [x2, y2], angle: Math.atan2(x2 - x1, y2 - y1) };
     }
     return null;
 }

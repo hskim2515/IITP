@@ -16,6 +16,7 @@ public interface ScenarioService {
     void deleteScenario(Long id);
     boolean existsByKey(String key);
     ScenarioVersion createVersion(Long scenarioId, String key, String label);
+    void deleteVersion(Long scenarioId, Long versionId);
     void updateCoordinatesByKey(String key, double latitude, double longitude);
 }
 

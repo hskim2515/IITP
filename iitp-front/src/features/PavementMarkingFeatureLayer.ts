@@ -27,6 +27,8 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
     private readonly LAYER_NAME = "pavementMarking";
     private unsubscribe: () => void;
+    private networkUnsubscribe: (() => void) | null = null;
+    private reinterpolateTimer: ReturnType<typeof setTimeout> | null = null;
 
     constructor() {
         const source = new VectorSource();
@@ -36,6 +38,9 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
             visible: true,
 
             style: (feature: Feature, resolution: number) => {
+                // 보간 전(차선 타일 미로드) 피처는 [0,0] 임시 geometry — 렌더 생략
+                const c = (feature.getGeometry() as Point | undefined)?.getCoordinates();
+                if (!c || (c[0] === 0 && c[1] === 0)) return undefined;
                 const baseResolution = 1.2;
                 const scale = 0.05 * (baseResolution / resolution);
                 const markingType = feature.get("markingType");
@@ -172,6 +177,30 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
             listener,
             { fireImmediately: true }
         );
+
+        // 타일 모드: lane-edit 피처는 detail LOD viewport 타일에만 존재해 마킹 로드 시점에
+        // 차선이 없으면 보간 실패(geometry [0,0]). 타일 로드 후 네트워크 store 동기화가
+        // 발생하므로 이를 구독해 미해결 마킹만 재보간한다.
+        const networkStore = layerNameToStoreMap["network"] as any;
+        this.networkUnsubscribe = networkStore?.subscribe(
+            (state: any) => state.currentJsonData,
+            () => this.scheduleReinterpolate(),
+        ) ?? null;
+    }
+
+    /** 보간 실패([0,0]) 상태로 남은 마킹을 차선 타일 로드 후 재보간 (debounce) */
+    private scheduleReinterpolate(): void {
+        if (this.reinterpolateTimer) return;
+        this.reinterpolateTimer = setTimeout(() => {
+            this.reinterpolateTimer = null;
+            const unresolved = this.source.getFeatures().filter(f => {
+                const c = (f.getGeometry() as Point | undefined)?.getCoordinates();
+                return !c || (c[0] === 0 && c[1] === 0);
+            });
+            if (unresolved.length === 0) return;
+            interpolateByOffset(unresolved);
+            this.changed();
+        }, 200);
     }
 
     public async load(): Promise<void> {
@@ -336,5 +365,10 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
 
     public destroy() {
         this.unsubscribe();
+        this.networkUnsubscribe?.();
+        if (this.reinterpolateTimer) {
+            clearTimeout(this.reinterpolateTimer);
+            this.reinterpolateTimer = null;
+        }
     }
 }

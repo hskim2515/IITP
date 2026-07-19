@@ -12,5 +12,6 @@ public interface BusStationVersionsRepository extends JpaRepository<BusStationVe
 
     Optional<BusStationVersion> findByVersionId(String versionId);
 
+    void deleteByVersionId(String versionId);
 }
 

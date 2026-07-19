@@ -42,6 +42,21 @@ public class KtdbNetworkConverter {
     private static final double BASE_CELL_LEN = 69.44;
     private static final double JAM_DENSITY   = 150.0;
     private static final double INTERNAL_MAX_M = 25.0; // 이 길이 미만 + 양끝 고차수 노드 → 내부 링크
+    // 양끝 노드의 교차로명(node_name)이 같으면 같은 평면교차로의 분리 노드로 보고
+    // 넓은 교차로(왕복8차선 교차 시 횡단 40~60m)의 내부링크가 25m를 넘어도 병합 "후보"로.
+    // 실제 병합은 클러스터 span 게이트(5b) 통과 시에만 — 이름·길이만으로는 별개 교차로
+    // 두 개를 잇는 본선 링크(동부네거리 54m 실측)까지 흡수해 유령 교차로가 생긴다.
+    private static final double SAME_NAME_INTERNAL_MAX_M = 60.0;
+    /** 같은 교차로명 병합 결과 클러스터의 최대 공간 폭(m). 단일 대형 교차로 폭 상한. */
+    private static final double SAME_NAME_CLUSTER_SPAN_M = 50.0;
+
+    // 교차로 setback: 교차로에 모이는 최대 도로폭 + 여유(횡단보도 ~5m + 정지선 이격 ~3m).
+    // KTDB는 방향별 링크라 도로폭(차선수×차선폭)이 편도 폭 — 교차로 중심에서 정지선까지는
+    // 교차 도로 편도폭 + 횡단보도 + 정지선 이격이 필요 (위성사진 대비 침범 방지). 링크 길이 35% 상한.
+    private static final double SETBACK_MIN_M    = 8.0;
+    private static final double SETBACK_MAX_M    = 35.0;
+    private static final double SETBACK_MARGIN_M = 8.0;
+    private static final double SETBACK_MAX_FRAC = 0.35;
 
     private static final Map<Integer, double[]> RANK_DEFS = new HashMap<>();
     static {
@@ -62,6 +77,9 @@ public class KtdbNetworkConverter {
 
     public record ConvertResult(NetworkXml networkXml) {}
 
+    /** 교차로 회전 동선: 외부 진입/진출 링크쌍 + 내부링크 경유 경로 지오메트리(로컬 좌표) */
+    private record ConnData(long fromLinkId, long toLinkId, int turnCode, List<double[]> viaCoords) {}
+
     public ConvertResult convert(
             double south, double west, double north, double east,
             double baseLat, double baseLon, int networkId) {
@@ -70,10 +88,21 @@ public class KtdbNetworkConverter {
         List<KtdbLink> links = linkRepo.findByBbox(west, east, south, north);
         if (links.isEmpty()) throw new IllegalArgumentException("해당 bbox에 KTDB 데이터가 없습니다.");
 
-        Set<String> nodeIds = new HashSet<>();
-        for (KtdbLink lk : links) { nodeIds.add(lk.getFNode()); nodeIds.add(lk.getTNode()); }
-        Map<String, KtdbNode> nodeMap = nodeRepo.findByNodeIdIn(nodeIds)
+        // ROAD_USE=1(미사용: 공사중/폐쇄) 링크 제외 — 시뮬레이션 대상 아님
+        int beforeUse = links.size();
+        links = links.stream()
+                .filter(lk -> !"1".equals(lk.getRoadUse()))
+                .collect(Collectors.toList());
+        if (links.size() < beforeUse) {
+            log.info("ROAD_USE=미사용 링크 제외: {}개", beforeUse - links.size());
+        }
+        if (links.isEmpty()) throw new IllegalArgumentException("해당 bbox에 사용 중인 KTDB 링크가 없습니다.");
+
+        // findByNodeIdIn 대신 bbox JOIN 쿼리 사용 — 대용량 bbox에서 IN 파라미터 65535 한도 초과 방지
+        Map<String, KtdbNode> nodeMap = nodeRepo.findNodesForBboxLinks(west, east, south, north)
                 .stream().collect(Collectors.toMap(KtdbNode::getNodeId, n -> n));
+
+        Set<String> nodeIds = nodeMap.keySet();
 
         log.info("KTDB 직접 변환: 링크 {}개, 노드 {}개", links.size(), nodeMap.size());
 
@@ -96,16 +125,27 @@ public class KtdbNetworkConverter {
         }
 
         // ── 4. 내부 링크 판별 ─────────────────────────────────────────────────
+        // 확정 내부링크(양끝 degree≥3 + <25m)와 같은 교차로명 "후보"(25~60m)를 분리 —
+        // 후보는 5b에서 클러스터 span 게이트를 통과해야 병합된다.
         Set<String> internalIds = new HashSet<>();
+        List<KtdbLink> sameNameCands = new ArrayList<>();
         for (KtdbLink lk : links) {
             if (!coordsMap.containsKey(lk.getLinkId())) continue;
-            if (degree.getOrDefault(lk.getFNode(), 0) >= 3
-                    && degree.getOrDefault(lk.getTNode(), 0) >= 3
-                    && calcLength(coordsMap.get(lk.getLinkId())) < INTERNAL_MAX_M) {
+            double len = calcLength(coordsMap.get(lk.getLinkId()));
+            boolean hideg = degree.getOrDefault(lk.getFNode(), 0) >= 3
+                    && degree.getOrDefault(lk.getTNode(), 0) >= 3;
+            if (hideg && len < INTERNAL_MAX_M) {
                 internalIds.add(lk.getLinkId());
+                continue;
+            }
+            KtdbNode fn = nodeMap.get(lk.getFNode()), tn = nodeMap.get(lk.getTNode());
+            if (hideg && len < SAME_NAME_INTERNAL_MAX_M
+                    && fn != null && tn != null
+                    && "101".equals(fn.getNodeType()) && "101".equals(tn.getNodeType())
+                    && sameNonBlankName(fn.getNodeName(), tn.getNodeName())) {
+                sameNameCands.add(lk);
             }
         }
-        log.info("교차로 내부 링크: {}개", internalIds.size());
 
         // ── 5. 내부 링크로 연결된 노드 클러스터 병합 (Union-Find) ─────────────
         Map<String, String> parent = new HashMap<>();
@@ -115,6 +155,47 @@ public class KtdbNetworkConverter {
                 union(parent, lk.getFNode(), lk.getTNode());
             }
         }
+
+        // ── 5b. 같은 교차로명 후보 병합 — 클러스터 span 상한 게이트 ──────────
+        // 이름·길이만 믿고 병합하면 별개 교차로 두 개를 잇는 본선 링크(실측: 동부네거리 54m,
+        // 양쪽에 12~14m 링 교차로가 각각 존재)까지 흡수되어, 병합 중심(교차로가 아닌 지점)에
+        // 유령 노드가 생긴다. 병합 결과 클러스터의 공간 폭이 상한을 넘으면 거부 →
+        // 넓은 단일 교차로(≤50m)만 병합되고 인접 교차로 쌍은 분리 유지.
+        if (!sameNameCands.isEmpty()) {
+            Map<String, double[]> rootMin = new HashMap<>(), rootMax = new HashMap<>();
+            for (String nid : nodeIds) {
+                KtdbNode n = nodeMap.get(nid);
+                if (n == null) continue;
+                double[] xy = wgsToLocal(n.getLat(), n.getLon(), baseLat, baseLon);
+                String r = find(parent, nid);
+                rootMin.merge(r, xy.clone(), (a, b) -> new double[]{Math.min(a[0], b[0]), Math.min(a[1], b[1])});
+                rootMax.merge(r, xy.clone(), (a, b) -> new double[]{Math.max(a[0], b[0]), Math.max(a[1], b[1])});
+            }
+            sameNameCands.sort(Comparator
+                    .comparingDouble((KtdbLink lk) -> calcLength(coordsMap.get(lk.getLinkId())))
+                    .thenComparing(KtdbLink::getLinkId));
+            int merged = 0;
+            for (KtdbLink lk : sameNameCands) {
+                String ra = find(parent, lk.getFNode()), rb = find(parent, lk.getTNode());
+                if (ra.equals(rb)) { internalIds.add(lk.getLinkId()); continue; } // 이미 같은 클러스터 내부
+                double[] mn1 = rootMin.get(ra), mx1 = rootMax.get(ra);
+                double[] mn2 = rootMin.get(rb), mx2 = rootMax.get(rb);
+                if (mn1 == null || mn2 == null) continue;
+                double spanX = Math.max(mx1[0], mx2[0]) - Math.min(mn1[0], mn2[0]);
+                double spanY = Math.max(mx1[1], mx2[1]) - Math.min(mn1[1], mn2[1]);
+                if (Math.max(spanX, spanY) > SAME_NAME_CLUSTER_SPAN_M) continue; // 별개 교차로 쌍 — 병합 거부
+                union(parent, lk.getFNode(), lk.getTNode());
+                String nr = find(parent, lk.getFNode());
+                rootMin.put(nr, new double[]{Math.min(mn1[0], mn2[0]), Math.min(mn1[1], mn2[1])});
+                rootMax.put(nr, new double[]{Math.max(mx1[0], mx2[0]), Math.max(mx1[1], mx2[1])});
+                internalIds.add(lk.getLinkId());
+                merged++;
+            }
+            log.info("같은 교차로명 병합: 후보 {}개 중 {}개 병합 (span {}m 게이트)",
+                    sameNameCands.size(), merged, SAME_NAME_CLUSTER_SPAN_M);
+        }
+        log.info("교차로 내부 링크: {}개", internalIds.size());
+
         // ktdbNodeId → clusterRepresentative
         Map<String, String> nodeToCluster = new HashMap<>();
         for (String nid : nodeIds) nodeToCluster.put(nid, find(parent, nid));
@@ -159,6 +240,17 @@ public class KtdbNetworkConverter {
             linkIdMap.put(lk.getLinkId(), linkCnt++);
         }
 
+        // 우리 linkId → 차선 수/차선 폭 역인덱스 (connection 차선 번호·차선별 shape 계산용)
+        Map<Long, Integer> ourIdToLanes = new HashMap<>();
+        Map<Long, Double>  ourIdToLaneWidth = new HashMap<>();
+        for (KtdbLink lk : links) {
+            Long ourId = linkIdMap.get(lk.getLinkId());
+            if (ourId != null) {
+                ourIdToLanes.put(ourId, Math.max(1, lk.getLanes()));
+                ourIdToLaneWidth.put(ourId, RANK_DEFS.getOrDefault(lk.getRoadRank(), DEFAULT_DEFS)[2]);
+            }
+        }
+
         // ── 8. 클러스터별 in/out 외부 링크 수집 ──────────────────────────────
         Map<String, List<KtdbLink>> clusterIn  = new LinkedHashMap<>();
         Map<String, List<KtdbLink>> clusterOut = new LinkedHashMap<>();
@@ -180,9 +272,23 @@ public class KtdbNetworkConverter {
         }
 
         // ── 9b. 링크 shape에 setback 적용 ──────────────────────────────────
-        // 교차로(merged cluster) 진입/진출 링크의 끝점을 노드 방향으로 setback.
+        // 교차로 진입/진출 링크의 끝점을 후퇴시켜 링크가 교차로를 침범하지 않게 함.
         // → 링크는 교차로 직전에서 끊기고, 교차로 내부는 connection만 표현.
-        final double SETBACK_M = 5.0; // 교차로 진입 전 setback 거리(m)
+        // 교차로 판정: merged cluster 또는 이웃 클러스터 3개 이상(단일 노드 교차로 포함).
+        // setback 거리: 교차로에 모이는 최대 도로폭 기반 동적 산출 (고정 5m는 다차선 도로 침범).
+        Map<String, Set<String>> clusterNeighbors = new HashMap<>();
+        Map<String, Double> clusterMaxRoadWidth = new HashMap<>();
+        for (KtdbLink lk : links) {
+            if (!linkIdMap.containsKey(lk.getLinkId())) continue;
+            String[] eps = linkClusterEndpoints.get(lk.getLinkId());
+            if (eps == null || eps[0] == null || eps[1] == null) continue;
+            double roadWidth = Math.max(1, lk.getLanes())
+                    * RANK_DEFS.getOrDefault(lk.getRoadRank(), DEFAULT_DEFS)[2];
+            clusterNeighbors.computeIfAbsent(eps[0], k -> new HashSet<>()).add(eps[1]);
+            clusterNeighbors.computeIfAbsent(eps[1], k -> new HashSet<>()).add(eps[0]);
+            clusterMaxRoadWidth.merge(eps[0], roadWidth, Math::max);
+            clusterMaxRoadWidth.merge(eps[1], roadWidth, Math::max);
+        }
 
         for (String lkId : linkIdMap.keySet()) {
             List<double[]> coords = coordsMap.get(lkId);
@@ -191,20 +297,25 @@ public class KtdbNetworkConverter {
             if (eps == null) continue;
 
             String fRep = eps[0], tRep = eps[1];
+            double linkLen = calcLength(coords);
 
-            // 진입 끝점 setback: t_node가 merged cluster → 마지막 점을 노드 방향으로 후퇴
-            if (clusterNodeCount.getOrDefault(tRep, 1) > 1) {
+            // 진입 끝점 setback: t_node가 교차로 → 마지막 점을 노드 방향으로 후퇴
+            if (isJunctionCluster(tRep, clusterNodeCount, clusterNeighbors)) {
                 double[] nodePos = clusterLocalCoord.get(tRep);
                 if (nodePos != null) {
-                    List<double[]> trimmed = trimEnd(coords, nodePos, SETBACK_M);
+                    double setback = Math.min(setbackFor(tRep, clusterMaxRoadWidth),
+                            linkLen * SETBACK_MAX_FRAC);
+                    List<double[]> trimmed = trimEnd(coords, nodePos, setback);
                     coords.clear(); coords.addAll(trimmed);
                 }
             }
-            // 진출 시작점 setback: f_node가 merged cluster → 첫 점을 노드 방향으로 후퇴
-            if (clusterNodeCount.getOrDefault(fRep, 1) > 1) {
+            // 진출 시작점 setback: f_node가 교차로 → 첫 점을 노드 방향으로 후퇴
+            if (isJunctionCluster(fRep, clusterNodeCount, clusterNeighbors)) {
                 double[] nodePos = clusterLocalCoord.get(fRep);
                 if (nodePos != null) {
-                    List<double[]> trimmed = trimStart(coords, nodePos, SETBACK_M);
+                    double setback = Math.min(setbackFor(fRep, clusterMaxRoadWidth),
+                            linkLen * SETBACK_MAX_FRAC);
+                    List<double[]> trimmed = trimStart(coords, nodePos, setback);
                     coords.clear(); coords.addAll(trimmed);
                 }
             }
@@ -228,12 +339,12 @@ public class KtdbNetworkConverter {
             nodeExtOut.computeIfAbsent(lk.getFNode(), k -> new ArrayList<>()).add(lk);
         }
 
-        // 내부 링크 방향 그래프: fNode → list of tNode (클러스터 내부 이동 가능 경로)
-        Map<String, List<String>> internalAdj = new HashMap<>();
+        // 내부 링크 방향 그래프: fNode → 내부링크 목록 (이동 가능 경로 + 커넥션 경유 지오메트리)
+        Map<String, List<KtdbLink>> internalAdj = new HashMap<>();
         for (KtdbLink intLk : links) {
             if (!internalIds.contains(intLk.getLinkId())) continue;
             internalAdj.computeIfAbsent(intLk.getFNode(), k -> new ArrayList<>())
-                    .add(intLk.getTNode());
+                    .add(intLk);
         }
 
         // TURNINFO 로드: bbox 내 클러스터 노드에 해당하는 회전 규칙
@@ -261,8 +372,8 @@ public class KtdbNetworkConverter {
                     allClusterNodeIds.size(), prohibitedTurns.size(), allowedTurns.size());
         }
 
-        // clusterRep → List<(fromLinkId, toLinkId, turningCode)>
-        Map<String, List<long[]>> clusterConnData = new HashMap<>();
+        // clusterRep → 회전 동선 목록 (경유 내부링크 지오메트리 포함)
+        Map<String, List<ConnData>> clusterConnData = new HashMap<>();
 
         // 각 클러스터에 대해: 클러스터 내 모든 노드를 순회
         // 외부 in-link가 있는 노드에서 BFS로 외부 out-link가 있는 노드까지 탐색
@@ -276,14 +387,18 @@ public class KtdbNetworkConverter {
                 List<KtdbLink> extIns = nodeExtIn.getOrDefault(entryNode, List.of());
                 if (extIns.isEmpty()) continue; // 외부 진입 링크 없으면 패스
 
-                // BFS: entryNode에서 출발해 내부 링크를 통해 도달 가능한 모든 노드 탐색
+                // BFS: entryNode에서 출발해 내부 링크를 통해 도달 가능한 모든 노드 탐색.
+                // viaEdge(노드→진입 내부링크)로 최단 경로를 복원해 커넥션 shape의 경유 지오메트리로 사용.
                 Set<String> visited = new HashSet<>();
                 Queue<String> queue = new LinkedList<>();
+                Map<String, KtdbLink> viaEdge = new HashMap<>();
                 visited.add(entryNode);
                 queue.add(entryNode);
 
                 while (!queue.isEmpty()) {
                     String cur = queue.poll();
+                    // entryNode→cur 경유 내부링크 지오메트리 (같은 노드면 빈 목록 = 직결)
+                    List<double[]> viaCoords = reconstructInternalPath(entryNode, cur, viaEdge, coordsMap);
                     // cur 노드에서 출발하는 외부 out-link 확인
                     for (KtdbLink extOut : nodeExtOut.getOrDefault(cur, List.of())) {
                         Long toLinkId = linkIdMap.get(extOut.getLinkId());
@@ -321,22 +436,43 @@ public class KtdbNetworkConverter {
                                 if (!explicitlyAllowed) continue;
                             }
 
-                            Turning turning = determineTurning(inBearing, outBearing);
+                            // U턴(TURNINFO 011, 명시 허용으로 게이트 통과)은 좌측 회전 —
+                            // determineTurning은 방위차 ≤180°를 우회전으로 오분류하므로 Left_Turn 강제
+                            // (Turning enum에 U턴 없음. TURNINFO 코드 실측: 011=유턴 99%, 101=좌회전 기하)
+                            Turning turning = isUTurn ? Turning.Left_Turn
+                                                      : determineTurning(inBearing, outBearing);
                             clusterConnData.computeIfAbsent(rep, k -> new ArrayList<>())
-                                    .add(new long[]{fromLinkId, toLinkId,
+                                    .add(new ConnData(fromLinkId, toLinkId,
                                             turning == Turning.Left_Turn  ? 0 :
-                                            turning == Turning.Right_Turn ? 2 : 1});
+                                            turning == Turning.Right_Turn ? 2 : 1,
+                                            viaCoords));
                         }
                     }
-                    // 내부 링크를 통해 이동 가능한 다음 노드 추가
-                    for (String next : internalAdj.getOrDefault(cur, List.of())) {
-                        if (visited.add(next)) queue.add(next);
+                    // 내부 링크를 통해 이동 가능한 다음 노드 추가 (진입에 쓴 링크를 viaEdge에 기록)
+                    for (KtdbLink intLk : internalAdj.getOrDefault(cur, List.of())) {
+                        if (visited.add(intLk.getTNode())) {
+                            viaEdge.put(intLk.getTNode(), intLk);
+                            queue.add(intLk.getTNode());
+                        }
                     }
                 }
             }
         }
 
         // ── 11. 노드 생성 ────────────────────────────────────────────────────
+        // 클러스터 대표 원본 속성: NODE_NAME(교차로명) / NODE_TYPE=101(평면교차로) 존재 여부
+        Map<String, String>  clusterName  = new HashMap<>();
+        Map<String, Boolean> clusterIsItx = new HashMap<>();
+        for (String nid : nodeIds) {
+            KtdbNode n = nodeMap.get(nid);
+            if (n == null) continue;
+            String rep = nodeToCluster.get(nid);
+            if (n.getNodeName() != null && !n.getNodeName().isBlank()) {
+                clusterName.merge(rep, n.getNodeName(), (a, b) -> a); // 첫 비공백 이름 유지
+            }
+            if ("101".equals(n.getNodeType())) clusterIsItx.put(rep, true);
+        }
+
         List<NodeXml> nodeList = new ArrayList<>();
         for (String rep : clusterReps) {
             Long ourNodeId = clusterIdMap.get(rep);
@@ -371,7 +507,7 @@ public class KtdbNetworkConverter {
                 // 교차로: 내부 링크로부터 파생된 실제 회전 동선 사용
                 conns = buildConnectionsFromInternalLinks(
                         clusterConnData.getOrDefault(rep, List.of()),
-                        inPortIds, outPortIds, coordsMap, linkIdMap);
+                        inPortIds, outPortIds, coordsMap, linkIdMap, ourIdToLanes, ourIdToLaneWidth);
             } else {
                 // 단순 노드(merge 없음): in-link 하나 → out-link 하나의 통과 연결
                 conns = buildPassthroughConnections(ins, outs, inPortIds, outPortIds, linkIdMap, coordsMap);
@@ -379,7 +515,14 @@ public class KtdbNetworkConverter {
 
             NodeXml nx = new NodeXml();
             nx.setId(ourNodeId);
-            nx.setType(classifyNodeType(ins.size(), outs.size()));
+            // 원본 NODE_TYPE=101(평면교차로)이면 degree 기반 추정을 Intersection으로 오버라이드
+            // (좌회전 connection이 있어도 in/out 수가 같지 않으면 Merging/Diverging으로 잘못 분류되던 것 보정)
+            NodeType degreeType = classifyNodeType(ins.size(), outs.size());
+            boolean ktdbSaysItx = Boolean.TRUE.equals(clusterIsItx.get(rep))
+                    && ins.size() >= 1 && outs.size() >= 1 && ins.size() + outs.size() >= 3;
+            nx.setType(ktdbSaysItx ? NodeType.Intersection : degreeType);
+            String nodeName = clusterName.get(rep);
+            if (nodeName != null) nx.setName(nodeName);
             nx.setCenter(fmt3(lxy[0]) + " " + fmt3(lxy[1]));
             nx.setPorts(ports);
             nx.setNumPort(ports.size());
@@ -425,7 +568,13 @@ public class KtdbNetworkConverter {
             lx.setMaxVeh(round2((length / 1000.0) * JAM_DENSITY * lanes));
             lx.setSimType(SimType.Meso);
             lx.setType(LinkType.straight);
-            lx.setLayer("");
+            // 도로명: ROAD_NAME 우선, 없으면 노선번호 표기 (중용구간 노선명은 ktdb_multilink 참조)
+            String name = lk.getRoadName();
+            if ((name == null || name.isBlank()) && lk.getRoadNo() != null && !lk.getRoadNo().isBlank()) {
+                name = "노선 " + lk.getRoadNo();
+            }
+            if (name != null && !name.isBlank()) lx.setName(name);
+            lx.setLayer(structureLayer(lk));
             lx.setStopLine(0.0);
             lx.setShape(shape);
             lx.setLanes(buildLanes(lanes, length, shape));
@@ -445,14 +594,47 @@ public class KtdbNetworkConverter {
     // ── 연결 생성 ─────────────────────────────────────────────────────────────
 
     /**
+     * BFS viaEdge 체인을 따라 entryNode→cur 경유 내부링크들의 좌표를 진행 순서로 이어붙임.
+     * 인접 중복점(링크 이음새)은 제거. 커넥션 shape가 교차로 내부의 실제 동선(교통섬 순환,
+     * 회전 곡선)을 따라가도록 하는 경유 지오메트리.
+     */
+    private List<double[]> reconstructInternalPath(String entryNode, String cur,
+            Map<String, KtdbLink> viaEdge, Map<String, List<double[]>> coordsMap) {
+        if (entryNode.equals(cur)) return List.of();
+        List<KtdbLink> chain = new ArrayList<>();
+        String n = cur;
+        while (!n.equals(entryNode)) {
+            KtdbLink e = viaEdge.get(n);
+            if (e == null) return List.of(); // 방어: 체인 단절 시 직결로 폴백
+            chain.add(e);
+            n = e.getFNode();
+            if (chain.size() > 64) return List.of(); // 방어: 비정상 순환
+        }
+        Collections.reverse(chain);
+        List<double[]> pts = new ArrayList<>();
+        for (KtdbLink e : chain) {
+            List<double[]> c = coordsMap.get(e.getLinkId());
+            if (c == null) continue;
+            for (double[] p : c) {
+                if (!pts.isEmpty() && dist(pts.get(pts.size() - 1), p) < 1e-6) continue;
+                pts.add(p);
+            }
+        }
+        return pts;
+    }
+
+    /**
      * 교차로 노드용: 내부 링크로부터 파생된 실제 회전 동선.
-     * long[] = {fromLinkId, toLinkId, turningCode}
+     * shape는 [진입 차선 끝점] + 내부링크 경유 지오메트리 + [진출 차선 시작점] 폴리라인 —
+     * 직선 2점이면 교통섬 순환/회전 곡선이 교차로를 가로지르는 직선으로 뭉개진다.
      */
     private List<ConnectionXml> buildConnectionsFromInternalLinks(
-            List<long[]> connData,
+            List<ConnData> connData,
             Set<Long> inPortIds, Set<Long> outPortIds,
             Map<String, List<double[]>> coordsMap,
-            Map<String, Long> linkIdMap) {
+            Map<String, Long> linkIdMap,
+            Map<Long, Integer> ourIdToLanes,
+            Map<Long, Double>  ourIdToLaneWidth) {
 
         Map<Long, String> reverseMap = new HashMap<>();
         for (Map.Entry<String, Long> e : linkIdMap.entrySet()) reverseMap.put(e.getValue(), e.getKey());
@@ -461,12 +643,12 @@ public class KtdbNetworkConverter {
         Set<String> seen = new HashSet<>();
         long connId = 0;
 
-        for (long[] cd : connData) {
-            long fromLinkId = cd[0], toLinkId = cd[1];
+        for (ConnData cd : connData) {
+            long fromLinkId = cd.fromLinkId(), toLinkId = cd.toLinkId();
             if (!inPortIds.contains(fromLinkId) || !outPortIds.contains(toLinkId)) continue;
 
             String key = fromLinkId + ":" + toLinkId;
-            if (!seen.add(key)) continue; // 중복 제거
+            if (!seen.add(key)) continue; // BFS 방문 순서상 첫 등록이 최단 경로
 
             String fromKtdbId = reverseMap.get(fromLinkId);
             String toKtdbId   = reverseMap.get(toLinkId);
@@ -476,35 +658,68 @@ public class KtdbNetworkConverter {
             List<double[]> toCoords   = coordsMap.get(toKtdbId);
             if (fromCoords == null || toCoords == null) continue;
 
-            Turning turning = cd[2] == 0 ? Turning.Left_Turn :
-                              cd[2] == 2 ? Turning.Right_Turn : Turning.Straight;
+            Turning turning = cd.turnCode() == 0 ? Turning.Left_Turn :
+                              cd.turnCode() == 2 ? Turning.Right_Turn : Turning.Straight;
+            double connFf  = turning == Turning.Left_Turn  ? 20.0 :
+                             turning == Turning.Right_Turn ? 25.0 : 30.0;
 
-            double[] from = lastPoint(fromCoords);
-            double[] to   = firstPoint(toCoords);
-            double dx = to[0] - from[0], dy = to[1] - from[1];
-            double connLen = Math.max(1.0, Math.sqrt(dx * dx + dy * dy));
+            int inLanes  = ourIdToLanes.getOrDefault(fromLinkId, 1);
+            int outLanes = ourIdToLanes.getOrDefault(toLinkId,   1);
+            double inW   = ourIdToLaneWidth.getOrDefault(fromLinkId, 3.0);
+            double outW  = ourIdToLaneWidth.getOrDefault(toLinkId,   3.0);
 
-            // 차선 연결: 직진은 차선 수 맞춰서, 좌/우회전은 끝 차선끼리
-            String fromKtdbIdStr = fromKtdbId;
-            int inLanes  = linkIdMap.containsKey(fromKtdbIdStr) ? 1 : 1; // lanes는 KtdbLink에서 가져와야 하나 여기선 1로 단순화
-            int outLanes = 1;
+            for (int[] pair : lanePairs(turning, inLanes, outLanes)) {
+                // 커넥션은 차선↔차선 연결 — 링크 중심선이 아니라 해당 차선의 끝점에서 시작/종료
+                double[] from = laneEndpoint(fromCoords, true,  pair[0], inLanes,  inW);
+                double[] to   = laneEndpoint(toCoords,   false, pair[1], outLanes, outW);
 
-            ConnectionXml conn = new ConnectionXml();
-            conn.setId(connId++);
-            conn.setFromLink(fromLinkId);
-            conn.setFromLane(0L);
-            conn.setToLink(toLinkId);
-            conn.setToLane(0L);
-            conn.setTurning(turning);
-            conn.setLength(round2(connLen));
-            conn.setWidth(3.0);
-            conn.setFfSpd(round2(turning == Turning.Left_Turn ? 20.0 :
-                                  turning == Turning.Right_Turn ? 25.0 : 30.0));
-            conn.setShape(fmt5(from[0]) + "," + fmt5(from[1]) + " " +
-                          fmt5(to[0])   + "," + fmt5(to[1]));
-            result.add(conn);
+                List<double[]> pts = new ArrayList<>(cd.viaCoords().size() + 2);
+                pts.add(from);
+                for (double[] p : cd.viaCoords()) {
+                    if (dist(pts.get(pts.size() - 1), p) < 1e-6) continue;
+                    pts.add(p);
+                }
+                if (dist(pts.get(pts.size() - 1), to) >= 1e-6) pts.add(to);
+
+                double connLen = Math.max(1.0, calcLength(pts));
+                StringBuilder shape = new StringBuilder();
+                for (double[] p : pts) {
+                    if (shape.length() > 0) shape.append(' ');
+                    shape.append(fmt5(p[0])).append(',').append(fmt5(p[1]));
+                }
+
+                ConnectionXml conn = new ConnectionXml();
+                conn.setId(connId++);
+                conn.setFromLink(fromLinkId);
+                conn.setFromLane((long) pair[0]);
+                conn.setToLink(toLinkId);
+                conn.setToLane((long) pair[1]);
+                conn.setTurning(turning);
+                conn.setLength(round2(connLen));
+                conn.setWidth(3.0);
+                conn.setFfSpd(round2(connFf));
+                conn.setShape(shape.toString());
+                result.add(conn);
+            }
         }
         return result;
+    }
+
+    /**
+     * 링크 중심선 좌표에서 특정 차선의 끝점(atEnd=true: 마지막 점, false: 첫 점)을 계산.
+     * 프론트 렌더 규약과 동일: 차선 i 오프셋 = ((laneCount-1)/2 - i) × laneWidth,
+     * 진행방향 왼쪽 법선(+) 기준 (차선 0 = 최좌측).
+     */
+    private double[] laneEndpoint(List<double[]> coords, boolean atEnd,
+                                  int laneIdx, int laneCount, double laneWidth) {
+        double[] pt, p1, p2;
+        if (atEnd) { pt = coords.get(coords.size() - 1); p1 = coords.get(coords.size() - 2); p2 = pt; }
+        else       { pt = coords.get(0);                 p1 = pt; p2 = coords.get(1); }
+        double dx = p2[0] - p1[0], dy = p2[1] - p1[1];
+        double len = Math.hypot(dx, dy);
+        if (len < 1e-9) return pt;
+        double off = ((laneCount - 1) / 2.0 - laneIdx) * laneWidth;
+        return new double[]{pt[0] + (-dy / len) * off, pt[1] + (dx / len) * off};
     }
 
     /**
@@ -545,11 +760,8 @@ public class KtdbNetworkConverter {
 
                 Turning turning = determineTurning(inBearing, outBearing);
 
-                double[] from = lastPoint(inCoords);
-                double[] to   = firstPoint(outCoords);
-                double dx = to[0] - from[0], dy = to[1] - from[1];
-                double connLen = Math.max(1.0, Math.sqrt(dx * dx + dy * dy));
-                double[] defs  = RANK_DEFS.getOrDefault(outLk.getRoadRank(), DEFAULT_DEFS);
+                double[] defs   = RANK_DEFS.getOrDefault(outLk.getRoadRank(), DEFAULT_DEFS);
+                double[] inDefs = RANK_DEFS.getOrDefault(inLk.getRoadRank(),  DEFAULT_DEFS);
                 double connFf  = switch (turning) {
                     case Left_Turn  -> Math.min(30.0, outLk.getMaxSpd());
                     case Right_Turn -> Math.min(35.0, outLk.getMaxSpd());
@@ -559,6 +771,12 @@ public class KtdbNetworkConverter {
                 int inLanes  = Math.max(1, inLk.getLanes());
                 int outLanes = Math.max(1, outLk.getLanes());
                 for (int[] pair : lanePairs(turning, inLanes, outLanes)) {
+                    // 커넥션은 차선↔차선 연결 — 해당 차선의 끝점 기준
+                    double[] from = laneEndpoint(inCoords,  true,  pair[0], inLanes,  inDefs[2]);
+                    double[] to   = laneEndpoint(outCoords, false, pair[1], outLanes, defs[2]);
+                    double dx = to[0] - from[0], dy = to[1] - from[1];
+                    double connLen = Math.max(1.0, Math.sqrt(dx * dx + dy * dy));
+
                     ConnectionXml conn = new ConnectionXml();
                     conn.setId(connId++);
                     conn.setFromLink(fromLinkId);
@@ -600,7 +818,27 @@ public class KtdbNetworkConverter {
         return pairs;
     }
 
+    /** 두 교차로명이 모두 비어있지 않고 동일한지 (KTDB 표준: 같은 평면교차로의 분리 노드는 교차로명 공유) */
+    private boolean sameNonBlankName(String a, String b) {
+        return a != null && !a.isBlank() && a.equals(b);
+    }
+
     // ── Setback 트리밍 ────────────────────────────────────────────────────────
+
+    /** 교차로 판정: merged cluster 또는 이웃 클러스터 3개 이상 (경유 노드는 이웃 2개 → 제외) */
+    private boolean isJunctionCluster(String rep,
+            Map<String, Integer> clusterNodeCount,
+            Map<String, Set<String>> clusterNeighbors) {
+        if (rep == null) return false;
+        if (clusterNodeCount.getOrDefault(rep, 1) > 1) return true;
+        return clusterNeighbors.getOrDefault(rep, Set.of()).size() >= 3;
+    }
+
+    /** 교차로별 setback 거리: 모이는 최대 도로폭 + 여유, [MIN, MAX] 클램프 */
+    private double setbackFor(String rep, Map<String, Double> clusterMaxRoadWidth) {
+        double w = clusterMaxRoadWidth.getOrDefault(rep, 0.0);
+        return Math.min(SETBACK_MAX_M, Math.max(SETBACK_MIN_M, w + SETBACK_MARGIN_M));
+    }
 
     /**
      * 링크 끝점 쪽을 nodePos 방향으로 setbackM 만큼 후퇴시킴.
@@ -734,6 +972,24 @@ public class KtdbNetworkConverter {
     }
 
     // ── 네트워크 구조 빌더 ────────────────────────────────────────────────────
+
+    /**
+     * 링크 layer 문자열: 원본 구조물유형(ROAD_TYPE)·연결로(CONNECT) 보존.
+     * 000/일반이면 빈 문자열(기존 동작 유지). 렌더링·포켓 합성 제외 규칙 등에 활용.
+     */
+    private String structureLayer(KtdbLink lk) {
+        String rt = lk.getRoadType();
+        String structure = switch (rt == null ? "" : rt) {
+            case "001" -> "elevated";   // 고가차도
+            case "002" -> "underpass";  // 지하차도
+            case "003" -> "bridge";     // 교량
+            case "004" -> "tunnel";     // 터널
+            default    -> "";
+        };
+        boolean ramp = lk.getConnect() != null && !lk.getConnect().isBlank() && !"0".equals(lk.getConnect());
+        if (ramp) return structure.isEmpty() ? "ramp" : structure + ",ramp";
+        return structure;
+    }
 
     private NodeType classifyNodeType(int ins, int outs) {
         int total = ins + outs;

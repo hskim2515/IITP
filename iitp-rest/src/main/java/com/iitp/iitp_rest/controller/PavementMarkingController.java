@@ -24,26 +24,20 @@ public class PavementMarkingController {
     }
 
     @GetMapping("/{versionId}")
-    public ResponseEntity<RoadAssetData> getPavementMarking(@PathVariable String versionId) {
-        try {
-            RoadAssetData result = new RoadAssetData();
+    public ResponseEntity<RoadAssetData> getPavementMarking(@PathVariable String versionId) throws Exception {
+        RoadAssetData result = new RoadAssetData();
 
-            Optional<PavementMarkingVersion> pavementMarkingVersionOpt = pavementMarkingVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST);
-            List<PavementMarkingData> pavementMarkingData;
+        Optional<PavementMarkingVersion> pavementMarkingVersionOpt = pavementMarkingVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST);
+        List<PavementMarkingData> pavementMarkingData;
 
-            if (pavementMarkingVersionOpt.isPresent()) {
-                PavementMarkingVersion pavementMarkingVersion = pavementMarkingService.getDataFromDatabase(versionId);
-                result.setPavementMarkings(pavementMarkingVersion.getData());
-            } else {
-                pavementMarkingData = pavementMarkingService.getDataFromXml(versionId);
-                result.setPavementMarkings(pavementMarkingData);
-            }
-            return ResponseEntity.ok(result);
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        if (pavementMarkingVersionOpt.isPresent()) {
+            PavementMarkingVersion pavementMarkingVersion = pavementMarkingService.getDataFromDatabase(versionId);
+            result.setPavementMarkings(pavementMarkingVersion.getData());
+        } else {
+            pavementMarkingData = pavementMarkingService.getDataFromXml(versionId);
+            result.setPavementMarkings(pavementMarkingData);
         }
+        return ResponseEntity.ok(result);
     }
     @GetMapping("/histories/{versionId}")
     public ResponseEntity<List<PavementMarkingLogs>> getLogsByVersion(@PathVariable String versionId) {

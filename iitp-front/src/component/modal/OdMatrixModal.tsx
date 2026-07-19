@@ -97,7 +97,18 @@ const OdMatrixModal: React.FC = () => {
                 setTabIdx(0);
                 setMatrix(demandsToMatrix(matrices[0]?.demands ?? []));
             })
-            .catch(e => setError(e.message ?? '불러오기 실패'))
+            .catch(e => {
+                if (e?.response?.status === 404) {
+                    // odmatrix.xml 이 아직 없는 버전 — 에러가 아니라 신규 작성 시작.
+                    // 빈 매트릭스 1개로 초기화해 출발지/도착지 추가 UI 를 바로 쓸 수 있게 한다.
+                    const empty: OdMatrixItem = { id: 0, startTime: '00:00:00', duration: 60, demands: [] };
+                    setData({ odMatrices: [empty] });
+                    setTabIdx(0);
+                    setMatrix(demandsToMatrix([]));
+                } else {
+                    setError(e.message ?? '불러오기 실패');
+                }
+            })
             .finally(() => setLoading(false));
     }, [versionId]);
 
@@ -195,7 +206,12 @@ const OdMatrixModal: React.FC = () => {
         };
         setSaving(true);
         try {
-            await axiosInstance.post(`/od-matrix/${versionId}`, payload);
+            // 백엔드는 XmlLayerSaveRequest({data, logs}) 래핑을 기대 — payload 를 그대로 보내면
+            // request.getData()=null 로 저장돼 DB 레이어가 비고 파일 동기화도 실패한다
+            await axiosInstance.post(`/od-matrix/${versionId}`, {
+                data: payload,
+                logs: { added: [], modified: [], deleted: [] },
+            });
             setSaveMsg({ ok: true, text: '저장 완료' });
         } catch (e: any) {
             setSaveMsg({ ok: false, text: e.message ?? '저장 실패' });
@@ -306,11 +322,14 @@ const OdMatrixModal: React.FC = () => {
                                     if ((e.target as HTMLElement).tagName !== 'INPUT') commitEdit();
                                 }}
                             >
-                                {matrix.sources.length === 0 && matrix.sinks.length === 0 ? (
-                                    <div style={{ color: '#333', fontSize: 12, padding: '32px 0', textAlign: 'center' }}>
-                                        데이터가 없습니다. 출발지와 도착지를 추가하세요.
+                                {/* 빈 매트릭스여도 테이블은 렌더 — 추가 입력(도착지/출발지 ID)이
+                                    테이블 헤더/푸터에 있어서, 숨기면 신규 작성이 불가능해진다 */}
+                                {matrix.sources.length === 0 && matrix.sinks.length === 0 && (
+                                    <div style={{ color: '#555', fontSize: 12, padding: '12px 0 6px' }}>
+                                        데이터가 없습니다. 도착지/출발지 ID(터미널 노드)를 입력해 추가하세요.
                                     </div>
-                                ) : (
+                                )}
+                                {(
                                     <table style={{ borderCollapse: 'collapse', fontSize: 12 }}>
                                         <thead>
                                             <tr>

@@ -75,8 +75,7 @@ public class NetconvertRunner {
                 dockerImage,
                 "netconvert",
                 "--osm-files",    "/data/input.osm",
-                "--output-file",  "/data/output.net.xml",
-                "--no-warnings",  "true"
+                "--output-file",  "/data/output.net.xml"
             ));
 
             if (ktdbMode) {

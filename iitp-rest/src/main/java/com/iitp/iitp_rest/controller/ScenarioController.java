@@ -44,6 +44,16 @@ public class ScenarioController {
 
     record ScenarioVersionRequest(String key, String label) {}
 
+    @DeleteMapping("/{id}/versions/{versionId}")
+    public ResponseEntity<Void> deleteVersion(@PathVariable Long id, @PathVariable Long versionId) {
+        try {
+            scenarioService.deleteVersion(id, versionId);
+            return ResponseEntity.noContent().build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
     @GetMapping("/check-key")
     public ResponseEntity<Boolean> checkKey(@RequestParam String key) {
         return ResponseEntity.ok(scenarioService.existsByKey(key));
