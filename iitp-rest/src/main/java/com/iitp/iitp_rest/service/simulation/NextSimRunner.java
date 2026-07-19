@@ -399,6 +399,7 @@ public class NextSimRunner {
     private void injectRequiredNetworkAttrs(Path networkXml, Set<String> keepNodeIds) throws IOException {
         Path tmp = networkXml.resolveSibling(networkXml.getFileName() + ".compat");
         long injected = 0, pruned = 0, keptTerminals = 0;
+        long connFixedNodes = 0;
         Pattern idAttr = Pattern.compile("\\bid=\"([^\"]+)\"");
         try (var reader = Files.newBufferedReader(networkXml, StandardCharsets.UTF_8);
              var writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
@@ -423,6 +424,14 @@ public class NextSimRunner {
                         t = t.replaceFirst("(/?>)$", " v2x=\"\"$1");
                         injected++;
                     }
+                    // KTDB 보정: connection 0 인 비터미널(막다른/미연결) 노드는 route-generator 가
+                    // 통과 노드로 취급하다 std::out_of_range 크래시(부천 51개 실측, 23링크 최소
+                    // 재현체로 확정). terminal 로 전환하면 소스/싱크 후보가 되고, OD 미참조 시
+                    // 아래 가지치기가 garage 로 무시 처리 — 시뮬 의미 불변.
+                    if (t.contains("num_connection=\"0\"")
+                            && !t.contains("type=\"terminal\"") && !t.contains("type=\"garage\"")) {
+                        t = t.replaceFirst("type=\"\\w+\"", "type=\"terminal\"");
+                    }
                     if (keepNodeIds != null && t.contains("type=\"terminal\"")) {
                         Matcher m = idAttr.matcher(t);
                         if (m.find() && !keepNodeIds.contains(m.group(1))) {
@@ -435,6 +444,21 @@ public class NextSimRunner {
                             keptTerminals++;
                         }
                     }
+                    // KTDB 보정 2: 통과 노드(비터미널)의 in-link 에 나가는 커넥션이 없거나
+                    // out-link 로 들어오는 커넥션이 없으면 route-generator std::out_of_range
+                    // (부천 40링크 최소 재현체로 확정 — 누락 커넥션 채우면 SUCCESS).
+                    // KTDB 변환기의 커넥션 생성 누락(부천 237건, 수도권 1,317건 실측)을
+                    // 스테이징 사본에서 직진(0→0) 커넥션으로 보완한다.
+                    if (!t.endsWith("/>")
+                            && !t.contains("type=\"terminal\"") && !t.contains("type=\"garage\"")) {
+                        String block = t + readUntilCloseTag(reader, "</node>");
+                        // 블록 통째 처리라 태그 단위 port 분기를 안 거침 — direction 주입을 여기서도
+                        block = PORT_NO_DIRECTION.matcher(block).replaceAll("$1 direction=\"\"$2");
+                        String fixed = fillMissingConnections(block);
+                        if (!fixed.equals(block)) connFixedNodes++;
+                        writer.write(fixed);
+                        continue;
+                    }
                 }
                 writer.write(t);
             }
@@ -442,10 +466,98 @@ public class NextSimRunner {
         }
         Files.move(tmp, networkXml, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
         if (injected > 0) log.info("[NextSimRunner] network.xml 호환 보정: 필수 속성 {}건 주입", injected);
+        if (connFixedNodes > 0) log.info("[NextSimRunner] 누락 커넥션 보완: {}개 노드", connFixedNodes);
         if (keepNodeIds != null) {
             log.info("[NextSimRunner] 터미널 가지치기: 유지 {} / 전환 {} (OD 참조 노드 {}개)",
                     keptTerminals, pruned, keepNodeIds.size());
         }
+    }
+
+    /** 여는 태그 이후부터 종료 태그(포함)까지 읽기 — 노드 블록 수집용 */
+    private static String readUntilCloseTag(java.io.Reader reader, String closeTag) throws IOException {
+        StringBuilder sb = new StringBuilder(2048);
+        int matched = 0;
+        int c;
+        while ((c = reader.read()) >= 0) {
+            char ch = (char) c;
+            sb.append(ch);
+            matched = (ch == closeTag.charAt(matched)) ? matched + 1
+                    : (ch == closeTag.charAt(0) ? 1 : 0);
+            if (matched == closeTag.length()) return sb.toString();
+        }
+        throw new IOException("network.xml 이 " + closeTag + " 없이 끝났습니다");
+    }
+
+    private static final Pattern PORT_NO_DIRECTION = Pattern.compile("(<port (?![^>]*direction=)[^>]*?)(/?>)");
+    private static final Pattern PORT_IN = Pattern.compile("<port type=\"in\" link_id=\"(\\d+)\"");
+    private static final Pattern PORT_OUT = Pattern.compile("<port type=\"out\" link_id=\"(\\d+)\"");
+    private static final Pattern CONN_FROM = Pattern.compile("<connection [^>]*from_link=\"(\\d+)\"");
+    private static final Pattern CONN_TO = Pattern.compile("<connection [^>]*to_link=\"(\\d+)\"");
+    private static final Pattern CONN_ID = Pattern.compile("<connection id=\"(\\d+)\"");
+    private static final Pattern NODE_CENTER = Pattern.compile("center=\"([-\\d.]+) ([-\\d.]+)\"");
+
+    /**
+     * 통과 노드 블록에서 커넥션이 누락된 in/out 링크에 직진(0→0) 커넥션을 채운다.
+     * 채운 게 없으면 원본 블록 그대로 반환.
+     */
+    private static String fillMissingConnections(String block) {
+        Set<String> connFrom = collect(CONN_FROM, block);
+        Set<String> connTo = collect(CONN_TO, block);
+        List<String> inLinks = collectList(PORT_IN, block);
+        List<String> outLinks = collectList(PORT_OUT, block);
+        if (inLinks.isEmpty() || outLinks.isEmpty()) return block;
+
+        Matcher cm = NODE_CENTER.matcher(block);
+        String cx = "0", cy = "0";
+        if (cm.find()) { cx = cm.group(1); cy = cm.group(2); }
+        int nextId = 0;
+        Matcher im = CONN_ID.matcher(block);
+        while (im.find()) nextId = Math.max(nextId, Integer.parseInt(im.group(1)) + 1);
+
+        StringBuilder add = new StringBuilder();
+        for (String il : inLinks) {
+            if (!connFrom.contains(il)) {
+                add.append(connXml(nextId++, il, outLinks.get(0), cx, cy));
+            }
+        }
+        for (String ol : outLinks) {
+            if (!connTo.contains(ol)) {
+                add.append(connXml(nextId++, inLinks.get(0), ol, cx, cy));
+            }
+        }
+        if (add.length() == 0) return block;
+
+        int close = block.lastIndexOf("</node>");
+        String out = block.substring(0, close) + add + "</node>";
+        int total = countMatches(CONN_ID, out);
+        return out.replaceFirst("num_connection=\"\\d+\"", "num_connection=\"" + total + "\"");
+    }
+
+    private static String connXml(int id, String fromLink, String toLink, String cx, String cy) {
+        return "<connection id=\"" + id + "\" from_link=\"" + fromLink + "\" from_lane=\"0\" to_link=\"" + toLink
+                + "\" to_lane=\"0\" turning=\"S\" length=\"1.0\" width=\"3.0\" ff_spd=\"30.0\" shape=\""
+                + cx + "," + cy + " " + cx + "," + cy + "\"/>";
+    }
+
+    private static Set<String> collect(Pattern p, String s) {
+        Set<String> out = new LinkedHashSet<>();
+        Matcher m = p.matcher(s);
+        while (m.find()) out.add(m.group(1));
+        return out;
+    }
+
+    private static List<String> collectList(Pattern p, String s) {
+        List<String> out = new java.util.ArrayList<>();
+        Matcher m = p.matcher(s);
+        while (m.find()) out.add(m.group(1));
+        return out;
+    }
+
+    private static int countMatches(Pattern p, String s) {
+        int n = 0;
+        Matcher m = p.matcher(s);
+        while (m.find()) n++;
+        return n;
     }
 
     /** odmatrix.xml 의 source/sink 노드 id 집합 (가지치기 유지 대상) */
