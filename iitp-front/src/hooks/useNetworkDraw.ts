@@ -542,8 +542,17 @@ function makeConnections(
     } as Connection);
 
     if (turning === 'Straight') {
-        // 직진: 동일 인덱스 1:1 매핑
-        return Array.from({ length: Math.min(fLanes, tLanes) }, (_, i) => conn(i, i, i));
+        // 직진: 동일 인덱스 1:1 매핑 + 차선수가 다르면(확폭/축소) 남는 차선을 가장자리로 fan.
+        // min() 매핑만 하면 확폭 구간의 늘어난 차선(또는 축소 전 초과 차선)이 커넥션 없이
+        // 고립돼 시뮬레이션에서 절대 도달 불가능한 "죽은 차선"이 된다 (실사용 발견 —
+        // 확폭 포켓 링크를 만들어도 새 차선에 아무도 못 들어감). 커넥션 편집 패널의
+        // lanePairsFor 와 동일 규약으로 통일.
+        const cnt = Math.min(fLanes, tLanes);
+        const pairs: [number, number][] = [];
+        for (let i = 0; i < cnt; i++) pairs.push([i, i]);
+        for (let i = cnt; i < fLanes; i++) pairs.push([i, tLanes - 1]); // 남는 진입차선 → 마지막 진출차선 병합
+        for (let i = cnt; i < tLanes; i++) pairs.push([fLanes - 1, i]); // 남는 진출차선(확폭) ← 마지막 진입차선에서 분기
+        return pairs.map(([a, b], i) => conn(a, b, i));
     }
     if (turning === 'Right_Turn') {
         // 우회전: 우측(외측, 높은 인덱스) 차선

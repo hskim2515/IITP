@@ -106,7 +106,8 @@ public class KtdbStreamingConverter {
 
     public record StreamResult(int nodeCount, int linkCount,
                                 List<NodeResponse> nodes, List<LinkResponse> links,
-                                List<String> warnings) {}
+                                List<String> warnings,
+                                List<Long> terminalNodeIds) {}
 
     // ── DI ───────────────────────────────────────────────────────────────────
 
@@ -200,11 +201,17 @@ public class KtdbStreamingConverter {
             tmp.delete();
         }
 
-        // 간소화 응답 빌드
+        // 간소화 응답 빌드 (+ 터미널 id 수집 — NextSim 입력 스캐폴딩의 OD source/sink 후보)
         List<NodeResponse> simpleNodes = new ArrayList<>(clusters.size());
+        List<Long> terminalIds = new ArrayList<>();
         for (ClusterInfo ci : clusters.values()) {
             NodeResponse nr = new NodeResponse();
             nr.setId(ci.id());
+            NodeType nType = nodeTypeOf(ci,
+                    clusterIn.getOrDefault(ci.id(), List.of()),
+                    clusterOut.getOrDefault(ci.id(), List.of()));
+            nr.setType(nType);
+            if (nType == NodeType.Terminal) terminalIds.add(ci.id());
             if (ci.name() != null) nr.setName(ci.name());
             Coordinates c = new Coordinates();
             c.setLat(ci.wgsLat());
@@ -242,7 +249,7 @@ public class KtdbStreamingConverter {
         }
 
         log.info("스트리밍 변환 완료: 노드 {}개, 링크 {}개", clusters.size(), allLinks.size());
-        return new StreamResult(clusters.size(), allLinks.size(), simpleNodes, simpleLinks, List.of());
+        return new StreamResult(clusters.size(), allLinks.size(), simpleNodes, simpleLinks, List.of(), terminalIds);
     }
 
     // ── 타일 처리 ─────────────────────────────────────────────────────────────
@@ -635,11 +642,7 @@ public class KtdbStreamingConverter {
                 for (ExtLink lk : ins)  inPortIds.add(lk.id());
                 for (ExtLink lk : outs) outPortIds.add(lk.id());
 
-                // 원본 NODE_TYPE=101(평면교차로)이면 degree 추정을 Intersection으로 오버라이드
-                NodeType nType = classifyNodeType(ins.size(), outs.size());
-                if (ci.ktdbItx() && !ins.isEmpty() && !outs.isEmpty() && ins.size() + outs.size() >= 3) {
-                    nType = NodeType.Intersection;
-                }
+                NodeType nType = nodeTypeOf(ci, ins, outs);
                 w.writeStartElement("node");
                 w.writeAttribute("id",             String.valueOf(ci.id()));
                 w.writeAttribute("type",           nType.getValue());
@@ -969,6 +972,17 @@ public class KtdbStreamingConverter {
         boolean ramp = connect != null && !connect.isBlank() && !"0".equals(connect);
         if (ramp) return structure.isEmpty() ? "ramp" : structure + ",ramp";
         return structure;
+    }
+
+    /** 노드 타입 판정 — network.xml 기록과 간소화 응답이 반드시 동일 로직을 써야 한다
+     *  (터미널 집합이 어긋나면 스캐폴딩 OD 가 비터미널을 참조 → route-generator 실패) */
+    private NodeType nodeTypeOf(ClusterInfo ci, List<ExtLink> ins, List<ExtLink> outs) {
+        // 원본 NODE_TYPE=101(평면교차로)이면 degree 추정을 Intersection으로 오버라이드
+        NodeType nType = classifyNodeType(ins.size(), outs.size());
+        if (ci.ktdbItx() && !ins.isEmpty() && !outs.isEmpty() && ins.size() + outs.size() >= 3) {
+            nType = NodeType.Intersection;
+        }
+        return nType;
     }
 
     private NodeType classifyNodeType(int ins, int outs) {

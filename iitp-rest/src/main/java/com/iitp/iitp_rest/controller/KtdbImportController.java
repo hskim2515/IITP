@@ -11,6 +11,7 @@ import com.iitp.iitp_rest.service.network.NetworkJaxbParser;
 import com.iitp.iitp_rest.service.network.NetworkTileService;
 import com.iitp.iitp_rest.service.network.OsmNetworkValidator;
 import com.iitp.iitp_rest.service.scenario.ScenarioService;
+import com.iitp.iitp_rest.service.simulation.NextSimInputScaffolder;
 import com.iitp.iitp_rest.util.FileStorageService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -49,6 +50,7 @@ public class KtdbImportController {
     private final ScenarioService       scenarioService;
     private final NetworkTileService    networkTileService;
     private final com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService xmlLayerVersionService;
+    private final NextSimInputScaffolder nextSimScaffolder;
 
     // ── 공통 변환 로직 ────────────────────────────────────────────────────────
 
@@ -159,10 +161,18 @@ public class KtdbImportController {
                     networkResponse.getNodes().size(), networkResponse.getLinks().size());
 
             // 타일 SQLite DB 백그라운드 선빌드 → 첫 타일 요청 즉시 응답 가능
+            // + NextSim 필수 입력(odmatrix/scenario/signal/signalTOD) 기본본 생성 → 임포트 후 바로 실행 가능
             if (versionId != null && !versionId.isBlank()) {
                 final String vid = versionId;
                 final NetworkResponse resp = networkResponse;
+                final List<Long> terminalIds = networkXml.getNodes() == null ? List.of()
+                        : networkXml.getNodes().stream()
+                            .filter(n -> n.getType() == com.iitp.iitp_rest.model.network.node.NodeType.Terminal)
+                            .map(com.iitp.iitp_rest.model.network.node.NodeXml::getId)
+                            .filter(java.util.Objects::nonNull)
+                            .toList();
                 CompletableFuture.runAsync(() -> {
+                    nextSimScaffolder.scaffoldMissingInputs(vid, terminalIds);
                     try { networkTileService.ingest(vid, resp); }
                     catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
                 });
@@ -223,7 +233,10 @@ public class KtdbImportController {
             if (versionId != null && !versionId.isBlank()) {
                 final String vid = versionId;
                 final NetworkResponse resp = simplified;
+                final List<Long> terminalIds = sr.terminalNodeIds();
                 CompletableFuture.runAsync(() -> {
+                    // NextSim 필수 입력 기본본 생성 (가볍고 빠름 — 타일 빌드보다 먼저)
+                    nextSimScaffolder.scaffoldMissingInputs(vid, terminalIds);
                     try { networkTileService.ingest(vid, resp); }   // 1차: simplified 빠른 빌드
                     catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
                     // 2차: SFTP XML 기반 완전 재빌드 — 1차 실패와 무관하게 항상 시도 (내부 예외 처리)
