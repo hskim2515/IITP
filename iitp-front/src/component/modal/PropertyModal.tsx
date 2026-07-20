@@ -6,6 +6,7 @@ import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useSchemaStore } from "@stores/useSchemaStore";
 import { findMenuCodeBySchemaDefinition } from "@utils/schema";
 import { propertyFormSchema } from "@schema/propertyFormSchema";
+import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 
 // 모든 스키마에서 fieldName → label 역인덱스 빌드
 function buildFieldLabelMap(): Record<string, string> {
@@ -74,6 +75,9 @@ const PropertyModal = () => {
     const selectedProps = usePropertyStore((state) => state.selectedProps);
     const setSelectedProps = usePropertyStore((state) => state.setSelectedProps);
     const { activeSubmenu, menu, setActiveSubmenu } = useMenuStore();
+    // 선택·편집 모드 중에는 속성 모달 숨김 — 편집 클릭마다 모달이 함께 떠서 조작을 가림.
+    // (selectedProps 자체는 유지 — 레인/셀 선택 하이라이트 오버레이가 이를 사용)
+    const isSelectActive = useNetworkDrawStore((s) => s.isSelectActive);
     const getSchemaDefinitionBySchemaDefinitionName = useSchemaStore.getState().getSchemaDefinitionBySchemaDefinitionName;
 
     const displayEntries = useMemo(() => {
@@ -83,6 +87,7 @@ const PropertyModal = () => {
 
     if (!selectedProps || Object.keys(selectedProps).length === 0) return null;
     if (activeSubmenu) return null;
+    if (isSelectActive) return null; // 선택·편집 중엔 미표시 (속성 확인은 보기 모드/그리드에서)
 
     const featureType = selectedProps.featureType as string | undefined;
 

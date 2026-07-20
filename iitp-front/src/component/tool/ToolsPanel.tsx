@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRuler, faLayerGroup, faCog, faRoad, faFileArrowDown } from '@fortawesome/free-solid-svg-icons';
 import LayerPopup from "../popup/LayerPopup";
@@ -25,9 +25,21 @@ const ToolsPanel = () => {
     const coordPickActive = useMapStore((s) => s.coordPickCallback !== null);
     const appMode = useModeStore((s) => s.appMode);
 
+    // 편집모드 진입 시 선택·편집 자동 활성화 — 패널을 열지 않고도 바로 링크/노드 편집 가능.
+    // (진입당 1회만: 사용자가 수동으로 끈 뒤 effect 재실행(activeIndex 변경 등)으로 다시 강제하지 않음)
+    const autoSelectDoneRef = useRef(false);
     // 편집모드 이탈 시: 진행 중인 도로편집 리셋 + 편집 툴 패널 닫기.
     useEffect(() => {
-        if (appMode !== 'edit') {
+        if (appMode === 'edit') {
+            if (!autoSelectDoneRef.current) {
+                autoSelectDoneRef.current = true;
+                const ds = useNetworkDrawStore.getState();
+                if (!ds.isActive && !ds.isConnectionActive && ds.placementMode === 'none' && !ds.isSelectActive) {
+                    try { ds.setSelectActive(true); } catch (_) { /* noop */ }
+                }
+            }
+        } else {
+            autoSelectDoneRef.current = false;
             try { useNetworkDrawStore.getState().reset(); } catch (_) {}
             if (activeIndex !== null && tools[activeIndex]?.editOnly) setActiveIndex(null);
         }

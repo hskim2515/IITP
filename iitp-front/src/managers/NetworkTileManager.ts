@@ -180,9 +180,11 @@ export class NetworkTileManager {
         const p = axiosInstance
             .get(`/network/${this.versionId}/tiles`, { params: { bbox, lod }, signal: ctrl.signal })
             .then((res) => {
+                // filter(Boolean): 응답 배열에 null 요소가 섞이면 소비자 순회(x.id 등)가
+                // TypeError 로 죽으므로 진입점에서 일괄 제거 (Cesium/OL 소비자 공용 방어)
                 const payload: NetworkTilePayload = {
-                    links: res.data?.links ?? [],
-                    nodes: res.data?.nodes ?? [],
+                    links: (res.data?.links ?? []).filter(Boolean),
+                    nodes: (res.data?.nodes ?? []).filter(Boolean),
                 };
                 // tier 업그레이드 스왑: onTileEvicted 를 부르지 않고 엔트리만 교체.
                 // (여기서 즉시 evict 하면 새 GroundPrimitive 비동기 빌드(수 초) 동안 도로가 사라지는

@@ -33,6 +33,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
     private unsubscribe: (() => void) | undefined;
     private unsubscribeDraw: (() => void) | undefined;
+    private unsubscribeMode: (() => void) | undefined;
     private showDetail: boolean = false;
 
     // 증분 업데이트용 상태
@@ -54,6 +55,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
     private addedNodeFeatures: Map<string, Feature[]> = new Map(); // nodeId → 현재 source에 올라간 피처
     private lastTier: NetworkLodTier | null = null;
     private moveEndKey: EventsKey | null = null;
+    /** 타일 매니저가 바라보는 versionId — 세션 중 버전 전환 감지용 */
+    private tileVersionId: string | null = null;
     private visChangeKey: EventsKey | null = null;
     // 편집 델타 오버레이: editedLinkIds 링크를 MVT 위에 OL 벡터로 그리는 전용 레이어(this.source 와 분리).
     private editOverlaySource: VectorSource | null = null;
@@ -131,6 +134,19 @@ export default class NetworkFeatureLayer extends VectorLayer {
         }
 
         // 도로 그리기 종료 시 fullBuild (draw 중 incremental 누적 후 정리)
+        // 편집 모드 전환 시 즉시 viewport 타일 갱신 — updateTiles 는 moveend 에만 걸려 있어,
+        // 편집 모드로 바꾼 직후에는 팬/줌을 하기 전까지 store 가 비어 클릭 선택이 아무것도
+        // 못 잡던 문제(실사용 재현)의 원인. 모드가 바뀌면 fetch 게이트(near부터)가 달라지므로
+        // 그 자리에서 바로 타일을 당겨온다.
+        // (useModeStore 는 subscribeWithSelector 미들웨어가 없는 일반 스토어 — 수동 prev 비교)
+        let prevAppMode = useModeStore.getState().appMode;
+        this.unsubscribeMode = useModeStore.subscribe((s) => {
+            if (s.appMode === prevAppMode) return;
+            prevAppMode = s.appMode;
+            const map = this.getMapInternal();
+            if (map) { try { this.updateTiles(map); } catch (_) { /* noop */ } }
+        });
+
         this.unsubscribeDraw = useNetworkDrawStore.subscribe(
             (state, prevState) => {
                 const wasDrawing = prevState.isActive || prevState.isConnectionActive;
@@ -287,9 +303,17 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const draw = useNetworkDrawStore.getState();
         if (draw.isActive || draw.isConnectionActive || draw.placementMode !== 'none') return;
 
+        const versionId = getActiveVersionId();
+        if (!versionId) return; // 시나리오 미선택 시 fetch 불가
+        // 버전 전환 감지 — 매니저는 생성 시 versionId 고정. 세션 중 활성 버전이 바뀌면
+        // (저장 후 새 버전 활성화 등) 이전 버전 타일을 계속 fetch/표시하므로 재생성 + MVT 캐시 무효화.
+        if (this.tileManager && this.tileVersionId !== String(versionId)) {
+            this.tileManager.clear();
+            this.tileManager = null;
+            try { this.mvtLayer?.refreshTiles(); } catch (_) {}
+        }
+        this.tileVersionId = String(versionId);
         if (!this.tileManager) {
-            const versionId = getActiveVersionId();
-            if (!versionId) return; // 시나리오 미선택 시 fetch 불가
             this.tileManager = new NetworkTileManager(String(versionId), {
                 onTileLoaded: (_k, payload) => this.addTilePayload(payload),
                 onTileEvicted: (_k, payload) => this.removeTilePayload(payload),
@@ -400,8 +424,11 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const store = layerNameToStoreMap[this.LAYER_NAME];
         const links: any[] = (store?.getState() as any)?.currentJsonData?.links ?? [];
         const edited = new Set<string>();
+        const storeLinkIds = new Set<string>();
         for (const l of links) {
+            if (!l) continue; // null 요소 방어
             const id = String(l.id);
+            storeLinkIds.add(id);
             const cached = this.cachedLinkMap.get(id);
             // 서버 타일에 없거나(신규) geo 가 다르면(수정) → 편집됨
             if (!cached || NetworkFeatureLayer.linkGeoHash(cached) !== NetworkFeatureLayer.linkGeoHash(l)) {
@@ -409,11 +436,16 @@ export default class NetworkFeatureLayer extends VectorLayer {
             }
         }
         const prev = useNetworkEditStore.getState();
+        // 삭제 마스크 정합: store 에 다시 존재하는 링크는 더 이상 삭제 아님 — Ctrl+Z(스냅샷 undo)는
+        // 데이터만 되돌리고 마스크를 안 풀어서, 복원된 도로가 MVT 에서 계속 숨겨진 채 남는다.
+        // (store 에 없는 id 는 viewport 밖일 수 있으므로 마스크 유지 — 존재 확인된 것만 해제)
+        const deleted = new Set([...prev.deletedLinkIds].filter((id) => !storeLinkIds.has(id)));
         // 참조 안정: 내용 동일하면 set 안 함(불필요 재렌더 방지)
         const linksSame = edited.size === prev.editedLinkIds.size &&
-            [...edited].every((id) => prev.editedLinkIds.has(id));
+            [...edited].every((id) => prev.editedLinkIds.has(id)) &&
+            deleted.size === prev.deletedLinkIds.size;
         if (!linksSame) {
-            try { useNetworkEditStore.getState().setEdits(edited, prev.deletedLinkIds); } catch (_) {}
+            try { useNetworkEditStore.getState().setEdits(edited, deleted); } catch (_) {}
         }
 
         // 노드 편집 감지 (이동·포트 재배선·커넥션 편집) — 서버 타일 노드와 해시 비교.
@@ -423,6 +455,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const editedNodes = new Set<string>();
         const sigParts: string[] = [];
         for (const n of nodes) {
+            if (!n) continue; // null 요소 방어
             const id = String(n.id);
             const cached = this.cachedNodeMap.get(id);
             const hash = NetworkFeatureLayer.nodeEditHash(n);
@@ -439,6 +472,28 @@ export default class NetworkFeatureLayer extends VectorLayer {
             this.lastEditedNodesSig = sig;
             try { useNetworkEditStore.getState().setNodeEdits(editedNodes); } catch (_) {}
         }
+
+        // 노드 삭제 마스크 정합 (링크와 동일 — 스냅샷 undo 복원분 해제)
+        const cur = useNetworkEditStore.getState();
+        const restoredNodeIds = [...cur.deletedNodeIds].filter((id) =>
+            nodes.some((n) => n && String(n.id) === id));
+        if (restoredNodeIds.length > 0) {
+            try { cur.removeDeletedNodes(restoredNodeIds); } catch (_) { /* noop */ }
+        }
+
+        // 편집 델타가 전부 사라졌으면(undo 로 원상 복구) 미저장 플래그 해제 —
+        // Ctrl+Z 는 setChange(true) 를 무조건 걸어서, 완전 복구 후에도 "미저장 편집"
+        // 배지가 남고 저장 흐름을 혼란시킨다. 서버 상태와 diff 0 = 저장할 것 없음.
+        const st: any = store?.getState();
+        if (st?.isChanged) {
+            const fin = useNetworkEditStore.getState();
+            const noDelta = fin.editedLinkIds.size === 0 && fin.deletedLinkIds.size === 0
+                && fin.editedNodeIds.size === 0 && fin.deletedNodeIds.size === 0
+                && (st.deletedRecords?.length ?? 0) === 0;
+            if (noDelta && links.length > 0) {
+                try { st.setChange(false); } catch (_) { /* noop */ }
+            }
+        }
     }
 
     /** 직전 노드 편집 시그니처 (id:hash 정렬 조인) — 내용 변화 감지용 */
@@ -454,7 +509,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         if (!NETWORK_TILING.ENABLED) return;
         const store = layerNameToStoreMap[this.LAYER_NAME];
         const nodes: any[] = (store?.getState() as any)?.currentJsonData?.nodes ?? [];
-        const nodeById = new Map(nodes.map((n: any) => [String(n.id), n]));
+        const nodeById = new Map(nodes.filter(Boolean).map((n: any) => [String(n.id), n]));
 
         const removeFeats = (id: string) => {
             const feats = this.nodeFeaturesMap.get(id);
@@ -542,7 +597,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 // 레인/셀: linkRef 로 링크 찾아 레인 폴리곤(오프셋은 렌더와 동일). 셀이면 종방향 구간 클립.
                 const linkId = String(props.linkRef ?? "");
                 const link: any = this.cachedLinkMap.get(linkId)
-                    ?? (layerNameToStoreMap[this.LAYER_NAME]?.getState() as any)?.currentJsonData?.links?.find((l: any) => String(l.id) === linkId);
+                    ?? (layerNameToStoreMap[this.LAYER_NAME]?.getState() as any)?.currentJsonData?.links?.find((l: any) => l && String(l.id) === linkId);
                 const laneIdx = Number(props.laneRef ?? props.id ?? 0);
                 let ring: number[][] | null = null;
                 if (link && ft === "cells") {
@@ -692,22 +747,22 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
             // viewport 타일 링크(서버 최신) + 편집된 링크(prev 에서 보존). 삭제된 링크는 제외.
             const linkById = new Map<string, any>();
-            for (const l of this.cachedLinkMap.values()) linkById.set(String(l.id), l);
+            for (const l of this.cachedLinkMap.values()) if (l) linkById.set(String(l.id), l);
             for (const l of (prev.links ?? [])) {          // 편집(추가/수정) 링크는 prev 값으로 덮어씀(보존)
-                if (editedIds.has(String(l.id))) linkById.set(String(l.id), l);
+                if (l && editedIds.has(String(l.id))) linkById.set(String(l.id), l);
             }
             for (const id of deletedIds) linkById.delete(id); // 삭제 링크 제외
 
             const nodeById = new Map<string, any>();
-            for (const n of this.cachedNodeMap.values()) nodeById.set(String(n.id), n);
+            for (const n of this.cachedNodeMap.values()) if (n) nodeById.set(String(n.id), n);
             // 편집된 노드(이동·포트 재배선·커넥션 편집)는 prev 값으로 덮어씀(보존) —
             // 없으면 다음 동기화가 서버 타일 원본으로 되돌려 편집 유실
             for (const n of (prev.nodes ?? [])) {
-                if (editedNodeIds.has(String(n.id))) nodeById.set(String(n.id), n);
+                if (n && editedNodeIds.has(String(n.id))) nodeById.set(String(n.id), n);
             }
             // 편집 링크가 참조하는 노드는 prev 에서 보존(신규 노드가 타일에 없을 수 있음)
             if (editedIds.size > 0) {
-                for (const n of (prev.nodes ?? [])) if (!nodeById.has(String(n.id))) nodeById.set(String(n.id), n);
+                for (const n of (prev.nodes ?? [])) if (n && !nodeById.has(String(n.id))) nodeById.set(String(n.id), n);
             }
             for (const id of deletedNodeIds) nodeById.delete(id); // 삭제 노드 제외 (되살아남 방지)
 
@@ -1136,7 +1191,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         }
 
         // Slow path: 공통 ID 없으면 전체 교체 (다른 파일 로드)
-        const hasCommon = next.links.some(l => this.cachedLinkMap.has(String(l.id)));
+        const hasCommon = next.links.some(l => l && this.cachedLinkMap.has(String(l.id)));
         return !hasCommon;
     }
 
@@ -1145,8 +1200,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
         this.nodeFeaturesMap.clear();
         this.laneMap.clear();
 
-        const nodes = network.nodes ?? [];
-        const links = network.links ?? [];
+        const nodes = (network.nodes ?? []).filter(Boolean); // null 요소 방어
+        const links = (network.links ?? []).filter(Boolean);
         // 캐시 Map 초기화 (이후 incrementalUpdate에서 증분 갱신)
         this.cachedNodeMap = new Map(nodes.map(n => [String(n.id), n]));
         this.cachedLinkMap = new Map(links.map(l => [String(l.id), l]));
@@ -1222,21 +1277,22 @@ export default class NetworkFeatureLayer extends VectorLayer {
 
         if (changedNodeIndices.length === 0 && newLinks.length === 0 && newNodes.length === 0) return;
 
-        // 4. 캐시 Map 증분 갱신 (전체 재생성 없이 변경분만)
+        // 4. 캐시 Map 증분 갱신 (전체 재생성 없이 변경분만, null 요소 방어)
         for (const i of changedNodeIndices) {
-            const node = next.nodes[i]!;
-            this.cachedNodeMap.set(String(node.id), node);
+            const node = next.nodes[i];
+            if (node) this.cachedNodeMap.set(String(node.id), node);
         }
         for (const node of newNodes) {
-            this.cachedNodeMap.set(String(node.id), node);
+            if (node) this.cachedNodeMap.set(String(node.id), node);
         }
         for (const link of newLinks) {
-            this.cachedLinkMap.set(String(link.id), link);
+            if (link) this.cachedLinkMap.set(String(link.id), link);
         }
 
         // 5. 신규 링크 피처 추가 (먼저: laneMap이 채워져야 노드 conn 빌드 가능)
         const addBuffer: Feature[] = [];
         for (const link of newLinks) {
+            if (!link) continue; // null 요소 방어
             const features = this.buildLinkFeatures(link, this.cachedNodeMap);
             if (features.length > 0) {
                 const id = String(link.id);
@@ -1250,8 +1306,9 @@ export default class NetworkFeatureLayer extends VectorLayer {
         //    finishSegment는 ports/connections를 항상 끝에 추가(append)하므로
         //    slice(prevLen)으로 신규 항목만 골라 피처를 추가한다.
         for (const i of changedNodeIndices) {
-            const prevNode = prev.nodes[i]!;
-            const nextNode = next.nodes[i]!;
+            const prevNode = prev.nodes[i];
+            const nextNode = next.nodes[i];
+            if (!prevNode || !nextNode) continue; // null 요소 방어
             const id = String(nextNode.id);
             const existingFeatures = this.nodeFeaturesMap.get(id) ?? [];
 
@@ -1633,6 +1690,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
     public dispose(): void {
         this.unsubscribe?.();
         this.unsubscribeDraw?.();
+        this.unsubscribeMode?.();
         this.unsubscribeEdit?.();
         this.unsubscribeChanged?.();
         this.unsubscribeSel?.();

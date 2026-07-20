@@ -128,7 +128,7 @@ export default class TrafficHeatmapCesiumLayer {
         const network = (useNetworkStore.getState().currentJsonData
                       ?? useNetworkStore.getState().originData) as any;
         if (!network?.links) return;
-        this._links       = network.links as Link[];
+        this._links       = (network.links as Link[]).filter(Boolean); // null 요소 방어
         this.linkSegments = buildLinkSegments(this._links);
         this._links.forEach(l => this.emaByLink.set(l.id, 0));
     }
