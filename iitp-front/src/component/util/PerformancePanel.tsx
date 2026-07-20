@@ -105,7 +105,10 @@ export default function PerformancePanel() {
 
     return (
         <div style={{
-            position: 'fixed', top: 60, right: 12, zIndex: 99999,
+            // 좌하단 배치 + z-index 900: 우측은 데이터 입출력 등 툴 패널 영역이라
+            // 디버그 오버레이가 "서버 저장" 섹션을 가렸음 (패널이 main 스태킹 컨텍스트
+            // 안이라 z-index 로는 못 이김 → 위치 자체를 비켜 배치)
+            position: 'fixed', bottom: 42, left: 12, zIndex: 900,
             background: 'rgba(16,18,24,0.88)', color: '#e8eaf0',
             font: '11px/1.5 ui-monospace, Menlo, monospace',
             padding: '8px 10px', borderRadius: 6, minWidth: 190,
