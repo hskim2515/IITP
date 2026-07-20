@@ -11,6 +11,7 @@ import axiosInstance from "@api/axiosInstance";
 import { NetworkTileManager, type NetworkTilePayload } from "@managers/NetworkTileManager";
 import { assignTileGuids } from "@utils/tileGuid";
 import { smoothSharpPolyline } from "@utils/polylineSmooth";
+import { normalizeTurning } from "@utils/turning";
 import { useNetworkEditStore } from "@stores/useNetworkEditStore";
 
 // --- 이벤트 핸들러에서 Primitive 피킹/하이라이트에 사용 ---
@@ -1816,7 +1817,7 @@ export default class NetworkDataSourceLayer {
             const ctrlPt = node.coordinates?.lng && node.coordinates?.lat
                 ? Cesium.Cartesian3.fromDegrees(node.coordinates.lng, node.coordinates.lat)
                 : Cesium.Cartesian3.midpoint(fromPt, toPt, new Cesium.Cartesian3());
-            positions = conn.turning === 'Straight'
+            positions = normalizeTurning(conn.turning) === 'Straight'
                 ? [fromPt, toPt]
                 : this.generateQuadraticBezierCurve(fromPt, ctrlPt, toPt);
         }

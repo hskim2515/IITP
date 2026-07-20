@@ -20,6 +20,7 @@ import { useCesiumStore } from '@stores/useCesiumStore';
 import { useMapStore } from '@stores/useMapStore';
 import { useMessageStore } from '@stores/useMessageStore';
 import { generateGUID, assignPropertyToResponseData } from '@utils/guid';
+import { normalizeTurning } from '@utils/turning';
 import { Network, Node, Link, Lane, Cell, Segment, Port, Connection, Coordinates } from '@type/Network';
 import { UpdateLogEntry } from '@type/HistoryTypes';
 
@@ -454,7 +455,7 @@ function makeNode(id: number | string, coord: Coordinates, ports: Port[] = []): 
  *  편집 화면이 [from → 노드중심 → to] 3점 꺾은선으로 그려 실제 렌더(베지어 곡선)와
  *  달라 보이던 것("커넥션이 각지게 만들어짐") 통일. Straight 는 렌더와 동일하게 직선. */
 function connCurveOl(fromOl: Coordinate, nodeOl: Coordinate, toOl: Coordinate, turning?: string): Coordinate[] {
-    if (turning === 'Straight') return [fromOl, toOl];
+    if (normalizeTurning(turning) === 'Straight') return [fromOl, toOl];
     const baseX = (fromOl[0]! + toOl[0]!) / 2, baseY = (fromOl[1]! + toOl[1]!) / 2;
     const ctrlX = baseX + (nodeOl[0]! - baseX) * 0.4, ctrlY = baseY + (nodeOl[1]! - baseY) * 0.4;
     const pts: Coordinate[] = [];
@@ -2053,11 +2054,12 @@ export const useNetworkDraw = () => {
                 if (!fromLink || !toLink) continue;
                 const fromOl = getLaneEndpointOl(fromLink, conn.fromLane, 'target');
                 const toOl   = getLaneEndpointOl(toLink, conn.toLane, 'source');
-                const color  = TURN_COLOR[conn.turning] ?? 'rgba(160,160,160,0.7)';
+                const connTurning = normalizeTurning(conn.turning);
+                const color  = TURN_COLOR[connTurning] ?? 'rgba(160,160,160,0.7)';
                 const dx = toOl[0]! - fromOl[0]!; const dy = toOl[1]! - fromOl[1]!;
                 const angle = Math.atan2(dy, dx);
 
-                const lineF = new Feature(new LineString(connCurveOl(fromOl, nodeOl, toOl, conn.turning)));
+                const lineF = new Feature(new LineString(connCurveOl(fromOl, nodeOl, toOl, connTurning)));
                 lineF.set('_type', 'conn');
                 lineF.set('_connId', conn.id);
                 lineF.setStyle([
@@ -2076,7 +2078,7 @@ export const useNetworkDraw = () => {
                         rotation: -(angle - Math.PI / 2),
                     }),
                     text: new OlText({
-                        text: conn.turning === 'Straight' ? '↑' : conn.turning === 'Right_Turn' ? '→' : '←',
+                        text: connTurning === 'Straight' ? '↑' : connTurning === 'Right_Turn' ? '→' : '←',
                         font: 'bold 9px sans-serif',
                         fill: new Fill({ color }),
                         stroke: new Stroke({ color: 'rgba(0,0,0,0.8)', width: 2 }),
@@ -3293,11 +3295,12 @@ function flashIntersectionConnectionsOl(
             if (!fromLink || !toLink) continue;
             const fromOl = getLaneEndpointOl(fromLink, conn.fromLane, 'target');
             const toOl   = getLaneEndpointOl(toLink, conn.toLane, 'source');
-            const color  = TURN_FLASH_OL[conn.turning] ?? 'rgba(160,160,160,0.8)';
+            const connTurning = normalizeTurning(conn.turning);
+            const color  = TURN_FLASH_OL[connTurning] ?? 'rgba(160,160,160,0.8)';
             const dx = toOl[0]! - fromOl[0]!; const dy = toOl[1]! - fromOl[1]!;
             const angle = Math.atan2(dy, dx);
 
-            const lineF = new Feature(new LineString(connCurveOl(fromOl, nodeOl, toOl, conn.turning)));
+            const lineF = new Feature(new LineString(connCurveOl(fromOl, nodeOl, toOl, connTurning)));
             lineF.setStyle(new Style({
                 stroke: new Stroke({ color, width: 2, lineDash: [6, 4] }),
             }));
