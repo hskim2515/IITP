@@ -258,6 +258,37 @@ export function deleteNodeFromNetwork(network: Network, nodeId: number | string)
     return { ...result, nodes: result.nodes.filter(n => String(n.id) !== String(nodeId)) };
 }
 
+/**
+ * 링크 길이 변경 시 레인 파생물(cells/segments) 정합 갱신.
+ *
+ * <p>셀/세그먼트는 링크 길이의 종방향 분할이라 기하 편집 시 함께 갱신돼야 한다.
+ * - segments: 비율 스케일 — 다중 세그먼트(block 구간 등)의 개수·속성 보존
+ * - cells: 채워져 있으면 비율 스케일(개수·속성 보존, KTDB 임포트 링크),
+ *          비어 있으면 빈 배열 유지(그린 도로 — 서버 생성 규약)
+ * - numCell: cells 와 동기 (없으면 100m 균등 분할 규약)
+ */
+function rescaleLaneDerived(lane: any, oldLen: number, newLen: number, coords: Coordinates[]): any {
+    const f = oldLen > 0 && newLen > 0 ? newLen / oldLen : null;
+    const segs = (lane.segments?.length > 0 && f != null)
+        ? lane.segments.map((s: any) => ({
+            ...s,
+            initPoint: Math.round(s.initPoint * f * 100) / 100,
+            endPoint:  Math.round(s.endPoint  * f * 100) / 100,
+        }))
+        : [{ ...(lane.segments?.[0] ?? { featureType: 'segments', id: 0, block: false }), initPoint: 0, endPoint: newLen }];
+    const cells = (lane.cells?.length > 0 && f != null)
+        ? lane.cells.map((c: any) => ({
+            ...c,
+            offset: Math.round(c.offset * f * 100) / 100,
+            length: Math.round(c.length * f * 100) / 100,
+        }))
+        : (lane.cells ?? []);
+    return {
+        ...lane, coordinates: coords, segments: segs, cells,
+        numCell: cells.length > 0 ? cells.length : Math.max(1, Math.ceil(newLen / 100)),
+    };
+}
+
 function rebuildLanes(link: Link, numLane: number): Lane[] {
     const from = link.coordinates[0]!;
     const to   = link.coordinates[link.coordinates.length - 1]!;
@@ -327,16 +358,12 @@ export function updateLinkCoordinates(network: Network, linkId: number | string,
         newFrom.lng !== oldFrom?.lng || newFrom.lat !== oldFrom?.lat ||
         newTo.lng   !== oldTo?.lng   || newTo.lat   !== oldTo?.lat;
 
+    const oldLen = link.length || calcPathLength(link.coordinates);
     const updatedLinks = network.links.map(l => {
         if (String(l.id) !== String(linkId)) return l;
         return {
             ...l, coordinates: newCoords, length,
-            lanes: l.lanes.map((lane: any) => ({
-                ...lane,
-                coordinates: newCoords,
-                numCell: Math.max(1, Math.ceil(length / 100)), // 길이 변경 반영(cells 는 빈 배열 유지=서버 생성)
-                segments: [{ ...lane.segments[0], initPoint: 0, endPoint: length }],
-            })),
+            lanes: l.lanes.map((lane: any) => rescaleLaneDerived(lane, oldLen, length, newCoords)),
         };
     });
 
@@ -437,7 +464,12 @@ export function mergeNodesInNetwork(
         if (String(l.fromNode) === String(removeNodeId)) { fromNode = keepNodeId as number; coords = [keepCoord, ...coords.slice(1)]; }
         if (String(l.toNode)   === String(removeNodeId)) { toNode   = keepNodeId as number; coords = [...coords.slice(0, -1), keepCoord]; }
         if (fromNode === l.fromNode && toNode === l.toNode) return l;
-        return { ...l, fromNode, toNode, coordinates: coords, length: calcPathLength(coords) };
+        const newLen = calcPathLength(coords);
+        const oldLen = l.length || calcPathLength(l.coordinates);
+        return {
+            ...l, fromNode, toNode, coordinates: coords, length: newLen,
+            lanes: (l.lanes ?? []).map((lane: any) => rescaleLaneDerived(lane, oldLen, newLen, coords)),
+        };
     });
 
     const selfLoopIds = new Set(
@@ -511,14 +543,11 @@ export function moveNode(network: Network, nodeId: number | string, newCoord: Co
         if (isFrom) coords[0] = newCoord;
         if (isTo)   coords[coords.length - 1] = newCoord;
         const length = calcPathLength(coords);
-        // 레인 coordinates는 link.coordinates를 따르므로 동일하게 업데이트
+        const oldLen = l.length || calcPathLength(l.coordinates);
+        // 레인 coordinates는 link.coordinates를 따름 + cells/segments 비율 갱신
         return {
             ...l, coordinates: coords, length,
-            lanes: l.lanes.map((lane: any) => ({
-                ...lane,
-                coordinates: coords,
-                segments: [{ ...lane.segments[0], initPoint: 0, endPoint: length }],
-            })),
+            lanes: l.lanes.map((lane: any) => rescaleLaneDerived(lane, oldLen, length, coords)),
         };
     });
     return { ...network, nodes: updatedNodes, links: updatedLinks };
