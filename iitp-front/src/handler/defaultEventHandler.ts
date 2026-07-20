@@ -18,6 +18,7 @@ import { highlightNetworkPrimitive, pickNetworkAtPosition, pickLaneAtPosition } 
 import { useNetworkStore } from "@stores/useNetworkStore";
 import { findNearestNode, findNearestLink, findNearestLane } from "@hooks/useNetworkSelect";
 import { getNetworkLodTierByResolution } from "@utils/lodConstants";
+import { fromLonLat } from "ol/proj";
 
 
 const selectedGuid = useSelectionStore.getState().selectedGuid;
@@ -163,10 +164,19 @@ export const defaultEventHandlers ={
             const res = olMap.getView().getResolution() ?? 1;
             let hit: any = null;
             if (network && coord) {
-                const node = findNearestNode(network.nodes ?? [], coord, res * 20);
+                // 노드는 마커 직접 클릭(res*8)만 즉시 선택 — 절대 우선(res*20)이면 교차로 부근
+                // 레인/링크 클릭이 전부 노드로 가로채임 (useNetworkSelect 클릭과 동일 규칙)
+                const nodeCand = findNearestNode(network.nodes ?? [], coord, res * 20);
+                let nodeDist = Infinity;
+                if (nodeCand) {
+                    const p = fromLonLat([nodeCand.coordinates.lng, nodeCand.coordinates.lat]);
+                    nodeDist = Math.hypot(p[0]! - coord[0]!, p[1]! - coord[1]!);
+                }
+                const directNode = nodeCand && nodeDist <= res * 8 ? nodeCand : null;
                 const isDetail = getNetworkLodTierByResolution(res) === 'detail';
-                const lane = !node && isDetail ? findNearestLane(network.links ?? [], coord, res * 8) : null;
-                const link = (!node && !lane) ? findNearestLink(network.links ?? [], coord, res * 15) : null;
+                const lane = !directNode && isDetail ? findNearestLane(network.links ?? [], coord, res * 8) : null;
+                const link = (!directNode && !lane) ? findNearestLink(network.links ?? [], coord, res * 15) : null;
+                const node = directNode ?? ((!lane && !link) ? nodeCand : null);
                 if (node) hit = { ...node, featureType: 'nodes' };
                 else if (lane) {
                     const l0 = (network.links ?? []).find((l: any) => String(l.id) === lane.linkId);

@@ -1286,11 +1286,19 @@ export const useNetworkSelect = () => {
             const coord = olMap.getEventCoordinate(e);
             const res   = olMap.getView().getResolution() ?? 1;
 
-            // 우선순위: 노드 > 레인(detail 줌에서만) > 링크. 레인은 링크보다 세밀하니 먼저.
-            const node = findNearestNode(network.nodes, coord, res * 20);
+            // 우선순위: 노드 마커 직접 클릭(res*8) > 레인(detail) > 링크 > 노드 근접 폴백(res*20).
+            // 노드를 res*20 절대 우선으로 두면, 노드는 링크 끝점 위에 있으므로 교차로 부근
+            // 20px 안의 레인/링크 클릭이 전부 노드로 가로채였다("레인 클릭했는데 노드 선택됨").
+            // 마커를 정확히 짚은 클릭만 노드 즉시 선택, 그 외엔 도로 요소 우선.
+            const nodeCand = findNearestNode(network.nodes, coord, res * 20);
+            const nodeDist = nodeCand
+                ? olDist(fromLonLat([nodeCand.coordinates.lng, nodeCand.coordinates.lat]), coord)
+                : Infinity;
             const isDetail = getNetworkLodTierByResolution(res) === 'detail';
-            const lane = !node && isDetail ? findNearestLane(network.links, coord, res * 8) : null;
-            const link = (!node && !lane) ? findNearestLink(network.links, coord, res * 15) : null;
+            const directNode = nodeCand && nodeDist <= res * 8 ? nodeCand : null;
+            const lane = !directNode && isDetail ? findNearestLane(network.links, coord, res * 8) : null;
+            const link = (!directNode && !lane) ? findNearestLink(network.links, coord, res * 15) : null;
+            const node = directNode ?? ((!lane && !link) ? nodeCand : null); // 도로 요소 없을 때만 근접 폴백
 
             if (e.shiftKey) {
                 // Shift+클릭: 멀티셀렉트 토글 (레인은 멀티셀렉트 미지원 → 링크로)
