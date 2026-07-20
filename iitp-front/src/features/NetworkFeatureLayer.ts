@@ -1349,9 +1349,14 @@ export default class NetworkFeatureLayer extends VectorLayer {
             const newConns = nextNode.connections.slice(prevNode.connections.length);
             const nodePt = fromLonLat([nextNode.coordinates.lng, nextNode.coordinates.lat]);
             for (const conn of newConns) {
-                // 3점 이상 = 내부링크 경로 폴리라인 — 급꺾임(변환기 합성 직각 shape)만 코너 스무딩
+                const isStraight = normalizeTurning(conn.turning) === 'Straight';
+                // 3점 이상 = 내부링크 경로 폴리라인 — 회전 커넥션(교통섬 순환 등 실측 경로)만
+                // 그대로 사용. 직진은 원본에 중간 경유점이 있어도 여러 차선이 같은 경유점으로
+                // 합성돼(KTDB 내부링크 생성 시 차선별 분리 없이 공유) 교차로 중앙에서 겹쳐
+                // 보이는 인공물이 되므로, 직진은 항상 시작~끝 2점 직선으로 그린다(실사용 발견 —
+                // 4개 차선의 turning=S 커넥션이 전부 동일한 중간 좌표 2점을 거치는 것 확인).
                 let coord: number[][] | null = null;
-                if (conn.coordinates?.length > 2) {
+                if (!isStraight && conn.coordinates?.length > 2) {
                     const pts = smoothSharpPolyline(conn.coordinates.filter((c: any) => c && c.lng != null && c.lat != null));
                     if (pts.length >= 2) coord = pts.map((c: any) => fromLonLat([c.lng, c.lat]));
                 }
@@ -1378,7 +1383,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                         }
                     }
                     if (!fromPt || !toPt) continue;
-                    coord = normalizeTurning(conn.turning) === 'Straight'
+                    coord = isStraight
                         ? [fromPt, toPt]
                         : this.generateQuadraticBezierCurve(fromPt, nodePt, toPt);
                 }
@@ -1572,12 +1577,14 @@ export default class NetworkFeatureLayer extends VectorLayer {
         features.push(nodeFeature);
 
         for (const conn of (node.connections ?? [])) {
-            // 3점 이상 = 변환기가 내부링크 경로(교통섬 순환·회전 동선)로 생성한 폴리라인.
-            // 완만한 실측 경로는 그대로, 급꺾임(변환기 합성 [직진→직각→직진] shape,
-            // 실측 90~120° 꺾임)은 코너 스무딩해 "직각 커넥션"으로 보이지 않게.
-            // 2점(구 데이터/직결)만 베지어 폴백.
+            const isStraight = normalizeTurning(conn.turning) === 'Straight';
+            // 3점 이상 = 변환기가 내부링크 경로(교통섬 순환·회전 동선)로 생성한 폴리라인 —
+            // 회전 커넥션만 사용(완만한 실측은 그대로, 급꺾임은 코너 스무딩). 직진은 원본에
+            // 중간 경유점이 있어도 여러 차선이 같은 경유점으로 합성돼(KTDB 내부링크 생성 시
+            // 차선별 분리 없이 공유) 교차로 중앙에서 겹쳐 보이는 인공물이 되므로, 직진은
+            // 항상 시작~끝 2점 직선으로 그린다(실사용 발견).
             let coord: Coordinate[] | null = null;
-            if (conn.coordinates?.length > 2) {
+            if (!isStraight && conn.coordinates?.length > 2) {
                 const pts = smoothSharpPolyline(conn.coordinates.filter((c: any) => c && c.lng != null && c.lat != null));
                 if (pts.length >= 2) coord = pts.map((c: any) => fromLonLat([c.lng, c.lat]));
             }
@@ -1606,7 +1613,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 }
                 if (!fromPt || !toPt) continue;
 
-                coord = normalizeTurning(conn.turning) === "Straight"
+                coord = isStraight
                     ? [fromPt, toPt]
                     : this.generateQuadraticBezierCurve(fromPt, fromLonLat([node.coordinates.lng, node.coordinates.lat]), toPt);
             }

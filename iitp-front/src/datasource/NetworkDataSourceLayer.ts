@@ -1786,11 +1786,14 @@ export default class NetworkDataSourceLayer {
         const toLink = this.cachedLinkMap.get(String(conn.toLink));
         if (!fromLink || !toLink || !conn.__guid) return;
 
-        // 3점 이상 = 변환기가 내부링크 경로(교통섬 순환·회전 동선)로 생성한 폴리라인.
-        // 완만한 실측 경로는 그대로, 급꺾임(변환기 합성 직각 shape)은 코너 스무딩.
-        // 2점(구 데이터/직결)만 베지어 폴백.
+        const isStraight = normalizeTurning(conn.turning) === 'Straight';
+        // 3점 이상 = 변환기가 내부링크 경로(교통섬 순환·회전 동선)로 생성한 폴리라인 —
+        // 회전 커넥션만 사용(완만한 실측은 그대로, 급꺾임은 코너 스무딩). 직진은 원본에
+        // 중간 경유점이 있어도 여러 차선이 같은 경유점으로 합성돼(KTDB 내부링크 생성 시
+        // 차선별 분리 없이 공유) 교차로 중앙에서 겹쳐 보이는 인공물이 되므로, 직진은
+        // 항상 시작~끝 2점 직선으로 그린다(실사용 발견).
         let positions: Cesium.Cartesian3[] | null = null;
-        if (conn.coordinates?.length > 2) {
+        if (!isStraight && conn.coordinates?.length > 2) {
             const pts = smoothSharpPolyline(conn.coordinates.filter((c: any) => c && c.lng != null && c.lat != null));
             if (pts.length >= 2) {
                 positions = pts.map((c: any) => Cesium.Cartesian3.fromDegrees(c.lng, c.lat));
@@ -1817,7 +1820,7 @@ export default class NetworkDataSourceLayer {
             const ctrlPt = node.coordinates?.lng && node.coordinates?.lat
                 ? Cesium.Cartesian3.fromDegrees(node.coordinates.lng, node.coordinates.lat)
                 : Cesium.Cartesian3.midpoint(fromPt, toPt, new Cesium.Cartesian3());
-            positions = normalizeTurning(conn.turning) === 'Straight'
+            positions = isStraight
                 ? [fromPt, toPt]
                 : this.generateQuadraticBezierCurve(fromPt, ctrlPt, toPt);
         }
