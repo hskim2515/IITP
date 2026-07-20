@@ -11,6 +11,7 @@ import axiosInstance from "@api/axiosInstance";
 import { NetworkTileManager, type NetworkTilePayload } from "@managers/NetworkTileManager";
 import { assignTileGuids } from "@utils/tileGuid";
 import { smoothSharpPolyline } from "@utils/polylineSmooth";
+import { useNetworkEditStore } from "@stores/useNetworkEditStore";
 
 // --- 이벤트 핸들러에서 Primitive 피킹/하이라이트에 사용 ---
 export const networkPrimitivePropertiesMap = new Map<string, any>();
@@ -205,6 +206,9 @@ export default class NetworkDataSourceLayer {
     private tileCameraTimer: ReturnType<typeof setTimeout> | null = null;
     /** 타일 매니저가 바라보는 versionId — 세션 중 버전 전환 감지용 */
     private tileVersionId: string | null = null;
+    /** 편집 델타 오버레이 프리미티브 (타일 모드에서 미저장 편집 링크의 새 형상 — 2D 오버레이의 3D 대응) */
+    private editOverlayPrims: (Cesium.GroundPrimitive | Cesium.GroundPolylinePrimitive)[] = [];
+    private unsubscribeEdit: (() => void) | undefined;
     private applyVisDebounce: ReturnType<typeof setTimeout> | null = null; // 타일 다중 로드 시 applyVisibility 1회로 합침
     // 3D 줌아웃(overview/mid): 간선 중심선 폴리라인 1회 fetch (2D MVT 대응). near로 줌인하면 타일로 전환.
     private overviewArterialsActive = false;
@@ -351,6 +355,24 @@ export default class NetworkDataSourceLayer {
         // tileMode 전환 감지: false→true 전환 시 load() → updateTiles() 트리거
         this.unsubscribeTileMode = useNetworkTileStore.subscribe(
             (state, prev) => { if (state.tileMode && !prev.tileMode) this.load(); }
+        );
+
+        // 편집 델타 반영 (타일 모드): 편집/삭제 링크 집합이 바뀌면
+        // ① 해당 링크의 원본 청크 재빌드(마스킹 — 옛 형상 제거) ② 새 형상 오버레이 재구성.
+        // 이것 없이는 3D 가 서버 타일 원본만 그려 "편집이 2D 에만 반영"됐다.
+        this.unsubscribeEdit = useNetworkEditStore.subscribe(
+            (s) => [s.editedLinkIds, s.deletedLinkIds] as const,
+            ([ed, del], [prevEd, prevDel]) => {
+                if (!NETWORK_TILING.ENABLED && !useNetworkTileStore.getState().tileMode) return;
+                const changed = new Set<string>();
+                for (const id of ed) if (!prevEd.has(id)) changed.add(id);
+                for (const id of prevEd) if (!ed.has(id)) changed.add(id);
+                for (const id of del) if (!prevDel.has(id)) changed.add(id);
+                for (const id of prevDel) if (!del.has(id)) changed.add(id);
+                this.rebuildChunksForLinks(changed);
+                this.rebuildEditOverlay();
+            },
+            { equalityFn: (a, b) => a[0] === b[0] && a[1] === b[1] },
         );
 
         // 카메라 고도 기반 LOD
@@ -632,7 +654,10 @@ export default class NetworkDataSourceLayer {
 
         // 소유 링크(home + claim)만 청크 인스턴스 빌드
         // (타일별 중심선 폴리라인은 추가하지 않음 — near 이상에서도 mid 베이스레이어가 상시 유지되어 중복)
-        const ownedLinkSet = new Set(ownedLinkIds);
+        // 편집/삭제된 링크는 초기 빌드에서도 제외 (오버레이가 새 형상 담당 — 이중 렌더 방지)
+        const editState = useNetworkEditStore.getState();
+        const ownedLinkSet = new Set(ownedLinkIds.filter(
+            (id) => !editState.editedLinkIds.has(id) && !editState.deletedLinkIds.has(id)));
         const outlineInst: Cesium.GeometryInstance[] = [];
         const linkInst: Cesium.GeometryInstance[] = [];
         const laneInst: Cesium.GeometryInstance[] = [];
@@ -965,6 +990,9 @@ export default class NetworkDataSourceLayer {
                 this.prevNetwork = null;
             }
             this.updateTiles();
+            // 편집 중 형상 변경(드래그/undo)은 editedLinkIds 집합이 안 변해도 좌표가 변한다
+            // → store 데이터 변경마다 오버레이 재구성 (집합 변경은 edit 구독이 청크 마스킹까지 처리)
+            this.rebuildEditOverlay();
             return;
         }
         const store = layerNameToStoreMap[this.LAYER_NAME];
@@ -1220,6 +1248,107 @@ export default class NetworkDataSourceLayer {
         const centerLng = (cx + 0.5) * NetworkDataSourceLayer.CHUNK_DEG;
         const centerLat = (cy + 0.5) * NetworkDataSourceLayer.CHUNK_DEG;
         this.chunkCenters.set(key, Cesium.Cartesian3.fromDegrees(centerLng, centerLat));
+    }
+
+    /** 편집/삭제 링크가 속한(빌드한) 청크만 캐시 데이터로 재빌드 — 원본 형상 마스킹.
+     *  청크는 배치 GroundPrimitive 라 개별 인스턴스를 숨길 수 없어, 소유 링크 목록에서
+     *  편집/삭제 id 를 제외하고 다시 빌드한다 (2D MVT styleFunction 숨김의 3D 대응). */
+    private rebuildChunksForLinks(linkIds: Set<string>): void {
+        if (linkIds.size === 0) return;
+        const keys = new Set<string>();
+        for (const id of linkIds) {
+            const k = this.linkOwnerTile.get(id);
+            if (k) keys.add(k);
+        }
+        for (const key of keys) this.rebuildChunkFromCache(key);
+        if (keys.size > 0) this.scheduleApplyVisibility();
+    }
+
+    private rebuildChunkFromCache(key: string): void {
+        const chunk = this.chunkPrimitives.get(key);
+        const home = this.tileHomeIds.get(key);
+        if (!chunk || !home) return;
+        if (chunk.outline) { try { this.viewer.scene.groundPrimitives.remove(chunk.outline); } catch (_) { /* noop */ } }
+        if (chunk.link)    { try { this.viewer.scene.groundPrimitives.remove(chunk.link); } catch (_) { /* noop */ } }
+        if (chunk.lane)    { try { this.viewer.scene.groundPrimitives.remove(chunk.lane); } catch (_) { /* noop */ } }
+        if (chunk.line)    { try { this.viewer.scene.groundPrimitives.remove(chunk.line); } catch (_) { /* noop */ } }
+        this.chunkPrimitives.delete(key);
+
+        const edit = useNetworkEditStore.getState();
+        const tier = this.chunkTiers.get(key);
+        const outlineInst: Cesium.GeometryInstance[] = [];
+        const linkInst: Cesium.GeometryInstance[] = [];
+        const laneInst: Cesium.GeometryInstance[] = [];
+        const lineInst: Cesium.GeometryInstance[] = [];
+        for (const id of home.linkIds) {
+            const link = this.cachedLinkMap.get(id);
+            if (!link) continue;
+            if (edit.editedLinkIds.has(id) || edit.deletedLinkIds.has(id)) {
+                // 마스킹 — 픽 속성 맵에서도 제거 (안 보이는 옛 형상이 선택되는 것 방지)
+                if (link.__guid) {
+                    networkPrimitivePropertiesMap.delete(link.__guid);
+                    for (const lane of link.lanes ?? []) {
+                        if (lane?.__guid) networkPrimitivePropertiesMap.delete(lane.__guid);
+                    }
+                }
+                continue;
+            }
+            this.buildLinkInstances(link, this.cachedNodeMap, outlineInst, linkInst, laneInst, lineInst, lineInst);
+        }
+        this.buildChunkPrimitives(key, outlineInst, linkInst, laneInst, lineInst);
+        if (tier != null) this.chunkTiers.set(key, tier);
+    }
+
+    /** 편집 델타 오버레이 재구성 (타일 모드) — store 의 편집 링크를 새 형상으로 렌더.
+     *  2D renderEditOverlay 의 3D 대응. 저장/폐기 시 editedLinkIds 가 비어 자동 제거된다. */
+    private rebuildEditOverlay(): void {
+        for (const p of this.editOverlayPrims) {
+            try { this.viewer.scene.groundPrimitives.remove(p); } catch (_) { /* noop */ }
+        }
+        this.editOverlayPrims = [];
+        if (this.destroyed) return;
+        if (!NETWORK_TILING.ENABLED && !useNetworkTileStore.getState().tileMode) return; // 전체 로드는 fullBuild 가 반영
+        const edited = useNetworkEditStore.getState().editedLinkIds;
+        (globalThis as any).__netEditOverlay3D = 0; // 디버그/E2E 관측용
+        if (edited.size === 0) { try { this.viewer.scene.requestRender(); } catch (_) { /* noop */ } return; }
+
+        const store = layerNameToStoreMap[this.LAYER_NAME];
+        const net: any = store?.getState()?.currentJsonData;
+        if (!net?.links) return;
+        const nodeMap = new Map<string, any>(
+            (net.nodes ?? []).filter(Boolean).map((n: any) => [String(n.id), n]));
+        // 편집 링크 끝 노드가 store 에 없을 수 있어(경계) 캐시 노드로 보강
+        for (const [id, n] of this.cachedNodeMap) if (!nodeMap.has(id)) nodeMap.set(id, n);
+
+        const outlineInst: Cesium.GeometryInstance[] = [];
+        const linkInst: Cesium.GeometryInstance[] = [];
+        const laneInst: Cesium.GeometryInstance[] = [];
+        const lineInst: Cesium.GeometryInstance[] = [];
+        for (const link of net.links) {
+            if (!link || !edited.has(String(link.id))) continue;
+            this.buildLinkInstances(link, nodeMap, outlineInst, linkInst, laneInst, lineInst, lineInst);
+        }
+        const mk = (inst: Cesium.GeometryInstance[]) => new Cesium.GroundPrimitive({
+            geometryInstances: inst,
+            appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: false }),
+            asynchronous: true,
+            classificationType: Cesium.ClassificationType.BOTH,
+        });
+        if (outlineInst.length > 0) this.editOverlayPrims.push(mk(outlineInst));
+        if (linkInst.length > 0)    this.editOverlayPrims.push(mk(linkInst));
+        if (laneInst.length > 0)    this.editOverlayPrims.push(mk(laneInst));
+        if (lineInst.length > 0) {
+            this.editOverlayPrims.push(new Cesium.GroundPolylinePrimitive({
+                geometryInstances: lineInst,
+                appearance: new Cesium.PolylineColorAppearance(),
+                asynchronous: true,
+                classificationType: Cesium.ClassificationType.BOTH,
+            }));
+        }
+        for (const p of this.editOverlayPrims) this.viewer.scene.groundPrimitives.add(p);
+        this.pumpUntilReady(this.editOverlayPrims as any);
+        (globalThis as any).__netEditOverlay3D = this.editOverlayPrims.length;
+        try { this.viewer.scene.requestRender(); } catch (_) { /* noop */ }
     }
 
     /** 모든 청크 Primitive 제거 */
@@ -1785,6 +1914,11 @@ export default class NetworkDataSourceLayer {
         this.unsubscribe?.();
         this.unsubscribeDraw?.();
         this.unsubscribeTileMode?.();
+        this.unsubscribeEdit?.();
+        for (const p of this.editOverlayPrims) {
+            try { this.viewer.scene.groundPrimitives.remove(p); } catch (_) { /* noop */ }
+        }
+        this.editOverlayPrims = [];
         if (this.highlightPrimitive) {
             try { this.viewer.scene.groundPrimitives.remove(this.highlightPrimitive); } catch (_) {}
             this.highlightPrimitive = null;
