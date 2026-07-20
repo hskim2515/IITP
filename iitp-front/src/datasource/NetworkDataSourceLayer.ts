@@ -10,6 +10,7 @@ import { LOD_ALT, LOD_RES, NETWORK_TILING, NETWORK_LOD_TIER_ORDER, getNetworkLod
 import axiosInstance from "@api/axiosInstance";
 import { NetworkTileManager, type NetworkTilePayload } from "@managers/NetworkTileManager";
 import { assignTileGuids } from "@utils/tileGuid";
+import { smoothSharpPolyline } from "@utils/polylineSmooth";
 
 // --- 이벤트 핸들러에서 Primitive 피킹/하이라이트에 사용 ---
 export const networkPrimitivePropertiesMap = new Map<string, any>();
@@ -1655,11 +1656,12 @@ export default class NetworkDataSourceLayer {
         const toLink = this.cachedLinkMap.get(String(conn.toLink));
         if (!fromLink || !toLink || !conn.__guid) return;
 
-        // 3점 이상 = 변환기가 내부링크 경로(교통섬 순환·회전 동선)로 생성한 실제 폴리라인 —
-        // 베지어 합성 없이 그대로 사용. 2점(구 데이터/직결)만 베지어 폴백.
+        // 3점 이상 = 변환기가 내부링크 경로(교통섬 순환·회전 동선)로 생성한 폴리라인.
+        // 완만한 실측 경로는 그대로, 급꺾임(변환기 합성 직각 shape)은 코너 스무딩.
+        // 2점(구 데이터/직결)만 베지어 폴백.
         let positions: Cesium.Cartesian3[] | null = null;
         if (conn.coordinates?.length > 2) {
-            const pts = conn.coordinates.filter((c: any) => c && c.lng != null && c.lat != null);
+            const pts = smoothSharpPolyline(conn.coordinates.filter((c: any) => c && c.lng != null && c.lat != null));
             if (pts.length >= 2) {
                 positions = pts.map((c: any) => Cesium.Cartesian3.fromDegrees(c.lng, c.lat));
             }

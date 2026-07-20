@@ -26,6 +26,7 @@ import type OLMap from "ol/Map";
 import { NETWORK_TILING } from "@utils/lodConstants";
 import { NetworkTileManager, type NetworkTilePayload } from "@managers/NetworkTileManager";
 import { assignTileGuids } from "@utils/tileGuid";
+import { smoothSharpPolyline } from "@utils/polylineSmooth";
 import NetworkMvtLayer from "@features/NetworkMvtLayer";
 
 export default class NetworkFeatureLayer extends VectorLayer {
@@ -1347,10 +1348,10 @@ export default class NetworkFeatureLayer extends VectorLayer {
             const newConns = nextNode.connections.slice(prevNode.connections.length);
             const nodePt = fromLonLat([nextNode.coordinates.lng, nextNode.coordinates.lat]);
             for (const conn of newConns) {
-                // 3점 이상 = 내부링크 경로 실제 폴리라인 — 그대로 사용 (베지어 합성 없음)
+                // 3점 이상 = 내부링크 경로 폴리라인 — 급꺾임(변환기 합성 직각 shape)만 코너 스무딩
                 let coord: number[][] | null = null;
                 if (conn.coordinates?.length > 2) {
-                    const pts = conn.coordinates.filter((c: any) => c && c.lng != null && c.lat != null);
+                    const pts = smoothSharpPolyline(conn.coordinates.filter((c: any) => c && c.lng != null && c.lat != null));
                     if (pts.length >= 2) coord = pts.map((c: any) => fromLonLat([c.lng, c.lat]));
                 }
                 if (!coord) {
@@ -1570,11 +1571,13 @@ export default class NetworkFeatureLayer extends VectorLayer {
         features.push(nodeFeature);
 
         for (const conn of (node.connections ?? [])) {
-            // 3점 이상 = 변환기가 내부링크 경로(교통섬 순환·회전 동선)로 생성한 실제 폴리라인 —
-            // 베지어 합성 없이 그대로 사용. 2점(구 데이터/직결)만 베지어 폴백.
+            // 3점 이상 = 변환기가 내부링크 경로(교통섬 순환·회전 동선)로 생성한 폴리라인.
+            // 완만한 실측 경로는 그대로, 급꺾임(변환기 합성 [직진→직각→직진] shape,
+            // 실측 90~120° 꺾임)은 코너 스무딩해 "직각 커넥션"으로 보이지 않게.
+            // 2점(구 데이터/직결)만 베지어 폴백.
             let coord: Coordinate[] | null = null;
             if (conn.coordinates?.length > 2) {
-                const pts = conn.coordinates.filter((c: any) => c && c.lng != null && c.lat != null);
+                const pts = smoothSharpPolyline(conn.coordinates.filter((c: any) => c && c.lng != null && c.lat != null));
                 if (pts.length >= 2) coord = pts.map((c: any) => fromLonLat([c.lng, c.lat]));
             }
             if (!coord) {
