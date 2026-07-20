@@ -13,12 +13,7 @@ export interface FacilityValidationResult {
     issues: string[];
 }
 
-async function loadNetworkForValidation(): Promise<any | null> {
-    return getNetworkForDummyGeneration();
-}
-
-export async function validateNetworkIntegrity(): Promise<FacilityValidationResult> {
-    const network = await loadNetworkForValidation();
+function validateNetworkStructure(network: any): FacilityValidationResult {
     const nodes = (network?.nodes ?? []).filter(Boolean);
     const links = (network?.links ?? []).filter(Boolean);
 
@@ -48,13 +43,12 @@ export async function validateNetworkIntegrity(): Promise<FacilityValidationResu
     return { ok: issues.length === 0, issues };
 }
 
-export async function validateSignalIntegrity(): Promise<FacilityValidationResult> {
+function validateSignalAgainstNetwork(network: any): FacilityValidationResult {
     const signalData = useSignalStore.getState().currentJsonData as any;
     const signals = (signalData?.signals ?? []).filter(Boolean);
     // 빈 신호(signal.xml 빈 템플릿)는 NextSim 이 허용하는 유효 상태
     if (signals.length === 0) return { ok: true, issues: [] };
 
-    const network = await loadNetworkForValidation();
     const nodes = (network?.nodes ?? []).filter(Boolean);
     const nodeIds = new Set(nodes.map((n: any) => String(n.id)));
     const connIdsByNode = new Map<string, Set<string>>();
@@ -77,10 +71,14 @@ export async function validateSignalIntegrity(): Promise<FacilityValidationResul
     return { ok: issues.length === 0, issues };
 }
 
-export async function validateFacilityIntegrity(key: string): Promise<FacilityValidationResult> {
-    switch (key) {
-        case "network": return validateNetworkIntegrity();
-        case "signal": return validateSignalIntegrity();
-        default: return { ok: true, issues: [] };
-    }
+/**
+ * network/signal 필수 항목을 한 번에 검증한다. 전체 네트워크는 무거운 fetch(타일 모드에서도
+ * 전체 다운로드)이므로 두 검증이 각자 다시 받지 않도록 한 번만 받아 공유한다.
+ */
+export async function validateAllRequired(): Promise<Record<string, FacilityValidationResult>> {
+    const network = await getNetworkForDummyGeneration();
+    return {
+        network: validateNetworkStructure(network),
+        signal: validateSignalAgainstNetwork(network),
+    };
 }
