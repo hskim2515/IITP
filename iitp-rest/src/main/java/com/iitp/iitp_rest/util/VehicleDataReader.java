@@ -11,7 +11,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.*;
-import java.net.URL;
 import java.sql.*;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -78,7 +77,7 @@ public class VehicleDataReader {
         InputStream in = null;
         for (String candidate : candidates) {
             try {
-                in = new URL(remoteUrl + versionId + "/" + candidate).openStream();
+                in = RemoteXmlFetch.openStream(remoteUrl + versionId + "/" + candidate);
                 logger.debug("[VehicleDataReader] {} 로드: {}", candidate, versionId);
                 break;
             } catch (FileNotFoundException ignored) {}

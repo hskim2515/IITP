@@ -19,10 +19,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.iitp.iitp_rest.util.RemoteXmlFetch;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 import java.util.List;
 
 @Slf4j
@@ -77,7 +77,7 @@ public class RailStationService {
     }
 
     public RailPublicTransitXml getRailStationXmlByVersionId(String versionId) throws IOException {
-        InputStream is = new URL(remoteUrl + versionId + "/railStation.xml").openStream();
+        InputStream is = RemoteXmlFetch.openStream(remoteUrl + versionId + "/railStation.xml");
         RailPublicTransitXml railPublicTransitDto = streamToDto(is);
         return transformRailPublicTransitCoordinates(versionId, railPublicTransitDto);
     }

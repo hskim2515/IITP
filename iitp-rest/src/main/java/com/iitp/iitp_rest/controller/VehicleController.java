@@ -24,6 +24,7 @@ import com.iitp.iitp_rest.service.vehicle.VehicleRouteService;
 import com.iitp.iitp_rest.util.CoordinateConverter;
 import com.iitp.iitp_rest.util.GeoJsonUtils;
 import com.iitp.iitp_rest.util.VehicleDataReader;
+import com.iitp.iitp_rest.util.RemoteXmlFetch;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
@@ -43,7 +44,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -116,7 +116,7 @@ public class VehicleController {
         stageMap.put(scenarioKey, "네트워크 XML 다운로드 중...");
         long _tDl = System.currentTimeMillis();
         byte[] networkBytes;
-        try (InputStream raw = new URL(networkXmlUrl).openStream()) {
+        try (InputStream raw = RemoteXmlFetch.openStream(networkXmlUrl)) {
             networkBytes = raw.readAllBytes();
         } catch (java.io.FileNotFoundException e) {
             logger.warn("[generateVehicleRoute] network.xml 없음: {}", networkXmlUrl);
@@ -490,7 +490,7 @@ public class VehicleController {
             }
             long t0 = System.currentTimeMillis();
             byte[] networkBytes;
-            try (InputStream raw = new URL(remoteUrl + scenarioKey + "/network.xml").openStream()) {
+            try (InputStream raw = RemoteXmlFetch.openStream(remoteUrl + scenarioKey + "/network.xml")) {
                 networkBytes = raw.readAllBytes();
             }
             List<RoadResponse.Road> roads = GeoJsonUtils.parseXmlToRoads(new ByteArrayInputStream(networkBytes));
@@ -996,7 +996,7 @@ public class VehicleController {
         Map<String, DummyVehicleGenerator.NodeSignalInfo> nodeSignals = new HashMap<>();
         Map<String, String> connKeyToTurn = new HashMap<>();
 
-        try (InputStream signalIs = new URL(signalXmlUrl).openStream()) {
+        try (InputStream signalIs = RemoteXmlFetch.openStream(signalXmlUrl)) {
             Document doc = DocumentBuilderFactory.newInstance().newDocumentBuilder().parse(signalIs);
             NodeList signalNodes = doc.getElementsByTagName("node");
 

@@ -10,12 +10,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import com.iitp.iitp_rest.util.RemoteXmlFetch;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 
 @Slf4j
 @Service
@@ -30,7 +30,7 @@ public class RailPtLineService {
     public RailPtLineXml getByScenarioKey(String scenarioKey) throws IOException {
         String url = remoteUrl + scenarioKey + "/railPTLine.xml";
         log.info("[RailPtLineService] fetching: {}", url);
-        try (InputStream is = new URL(url).openStream()) {
+        try (InputStream is = RemoteXmlFetch.openStream(url)) {
             return parse(is);
         }
     }
