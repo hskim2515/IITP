@@ -7,10 +7,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import com.iitp.iitp_rest.util.RemoteXmlFetch;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 
 @Slf4j
 @RestController
@@ -36,7 +36,7 @@ public class RouteController {
     private ResponseEntity<Object> fetchJson(String scenarioKey, String fileName) {
         String url = remoteUrl + scenarioKey + "/" + fileName;
         log.info("[RouteController] fetching: {}", url);
-        try (InputStream is = new URL(url).openStream()) {
+        try (InputStream is = RemoteXmlFetch.openStream(url)) {
             Object json = objectMapper.readValue(is, Object.class);
             return ResponseEntity.ok(json);
         } catch (java.io.FileNotFoundException e) {

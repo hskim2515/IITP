@@ -16,11 +16,12 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
+import com.iitp.iitp_rest.util.RemoteXmlFetch;
+
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.FileNotFoundException;
 import java.io.InputStream;
-import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -85,7 +86,7 @@ public class PavementMarkingService {
     public List<PavementMarkingData> getDataFromXml(String versionId) throws Exception {
         List<PavementMarkingData> markingResponses = new ArrayList<>();
 
-        try (InputStream is = new URL(remoteUrl + versionId + "/pavementMarking.xml").openStream()) {
+        try (InputStream is = RemoteXmlFetch.openStream(remoteUrl + versionId + "/pavementMarking.xml")) {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document doc = builder.parse(is);

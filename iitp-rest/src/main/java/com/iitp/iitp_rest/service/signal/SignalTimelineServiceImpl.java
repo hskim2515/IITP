@@ -8,11 +8,12 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
+import com.iitp.iitp_rest.util.RemoteXmlFetch;
+
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.FileNotFoundException;
 import java.io.InputStream;
-import java.net.URL;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -37,7 +38,7 @@ public class SignalTimelineServiceImpl implements SignalTimelineService {
         List<SignalTimelineResponse> timelines = new ArrayList<>();
 
         String xmlUrl = remoteUrl + dataPath + "/signal.xml";
-        try (InputStream is = new URL(xmlUrl).openStream()) {
+        try (InputStream is = RemoteXmlFetch.openStream(xmlUrl)) {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document doc = builder.parse(is);

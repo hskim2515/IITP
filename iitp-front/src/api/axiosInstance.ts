@@ -19,6 +19,12 @@ const axiosInstance: AxiosInstance = axios.create({
     headers: {
         "Content-Type": "application/json",
     },
+    // 안전망 타임아웃 — 기존엔 무제한이라 서버(원격 파일 서버 등)가 무응답이면
+    // "스피너만 계속 도는" 증상으로 이어졌다(개발서버 재현 보고). 대형 네트워크
+    // 최초 로드/SQLite 재빌드가 수십 초 걸릴 수 있어(NetworkTileManager 주석 참고)
+    // 넉넉히 90s로 — 그 안엔 backend 자체 타임아웃(RemoteXmlFetch, 최대 ~28s)이
+    // 먼저 에러 응답을 주므로 정상 케이스에선 이 타임아웃에 걸리지 않는다.
+    timeout: 90_000,
 });
 
 axiosInstance.interceptors.request.use((config) => {

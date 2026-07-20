@@ -7,6 +7,7 @@ import com.iitp.iitp_rest.model.scenario.ScenarioVersion;
 import com.iitp.iitp_rest.repository.ScenarioRepository;
 import com.iitp.iitp_rest.repository.ScenarioVersionRepository;
 import com.iitp.iitp_rest.util.CoordinateUtils;
+import com.iitp.iitp_rest.util.RemoteXmlFetch;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,7 +15,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 import java.util.List;
 
 @Slf4j
@@ -30,7 +30,7 @@ public class NetworkService {
     private String remoteUrl;
 
     public NetworkXml getNetworkXmlByVersionId(String versionId) throws IOException {
-        InputStream is = new URL(remoteUrl + versionId + "/network.xml").openStream();
+        InputStream is = RemoteXmlFetch.openStream(remoteUrl + versionId + "/network.xml");
         NetworkXml dto = streamToDto(is);
         return transformNetworkCoordinates(versionId, dto);
     }
@@ -47,7 +47,7 @@ public class NetworkService {
 
     public byte[] getRawXmlBytes(String versionId) throws IOException {
         // versionId → 실제 경로 조회 (getNetworkXmlByVersionId와 동일 경로 사용)
-        try (InputStream is = new URL(remoteUrl + versionId + "/network.xml").openStream()) {
+        try (InputStream is = RemoteXmlFetch.openStream(remoteUrl + versionId + "/network.xml")) {
             return is.readAllBytes();
         }
     }

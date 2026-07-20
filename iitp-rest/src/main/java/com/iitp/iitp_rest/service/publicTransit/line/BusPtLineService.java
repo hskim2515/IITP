@@ -10,12 +10,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import com.iitp.iitp_rest.util.RemoteXmlFetch;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 
 @Slf4j
 @Service
@@ -60,7 +60,7 @@ public class BusPtLineService {
     private BusPtLinesXml fetch(String scenarioKey, String fileName) throws IOException {
         String url = remoteUrl + scenarioKey + "/" + fileName;
         log.info("[BusPtLineService] fetching: {}", url);
-        try (InputStream is = new URL(url).openStream()) {
+        try (InputStream is = RemoteXmlFetch.openStream(url)) {
             return parse(is);
         }
     }

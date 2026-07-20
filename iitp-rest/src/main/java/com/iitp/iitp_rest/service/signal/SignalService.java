@@ -13,11 +13,12 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
+import com.iitp.iitp_rest.util.RemoteXmlFetch;
+
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -75,7 +76,7 @@ public class SignalService {
     }
 
     public SignalXml getSignalXmlByScenarioKey(String scenarioKey) throws IOException {
-        InputStream is = new URL(remoteUrl + scenarioKey + "/signal.xml").openStream();
+        InputStream is = RemoteXmlFetch.openStream(remoteUrl + scenarioKey + "/signal.xml");
         return streamToDto(is);
     }
 
@@ -91,7 +92,7 @@ public class SignalService {
     public List<SignalResponse> getDataFromXml(String versionId) throws Exception {
         List<SignalResponse> signalResponses = new ArrayList<>();
 
-        try (InputStream is = new URL(remoteUrl + versionId + "/signal.xml").openStream()) {
+        try (InputStream is = RemoteXmlFetch.openStream(remoteUrl + versionId + "/signal.xml")) {
             DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
             DocumentBuilder builder = factory.newDocumentBuilder();
             Document doc = builder.parse(is);
