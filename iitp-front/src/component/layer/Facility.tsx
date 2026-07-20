@@ -17,6 +17,7 @@ import { generateDummyPavementMarkings } from '@utils/pavementMarking';
 import { getNetworkForDummyGeneration } from '@utils/generationNetwork';
 import { autoSaveChangedLayers } from '@utils/autoSave';
 import { showAlert, showConfirm } from '@utils/dialog';
+import { NEXTSIM_REQUIRED_KEYS, validateFacilityIntegrity, FacilityValidationResult } from '@utils/nextSimValidation';
 import styles from "@css/ToolsPanel.module.css";
 
 export interface FacilityProps {
@@ -60,6 +61,8 @@ const Facility = ({ fields }: FacilityProps) => {
     const [generatingKey, setGeneratingKey] = useState<string | null>(null);
     const [vehicleExists, setVehicleExists] = useState<boolean | null>(null);
     const [vehicleLoading, setVehicleLoading] = useState(false);
+    const [validation, setValidation] = useState<Record<string, { loading: boolean } & Partial<FacilityValidationResult>>>({});
+    const [issueExpanded, setIssueExpanded] = useState<Record<string, boolean>>({});
 
     // store의 currentJsonData 변화를 감지해 visibleFields 재계산
     const [, setDataTick] = useState(0);
@@ -219,6 +222,17 @@ const Facility = ({ fields }: FacilityProps) => {
         }
     };
 
+    const runValidation = async (key: string) => {
+        setValidation(prev => ({ ...prev, [key]: { loading: true } }));
+        try {
+            const result = await validateFacilityIntegrity(key);
+            setValidation(prev => ({ ...prev, [key]: { loading: false, ...result } }));
+            setIssueExpanded(prev => ({ ...prev, [key]: !result.ok }));
+        } catch (e) {
+            setValidation(prev => ({ ...prev, [key]: { loading: false, ok: false, issues: ['검증 중 오류가 발생했습니다.'] } }));
+        }
+    };
+
     const handleVehicleDelete = async () => {
         if (!await showConfirm('차량 시뮬레이션 데이터를 삭제하시겠습니까?')) return;
         const scenarioKey = getActiveVersionId();
@@ -301,6 +315,8 @@ const Facility = ({ fields }: FacilityProps) => {
                 const parentKey = field.key;
                 const nestedFields = nestedArrayFieldsMap[parentKey] || [];
                 const isExpanded = expandedParents[parentKey] ?? false;
+                const isRequired = NEXTSIM_REQUIRED_KEYS.has(parentKey);
+                const v = validation[parentKey];
 
                 return (
                     <div key={parentKey}>
@@ -314,6 +330,28 @@ const Facility = ({ fields }: FacilityProps) => {
                                 </span>
                             )}
                             <span style={{ flex: 1 }}>{field.label}</span>
+                            {isRequired && (
+                                <span title="NextSim 실행 필수 데이터" style={requiredBadgeStyle}>필수</span>
+                            )}
+                            {isRequired && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); runValidation(parentKey); }}
+                                    disabled={v?.loading}
+                                    title={`${field.label} 무결성 검증`}
+                                    style={validateBtnStyle}
+                                >
+                                    {v?.loading ? '...' : '검증'}
+                                </button>
+                            )}
+                            {isRequired && v && !v.loading && v.ok !== undefined && (
+                                <span
+                                    onClick={(e) => { e.stopPropagation(); if (!v.ok) setIssueExpanded(prev => ({ ...prev, [parentKey]: !prev[parentKey] })); }}
+                                    title={v.ok ? '검증 통과' : '검증 항목을 눌러 상세 확인'}
+                                    style={v.ok ? okBadgeStyle : warnBadgeStyle}
+                                >
+                                    {v.ok ? '✓ 정상' : `⚠ ${v.issues?.length ?? 0}건`}
+                                </span>
+                            )}
                             <button
                                 onClick={(e) => { e.stopPropagation(); handleDelete(field); }}
                                 title={`${field.label} 데이터 삭제`}
@@ -329,6 +367,12 @@ const Facility = ({ fields }: FacilityProps) => {
                                 style={{ accentColor: '#7aa2ff', width: 13, height: 13, cursor: 'pointer' }}
                             />
                         </div>
+
+                        {isRequired && v && !v.ok && issueExpanded[parentKey] && (v.issues?.length ?? 0) > 0 && (
+                            <ul style={issueListStyle}>
+                                {v.issues!.map((issue, i) => <li key={i}>{issue}</li>)}
+                            </ul>
+                        )}
 
                         {isExpanded && nestedFields.map(childKey => (
                             <label key={`${parentKey}.${childKey}`} className={styles.childItem}>
@@ -348,6 +392,9 @@ const Facility = ({ fields }: FacilityProps) => {
             {emptyDummyFields.map((field) => (
                 <div key={field.key} className={styles.sectionLabel} style={{ opacity: 0.5, cursor: 'default' }}>
                     <span style={{ flex: 1 }}>{field.label}</span>
+                    {NEXTSIM_REQUIRED_KEYS.has(field.key) && (
+                        <span title="NextSim 실행 필수 데이터" style={requiredBadgeStyle}>필수</span>
+                    )}
                     <button
                         onClick={(e) => { e.stopPropagation(); handleGenerate(field); }}
                         disabled={generatingKey === field.key}
@@ -408,6 +455,63 @@ const generateBtnStyle: React.CSSProperties = {
     padding: '2px 6px',
     borderRadius: 4,
     flexShrink: 0,
+};
+
+const requiredBadgeStyle: React.CSSProperties = {
+    background: 'rgba(255,159,67,0.15)',
+    border: '1px solid rgba(255,159,67,0.4)',
+    color: '#ff9f43',
+    fontSize: 9,
+    padding: '1px 5px',
+    borderRadius: 4,
+    flexShrink: 0,
+    marginRight: 4,
+};
+
+const validateBtnStyle: React.CSSProperties = {
+    background: 'rgba(122,162,255,0.12)',
+    border: '1px solid rgba(122,162,255,0.3)',
+    color: '#7aa2ff',
+    cursor: 'pointer',
+    fontSize: 9,
+    padding: '2px 6px',
+    borderRadius: 4,
+    flexShrink: 0,
+    marginRight: 4,
+};
+
+const okBadgeStyle: React.CSSProperties = {
+    background: 'rgba(46,213,115,0.12)',
+    border: '1px solid rgba(46,213,115,0.35)',
+    color: '#2ed573',
+    fontSize: 9,
+    padding: '1px 5px',
+    borderRadius: 4,
+    flexShrink: 0,
+    marginRight: 4,
+    cursor: 'default',
+};
+
+const warnBadgeStyle: React.CSSProperties = {
+    background: 'rgba(255,71,87,0.12)',
+    border: '1px solid rgba(255,71,87,0.35)',
+    color: '#ff4757',
+    fontSize: 9,
+    padding: '1px 5px',
+    borderRadius: 4,
+    flexShrink: 0,
+    marginRight: 4,
+    cursor: 'pointer',
+};
+
+const issueListStyle: React.CSSProperties = {
+    margin: '0 0 4px 22px',
+    padding: '4px 8px',
+    fontSize: 10,
+    color: '#ff4757',
+    background: 'rgba(255,71,87,0.06)',
+    borderRadius: 4,
+    listStyle: 'disc',
 };
 
 export default Facility;
