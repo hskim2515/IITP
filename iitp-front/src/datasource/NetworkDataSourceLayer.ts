@@ -81,8 +81,9 @@ function nearestLateralToPolyline(coords: any[], groundPt: Cesium.Cartesian3): {
  *  GroundPrimitive 분류볼륨 pick 은 지형 고저 범위만큼 수직 확장된 볼륨의 **벽면**이
  *  카메라 기울기에 따라 도로 footprint 밖 픽셀에 걸려, "보이는 것과 선택되는 것이
  *  다른" 픽 불일치를 만든다 (tier 스왑 잔존 지오메트리도 동일 증상). 화면에 보이는
- *  도로는 coordinates + 우측 반폭 이동의 결정적 함수이므로, 등록된 링크 지오메트리에서
- *  같은 규칙(중심선 우측 [0, width])으로 직접 탐색하면 보이는 것 = 선택되는 것이 보장된다. */
+ *  도로는 coordinates 의 결정적 함수이므로, 등록된 링크 지오메트리에서
+ *  렌더와 같은 규칙(중심선 중앙정렬 [-width/2, +width/2])으로 직접 탐색하면
+ *  보이는 것 = 선택되는 것이 보장된다. */
 export function pickNetworkAtPosition(
     scene: Cesium.Scene,
     position: Cesium.Cartesian2,
@@ -106,10 +107,13 @@ export function pickNetworkAtPosition(
         const near = nearestLateralToPolyline(coords, groundPt);
         if (!near) continue;
         const width = props.width ?? 7;
-        // 렌더된 몸체 = 중심선 우측 [0, width] (+외곽 0.6m) — 범위 밖(반대 방향 링크 쪽)은 기각
-        if (near.signed < -0.6 || near.signed > width + 0.6) continue;
+        const half = width / 2;
+        // 렌더된 몸체 = 중심선 중앙정렬 [-w/2, +w/2] (+외곽 0.6m) — buildLinkInstances 의
+        // computeOffsetPositions(validCoords, 0) 규약과 정합. (구 우측시프트 [0, width] 판정은
+        // 반폭 어긋나 "도로 좌반 클릭 무시, 우측 바깥 클릭 오선택"의 원인이었음)
+        if (near.signed < -half - 0.6 || near.signed > half + 0.6) continue;
         if (near.dist > width + 2) continue; // 끝점 밖 과도 이탈 기각
-        const score = Math.abs(near.signed - width / 2); // 몸체 중심에 가까운 링크 우선
+        const score = Math.abs(near.signed); // 몸체 중심(=중심선)에 가까운 링크 우선
         if (!best || score < best.score) best = { guid, props, score };
     }
     if ((globalThis as any).__netPickDebug) {
@@ -198,6 +202,8 @@ export default class NetworkDataSourceLayer {
     /** 마지막으로 near 이상 tier 였던 시각 — 경계 플랩 시 전체 clear 방지 (히스테리시스) */
     private lastNearTs = 0;
     private tileCameraTimer: ReturnType<typeof setTimeout> | null = null;
+    /** 타일 매니저가 바라보는 versionId — 세션 중 버전 전환 감지용 */
+    private tileVersionId: string | null = null;
     private applyVisDebounce: ReturnType<typeof setTimeout> | null = null; // 타일 다중 로드 시 applyVisibility 1회로 합침
     // 3D 줌아웃(overview/mid): 간선 중심선 폴리라인 1회 fetch (2D MVT 대응). near로 줌인하면 타일로 전환.
     private overviewArterialsActive = false;
@@ -440,6 +446,19 @@ export default class NetworkDataSourceLayer {
         const versionId = getActiveVersionId();
         if (!versionId) return;
 
+        // 버전 전환 감지 — 타일 매니저는 생성 시 versionId 가 고정되므로, 세션 중 활성 버전이
+        // 바뀌면(저장 후 새 버전 활성화 등) 이전 버전 데이터로 계속 fetch/표시된다.
+        // 이전 버전 청크·캐시를 전부 폐기하고 새 versionId 로 재생성.
+        if (this.tileVersionId && this.tileVersionId !== String(versionId)) {
+            this.tileManager?.clear();
+            this.tileManager = null;
+            this.clearRoadOverview();
+            this.overviewArterialsActive = false;
+            this.overviewFetchedBbox = null;
+            this.lastNearTs = 0;
+        }
+        this.tileVersionId = String(versionId);
+
         // 줌아웃(macro/overview/mid): viewport 간선 중심선 fetch.
         //   macro    → 고속도로 골격만 (광역/전국 조망, ~26km+ 고도)
         //   overview → rank 0(간선/고속) + 차선수 굵기 강조 → "큰 구조"가 보임
@@ -499,7 +518,7 @@ export default class NetworkDataSourceLayer {
         axiosInstance.get(`/network/${versionId}/tiles`, { params: { bbox: `${pw},${ps},${pe},${pn}`, lod } })
             .then((res) => {
                 if (seq !== this.overviewFetchSeq || this.destroyed) return; // 더 최신 요청이 있으면 폐기
-                const links = res.data?.links ?? [];
+                const links = (res.data?.links ?? []).filter(Boolean); // null 요소 방어
                 this.clearRoadOverview();
                 for (const link of links) this.addRoadOverviewPolyline(link);
                 this.commitRoadOverview();
@@ -979,7 +998,7 @@ export default class NetworkDataSourceLayer {
         }
 
         // Slow path: 공통 ID가 없으면 전체 교체
-        const hasCommon = next.links.some(l => this.cachedLinkMap.has(String(l.id)));
+        const hasCommon = next.links.some(l => l && this.cachedLinkMap.has(String(l.id)));
         return !hasCommon;
     }
 
@@ -1009,8 +1028,11 @@ export default class NetworkDataSourceLayer {
         this.lanePositionMap.clear();
         networkPrimitivePropertiesMap.clear();
 
-        this.cachedNodeMap = new Map(network.nodes.map(n => [String(n.id), n]));
-        this.cachedLinkMap = new Map(network.links.map(l => [String(l.id), l]));
+        // null 요소 방어: 배열에 구멍/널이 섞여도 빌드가 TypeError 로 죽지 않도록 걸러서 순회
+        const validNodes = network.nodes.filter(Boolean);
+        const validLinks = network.links.filter(Boolean);
+        this.cachedNodeMap = new Map(validNodes.map(n => [String(n.id), n]));
+        this.cachedLinkMap = new Map(validLinks.map(l => [String(l.id), l]));
 
         // 링크·레인 → 공간 청크별 Primitive
         const chunkOutline = new Map<string, Cesium.GeometryInstance[]>();
@@ -1019,7 +1041,7 @@ export default class NetworkDataSourceLayer {
         const chunkLine    = new Map<string, Cesium.GeometryInstance[]>(); // 구분선+중앙선 (폴리라인)
 
         this.clearRoadOverview();
-        for (const link of network.links) {
+        for (const link of validLinks) {
             const key = this.linkChunkKey(link);
             if (!chunkOutline.has(key)) {
                 chunkOutline.set(key, []); chunkLink.set(key, []); chunkLane.set(key, []); chunkLine.set(key, []);
@@ -1040,7 +1062,7 @@ export default class NetworkDataSourceLayer {
         // viewer에서 완전히 제거 후 새 DataSource로 교체하면 배치 오염이 없다.
         this.viewer.dataSources.remove(this.dataSource, true);
         this.dataSource = new Cesium.CustomDataSource(this.LAYER_NAME);
-        for (const node of network.nodes) {
+        for (const node of validNodes) {
             try {
                 this.buildNodeEntities(node, this.cachedLinkMap, this.cachedNodeMap);
             } catch (e) {
@@ -1274,13 +1296,13 @@ export default class NetworkDataSourceLayer {
 
         if (changedNodeIndices.length === 0 && newLinks.length === 0 && newNodes.length === 0) return;
 
-        // 캐시 증분 갱신
+        // 캐시 증분 갱신 (null 요소 방어 포함)
         for (const i of changedNodeIndices) {
-            const node = next.nodes[i]!;
-            this.cachedNodeMap.set(String(node.id), node);
+            const node = next.nodes[i];
+            if (node) this.cachedNodeMap.set(String(node.id), node);
         }
-        for (const node of newNodes) this.cachedNodeMap.set(String(node.id), node);
-        for (const link of newLinks) this.cachedLinkMap.set(String(link.id), link);
+        for (const node of newNodes) if (node) this.cachedNodeMap.set(String(node.id), node);
+        for (const link of newLinks) if (link) this.cachedLinkMap.set(String(link.id), link);
 
         // 새 링크가 있으면 청크별 Primitive 전체 재빌드
         if (newLinks.length > 0) {
@@ -1293,6 +1315,7 @@ export default class NetworkDataSourceLayer {
             const chunkLine    = new Map<string, Cesium.GeometryInstance[]>();
             this.clearRoadOverview();
             for (const link of next.links) {
+                if (!link) continue; // null 요소 방어
                 const key = this.linkChunkKey(link);
                 if (!chunkOutline.has(key)) {
                     chunkOutline.set(key, []); chunkLink.set(key, []); chunkLane.set(key, []); chunkLine.set(key, []);
@@ -1314,11 +1337,13 @@ export default class NetworkDataSourceLayer {
         this.dataSource.entities.suspendEvents();
         try {
             for (const node of newNodes) {
+                if (!node) continue; // null 요소 방어
                 this.buildNodeEntities(node, this.cachedLinkMap, this.cachedNodeMap);
             }
             for (const i of changedNodeIndices) {
-                const prevNode = prev.nodes[i]!;
-                const nextNode = next.nodes[i]!;
+                const prevNode = prev.nodes[i];
+                const nextNode = next.nodes[i];
+                if (!prevNode || !nextNode) continue; // null 요소 방어
                 const id = String(nextNode.id);
                 const existingIds = this.nodeEntityIds.get(id) ?? [];
 

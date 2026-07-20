@@ -278,6 +278,8 @@ export default class SignalDataSourceLayer {
 
     // ── 신호 타일링 (SIGNAL_TILING.ENABLED 일 때만; 읽기 전용) ──
     private tileManager: SignalTileManager | null = null;
+    /** 타일 매니저가 바라보는 versionId — 세션 중 버전 전환 감지용 */
+    private tileVersionId: string | null = null;
     private membership = new SignalTileMembership();
 
     constructor(private viewer: Viewer) {
@@ -333,16 +335,17 @@ export default class SignalDataSourceLayer {
         const nodeState   = new Map<string, string>();
 
         for (const entry of timeline) {
+            if (!entry) continue; // null 요소 방어
             const nodeId = String(entry.nodeId);
-            const cur = entry.signalTimeline.find(
+            const cur = (entry.signalTimeline ?? []).find(
                 s => wallClock >= isoToTime(s.startTime) && wallClock < isoToTime(s.endTime)
             );
             if (!cur) continue;
             nodeState.set(nodeId, cur.signalState);
             const ag = new Set<string>();
-            for (const tid of cur.activeTurns) {
-                const t = entry.turnInfo.find(t => t.id === tid);
-                if (t) t.connList.forEach((g: string) => ag.add(g));
+            for (const tid of (cur.activeTurns ?? [])) {
+                const t = (entry.turnInfo ?? []).find(t => t && t.id === tid);
+                if (t) t.connList?.forEach((g: string) => ag.add(g));
             }
             activeConns.set(nodeId, ag);
         }
@@ -407,9 +410,9 @@ export default class SignalDataSourceLayer {
         const signalStore = layerNameToStoreMap[this.LAYER_NAME];
         if (!signalStore) return;
         // 타일 모드: viewport 신호만. 비-타일 모드: store 전체.
-        const signals: any[] = SIGNAL_TILING.ENABLED
+        const signals: any[] = (SIGNAL_TILING.ENABLED
             ? this.membership.values()
-            : ((signalStore as any).getState().currentJsonData?.signals ?? []);
+            : ((signalStore as any).getState().currentJsonData?.signals ?? [])).filter(Boolean); // null 요소 방어
         if (!signals.length) return;
 
         const networkData = (useNetworkStore as any).getState().currentJsonData;
@@ -423,12 +426,14 @@ export default class SignalDataSourceLayer {
         }
         const connMap = new Map<string, any[]>();
         for (const node of networkData.nodes) {
+            if (!node) continue; // null 요소 방어
             connMap.set(String(node.id), node.connections ?? []);
         }
 
         const rawEntries: Omit<SignalEntry, 'baseH' | 'cartesian'>[] = [];
 
         for (const link of networkData.links) {
+            if (!link) continue; // null 요소 방어
             const toNodeId = String(link.toNode);
             if (!signalNodeIds.has(toNodeId)) continue;
             if (!link.coordinates?.length) continue;
@@ -529,9 +534,15 @@ export default class SignalDataSourceLayer {
         const south = Cesium.Math.toDegrees(rect.south);
         const east = Cesium.Math.toDegrees(rect.east);
         const north = Cesium.Math.toDegrees(rect.north);
+        const versionId = getActiveVersionId();
+        if (!versionId) return;
+        // 버전 전환 감지 — 이전 버전 신호 타일/멤버십 폐기 후 재생성 (network 레이어와 동일 패턴)
+        if (this.tileManager && this.tileVersionId !== String(versionId)) {
+            try { this.tileManager.clear(); } catch (_) { /* noop */ }
+            this.tileManager = null;
+        }
+        this.tileVersionId = String(versionId);
         if (!this.tileManager) {
-            const versionId = getActiveVersionId();
-            if (!versionId) return;
             this.tileManager = new SignalTileManager(String(versionId), {
                 onTileLoaded: (_k, payload) => { if (this.membership.add(payload)) this.load(); },
                 onTileEvicted: (_k, payload) => { if (this.membership.remove(payload)) this.load(); },

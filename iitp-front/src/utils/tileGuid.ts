@@ -12,6 +12,7 @@ import type { NetworkTilePayload } from "@managers/NetworkTileManager";
  */
 export function assignTileGuids(payload: NetworkTilePayload): void {
     for (const link of payload.links) {
+        if (!link) continue; // null 요소 방어 (직접 호출 경로 대비)
         const lid = String(link.id);
         link.__guid = `T_L${lid}`;
         link.featureType = "links";
@@ -32,6 +33,7 @@ export function assignTileGuids(payload: NetworkTilePayload): void {
         }
     }
     for (const node of payload.nodes) {
+        if (!node) continue; // null 요소 방어
         const nid = String(node.id);
         node.__guid = `T_N${nid}`;
         node.featureType = "nodes";
