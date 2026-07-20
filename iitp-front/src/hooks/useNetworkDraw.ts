@@ -450,6 +450,24 @@ function makeNode(id: number | string, coord: Coordinates, ports: Port[] = []): 
 }
 
 // ── 방위각 계산 (WGS84 기준, 0–360°, 북=0, 동=90) ─────────────
+/** 커넥션 표시용 곡선 (NetworkFeatureLayer.generateQuadraticBezierCurve 와 동일 규약).
+ *  편집 화면이 [from → 노드중심 → to] 3점 꺾은선으로 그려 실제 렌더(베지어 곡선)와
+ *  달라 보이던 것("커넥션이 각지게 만들어짐") 통일. Straight 는 렌더와 동일하게 직선. */
+function connCurveOl(fromOl: Coordinate, nodeOl: Coordinate, toOl: Coordinate, turning?: string): Coordinate[] {
+    if (turning === 'Straight') return [fromOl, toOl];
+    const baseX = (fromOl[0]! + toOl[0]!) / 2, baseY = (fromOl[1]! + toOl[1]!) / 2;
+    const ctrlX = baseX + (nodeOl[0]! - baseX) * 0.4, ctrlY = baseY + (nodeOl[1]! - baseY) * 0.4;
+    const pts: Coordinate[] = [];
+    for (let i = 0; i <= 15; i++) {
+        const t = i / 15, u = 1 - t;
+        pts.push([
+            u * u * fromOl[0]! + 2 * u * t * ctrlX + t * t * toOl[0]!,
+            u * u * fromOl[1]! + 2 * u * t * ctrlY + t * t * toOl[1]!,
+        ]);
+    }
+    return pts;
+}
+
 function computeBearing(from: Coordinates, to: Coordinates): number {
     const toRad = Math.PI / 180;
     const lat1 = from.lat * toRad, lat2 = to.lat * toRad;
@@ -2030,7 +2048,7 @@ export const useNetworkDraw = () => {
                 const dx = toOl[0]! - fromOl[0]!; const dy = toOl[1]! - fromOl[1]!;
                 const angle = Math.atan2(dy, dx);
 
-                const lineF = new Feature(new LineString([fromOl, nodeOl, toOl]));
+                const lineF = new Feature(new LineString(connCurveOl(fromOl, nodeOl, toOl, conn.turning)));
                 lineF.set('_type', 'conn');
                 lineF.set('_connId', conn.id);
                 lineF.setStyle([
@@ -3270,7 +3288,7 @@ function flashIntersectionConnectionsOl(
             const dx = toOl[0]! - fromOl[0]!; const dy = toOl[1]! - fromOl[1]!;
             const angle = Math.atan2(dy, dx);
 
-            const lineF = new Feature(new LineString([fromOl, nodeOl, toOl]));
+            const lineF = new Feature(new LineString(connCurveOl(fromOl, nodeOl, toOl, conn.turning)));
             lineF.setStyle(new Style({
                 stroke: new Stroke({ color, width: 2, lineDash: [6, 4] }),
             }));

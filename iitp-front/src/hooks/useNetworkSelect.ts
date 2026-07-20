@@ -126,6 +126,7 @@ function olDist(a: Coordinate, b: Coordinate): number {
 export function findNearestNode(nodes: Node[], coord: Coordinate, threshold: number): Node | null {
     let best: Node | null = null, minD = threshold;
     for (const n of nodes) {
+        if (!n?.coordinates) continue; // null 요소 방어
         const d = olDist(fromLonLat([n.coordinates.lng, n.coordinates.lat]), coord);
         if (d < minD) { minD = d; best = n; }
     }
@@ -135,6 +136,7 @@ export function findNearestNode(nodes: Node[], coord: Coordinate, threshold: num
 export function findNearestLink(links: Link[], coord: Coordinate, threshold: number): Link | null {
     let best: Link | null = null, minD = threshold;
     for (const link of links) {
+        if (!link?.coordinates) continue; // null 요소 방어
         const c = link.coordinates;
         for (let i = 0; i < c.length - 1; i++) {
             const a = fromLonLat([c[i]!.lng, c[i]!.lat]);
@@ -158,6 +160,7 @@ export function findNearestLane(links: Link[], coord: Coordinate, threshold: num
     let best: { linkId: string; laneIdx: number; frac: number } | null = null;
     let minD = threshold;
     for (const link of links) {
+        if (!link?.coordinates || link.coordinates.length < 2) continue; // null 요소 방어
         const lanes = link.lanes ?? [];
         const laneCount = lanes.length;
         if (laneCount === 0) continue;
@@ -754,6 +757,10 @@ export const useNetworkSelect = () => {
     const nodeEditRef = useRef<NodeEditFeatures | null>(null);
     /** 좌클릭 pointerdown 화면좌표 — 팬 드래그 후 click 을 선택으로 오처리하지 않기 위한 거리 판정 */
     const panStartPxRef = useRef<[number, number] | null>(null);
+    /** 핸들/세그먼트/노드 드래그의 pointerdown 화면좌표 — 드래그 후 발화하는 click 억제용
+     *  (정점 근접 반경으로 클릭을 통째로 무시하던 방식은 방금 드래그한 자리를 다시 클릭하는
+     *  자연스러운 조작까지 막아 "레인 클릭 안 됨"을 만들었다 — 이동 거리 기반으로 정밀 억제) */
+    const dragDownPxRef = useRef<[number, number] | null>(null);
 
     // 드래그 상태
     const dragStateRef = useRef<DragState | null>(null);
@@ -815,31 +822,46 @@ export const useNetworkSelect = () => {
 
     // ── 선택 변경 → 하이라이트 + 편집 핸들 생성 ────────────────
     useEffect(() => {
-        const selSrc   = selSrcRef.current;
-        const hoverSrc = hoverSrcRef.current;
-        const editSrc  = editSrcRef.current;
-        if (!selSrc || !hoverSrc || !editSrc) return;
+        const rebuild = () => {
+            const selSrc   = selSrcRef.current;
+            const hoverSrc = hoverSrcRef.current;
+            const editSrc  = editSrcRef.current;
+            if (!selSrc || !hoverSrc || !editSrc) return;
 
-        const network = useNetworkStore.getState().currentJsonData;
-        if (!network) return;
+            const network = useNetworkStore.getState().currentJsonData;
+            if (!network) return;
 
-        dragStateRef.current = null;
-        linkEditRef.current  = null;
-        nodeEditRef.current  = null;
+            // 드래그 진행 중에는 스토어 변경(타일 동기화 등)이 끼어들어도 재구성하지 않는다
+            // — 재구성이 dragStateRef 를 리셋해 진행 중 드래그가 끊기는 것 방지.
+            if (dragStateRef.current) return;
 
-        renderHighlight(selSrc, hoverSrc, network, selectedLinkId, selectedNodeId,
-            hoveredLinkIdRef.current, hoveredNodeIdRef.current, selectedLaneId);
+            dragStateRef.current = null;
+            linkEditRef.current  = null;
+            nodeEditRef.current  = null;
 
-        // 편집 핸들은 편집 조작용 → 선택 모드에서만. 레인은 편집 핸들 없음(선택+속성만).
-        if (isSelectActive && selectedLinkId !== null) {
-            const link = network.links.find(l => String(l.id) === String(selectedLinkId));
-            if (link) linkEditRef.current = buildLinkEditFeatures(editSrc, link.coordinates);
-        } else if (isSelectActive && selectedNodeId !== null) {
-            const node = network.nodes.find(n => String(n.id) === String(selectedNodeId));
-            if (node) nodeEditRef.current = buildNodeEditFeatures(editSrc, node);
-        } else {
-            editSrc.clear();
-        }
+            renderHighlight(selSrc, hoverSrc, network, selectedLinkId, selectedNodeId,
+                hoveredLinkIdRef.current, hoveredNodeIdRef.current, selectedLaneId);
+
+            // 편집 핸들은 편집 조작용 → 선택 모드에서만. 레인은 편집 핸들 없음(선택+속성만).
+            if (isSelectActive && selectedLinkId !== null) {
+                const link = network.links.find(l => String(l.id) === String(selectedLinkId));
+                if (link) linkEditRef.current = buildLinkEditFeatures(editSrc, link.coordinates);
+            } else if (isSelectActive && selectedNodeId !== null) {
+                const node = network.nodes.find(n => String(n.id) === String(selectedNodeId));
+                if (node) nodeEditRef.current = buildNodeEditFeatures(editSrc, node);
+            } else {
+                editSrc.clear();
+            }
+        };
+        rebuild();
+        // undo/redo·패널 수정 등 스토어 데이터 변경 시에도 하이라이트/편집 핸들 재구성 —
+        // 선택 ID 만 의존하면 Ctrl+Z 후 옛 형상 핸들·점선이 화면에 잔존한다 (실사용 재현).
+        const unsub = (useNetworkStore as any).subscribe(
+            (s: any) => s.currentJsonData,
+            () => rebuild(),
+            { equalityFn: (a: any, b: any) => a === b },
+        );
+        return unsub;
     }, [selectedLinkId, selectedNodeId, selectedLaneId, isSelectActive]);
 
     // 모드 전환(보기↔편집) 시 선택 초기화 (확정 요구사항) + 드릴다운 깊이 리셋
@@ -941,6 +963,7 @@ export const useNetworkSelect = () => {
                             workingCoords: link.coordinates.map(c => ({ ...c })),
                             isEndpoint: hitIdx === 0 || hitIdx === link.coordinates.length - 1,
                         };
+                        dragDownPxRef.current = [e.clientX, e.clientY];
                         setDragPan(olMap, false);
                         e.stopPropagation();
                         e.stopImmediatePropagation();
@@ -961,6 +984,7 @@ export const useNetworkSelect = () => {
                             isEndpoint: false,
                             inserted: true,
                         };
+                        dragDownPxRef.current = [e.clientX, e.clientY];
                         // 편집 핸들을 삽입된 정점 포함으로 재구성 (드래그 중 시각 피드백)
                         if (editSrcRef.current) {
                             linkEditRef.current = buildLinkEditFeatures(editSrcRef.current, working);
@@ -984,6 +1008,7 @@ export const useNetworkSelect = () => {
                             type: 'node', nodeId: sn,
                             workingCoord: { ...node.coordinates },
                         };
+                        dragDownPxRef.current = [e.clientX, e.clientY];
                         setDragPan(olMap, false);
                         e.stopPropagation();
                         e.stopImmediatePropagation();
@@ -1248,22 +1273,18 @@ export const useNetworkSelect = () => {
                 const d = Math.hypot(e.clientX - panStartPxRef.current[0], e.clientY - panStartPxRef.current[1]);
                 if (d > 5) return;
             }
+            // 핸들/세그먼트/노드 드래그 직후 발화하는 click 억제 (이동 5px 초과 = 드래그였음).
+            // 무이동 핸들 클릭은 통과 → 아래 선택/드릴 로직이 정상 동작.
+            if (dragDownPxRef.current) {
+                const [dx0, dy0] = dragDownPxRef.current;
+                dragDownPxRef.current = null;
+                if (Math.hypot(e.clientX - dx0, e.clientY - dy0) > 5) return;
+            }
             e.stopPropagation();
             const network = useNetworkStore.getState().currentJsonData;
             if (!network) return;
             const coord = olMap.getEventCoordinate(e);
             const res   = olMap.getView().getResolution() ?? 1;
-
-            // 이미 선택된 요소 핸들 클릭이면 무시 (드래그용)
-            const { selectedLinkId: sl, selectedNodeId: sn } = useNetworkDrawStore.getState();
-            if (sl !== null && linkEditRef.current) {
-                const link = network.links.find(l => String(l.id) === String(sl));
-                if (link?.coordinates.some(c => olDist(fromLonLat([c.lng, c.lat]), coord) < res * 18)) return;
-            }
-            if (sn !== null && nodeEditRef.current) {
-                const node = network.nodes.find(n => String(n.id) === String(sn));
-                if (node && olDist(fromLonLat([node.coordinates.lng, node.coordinates.lat]), coord) < res * 18) return;
-            }
 
             // 우선순위: 노드 > 레인(detail 줌에서만) > 링크. 레인은 링크보다 세밀하니 먼저.
             const node = findNearestNode(network.nodes, coord, res * 20);
