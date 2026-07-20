@@ -27,6 +27,7 @@ import { NETWORK_TILING } from "@utils/lodConstants";
 import { NetworkTileManager, type NetworkTilePayload } from "@managers/NetworkTileManager";
 import { assignTileGuids } from "@utils/tileGuid";
 import { smoothSharpPolyline } from "@utils/polylineSmooth";
+import { normalizeTurning } from "@utils/turning";
 import NetworkMvtLayer from "@features/NetworkMvtLayer";
 
 export default class NetworkFeatureLayer extends VectorLayer {
@@ -1377,7 +1378,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                         }
                     }
                     if (!fromPt || !toPt) continue;
-                    coord = conn.turning === 'Straight'
+                    coord = normalizeTurning(conn.turning) === 'Straight'
                         ? [fromPt, toPt]
                         : this.generateQuadraticBezierCurve(fromPt, nodePt, toPt);
                 }
@@ -1605,7 +1606,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 }
                 if (!fromPt || !toPt) continue;
 
-                coord = conn.turning === "Straight"
+                coord = normalizeTurning(conn.turning) === "Straight"
                     ? [fromPt, toPt]
                     : this.generateQuadraticBezierCurve(fromPt, fromLonLat([node.coordinates.lng, node.coordinates.lat]), toPt);
             }
