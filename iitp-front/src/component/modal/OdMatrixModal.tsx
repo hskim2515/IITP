@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import axiosInstance from '@api/axiosInstance';
 import { useScenarioStore } from '@stores/useScenarioStore';
 import { useWorkflowStore } from '@stores/useWorkflowStore';
+import { useNextSimRunStore, checkNextSimAvailable, startNextSimRun, cancelNextSimRun, formatElapsed } from '@utils/nextsim';
 import type { DemandEntry, OdMatrixData, OdMatrixItem } from '@type/OdMatrix';
 
 const MENU_CODE = 'OD_MATRIX';
@@ -70,6 +71,15 @@ const OdMatrixModal: React.FC = () => {
 
     const matrixRef = useRef(matrix);
     matrixRef.current = matrix;
+
+    // NextSim 실행 상태 — 수요 편집 직후 재실행하는 자연스러운 진입점 (온보딩 모달과 스토어 공유)
+    const nsAvailable = useNextSimRunStore((s) => s.available);
+    const nsRunning   = useNextSimRunStore((s) => s.runningVersionId) === versionId;
+    const nsStage     = useNextSimRunStore((s) => s.stage);
+    const nsElapsed   = useNextSimRunStore((s) => s.elapsedSeconds);
+    const nsBeat      = useNextSimRunStore((s) => s.sinceOutputSeconds);
+    const nsError     = useNextSimRunStore((s) => s.lastError);
+    useEffect(() => { void checkNextSimAvailable(); }, []);
 
     /* ── 최대 flow (컬러 스케일용) ── */
     const maxFlow = useMemo(() => {
@@ -190,10 +200,10 @@ const OdMatrixModal: React.FC = () => {
     };
 
     /* ── 저장 ── */
-    const handleSave = useCallback(async () => {
-        if (!data || !versionId) return;
+    const handleSave = useCallback(async (): Promise<boolean> => {
+        if (!data || !versionId) return false;
         const updated = flushMatrix();
-        if (!updated) return;
+        if (!updated) return false;
         const payload = {
             odMatrices: updated.odMatrices.map(m => ({
                 id: m.id, startTime: m.startTime, duration: m.duration,
@@ -213,13 +223,21 @@ const OdMatrixModal: React.FC = () => {
                 logs: { added: [], modified: [], deleted: [] },
             });
             setSaveMsg({ ok: true, text: '저장 완료' });
+            return true;
         } catch (e: any) {
             setSaveMsg({ ok: false, text: e.message ?? '저장 실패' });
+            return false;
         } finally {
             setSaving(false);
             setTimeout(() => setSaveMsg(null), 2500);
         }
     }, [data, versionId, flushMatrix]);
+
+    /* ── NextSim 실행 — 러너는 저장된 odmatrix.xml 파일을 읽으므로 편집 중 수요를 먼저 저장 ── */
+    const handleRunNextSim = useCallback(async () => {
+        const saved = await handleSave();
+        if (saved) void startNextSimRun(versionId);
+    }, [handleSave, versionId]);
 
     /* ── 셀 색상 ── */
     const cellBg = (flow: number) => {
@@ -258,13 +276,39 @@ const OdMatrixModal: React.FC = () => {
                             </span>
                         )}
                     </div>
-                    <div style={{ display: 'flex', gap: 8 }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                        {nsAvailable === true && !nsRunning && (
+                            <button
+                                onClick={handleRunNextSim} disabled={saving || loading || !versionId}
+                                style={runBtn(saving || loading || !versionId)}
+                                title="현재 수요를 저장한 뒤 NextSim 시뮬레이션을 실행합니다"
+                            >
+                                ▶ 저장 후 실행
+                            </button>
+                        )}
+                        {nsRunning && (
+                            <>
+                                <span style={runStatus}>
+                                    {nsStage || '준비 중...'} · {formatElapsed(nsElapsed)}
+                                    {nsBeat > 10 ? ` · 출력 ${nsBeat}초 전` : ''}
+                                </span>
+                                <button onClick={() => void cancelNextSimRun(versionId)} style={cancelRunBtn}
+                                        title="진행 중인 시뮬레이션을 중단합니다">
+                                    취소
+                                </button>
+                            </>
+                        )}
                         <button onClick={handleSave} disabled={saving || loading} style={saveBtn(saving || loading)}>
                             {saving ? '저장 중…' : '저장'}
                         </button>
                         <button onClick={() => closeSession(MENU_CODE)} style={closeBtn}>✕</button>
                     </div>
                 </div>
+
+                {/* ── NextSim 실행 실패 안내 (콘솔을 열지 않아도 원인이 보이도록) ── */}
+                {!nsRunning && nsError && (
+                    <div style={runErrBar}>NextSim {nsError}</div>
+                )}
 
                 {/* ── 상태 ── */}
                 {loading && <Center>불러오는 중…</Center>}
@@ -495,6 +539,15 @@ const saveBtn = (disabled: boolean): React.CSSProperties => ({
     color: disabled ? '#444' : '#8ab4ff',
 });
 const closeBtn: React.CSSProperties = { background: 'none', border: 'none', color: '#555', fontSize: 18, cursor: 'pointer', padding: '2px 4px', borderRadius: 4, lineHeight: 1 };
+const runBtn = (disabled: boolean): React.CSSProperties => ({
+    padding: '5px 14px', fontSize: 12, borderRadius: 5, cursor: disabled ? 'default' : 'pointer', fontWeight: 600, transition: 'all 0.15s',
+    background: disabled ? 'rgba(255,255,255,0.03)' : 'rgba(0,180,100,0.18)',
+    border: `1px solid ${disabled ? 'rgba(255,255,255,0.08)' : 'rgba(60,210,140,0.45)'}`,
+    color: disabled ? '#444' : '#4ecb8d',
+});
+const runStatus: React.CSSProperties = { fontSize: 11, color: '#7da7d9', maxWidth: 280, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
+const cancelRunBtn: React.CSSProperties = { padding: '5px 12px', fontSize: 12, borderRadius: 5, cursor: 'pointer', background: 'rgba(220,60,60,0.12)', border: '1px solid rgba(220,90,90,0.35)', color: '#e08585' };
+const runErrBar: React.CSSProperties = { flexShrink: 0, padding: '6px 18px', fontSize: 11, color: '#e07777', background: 'rgba(224,119,119,0.07)', borderBottom: '1px solid rgba(224,119,119,0.15)', whiteSpace: 'pre-wrap', maxHeight: 96, overflowY: 'auto', lineHeight: 1.5 };
 const sidebar:   React.CSSProperties = { width: 170, flexShrink: 0, borderRight: '1px solid rgba(255,255,255,0.06)', overflowY: 'auto', padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: 3 };
 const sideTitle: React.CSSProperties = { fontSize: 10, fontWeight: 600, color: '#3a3a3a', letterSpacing: '0.6px', textTransform: 'uppercase', padding: '2px 6px 8px' };
 const legend:    React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 14px', borderBottom: '1px solid rgba(255,255,255,0.04)', flexShrink: 0 };

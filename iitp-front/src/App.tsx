@@ -36,7 +36,7 @@ import { getNetworkForDummyGeneration } from "@utils/generationNetwork";
 import { usePavementMarkingStore } from "@stores/usePavementMarkingStore";
 import { autoSaveChangedLayers } from "@utils/autoSave";
 import { useBackgroundTaskStore } from "@stores/useBackgroundTaskStore";
-import { useNextSimRunStore, checkNextSimAvailable, startNextSimRun, cancelNextSimRun, resumeNextSimPollingIfRunning } from "@utils/nextsim";
+import { useNextSimRunStore, checkNextSimAvailable, startNextSimRun, cancelNextSimRun, resumeNextSimPollingIfRunning, formatElapsed } from "@utils/nextsim";
 
 function VersionPopup({ scenarioId, onSelect }: { scenarioId: number; onSelect: (v: ScenarioVersions) => void }) {
     const [versions, setVersions] = useState<ScenarioVersions[] | null>(null);
@@ -92,6 +92,10 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const nextsimAvailable = useNextSimRunStore((s) => s.available);
     const nextsimRunningId = useNextSimRunStore((s) => s.runningVersionId);
     const nextsimRunning = nextsimRunningId === scenarioKey;
+    const nextsimStage = useNextSimRunStore((s) => s.stage);
+    const nextsimElapsed = useNextSimRunStore((s) => s.elapsedSeconds);
+    const nextsimBeat = useNextSimRunStore((s) => s.sinceOutputSeconds);
+    const nextsimError = useNextSimRunStore((s) => s.lastError);
 
     // 러너 설정 여부 1회 확인 (미설정 서버에선 버튼 숨김)
     useEffect(() => {
@@ -342,6 +346,21 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                                         </button>
                                         </div>
                                     </div>
+                                    {nextsimRunning && (
+                                        <span style={{ fontSize: 10, color: '#7da7d9' }}>
+                                            {nextsimStage || '준비 중...'} — {formatElapsed(nextsimElapsed)} 경과
+                                            {nextsimBeat > 10 ? ` · 마지막 출력 ${nextsimBeat}초 전 (연산 중)` : ''}
+                                        </span>
+                                    )}
+                                    {!nextsimRunning && nextsimError && (
+                                        <div style={{
+                                            fontSize: 10, color: '#e07777', whiteSpace: 'pre-wrap',
+                                            maxHeight: 96, overflowY: 'auto', lineHeight: 1.5,
+                                            background: 'rgba(224,119,119,0.08)', borderRadius: 4, padding: '4px 6px',
+                                        }}>
+                                            NextSim {nextsimError}
+                                        </div>
+                                    )}
                                     {missingSignal && !signalDone && !vehicleDone && (
                                         <span style={{ fontSize: 10, color: '#666' }}>
                                             신호 데이터 없이 생성 시 신호 패턴이 자동 추정됩니다.

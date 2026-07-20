@@ -304,6 +304,8 @@ public class NextSimRunner {
                 "network.xml 이 없습니다 — 네트워크를 먼저 가져오기/저장하세요.");
         copyRequired(versionId, "odmatrix.xml", networkDir,
                 "odmatrix.xml 이 없습니다 — OD 매트릭스 메뉴에서 수요를 생성/저장하세요.");
+        // 파일은 있는데 수요가 전부 0/없음 → 시뮬은 "성공"하지만 차량 0대 — 혼란만 남으므로 명시 에러
+        requirePositiveDemand(networkDir.resolve("odmatrix.xml"));
         // KTDB 변환 네트워크 호환 보정 + 미사용 터미널 가지치기 (스테이징 사본, 단일 패스):
         // - NextSim 파서가 <port direction>/<node v2x> 를 필수 속성으로 요구(실측) → 빈 값 주입
         // - route-generator 는 odmatrix 무관 **전 터미널 쌍** 최단경로를 계산(실측 — 수도권
@@ -558,6 +560,18 @@ public class NextSimRunner {
         Matcher m = p.matcher(s);
         while (m.find()) n++;
         return n;
+    }
+
+    /** odmatrix.xml 에 flow>0 인 수요가 하나라도 있는지 검증 (없으면 실행 무의미) */
+    private static void requirePositiveDemand(Path odmatrixXml) throws IOException {
+        String xml = Files.readString(odmatrixXml, StandardCharsets.UTF_8);
+        Matcher m = Pattern.compile("\\bflow=\"([^\"]*)\"").matcher(xml);
+        while (m.find()) {
+            try {
+                if (Double.parseDouble(m.group(1)) > 0) return;
+            } catch (NumberFormatException ignored) {}
+        }
+        throw new IOException("odmatrix.xml 에 수요(flow>0)가 없습니다 — OD 매트릭스 메뉴에서 수요를 입력하세요.");
     }
 
     /** odmatrix.xml 의 source/sink 노드 id 집합 (가지치기 유지 대상) */

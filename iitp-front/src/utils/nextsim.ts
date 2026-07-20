@@ -16,17 +16,36 @@ interface NextSimRunState {
     /** 현재 폴링 중인 versionId (null=없음) */
     runningVersionId: string | null;
     stage: string;
+    /** 실행 경과 초 (status API elapsedSeconds) */
+    elapsedSeconds: number;
+    /** 마지막 시뮬레이터 출력 후 경과 초 — 하트비트 (연산 중 여부 판단) */
+    sinceOutputSeconds: number;
+    /** 마지막 실행 실패 메시지 — 모달 등 UI 표면화용 (새 실행 시작 시 초기화) */
+    lastError: string | null;
     setAvailable: (v: boolean) => void;
     setRunning: (versionId: string | null, stage?: string) => void;
+    setProgress: (stage: string, elapsedSeconds: number, sinceOutputSeconds: number) => void;
+    setLastError: (msg: string | null) => void;
 }
 
 export const useNextSimRunStore = create<NextSimRunState>((set) => ({
     available: null,
     runningVersionId: null,
     stage: "",
+    elapsedSeconds: 0,
+    sinceOutputSeconds: 0,
+    lastError: null,
     setAvailable: (v) => set({ available: v }),
-    setRunning: (versionId, stage) => set({ runningVersionId: versionId, stage: stage ?? "" }),
+    setRunning: (versionId, stage) =>
+        set({ runningVersionId: versionId, stage: stage ?? "", elapsedSeconds: 0, sinceOutputSeconds: 0 }),
+    setProgress: (stage, elapsedSeconds, sinceOutputSeconds) =>
+        set({ stage, elapsedSeconds, sinceOutputSeconds }),
+    setLastError: (msg) => set({ lastError: msg }),
 }));
+
+/** 경과 초 → "N분 M초" 표시 (모달/패널 공용) */
+export const formatElapsed = (sec: number) =>
+    sec >= 60 ? `${Math.floor(sec / 60)}분 ${sec % 60}초` : `${sec}초`;
 
 const BASE = () => import.meta.env.VITE_API_URL;
 const setTask = (label: string | null) =>
@@ -52,6 +71,7 @@ export async function checkNextSimAvailable(): Promise<boolean> {
 /** 실행 시작 + 폴링. 이미 실행 중(409)이면 폴링만 붙는다. */
 export async function startNextSimRun(versionId: string): Promise<void> {
     log("info", "[NextSim] 시뮬레이션 실행 시작...");
+    useNextSimRunStore.getState().setLastError(null);
     try {
         const res = await fetch(`${BASE()}/simulation/${versionId}/run`, { method: "POST" });
         if (res.status !== 202 && res.status !== 409) {
@@ -60,7 +80,9 @@ export async function startNextSimRun(versionId: string): Promise<void> {
         }
         startPolling(versionId);
     } catch (e: any) {
-        log("error", `[NextSim] 실행 요청 실패: ${e?.message ?? e}`);
+        const msg = `실행 요청 실패: ${e?.message ?? e}`;
+        log("error", `[NextSim] ${msg}`);
+        useNextSimRunStore.getState().setLastError(msg);
         setTask(null);
     }
 }
@@ -112,7 +134,8 @@ function startPolling(versionId: string): void {
                 if (s.state === "RUNNING") {
                     const beat = s.sinceOutputSeconds > 10 ? ` · 마지막 출력 ${s.sinceOutputSeconds}초 전 (연산 중)` : "";
                     const label = `NextSim 실행 중 — ${s.stage ?? ""} (${s.elapsedSeconds ?? 0}초${beat})`;
-                    useNextSimRunStore.getState().setRunning(versionId, s.stage ?? "");
+                    useNextSimRunStore.getState().setProgress(
+                        s.stage ?? "", s.elapsedSeconds ?? 0, s.sinceOutputSeconds ?? 0);
                     setTask(label);
                     if (n < 4800) setTimeout(() => poll(n + 1), 3000);
                     else finish("warn", "[NextSim] 상태 폴링 시간 초과 — 상태 조회로 확인하세요");
@@ -122,7 +145,9 @@ function startPolling(versionId: string): void {
                 } else if (s.state === "CANCELLED") {
                     finish("info", "[NextSim] 실행이 취소되었습니다");
                 } else if (s.state === "ERROR") {
-                    finish("error", `[NextSim] 실행 실패: ${s.error ?? "알 수 없는 오류"}`);
+                    const msg = `실행 실패: ${s.error ?? "알 수 없는 오류"}`;
+                    useNextSimRunStore.getState().setLastError(msg);
+                    finish("error", `[NextSim] ${msg}`);
                 } else { // IDLE — 서버 재시작 등
                     finish("warn", "[NextSim] 실행 상태를 찾을 수 없습니다 (서버 재시작?)");
                 }
