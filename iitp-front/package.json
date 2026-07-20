@@ -12,6 +12,12 @@
     "gen:types:local": "node scripts/gen-types.cjs local",
     "gen:types:develop": "node scripts/gen-types.cjs develop"
   },
+  "resolutions": {
+    "protobufjs": "^7.5.5"
+  },
+  "overrides": {
+    "protobufjs": "^7.5.5"
+  },
   "dependencies": {
     "@deck.gl/aggregation-layers": "^9.1.8",
     "@deck.gl/core": "^9.1.8",
@@ -26,7 +32,7 @@
     "ag-grid-community": "^33.3.0",
     "ag-grid-react": "^33.3.0",
     "antd": "^5.26.2",
-    "axios": "^1.9.0",
+    "axios": "^1.18.1",
     "cesium": "^1.127.0",
     "deep-diff": "^1.0.2",
     "deep-equal": "^2.2.3",
