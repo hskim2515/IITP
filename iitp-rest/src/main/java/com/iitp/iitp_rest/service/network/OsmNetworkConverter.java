@@ -14,12 +14,10 @@ import java.util.stream.Collectors;
  * 좌표 변환: local_x = (lon - baseLon) * 88000
  *            local_y = (lat - baseLat) * 111000
  *
- * 노드 ID 규칙:
- *   10000001~ : 교차로/일반 노드 (2개 이상 링크 연결)
- *   11000001~ : 터미널 노드 (1개 링크만 연결, 출입구)
- *
- * 링크 ID 규칙:
- *   20000001~
+ * ID 규칙 (Network ID naming 스펙, {@link NetworkIdAssigner} 참고):
+ *   1xxxxxxx : 교차로/일반 노드 (2개 이상 링크 연결) — Link와 생성 순서 인덱스 공유
+ *   11xxxxxx : 터미널 노드 (1개 링크만 연결, 출입구) — 연결된 Link와 뒷자리 6자리 동일
+ *   2xxxxxxx : 링크
  *
  * 주의: connection의 차선별 연결은 휴리스틱 기반 → 수동 보정 권장
  */
@@ -108,24 +106,37 @@ public class OsmNetworkConverter {
             inDeg.merge(e.toOsmId,   1, Integer::sum);
         }
 
-        // 5. 노드 ID 할당 (terminal=11000xxx, others=10000xxx)
+        // 5+6. Link/Node ID 할당 (Network ID naming 스펙) — Link=2, Node(교차로)=1,
+        // Terminal(출입구)=11 로 시작하는 8자리 숫자. Link와 일반 Node는 생성 순서(=엣지
+        // 원본 순서로 스캔)에 따라 하나의 인덱스를 공유하고, Terminal은 연결된 단 하나의
+        // Link와 뒷자리 6자리가 동일해야 한다 — 엣지를 스캔하며 그 자리에서 endpoint 노드를
+        // 처음 만나면 바로 배정하면 두 규칙을 한 번에 만족한다.
         Map<Long, Long> nodeIdMap = new LinkedHashMap<>();
-        long intCounter  = 10000001L;
-        long termCounter = 11000001L;
-        for (Long osmId : netOsmNodeIds) {
-            int total = inDeg.getOrDefault(osmId, 0) + outDeg.getOrDefault(osmId, 0);
-            if (total <= 1) {
-                nodeIdMap.put(osmId, termCounter++);
-            } else {
-                nodeIdMap.put(osmId, intCounter++);
+        Map<Integer, Long> edgeLinkId = new LinkedHashMap<>(); // index → linkId
+        NetworkIdAssigner idAssigner = new NetworkIdAssigner();
+        for (int i = 0; i < edges.size(); i++) {
+            GraphEdge e = edges.get(i);
+            long linkId = idAssigner.nextLinkId();
+            edgeLinkId.put(i, linkId);
+            // 양 끝이 둘 다 터미널(고립된 신규 세그먼트 등)이면 뒷자리 파생은 한쪽에만 적용 —
+            // 안 그러면 둘 다 같은 링크에서 파생돼 서로 다른 두 노드가 같은 id를 갖게 됨.
+            boolean derivedTerminalUsed = false;
+            for (Long osmId : new Long[]{e.fromOsmId, e.toOsmId}) {
+                if (nodeIdMap.containsKey(osmId)) continue;
+                int total = inDeg.getOrDefault(osmId, 0) + outDeg.getOrDefault(osmId, 0);
+                if (total > 1) {
+                    nodeIdMap.put(osmId, idAssigner.nextNormalNodeId());
+                } else if (!derivedTerminalUsed) {
+                    nodeIdMap.put(osmId, NetworkIdAssigner.terminalIdFor(linkId));
+                    derivedTerminalUsed = true;
+                } else {
+                    nodeIdMap.put(osmId, idAssigner.nextIsolatedTerminalId());
+                }
             }
         }
-
-        // 6. 링크 ID 할당
-        Map<Integer, Long> edgeLinkId = new LinkedHashMap<>(); // index → linkId
-        long linkCounter = 20000001L;
-        for (int i = 0; i < edges.size(); i++) {
-            edgeLinkId.put(i, linkCounter++);
+        // 어느 엣지에도 연결되지 않은 고립 노드(비정상 데이터) — 페어링할 Link가 없어 fallback
+        for (Long osmId : netOsmNodeIds) {
+            nodeIdMap.putIfAbsent(osmId, idAssigner.nextIsolatedTerminalId());
         }
 
         // 7. 노드별 in/out link 목록

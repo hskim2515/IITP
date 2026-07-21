@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.controller;
 
+import com.iitp.iitp_rest.model.LogsData;
 import com.iitp.iitp_rest.model.publicTransit.bus.BusPtLinesXml;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerLog;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerSaveRequest;
@@ -13,6 +14,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -66,6 +68,11 @@ public class BusPtLineController {
                 "roadPTline_" + scenarioKey + ".xml");
     }
 
+    @PostMapping("/{scenarioKey}/import")
+    public ResponseEntity<Map<String, Object>> importDefault(@PathVariable String scenarioKey, @RequestParam("file") MultipartFile file) {
+        return importResp(LAYER_KEY_DEFAULT, scenarioKey, file, busPtLineService::saveDefault);
+    }
+
     // ── weekday ──────────────────────────────────────────────────────
     @GetMapping("/weekday/{scenarioKey}")
     public ResponseEntity<Map<String, Object>> getWeekday(@PathVariable String scenarioKey) {
@@ -93,6 +100,11 @@ public class BusPtLineController {
                 "roadPTline-weekday_" + scenarioKey + ".xml");
     }
 
+    @PostMapping("/weekday/{scenarioKey}/import")
+    public ResponseEntity<Map<String, Object>> importWeekday(@PathVariable String scenarioKey, @RequestParam("file") MultipartFile file) {
+        return importResp(LAYER_KEY_WEEKDAY, scenarioKey, file, busPtLineService::saveWeekday);
+    }
+
     // ── weekend ──────────────────────────────────────────────────────
     @GetMapping("/weekend/{scenarioKey}")
     public ResponseEntity<Map<String, Object>> getWeekend(@PathVariable String scenarioKey) {
@@ -118,6 +130,11 @@ public class BusPtLineController {
     public ResponseEntity<byte[]> exportWeekend(@PathVariable String scenarioKey) {
         return exportResp(scenarioKey, LAYER_KEY_WEEKEND, () -> ioWrap(() -> busPtLineService.getWeekend(scenarioKey)),
                 "roadPTline-weekend_" + scenarioKey + ".xml");
+    }
+
+    @PostMapping("/weekend/{scenarioKey}/import")
+    public ResponseEntity<Map<String, Object>> importWeekend(@PathVariable String scenarioKey, @RequestParam("file") MultipartFile file) {
+        return importResp(LAYER_KEY_WEEKEND, scenarioKey, file, busPtLineService::saveWeekend);
     }
 
     // ── private helpers ──────────────────────────────────────────────
@@ -178,6 +195,25 @@ public class BusPtLineController {
         catch (java.io.IOException e) { throw new RuntimeException(e); }
     }
 
+    /** XML 파일 업로드 → 파싱 + DB 저장 + SFTP 동기화 (default/weekday/weekend 공용) */
+    private ResponseEntity<Map<String, Object>> importResp(String layerKey, String scenarioKey,
+                                                             MultipartFile file, FileSyncer syncer) {
+        log.info("[BusPtLineController] IMPORT layerKey={} scenarioKey={} size={}bytes", layerKey, scenarioKey, file.getSize());
+        try {
+            BusPtLinesXml xml = busPtLineService.parse(file.getInputStream());
+            Map<String, Object> data = XmlLayerConverter.toMap(xml);
+            xmlLayerVersionService.save(layerKey, scenarioKey, data, new LogsData());
+            syncer.save(scenarioKey, xml);
+            return ResponseEntity.ok(data);
+        } catch (Exception e) {
+            log.error("[BusPtLineController] 임포트 오류 layerKey={}", layerKey, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
     @FunctionalInterface
     interface IOSupplier<T> { T get() throws java.io.IOException; }
+
+    @FunctionalInterface
+    interface FileSyncer { void save(String scenarioKey, BusPtLinesXml xml) throws Exception; }
 }

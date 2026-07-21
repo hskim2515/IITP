@@ -161,18 +161,47 @@ public class KtdbImportController {
                     networkResponse.getNodes().size(), networkResponse.getLinks().size());
 
             // 타일 SQLite DB 백그라운드 선빌드 → 첫 타일 요청 즉시 응답 가능
-            // + NextSim 필수 입력(odmatrix/scenario/signal/signalTOD) 기본본 생성 → 임포트 후 바로 실행 가능
+            // + NextSim 필수 입력 정비 — 없으면 생성, 재임포트로 id 가 바뀌어 낡았으면 재생성
             if (versionId != null && !versionId.isBlank()) {
                 final String vid = versionId;
                 final NetworkResponse resp = networkResponse;
-                final List<Long> terminalIds = networkXml.getNodes() == null ? List.of()
+                final java.util.Set<String> allNodeIds = networkXml.getNodes() == null ? java.util.Set.of()
                         : networkXml.getNodes().stream()
-                            .filter(n -> n.getType() == com.iitp.iitp_rest.model.network.node.NodeType.Terminal)
                             .map(com.iitp.iitp_rest.model.network.node.NodeXml::getId)
                             .filter(java.util.Objects::nonNull)
-                            .toList();
+                            .map(String::valueOf)
+                            .collect(java.util.stream.Collectors.toSet());
+                // 터미널은 포트가 1개뿐(out만 있으면 source 후보, in만 있으면 sink 후보) —
+                // 부천 실측 odmatrix.xml 관례와 일치시켜 방향이 맞는 OD 만 스캐폴딩
+                List<Long> sourceIds = new java.util.ArrayList<>();
+                List<Long> sinkIds = new java.util.ArrayList<>();
+                // 터미널 로컬좌표(x,y, center="x y") — OD 샘플 수요를 거리 기반(근접 sink 우선)으로
+                // 생성해 임의 원거리 쌍보다 그럴듯한 통행 패턴을 만드는 데 사용
+                java.util.Map<Long, double[]> terminalCoords = new java.util.HashMap<>();
+                if (networkXml.getNodes() != null) {
+                    for (var n : networkXml.getNodes()) {
+                        if (n.getType() != com.iitp.iitp_rest.model.network.node.NodeType.Terminal
+                                || n.getId() == null || n.getPorts() == null || n.getPorts().isEmpty()) continue;
+                        var portType = n.getPorts().get(0).getType();
+                        if (portType == com.iitp.iitp_rest.model.network.port.PortType.out) sourceIds.add(n.getId());
+                        else if (portType == com.iitp.iitp_rest.model.network.port.PortType.in) sinkIds.add(n.getId());
+                        if (n.getCenter() != null) {
+                            String[] xy = n.getCenter().trim().split("\\s+");
+                            if (xy.length == 2) {
+                                try {
+                                    terminalCoords.put(n.getId(),
+                                            new double[]{Double.parseDouble(xy[0]), Double.parseDouble(xy[1])});
+                                } catch (NumberFormatException ignored) {}
+                            }
+                        }
+                    }
+                }
+                final List<Long> finalSourceIds = sourceIds, finalSinkIds = sinkIds;
+                final java.util.Map<Long, double[]> finalTerminalCoords = terminalCoords;
+                final NetworkXml finalNetworkXml = networkXml;
                 CompletableFuture.runAsync(() -> {
-                    nextSimScaffolder.scaffoldMissingInputs(vid, terminalIds);
+                    nextSimScaffolder.scaffoldForImport(vid, allNodeIds, finalSourceIds, finalSinkIds,
+                            finalTerminalCoords, finalNetworkXml);
                     try { networkTileService.ingest(vid, resp); }
                     catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
                 });
@@ -233,10 +262,28 @@ public class KtdbImportController {
             if (versionId != null && !versionId.isBlank()) {
                 final String vid = versionId;
                 final NetworkResponse resp = simplified;
-                final List<Long> terminalIds = sr.terminalNodeIds();
+                final List<Long> sourceIds = sr.sourceTerminalIds();
+                final List<Long> sinkIds = sr.sinkTerminalIds();
+                final java.util.Set<String> allNodeIds = sr.nodes().stream()
+                        .map(n -> String.valueOf(n.getId()))
+                        .collect(java.util.stream.Collectors.toSet());
+                // 터미널 로컬좌표 — 스트리밍 응답은 WGS84(lat/lng)만 가지므로 KtdbStreamingConverter
+                // 와 동일한 SCALE_X/SCALE_Y 로 origin 기준 로컬 미터 근사 변환(상대 거리 비교용이라
+                // 근사로 충분 — OD 샘플 수요를 근접 sink 우선으로 생성하는 데 사용)
+                final double odScaleOriginLat = originLat, odScaleOriginLon = originLon;
+                java.util.Map<Long, double[]> terminalCoords = new java.util.HashMap<>();
+                for (var n : sr.nodes()) {
+                    if (n.getId() == null || n.getCoordinates() == null) continue;
+                    Double lat = n.getCoordinates().getLat(), lng = n.getCoordinates().getLng();
+                    if (lat == null || lng == null) continue;
+                    terminalCoords.put(n.getId(), new double[]{
+                            (lng - odScaleOriginLon) * 88000.0,
+                            (lat - odScaleOriginLat) * 111000.0,
+                    });
+                }
                 CompletableFuture.runAsync(() -> {
-                    // NextSim 필수 입력 기본본 생성 (가볍고 빠름 — 타일 빌드보다 먼저)
-                    nextSimScaffolder.scaffoldMissingInputs(vid, terminalIds);
+                    // NextSim 필수 입력 정비 — 없으면 생성, 재임포트로 id 변경 시 재생성 (타일 빌드보다 먼저)
+                    nextSimScaffolder.scaffoldForImport(vid, allNodeIds, sourceIds, sinkIds, terminalCoords);
                     try { networkTileService.ingest(vid, resp); }   // 1차: simplified 빠른 빌드
                     catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
                     // 2차: SFTP XML 기반 완전 재빌드 — 1차 실패와 무관하게 항상 시도 (내부 예외 처리)

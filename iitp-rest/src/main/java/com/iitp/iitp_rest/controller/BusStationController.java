@@ -11,6 +11,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -88,6 +89,21 @@ public class BusStationController {
             return ResponseEntity.ok().build();
         } catch (Exception e) {
             log.error("[saveBusStations] 저장 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /** roadStation.xml 파일 업로드 → 파싱 + DB 저장 + SFTP 동기화 */
+    @PostMapping("/{versionId}/import")
+    public ResponseEntity<PublicTransitResponse> importBusStationXml(
+            @PathVariable String versionId,
+            @RequestParam("file") MultipartFile file) {
+        log.info("[BusStationController] IMPORT versionId={}, size={}bytes", versionId, file.getSize());
+        try {
+            PublicTransitResponse response = busStationService.importFromXml(file.getBytes(), versionId);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("[importBusStationXml] 임포트 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

@@ -131,23 +131,12 @@ public class VehicleController {
         List<RoadResponse.Road> roadEntities = GeoJsonUtils.parseXmlToRoads(is);
         logger.info("[PERF] parseXmlToRoads: {}ms, {} roads", System.currentTimeMillis() - _tParse, roadEntities.size());
 
-        // pos_x/pos_y가 링크 기준 좌표계이므로 linkId로만 키잉
+        // 더미 차량 생성(링크 길이/도형 기반)에 사용 — linkId로 키잉
         Map<String, RoadResponse.Road> roadMap = roadEntities.stream().collect(Collectors.toMap(
                 RoadResponse.Road::getLinkId,
                 Function.identity(),
                 (r1, r2) -> r1
         ));
-
-        // CoordinateConverter 사전 생성
-        long _tConv = System.currentTimeMillis();
-        Map<String, CoordinateConverter> converterCache = new ConcurrentHashMap<>();
-        roadMap.forEach((key, road) -> {
-            CoordinateConverter converter = new CoordinateConverter();
-            converter.setBasePoint(scenario.getLongitude(), scenario.getLatitude());
-            converter.setRoadPoint(road.getBaseEasting(), road.getBaseNorthing(), road.getTargetEasting(), road.getTargetNorthing(), road.getHalfWidth());
-            converterCache.put(key, converter);
-        });
-        logger.info("[PERF] CoordinateConverter 생성: {}ms, {} converters", System.currentTimeMillis() - _tConv, converterCache.size());
 
         stageMap.put(scenarioKey, "시뮬레이션 데이터 확인 중...");
         // 대용량 가드: 이벤트 수천만 건을 전부 로드해 CZML 을 빌드하면 heap OOM.
@@ -265,14 +254,14 @@ public class VehicleController {
         stageMap.put(scenarioKey, "CZML 좌표 변환 중... (차량 " + grouped.size() + "대)");
         List<SignalTimelineResponse> signalTimeline = signalTimelineService.generateSignalTimeline(baseEpoch, "0", scenarioKey, simulationDuration);
 
-        Instant[] range = buildVehiclePackets(grouped, roadMap, converterCache, scenario, baseEpoch,
+        Instant[] range = buildVehiclePackets(grouped, scenario, baseEpoch,
                 startTime, vehicleInfoMap, czml, featureList, vehiclePathList);
         Instant globalStart = range[0];
         Instant globalStop  = range[1];
 
         if (globalStart == null || globalStop == null) {
             throw new java.io.FileNotFoundException(
-                "차량 경로 생성 실패: 유효한 좌표가 없습니다 (roadMap에 링크가 없거나 vehicle_sim.db가 비어있음) — scenarioKey=" + scenarioKey);
+                "차량 경로 생성 실패: 유효한 좌표가 없습니다 (vehicle_sim.db가 비어있음) — scenarioKey=" + scenarioKey);
         }
 
         Map<String, Object> documentPacket = Map.of(
@@ -309,8 +298,6 @@ public class VehicleController {
      */
     private Instant[] buildVehiclePackets(
             Map<String, List<VehicleEvent>> grouped,
-            Map<String, RoadResponse.Road> roadMap,
-            Map<String, CoordinateConverter> converterCache,
             Scenario scenario,
             long baseEpoch,
             Instant startTime,
@@ -342,38 +329,15 @@ public class VehicleController {
             List<Cartesian3> path2d = new ArrayList<>();
 
             for (VehicleEvent vehicle : vehicles) {
-                String key = vehicle.getLinkId();
-
-                // 교차로 구간: DB link_id가 node_id인 경우 "nodeId_laneId" 키로 조회
-                boolean isConnection = false;
-                if (!roadMap.containsKey(key)) {
-                    key = vehicle.getLinkId() + "_" + vehicle.getLaneId();
-                    isConnection = true;
-                }
-
-                RoadResponse.Road baseRoad = roadMap.get(key);
-                if (baseRoad == null) {
-                    // 네트워크에 없는 링크: 스킵 (GAP_THRESHOLD 초과 시 차량이 사라졌다 나타남)
-                    continue;
-                }
-
-                ProjCoordinate actualCoord;
-                if (baseRoad.getLaneShape() != null) {
-                    if (isConnection) {
-                        // connection: bezier 곡선이 차선 중심선 → posY 오프셋 불필요
-                        actualCoord = CoordinateConverter.interpolateAlongLane(
-                                baseRoad.getLaneShape(), vehicle.getPosX(),
-                                scenario.getLongitude(), scenario.getLatitude());
-                    } else {
-                        // regular link: shape 폴리라인을 따르되 posY 횡방향 오프셋 적용
-                        actualCoord = CoordinateConverter.interpolateAlongShapeWithOffset(
-                                baseRoad.getLaneShape(), vehicle.getPosX(), vehicle.getPosY(), baseRoad.getHalfWidth(),
-                                scenario.getLongitude(), scenario.getLatitude());
-                    }
-                    if (actualCoord == null) actualCoord = converterCache.get(key).toAbsolute(vehicle.getPosX(), vehicle.getPosY());
-                } else {
-                    actualCoord = converterCache.get(key).toAbsolute(vehicle.getPosX(), vehicle.getPosY());
-                }
+                // pos_x/pos_y는 링크 기준 상대좌표가 아니라 network.xml의 node.center와 동일한
+                // 좌표계의 절대 로컬 좌표다(실측 확인 — CoordinateConverter.toAbsoluteLocal 참고).
+                // 링크/커넥션 도형을 조회·보간할 필요 없이 바로 변환한다.
+                // 회전/축척은 Scenario.baseRotation/baseScale(네트워크 캘리브레이션 결과의 미러) —
+                // 안 넘기면 도로는 회전·확대됐는데 차량만 평행이동만 반영돼 도로에서 어긋나 보인다.
+                ProjCoordinate actualCoord = CoordinateConverter.toAbsoluteLocal(
+                        vehicle.getPosX(), vehicle.getPosY(), scenario.getLongitude(), scenario.getLatitude(),
+                        scenario.getBaseRotation() != null ? scenario.getBaseRotation() : 0.0,
+                        scenario.getBaseScale() != null ? scenario.getBaseScale() : 1.0);
 
                 Cartesian3 pos = Cartesian3.fromDegrees(actualCoord.x, actualCoord.y, 0);
 
@@ -468,12 +432,10 @@ public class VehicleController {
 
     // ─────────────── 차량 viewport+시간창 스트리밍 (개별 차량 near LOD) ───────────────
 
-    /** scenarioKey → 스트리밍 컨텍스트 (roadMap/converter/기준시각 — network.xml 파싱 1회 캐시) */
+    /** scenarioKey → 스트리밍 컨텍스트 (기준시각 등 — vehicle_sim.db 최초 조회 시 1회 캐시) */
     private final ConcurrentHashMap<String, ViewportCtx> viewportCtxCache = new ConcurrentHashMap<>();
 
-    private record ViewportCtx(Map<String, RoadResponse.Road> roadMap,
-                               Map<String, CoordinateConverter> converterCache,
-                               Scenario scenario,
+    private record ViewportCtx(Scenario scenario,
                                Map<String, VehicleInfo> vehicleInfoMap,
                                long baseEpoch, double simMin, double simMax) {}
 
@@ -489,29 +451,14 @@ public class VehicleController {
                 throw new IOException("시나리오 기준 좌표 없음: " + scenarioKey);
             }
             long t0 = System.currentTimeMillis();
-            byte[] networkBytes;
-            try (InputStream raw = RemoteXmlFetch.openStream(remoteUrl + scenarioKey + "/network.xml")) {
-                networkBytes = raw.readAllBytes();
-            }
-            List<RoadResponse.Road> roads = GeoJsonUtils.parseXmlToRoads(new ByteArrayInputStream(networkBytes));
-            Map<String, RoadResponse.Road> roadMap = roads.stream().collect(Collectors.toMap(
-                    RoadResponse.Road::getLinkId, Function.identity(), (r1, r2) -> r1));
-            Map<String, CoordinateConverter> converters = new ConcurrentHashMap<>();
-            roadMap.forEach((key, road) -> {
-                CoordinateConverter converter = new CoordinateConverter();
-                converter.setBasePoint(scenario.getLongitude(), scenario.getLatitude());
-                converter.setRoadPoint(road.getBaseEasting(), road.getBaseNorthing(),
-                        road.getTargetEasting(), road.getTargetNorthing(), road.getHalfWidth());
-                converters.put(key, converter);
-            });
             double[] simRange = vehicleDataReader.readSimTimeRange(scenarioKey);
             Map<String, VehicleInfo> infoMap = vehicleDataReader.readVehicleInfoMap(scenarioKey);
             // baseEpoch은 컨텍스트 수명 동안 고정 → viewport 요청 간 CZML epoch/clock 이 일치 (재생 연속성)
             long baseEpoch = Instant.now().getEpochSecond();
-            c = new ViewportCtx(roadMap, converters, scenario, infoMap, baseEpoch, simRange[0], simRange[1]);
+            c = new ViewportCtx(scenario, infoMap, baseEpoch, simRange[0], simRange[1]);
             viewportCtxCache.put(scenarioKey, c);
-            logger.info("[viewport] {} 컨텍스트 빌드 완료 ({}ms, roads={}, simRange={}~{})",
-                    scenarioKey, System.currentTimeMillis() - t0, roadMap.size(), simRange[0], simRange[1]);
+            logger.info("[viewport] {} 컨텍스트 빌드 완료 ({}ms, simRange={}~{})",
+                    scenarioKey, System.currentTimeMillis() - t0, simRange[0], simRange[1]);
             return c;
         }
     }
@@ -580,7 +527,7 @@ public class VehicleController {
             List<Map<String, Object>> czml = Collections.synchronizedList(new ArrayList<>());
             List<Map<String, Object>> featureList = Collections.synchronizedList(new ArrayList<>());
             List<Map<String, Object>> vehiclePathList = Collections.synchronizedList(new ArrayList<>());
-            buildVehiclePackets(grouped, ctx.roadMap(), ctx.converterCache(), ctx.scenario(),
+            buildVehiclePackets(grouped, ctx.scenario(),
                     ctx.baseEpoch(), Instant.ofEpochSecond(ctx.baseEpoch()), ctx.vehicleInfoMap(),
                     czml, featureList, vehiclePathList);
 

@@ -65,7 +65,7 @@ public class BusPtLineService {
         }
     }
 
-    private BusPtLinesXml parse(InputStream is) {
+    public BusPtLinesXml parse(InputStream is) {
         try {
             JAXBContext ctx = JAXBContext.newInstance(BusPtLinesXml.class);
             Unmarshaller u = ctx.createUnmarshaller();

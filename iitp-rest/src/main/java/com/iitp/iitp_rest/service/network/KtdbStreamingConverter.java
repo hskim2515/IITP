@@ -91,7 +91,10 @@ public class KtdbStreamingConverter {
 
     // 외부 링크 (전역 누적용): localCoords = [x0,y0,x1,y1,...] 로컬 좌표
     // fNode/tNode: KTDB 부착 노드 id — 클러스터 내부 도달성(회전 동선 허용) 판정용
-    private record ExtLink(long id, long fromCluster, long toCluster,
+    // id: Network ID naming 스펙에 맞춘 최종 링크 id(2xxxxxxx) — assignFinalIds()가 부여.
+    // origId: 원본 KTDB stableId — TURNINFO(ktdb_turninfo)가 원본 id로 키잉되어 있어
+    //         id가 재채번된 뒤에도 TURNINFO 매칭에는 이 값을 써야 한다.
+    private record ExtLink(long id, long origId, long fromCluster, long toCluster,
                            int numLane, double length, double maxSpd,
                            double[] localCoords, String shape, int roadRank,
                            String name, String layer, String fNode, String tNode) {}
@@ -107,7 +110,7 @@ public class KtdbStreamingConverter {
     public record StreamResult(int nodeCount, int linkCount,
                                 List<NodeResponse> nodes, List<LinkResponse> links,
                                 List<String> warnings,
-                                List<Long> terminalNodeIds) {}
+                                List<Long> sourceTerminalIds, List<Long> sinkTerminalIds) {}
 
     // ── DI ───────────────────────────────────────────────────────────────────
 
@@ -158,6 +161,17 @@ public class KtdbStreamingConverter {
         if (clusters.isEmpty())
             throw new IllegalArgumentException("해당 bbox에 KTDB 데이터가 없습니다.");
 
+        // Link/Node 최종 id 재부여 (Network ID naming 스펙) — Link=2, Node(교차로)=1,
+        // Terminal(출입구)=11 로 시작하는 8자리 숫자. Link와 일반 Node는 생성 순서(=allLinks
+        // 누적 순서로 스캔)에 따라 하나의 인덱스를 공유하고, Terminal은 연결된 단 하나의
+        // Link와 뒷자리 6자리가 동일해야 한다. 원본 KTDB id(stableId)를 그대로 쓰면 Link에
+        // 접두사가 없을뿐더러, 터미널/일반 노드가 같은 id 공간에 뒤섞여 route-generator 내부
+        // 배열 인덱싱이 범위를 벗어나 std::out_of_range(_Map_base::at) 로 크래시함(gdb 역공학
+        // 확인 — KAIST 배포판 bucheon/toy grid 예시가 전부 terminal=11xxxxxx, 그 외=10xxxxxx로
+        // 분리돼 있어 우연히 이 버그를 피해간 것). Terminal/Node 대역 분리는 그대로 유지.
+        assignFinalIds(clusters, clusterMemberCnt, clusterIn, clusterOut,
+                clusterInternalAdj, allLinks);
+
         // TURNINFO 로드 (전국 4.4만 건 — 전량 메모리 적재 가능).
         // key: "stLinkId:edLinkId" (stableId 기준). 금지(turn_oper=1)는 커넥션 제외,
         // 그 외(011 U턴 등)는 기하학적 U턴 게이트의 명시 허용 목록으로 사용.
@@ -202,16 +216,24 @@ public class KtdbStreamingConverter {
         }
 
         // 간소화 응답 빌드 (+ 터미널 id 수집 — NextSim 입력 스캐폴딩의 OD source/sink 후보)
+        //   터미널은 포트가 0~1개뿐 — out 포트만 있으면 source 후보(나갈 링크만 있음),
+        //   in 포트만 있으면 sink 후보(들어올 링크만 있음). 실측(부천 odmatrix.xml)으로
+        //   확인: 실제 데이터는 source=out포트 터미널, sink=in포트 터미널로 전혀 섞이지 않음
+        //   — 반대로 섞으면 나갈/들어올 링크가 없는 노드에서 경로를 요구하는 셈이라 무효.
         List<NodeResponse> simpleNodes = new ArrayList<>(clusters.size());
-        List<Long> terminalIds = new ArrayList<>();
+        List<Long> sourceTerminalIds = new ArrayList<>();
+        List<Long> sinkTerminalIds = new ArrayList<>();
         for (ClusterInfo ci : clusters.values()) {
             NodeResponse nr = new NodeResponse();
             nr.setId(ci.id());
-            NodeType nType = nodeTypeOf(ci,
-                    clusterIn.getOrDefault(ci.id(), List.of()),
-                    clusterOut.getOrDefault(ci.id(), List.of()));
+            List<ExtLink> ins = clusterIn.getOrDefault(ci.id(), List.of());
+            List<ExtLink> outs = clusterOut.getOrDefault(ci.id(), List.of());
+            NodeType nType = nodeTypeOf(ci, ins, outs);
             nr.setType(nType);
-            if (nType == NodeType.Terminal) terminalIds.add(ci.id());
+            if (nType == NodeType.Terminal) {
+                if (!outs.isEmpty()) sourceTerminalIds.add(ci.id());
+                else if (!ins.isEmpty()) sinkTerminalIds.add(ci.id());
+            }
             if (ci.name() != null) nr.setName(ci.name());
             Coordinates c = new Coordinates();
             c.setLat(ci.wgsLat());
@@ -249,7 +271,8 @@ public class KtdbStreamingConverter {
         }
 
         log.info("스트리밍 변환 완료: 노드 {}개, 링크 {}개", clusters.size(), allLinks.size());
-        return new StreamResult(clusters.size(), allLinks.size(), simpleNodes, simpleLinks, List.of(), terminalIds);
+        return new StreamResult(clusters.size(), allLinks.size(), simpleNodes, simpleLinks, List.of(),
+                sourceTerminalIds, sinkTerminalIds);
     }
 
     // ── 타일 처리 ─────────────────────────────────────────────────────────────
@@ -462,10 +485,12 @@ public class KtdbStreamingConverter {
             String shape = buildShape(coords);
             if (shape.isBlank()) continue;
 
-            long linkId = stableId(lk.id());
+            long origId = stableId(lk.id());
             int numLane = Math.max(1, lk.lanes());
 
-            ExtLink ext = new ExtLink(linkId, fCid, tCid, numLane, round2(length),
+            // id는 assignFinalIds()가 최종 재채번하기 전까지의 placeholder(origId 재사용) —
+            // 이 시점엔 아직 전체 타일이 다 처리되지 않아 Link/Node 공유 인덱스를 부여할 수 없다.
+            ExtLink ext = new ExtLink(origId, origId, fCid, tCid, numLane, round2(length),
                     lk.maxSpd(), coords, shape, lk.roadRank(),
                     (lk.roadName() != null && !lk.roadName().isBlank()) ? lk.roadName() : null,
                     structureLayer(lk.roadType(), lk.connect()),
@@ -526,7 +551,8 @@ public class KtdbStreamingConverter {
                     // (일반 변환기의 BFS 동선 탐색과 동일 의미 — 전조합 과생성 방지)
                     if (reachable != null && !reachable.contains(outLk.fNode())) continue;
 
-                    String pairKey = inLk.id() + ":" + outLk.id();
+                    // TURNINFO는 원본 KTDB stableId로 키잉되어 있음 — 재채번된 id()가 아니라 origId() 사용
+                    String pairKey = inLk.origId() + ":" + outLk.origId();
                     // TURNINFO 금지(turn_oper=1) 동선 제외
                     if (prohibitedPairs.contains(pairKey)) continue;
 
@@ -801,7 +827,7 @@ public class KtdbStreamingConverter {
             String newShape = buildShape(flat);
             if (newShape.isBlank()) continue;
 
-            ExtLink trimmedLk = new ExtLink(lk.id(), lk.fromCluster(), lk.toCluster(),
+            ExtLink trimmedLk = new ExtLink(lk.id(), lk.origId(), lk.fromCluster(), lk.toCluster(),
                     lk.numLane(), round2(newLen), lk.maxSpd(), flat, newShape, lk.roadRank(),
                     lk.name(), lk.layer(), lk.fNode(), lk.tNode());
             replaced.put(lk.id(), trimmedLk);
@@ -1005,6 +1031,98 @@ public class KtdbStreamingConverter {
             for (int k = cnt; k < outL; k++) pairs.add(new int[]{inL-1, k});
         }
         return pairs;
+    }
+
+    /**
+     * Link/클러스터(=교차로 노드) 최종 id 부여 (Network ID naming 스펙, {@link NetworkIdAssigner}
+     * 참고). Link와 일반 Node(비터미널 클러스터)는 allLinks 누적 순서(=생성 순서)에 따라 하나의
+     * 인덱스를 공유하고, Terminal(in+out 외부 링크 합 ≤ 1인 클러스터)은 연결된 단 하나의 Link와
+     * 뒷자리 6자리가 동일하도록 그 자리에서 파생시킨다. clusters/clusterMemberCnt/clusterIn/
+     * clusterOut/clusterInternalAdj/allLinks 를 모두 새 id 로 일관되게 재구성한다(같은 ExtLink
+     * 인스턴스를 세 컬렉션이 공유하므로 allLinks 기준으로 재구성 후 clusterIn/clusterOut 은 다시
+     * 파생 — applyJunctionSetbacks 의 교체 패턴과 동일 원칙). ExtLink.origId()(원본 KTDB stableId)는
+     * 건드리지 않는다 — TURNINFO 매칭이 그 값으로 키잉되어 있다.
+     */
+    private void assignFinalIds(
+            Map<Long, ClusterInfo> clusters,
+            Map<Long, Integer> clusterMemberCnt,
+            Map<Long, List<ExtLink>> clusterIn,
+            Map<Long, List<ExtLink>> clusterOut,
+            Map<Long, Map<String, List<InternalEdge>>> clusterInternalAdj,
+            List<ExtLink> allLinks) {
+
+        // degree는 재채번 전 (old) 클러스터 id 기준으로 미리 확정 — 링크를 스캔하며 그 자리에서
+        // endpoint 클러스터를 처음 만나면 바로 배정하려면 degree가 이미 알려져 있어야 한다.
+        Map<Long, Integer> degree = new HashMap<>(clusters.size() * 2);
+        for (long oldId : clusters.keySet()) {
+            degree.put(oldId, clusterIn.getOrDefault(oldId, List.of()).size()
+                    + clusterOut.getOrDefault(oldId, List.of()).size());
+        }
+
+        Map<Long, Long> clusterIdRemap = new HashMap<>(clusters.size() * 2);
+        NetworkIdAssigner idAssigner = new NetworkIdAssigner();
+        for (int i = 0; i < allLinks.size(); i++) {
+            ExtLink lk = allLinks.get(i);
+            long newLinkId = idAssigner.nextLinkId();
+            allLinks.set(i, new ExtLink(newLinkId, lk.origId(), lk.fromCluster(), lk.toCluster(),
+                    lk.numLane(), lk.length(), lk.maxSpd(), lk.localCoords(), lk.shape(),
+                    lk.roadRank(), lk.name(), lk.layer(), lk.fNode(), lk.tNode()));
+            // 양 끝이 둘 다 터미널(고립된 신규 세그먼트 등)이면 뒷자리 파생은 한쪽에만 적용 —
+            // 안 그러면 둘 다 같은 링크에서 파생돼 서로 다른 두 클러스터가 같은 id를 갖게 됨.
+            boolean derivedTerminalUsed = false;
+            for (long oldCid : new long[]{lk.fromCluster(), lk.toCluster()}) {
+                if (clusterIdRemap.containsKey(oldCid)) continue;
+                if (degree.getOrDefault(oldCid, 0) > 1) {
+                    clusterIdRemap.put(oldCid, idAssigner.nextNormalNodeId());
+                } else if (!derivedTerminalUsed) {
+                    clusterIdRemap.put(oldCid, NetworkIdAssigner.terminalIdFor(newLinkId));
+                    derivedTerminalUsed = true;
+                } else {
+                    clusterIdRemap.put(oldCid, idAssigner.nextIsolatedTerminalId());
+                }
+            }
+        }
+        // 어느 외부 링크에도 연결되지 않은 고립 클러스터(비정상 데이터) — 페어링할 Link가 없어 fallback
+        for (long oldCid : clusters.keySet()) {
+            clusterIdRemap.putIfAbsent(oldCid, idAssigner.nextIsolatedTerminalId());
+        }
+
+        for (int i = 0; i < allLinks.size(); i++) {
+            ExtLink lk = allLinks.get(i);
+            allLinks.set(i, new ExtLink(lk.id(), lk.origId(),
+                    clusterIdRemap.getOrDefault(lk.fromCluster(), lk.fromCluster()),
+                    clusterIdRemap.getOrDefault(lk.toCluster(), lk.toCluster()),
+                    lk.numLane(), lk.length(), lk.maxSpd(), lk.localCoords(), lk.shape(),
+                    lk.roadRank(), lk.name(), lk.layer(), lk.fNode(), lk.tNode()));
+        }
+        clusterIn.clear();
+        clusterOut.clear();
+        for (ExtLink lk : allLinks) {
+            clusterIn.computeIfAbsent(lk.toCluster(),   k -> new ArrayList<>()).add(lk);
+            clusterOut.computeIfAbsent(lk.fromCluster(), k -> new ArrayList<>()).add(lk);
+        }
+
+        Map<Long, ClusterInfo> newClusters = new LinkedHashMap<>(clusters.size() * 2);
+        for (Map.Entry<Long, ClusterInfo> e : clusters.entrySet()) {
+            long newId = clusterIdRemap.get(e.getKey());
+            ClusterInfo ci = e.getValue();
+            newClusters.put(newId, new ClusterInfo(newId, ci.wgsLat(), ci.wgsLon(),
+                    ci.localX(), ci.localY(), ci.memberCount(), ci.name(), ci.ktdbItx()));
+        }
+        clusters.clear();
+        clusters.putAll(newClusters);
+
+        Map<Long, Integer> newMemberCnt = new HashMap<>(clusterMemberCnt.size() * 2);
+        for (Map.Entry<Long, Integer> e : clusterMemberCnt.entrySet())
+            newMemberCnt.put(clusterIdRemap.get(e.getKey()), e.getValue());
+        clusterMemberCnt.clear();
+        clusterMemberCnt.putAll(newMemberCnt);
+
+        Map<Long, Map<String, List<InternalEdge>>> newAdj = new HashMap<>(clusterInternalAdj.size() * 2);
+        for (Map.Entry<Long, Map<String, List<InternalEdge>>> e : clusterInternalAdj.entrySet())
+            newAdj.put(clusterIdRemap.get(e.getKey()), e.getValue());
+        clusterInternalAdj.clear();
+        clusterInternalAdj.putAll(newAdj);
     }
 
     // KTDB ID(숫자 문자열) → 안정적인 Long ID

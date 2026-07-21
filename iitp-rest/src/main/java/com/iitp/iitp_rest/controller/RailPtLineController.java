@@ -1,5 +1,6 @@
 package com.iitp.iitp_rest.controller;
 
+import com.iitp.iitp_rest.model.LogsData;
 import com.iitp.iitp_rest.model.publicTransit.rail.RailPtLineXml;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerLog;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerSaveRequest;
@@ -13,6 +14,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -100,6 +102,24 @@ public class RailPtLineController {
             return ResponseEntity.ok().build();
         } catch (Exception e) {
             log.error("[RailPtLineController] 저장 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /** railPTLine.xml 파일 업로드 → 파싱 + DB 저장 + SFTP 동기화 */
+    @PostMapping("/{scenarioKey}/import")
+    public ResponseEntity<Map<String, Object>> importRailPtLineXml(
+            @PathVariable String scenarioKey,
+            @RequestParam("file") MultipartFile file) {
+        log.info("[RailPtLineController] IMPORT scenarioKey={}, size={}bytes", scenarioKey, file.getSize());
+        try {
+            RailPtLineXml xml = railPtLineService.parse(file.getInputStream());
+            Map<String, Object> data = XmlLayerConverter.toMap(xml);
+            xmlLayerVersionService.save(LAYER_KEY, scenarioKey, data, new LogsData());
+            railPtLineService.saveByScenarioKey(scenarioKey, xml);
+            return ResponseEntity.ok(data);
+        } catch (Exception e) {
+            log.error("[RailPtLineController] 임포트 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

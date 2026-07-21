@@ -221,23 +221,64 @@ public class KtdbNetworkConverter {
 
         Set<String> clusterReps = new HashSet<>(clusterLocalCoord.keySet());
 
-        // ── 6. 클러스터(=교차로 노드) ID 부여 ───────────────────────────────
-        Map<String, Long> clusterIdMap = new LinkedHashMap<>();
-        long nodeCnt = 10000001L;
-        for (String rep : clusterReps) clusterIdMap.put(rep, nodeCnt++);
-
-        // ── 7. 외부 링크 선별 + ID 부여 (self-loop 사전 제거) ───────────────
-        // f_node와 t_node가 같은 클러스터에 속하면 self-loop → linkIdMap에서 완전 제외
+        // ── 7. 외부 링크 선별 (self-loop 사전 제거) ─────────────────────────
+        // f_node와 t_node가 같은 클러스터에 속하면 self-loop → 대상에서 완전 제외
         // 이 시점에 제외해야 포트/connection에도 등록되지 않음
-        Map<String, Long> linkIdMap = new LinkedHashMap<>();
-        long linkCnt = 20000001L;
+        List<KtdbLink> externalLinks = new ArrayList<>();
         for (KtdbLink lk : links) {
             if (internalIds.contains(lk.getLinkId())) continue;
             if (!coordsMap.containsKey(lk.getLinkId())) continue;
             String fRep = nodeToCluster.get(lk.getFNode());
             String tRep = nodeToCluster.get(lk.getTNode());
             if (fRep != null && fRep.equals(tRep)) continue; // self-loop 제외
-            linkIdMap.put(lk.getLinkId(), linkCnt++);
+            externalLinks.add(lk);
+        }
+
+        // ── 8. 클러스터별 in/out 외부 링크 수집 (ID 배정 전에 degree 확정) ──
+        Map<String, List<KtdbLink>> clusterIn  = new LinkedHashMap<>();
+        Map<String, List<KtdbLink>> clusterOut = new LinkedHashMap<>();
+        for (KtdbLink lk : externalLinks) {
+            String tRep = nodeToCluster.get(lk.getTNode());
+            String fRep = nodeToCluster.get(lk.getFNode());
+            if (tRep != null) clusterIn.computeIfAbsent(tRep,  k -> new ArrayList<>()).add(lk);
+            if (fRep != null) clusterOut.computeIfAbsent(fRep, k -> new ArrayList<>()).add(lk);
+        }
+
+        // ── 6+7. Link/클러스터(=교차로 노드) ID 부여 (Network ID naming 스펙) ──
+        // Link=2, Node(교차로)=1, Terminal(차량 출입점)=11 로 시작하는 8자리 숫자.
+        // Link와 일반 Node는 생성 순서(=외부 링크 원본 순서로 스캔)에 따라 하나의 인덱스를
+        // 공유하고, Terminal은 연결된 단 하나의 Link와 뒷자리 6자리가 동일해야 한다(스펙
+        // 예시: Link 20000326 ↔ Terminal 11000326) — 링크를 스캔하며 그 자리에서 endpoint
+        // 클러스터를 처음 만나면 바로 배정하면 두 규칙을 한 번에 만족한다.
+        // Terminal/Node 대역 분리(11xxxxxx/10xxxxxx) 자체는 NextSim route-generator 실측
+        // 크래시(std::out_of_range) 회피를 위해 원래도 필요했던 것(KAIST 배포판 bucheon/toy
+        // grid 예시가 이렇게 분리돼 있어 우연히 이 버그를 피해간 것으로 gdb 역공학 확인) — 그대로 유지.
+        Map<String, Long> linkIdMap    = new LinkedHashMap<>();
+        Map<String, Long> clusterIdMap = new LinkedHashMap<>();
+        NetworkIdAssigner idAssigner = new NetworkIdAssigner();
+        for (KtdbLink lk : externalLinks) {
+            long linkId = idAssigner.nextLinkId();
+            linkIdMap.put(lk.getLinkId(), linkId);
+            // 양 끝이 둘 다 터미널(완전히 고립된 신규 세그먼트 등)이면 뒷자리 파생은 한쪽에만
+            // 적용 — 안 그러면 둘 다 같은 링크에서 파생돼 서로 다른 두 노드가 같은 id를 갖게 됨.
+            boolean derivedTerminalUsed = false;
+            for (String rep : new String[]{nodeToCluster.get(lk.getFNode()), nodeToCluster.get(lk.getTNode())}) {
+                if (rep == null || clusterIdMap.containsKey(rep)) continue;
+                int clusterDegree = clusterIn.getOrDefault(rep, List.of()).size()
+                        + clusterOut.getOrDefault(rep, List.of()).size();
+                if (clusterDegree > 1) {
+                    clusterIdMap.put(rep, idAssigner.nextNormalNodeId());
+                } else if (!derivedTerminalUsed) {
+                    clusterIdMap.put(rep, NetworkIdAssigner.terminalIdFor(linkId));
+                    derivedTerminalUsed = true;
+                } else {
+                    clusterIdMap.put(rep, idAssigner.nextIsolatedTerminalId());
+                }
+            }
+        }
+        // 어느 외부 링크에도 연결되지 않은 고립 클러스터(비정상 데이터) — 페어링할 Link가 없어 fallback
+        for (String rep : clusterReps) {
+            clusterIdMap.putIfAbsent(rep, idAssigner.nextIsolatedTerminalId());
         }
 
         // 우리 linkId → 차선 수/차선 폭 역인덱스 (connection 차선 번호·차선별 shape 계산용)
@@ -249,17 +290,6 @@ public class KtdbNetworkConverter {
                 ourIdToLanes.put(ourId, Math.max(1, lk.getLanes()));
                 ourIdToLaneWidth.put(ourId, RANK_DEFS.getOrDefault(lk.getRoadRank(), DEFAULT_DEFS)[2]);
             }
-        }
-
-        // ── 8. 클러스터별 in/out 외부 링크 수집 ──────────────────────────────
-        Map<String, List<KtdbLink>> clusterIn  = new LinkedHashMap<>();
-        Map<String, List<KtdbLink>> clusterOut = new LinkedHashMap<>();
-        for (KtdbLink lk : links) {
-            if (!linkIdMap.containsKey(lk.getLinkId())) continue;
-            String tRep = nodeToCluster.get(lk.getTNode());
-            String fRep = nodeToCluster.get(lk.getFNode());
-            if (tRep != null) clusterIn.computeIfAbsent(tRep,  k -> new ArrayList<>()).add(lk);
-            if (fRep != null) clusterOut.computeIfAbsent(fRep, k -> new ArrayList<>()).add(lk);
         }
 
         // ── 9. 외부 링크 from/to 노드를 클러스터 대표로 리매핑 ───────────────

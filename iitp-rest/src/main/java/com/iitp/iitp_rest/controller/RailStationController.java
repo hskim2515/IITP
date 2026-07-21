@@ -13,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -92,6 +93,21 @@ public class RailStationController {
             return ResponseEntity.ok().build();
         } catch (Exception e) {
             log.error("[saveRailStations] 저장 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /** railStation.xml 파일 업로드 → 파싱 + DB 저장 + SFTP 동기화 */
+    @PostMapping("/{versionId}/import")
+    public ResponseEntity<RailPublicTransitResponse> importRailStationXml(
+            @PathVariable String versionId,
+            @RequestParam("file") MultipartFile file) {
+        log.info("[importRailStationXml] versionId: {}", versionId);
+        try {
+            RailPublicTransitResponse response = railStationService.importFromXml(file.getBytes(), versionId);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("[importRailStationXml] 임포트 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

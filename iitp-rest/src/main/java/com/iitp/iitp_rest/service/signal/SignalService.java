@@ -47,6 +47,17 @@ public class SignalService {
         latest.setData(request.getData());
         signalVersionsRepository.save(latest);
 
+        // ORIGIN이 아직 없으면(예: XML 임포트로 처음 생긴 버전) 이번 저장 데이터를 복원 기준점으로
+        // 생성 — getDataFromXml의 DOM 파서는 planList/phase를 읽지 않아 손실 변환이므로, 가능하면
+        // 여기서(완전한 JAXB 파싱 결과로) 먼저 ORIGIN을 채워 HistoryModal 복원 품질을 보장한다.
+        if (signalVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.ORIGIN).isEmpty()) {
+            SignalVersion origin = new SignalVersion();
+            origin.setVersionId(versionId);
+            origin.setVersionRole(BaseVersion.VersionRole.ORIGIN);
+            origin.setData(request.getData());
+            signalVersionsRepository.save(origin);
+        }
+
         List<SignalLogs> existingLogs = signalLogsRepository.findByVersionIdOrderByCreatedAtAsc(versionId);
 
         int maxLogs = 10;
@@ -138,7 +149,13 @@ public class SignalService {
             originVersion.setData(signalResponses);
             signalVersionsRepository.save(originVersion);
 
-            SignalVersion latestVersion = new SignalVersion();
+            // find-or-create — XML 임포트(POST .../import)처럼 ORIGIN 없이 LATEST만 먼저 생긴
+            // 버전에서 이 메서드가 호출되면(예: HistoryModal의 GET /origin), 여기서 무조건 새
+            // SignalVersion을 만들면 기존 LATEST 행과 중복되어 findByVersionIdAndVersionRole이
+            // 이후 2건을 만나 예외를 던진다(실측 재현) — 반드시 기존 행을 찾아 갱신해야 한다.
+            SignalVersion latestVersion = signalVersionsRepository
+                    .findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST)
+                    .orElse(new SignalVersion());
             latestVersion.setVersionId(versionId);
             latestVersion.setVersionRole(BaseVersion.VersionRole.LATEST);
             latestVersion.setData(signalResponses);
@@ -218,6 +235,72 @@ public class SignalService {
         SignalXml xml = new SignalXml();
         xml.setNode(nodes);
         return xml;
+    }
+
+    /**
+     * SignalXml(계층구조) → List&lt;SignalResponse&gt;(flat) 순변환. toSignalXml()의 역변환.
+     * turn 하나당 connList 공백 구분 토큰 개수만큼 SignalResponse 레코드로 펼치고(getDataFromXml과
+     * 동일 규칙), plans는 노드당 하나의 레코드에만 채운다(toSignalXml의 planMap.putIfAbsent와 대칭).
+     */
+    public List<SignalResponse> fromSignalXml(SignalXml xml) {
+        List<SignalResponse> responses = new ArrayList<>();
+        if (xml.getNode() == null) return responses;
+
+        for (SignalXml.SignalNodeXml node : xml.getNode()) {
+            String nodeId = node.getId() != null ? String.valueOf(node.getId()) : "";
+
+            List<SignalResponse.PlanData> plans = null;
+            if (node.getPlans() != null && !node.getPlans().isEmpty()) {
+                plans = node.getPlans().stream().map(p -> {
+                    SignalResponse.PlanData pd = new SignalResponse.PlanData();
+                    pd.setId(p.getId());
+                    pd.setCycle(p.getCycle());
+                    pd.setOffset(p.getOffset());
+                    if (p.getPhase() != null) {
+                        pd.setPhases(p.getPhase().stream().map(ph -> {
+                            SignalResponse.PhaseData phd = new SignalResponse.PhaseData();
+                            phd.setId(ph.getId());
+                            phd.setDuration(ph.getDuration());
+                            phd.setTurnList(ph.getTurnList());
+                            return phd;
+                        }).collect(Collectors.toList()));
+                    }
+                    return pd;
+                }).collect(Collectors.toList());
+            }
+
+            boolean firstTurnForNode = true;
+            if (node.getTurns() != null) {
+                for (SignalXml.TurnListXml turn : node.getTurns()) {
+                    String connListStr = turn.getConnList() != null ? turn.getConnList().trim() : "";
+                    List<String> connList = connListStr.isEmpty()
+                            ? new ArrayList<>()
+                            : Arrays.asList(connListStr.split("\\s+"));
+
+                    if (connList.isEmpty()) {
+                        SignalResponse r = new SignalResponse();
+                        r.setNodeId(nodeId);
+                        r.setTurnId(turn.getId());
+                        r.setTurning(turn.getTurning());
+                        r.setType(turn.getType());
+                        if (firstTurnForNode) { r.setPlans(plans); firstTurnForNode = false; }
+                        responses.add(r);
+                        continue;
+                    }
+                    for (String connId : connList) {
+                        SignalResponse r = new SignalResponse();
+                        r.setNodeId(nodeId);
+                        r.setTurnId(turn.getId());
+                        r.setTurning(turn.getTurning());
+                        r.setType(turn.getType());
+                        r.setConnectionId(connId);
+                        if (firstTurnForNode) { r.setPlans(plans); firstTurnForNode = false; }
+                        responses.add(r);
+                    }
+                }
+            }
+        }
+        return responses;
     }
 
 }
