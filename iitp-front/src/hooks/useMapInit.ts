@@ -1,5 +1,5 @@
 import { MutableRefObject, useEffect, useState } from 'react';
-import { useCesiumStore } from "@stores/useCesiumStore";
+import { useCesiumStore, CESIUM_TERRAIN_URL } from "@stores/useCesiumStore";
 import * as Cesium from "cesium";
 import { Cartesian3, Viewer } from "cesium";
 import { useLayerStore } from "@stores/useLayerStore";
@@ -72,7 +72,7 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
         if (!cesiumMapRef.current) return;
         Cesium.Ion.defaultAccessToken = '';  // Set your Cesium Ion access token here
         const cesiumViewer = new Viewer(cesiumMapRef.current, {
-            terrain: new Cesium.Terrain(Cesium.CesiumTerrainProvider.fromUrl('https://175.197.92.213:10210/terrain-tile/dem05_ellipsoid', { requestVertexNormals: true })),
+            terrain: new Cesium.Terrain(Cesium.CesiumTerrainProvider.fromUrl(CESIUM_TERRAIN_URL, { requestVertexNormals: true })),
             shouldAnimate: true,
             selectionIndicator: false,
             timeline: false,
@@ -91,6 +91,50 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
             //     webgl: gl, // ✅ OpenLayers의 WebGL 컨텍스트 재사용
             // },
         });
+
+        // GroundPolylinePrimitive 배치(clampToGround 도로/신호 커넥션) 갱신 중 팬/줌으로 인한
+        // 빈번한 엔티티 추가/제거 churn 때 Cesium 내부에서 드물게 예외가 난다(실측:
+        // "Cannot read properties of undefined (reading 'id')" @ StaticGroundPolylinePerMaterialBatch).
+        //
+        // Cesium 소스(startRenderLoop)를 직접 확인한 결과: 렌더 중 예외가 나면
+        // useDefaultRenderLoop=false로 내리고 showErrorPanel()을 호출할 뿐, catch 블록에서
+        // requestAnimationFrame(render2)를 다시 예약하지 않는다 — 즉 재귀 루프 자체가 끊긴다.
+        // showErrorPanel 안에서 useDefaultRenderLoop를 다시 true로 되돌려도 아무도 다음
+        // requestAnimationFrame을 걸어주지 않으므로 영영 재개되지 않는다(실측: 효과 없었음).
+        // 그래서 Cesium의 기본 루프를 끄고 우리가 직접 매 프레임 try/catch로 감싸 구동한다 —
+        // 이번 프레임이 실패해도 반드시 다음 프레임을 스스로 다시 예약해 자기유지시킨다.
+        cesiumViewer.useDefaultRenderLoop = false;
+
+        // 위 커스텀 루프만으로는 부족하다: CesiumWidget.render()는 내부적으로
+        // Clock.tick() → _onTick → dataSourceDisplay.update() 를 먼저 실행한 "다음에"
+        // scene.render()(실제 프리미티브 업데이트·드로우, 차량 위치 반영 포함)를 호출한다.
+        // dataSourceDisplay.update() 안에서 예외가 나면 CesiumWidget.render() 전체가 그
+        // 지점에서 중단되어 scene.render()가 아예 실행되지 않는다 — 도로/신호 등 다른 건
+        // 문제없는데 유독 "차량만" 안 움직이고 사라져 보이던 이유(차량 위치 갱신이
+        // scene.render() 경로에 걸려 있음). dataSourceDisplay.update() 자체를 감싸서 그
+        // 배치 오류만 흡수하면, scene.render()는 매 프레임 정상적으로 계속 실행된다.
+        const originalDataSourceDisplayUpdate = cesiumViewer.dataSourceDisplay.update.bind(cesiumViewer.dataSourceDisplay);
+        (cesiumViewer.dataSourceDisplay as any).update = (time: any) => {
+            try {
+                return originalDataSourceDisplayUpdate(time);
+            } catch (error) {
+                console.error('[Cesium] dataSourceDisplay.update 오류 — 이번 프레임만 건너뜀:', error);
+                return true;
+            }
+        };
+
+        let cesiumRenderLoopStopped = false;
+        const runCesiumRenderLoop = () => {
+            if (cesiumRenderLoopStopped || cesiumViewer.isDestroyed()) return;
+            try {
+                cesiumViewer.resize();
+                cesiumViewer.render();
+            } catch (error) {
+                console.error('[Cesium] 프레임 렌더 오류 — 다음 프레임에서 계속 진행:', error);
+            }
+            requestAnimationFrame(runCesiumRenderLoop);
+        };
+        requestAnimationFrame(runCesiumRenderLoop);
 
         cesiumViewer.camera.setView({
             destination: Cartesian3.fromDegrees(126.77496, 37.49720, 10000) // Adjust the height as needed

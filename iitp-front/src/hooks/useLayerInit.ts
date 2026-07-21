@@ -23,6 +23,7 @@ import {useLayerSchemaStore} from "@stores/useLayerSchemaStore";
 import {assignPropertyToResponseData} from "@utils/guid";
 import { NETWORK_TILING } from "@utils/lodConstants";
 import { getActiveVersionId } from "@utils/versionId";
+import { useNetworkExtentStore } from "@stores/useNetworkExtentStore";
 import {usePavementMarkingStore} from "@stores/usePavementMarkingStore";
 import { useBusStationStore } from "@stores/useBusStationStore";
 import { useRailStationStore } from "@stores/useRailStationStore";
@@ -123,6 +124,10 @@ export async function flyToNetworkExtent(cesiumViewer: any, olMap: any): Promise
     const extentM     = Math.max(latExtentM, lngExtentM, 500); // 최소 500m
     let cameraHeight = extentM * 2.0;
 
+    // 차량 줌 티어(개별/flow/히트맵/OD) 임계값 보정용 — 부천 규모(수 km)든 광역(수십km)든
+    // 네트워크 크기에 비례해 같은 상대적 줌 단계에서 전환되도록 viewportMetrics.normalizePixelSizeM이 참조.
+    useNetworkExtentStore.getState().setExtentM(extentM);
+
     // OpenLayers 뷰 이동 (Cesium보다 먼저 — fit 결과 해상도로 카메라 높이를 정합시키기 위함)
     const padding = 0.0005; // 약 50m 여백
     const extent3857 = transformExtent(
@@ -164,7 +169,7 @@ const useLayerInit = (): void => {
     const cesiumViewer = useCesiumStore.state.viewer();
     const setLayerManager = useLayerStore.getState().setLayerManager;
 
-    // 버전 선택 전 init 금지 — Maps는 VersionPopup 뒤에 이미 마운트되어 있어서,
+    // 버전 선택 전 init 금지 — Maps는 시나리오 선택 직후 이미 마운트되므로,
     // 여기서 기다리지 않으면 getActiveVersionId()가 scenario.key로 폴백해
     // 이전(원본) 네트워크를 먼저 로드했다가 버전 선택 후 현재 버전으로 갈아치우는 깜빡임 발생.
     const selectedVersion = useScenarioStore((state) => state.selectedScenarioVersion);

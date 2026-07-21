@@ -8,6 +8,12 @@ import { useSignalStore } from "@stores/useSignalStore";
  */
 export const NEXTSIM_REQUIRED_KEYS = new Set(["network", "signal"]);
 
+/** 시설물 스키마 라벨과 별개로, 헤더 등 스키마에 접근하지 않는 전역 UI에서 쓰는 고정 라벨 */
+export const NEXTSIM_REQUIRED_LABELS: Record<string, string> = {
+    network: "도로",
+    signal: "신호등",
+};
+
 export interface FacilityValidationResult {
     ok: boolean;
     issues: string[];
@@ -46,8 +52,12 @@ function validateNetworkStructure(network: any): FacilityValidationResult {
 function validateSignalAgainstNetwork(network: any): FacilityValidationResult {
     const signalData = useSignalStore.getState().currentJsonData as any;
     const signals = (signalData?.signals ?? []).filter(Boolean);
-    // 빈 신호(signal.xml 빈 템플릿)는 NextSim 이 허용하는 유효 상태
-    if (signals.length === 0) return { ok: true, issues: [] };
+    // NextSim은 signal.xml이 없으면 빈 템플릿을 만들어 실행 자체는 진행하지만,
+    // 신호 데이터가 하나도 없는 채로 돌리면 교차로 제어 없이 시뮬레이션되어
+    // 결과가 무의미해질 수 있다 — 무결성 검사에서는 실패로 처리해 사용자가 인지하게 한다.
+    if (signals.length === 0) {
+        return { ok: false, issues: ["신호 데이터가 없습니다."] };
+    }
 
     const nodes = (network?.nodes ?? []).filter(Boolean);
     const nodeIds = new Set(nodes.map((n: any) => String(n.id)));

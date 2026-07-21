@@ -50,7 +50,15 @@ export const defaultEventHandlers ={
         const viewer = useCesiumStore.getState().viewer;
         if (!viewer) return;
 
-        const picked = viewer.scene.pick(e.position);
+        // 줌 중 LOD tier 전환으로 GroundPrimitive 가 비동기 재생성되는 순간과 겹치면
+        // Cesium 내부 픽 오브젝트 매핑이 일시적으로 비어 scene.pick() 자체가 예외를 던질 수 있다
+        // (앱 코드가 아니라 Cesium 내부 — 다음 프레임엔 정상화되므로 이번 클릭만 무시하면 된다).
+        let picked: any;
+        try {
+            picked = viewer.scene.pick(e.position);
+        } catch (_) {
+            return;
+        }
 
         const props: Record<string, any> = {};
         const cartesian = viewer.scene.camera.pickEllipsoid(e.position, viewer.scene.globe.ellipsoid);
@@ -204,7 +212,15 @@ export const defaultEventHandlers ={
         const position = e.endPosition ?? e.position;
         if (!position) return;
 
-        const pickedObject = scene.pick(position);
+        // 줌 중 LOD tier 전환으로 GroundPrimitive 가 비동기 재생성되는 순간과 겹치면
+        // Cesium 내부 픽 오브젝트 매핑이 일시적으로 비어 scene.pick() 자체가 예외를 던질 수 있다
+        // (16ms throttle 로 계속 재시도되므로 이번 프레임만 건너뛰면 충분).
+        let pickedObject: any;
+        try {
+            pickedObject = scene.pick(position);
+        } catch (_) {
+            return;
+        }
 
         if (pickedObject?.id instanceof Cesium.Entity) {
             // Entity 호버 (노드, 포트, 커넥션 등)
@@ -226,7 +242,7 @@ export const defaultEventHandlers ={
         const olMap = useOpenLayersStore.getState().map;
         const activeSubmenu = useMenuStore.getState().activeSubmenu
 
-        const hoverLayerName = activeSubmenu ? propertyFormSchema[activeSubmenu?.menuCode].layer : undefined;
+        const hoverLayerName = activeSubmenu?.menuCode ? propertyFormSchema[activeSubmenu.menuCode]?.layer : undefined;
 
         if (!olMap) return;
 

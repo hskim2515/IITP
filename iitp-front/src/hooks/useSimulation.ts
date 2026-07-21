@@ -27,6 +27,7 @@ import { computeTodPeriods, mergeSignalTimelines } from "@utils/tod";
 import { useBackgroundTaskStore } from "@stores/useBackgroundTaskStore";
 import { useNetworkTileStore } from "@stores/useNetworkTileStore";
 import { VEHICLE_STREAMING, NETWORK_TILING } from "@utils/lodConstants";
+import { computeViewportMetrics } from "@utils/viewportMetrics";
 
 /**
  * vehicleRoute 내 모든 ECEF 웨이포인트에 지형 고도를 적용합니다.
@@ -99,9 +100,12 @@ async function applyTerrainHeightsToRoute(
 
         scratch.x = x; scratch.y = y; scratch.z = z;
         const carto = Cesium.Cartographic.fromCartesian(scratch);
-        carto.height = terrainH+1;
+        // 지형 위로 띄우는 버퍼(과거 +5m) 제거 — 차량이 지형보다 10m 가까이 떠 보이는
+        // 원인이었다("줌인 시 차량 사라짐"을 막으려 도입했던 값인데, 그 부작용이 더 컸음).
+        // "사라짐" 문제가 재발하면 위치를 띄우는 대신 다른 방식(깊이테스트 조정 등)으로 다시 다룰 것.
+        carto.height = terrainH;
         const newPos = Cesium.Cartesian3.fromRadians(
-            carto.longitude, carto.latitude, terrainH+1
+            carto.longitude, carto.latitude, terrainH
         );
 
         path[ref.offset + 1] = newPos.x;
@@ -144,6 +148,12 @@ const useSimulation = () => {
     const czml = useVehicleStore((state) => state.czml);
     const czmlDataSourceRef = useRef(null);
     const vehicleDataRef = useRef(null);
+    // 뷰포트 스트리밍(팬/줌마다 재요청)이 setSimulation()을 겹쳐 호출할 수 있다 — 이전 호출이
+    // 비동기 대기(CZML 로드, 지형 샘플링) 중 새 호출이 시작되면, 늦게 재개된 구 호출이
+    // layerManager/dataSources/worker를 새 호출 것 위에 덮어써 차량이 사라지거나 undefined 참조
+    // 오류가 난다. 매 setSimulation() 진입 시 세대를 증가시키고, 각 await 재개 지점에서 자신의
+    // 세대가 여전히 최신인지 확인해 구버전이면 조용히 중단한다.
+    const simGenRef = useRef(0);
     const vehicleRouteStartEndRef = useRef<any[] | null>(null);
     const needsReinitRef = useRef(false);
 
@@ -163,6 +173,21 @@ const useSimulation = () => {
     const czmlPositionWorkerRef = useRef<Worker | null>(null);
     const updateFrameFuncRef = useRef<(() => void) | null>(null);
     const makeOdDataWorkerRef = useRef<Worker | null>(null);
+    // 뷰포트 스트리밍 창의 simMin(전체 시뮬 시작 기준 오프셋, 초) — czmlPositionWorker에 넘길
+    // "절대 경과초"를 계산하는 데 필요. 전체-로드 모드에서는 0으로 유지(= 그대로 정확).
+    //
+    // ⚠️ 버그였던 것: 이 값을 안 쓰고 worker가 매 init() 호출 시점을 0초로 재설정해 경과를
+    // 셌다. 그런데 vehiclePathList의 각 포인트 t값은 vehicle_sim.db의 timestep 그대로(=
+    // 시뮬레이션 전체 기준 절대 초)라서, viewport 스트리밍처럼 fromTime>0인 시간창을 불러오면
+    // worker의 elapsed(0부터 시작)가 차량 경로의 절대 timestep(수백~초)과 전혀 안 맞아 거의
+    // 모든 차량이 "이 순간엔 위치 없음(null)"으로 계산됐다 — 줌/팬 후 차량이 안 보이거나
+    // 멈추는 것처럼 보인 근본 원인. viewer.clock.startTime(=baseEpoch+simMin, 문서 clock)
+    // 기준 경과초 + simMin = 절대 timestep이 되도록 맞춰야 한다.
+    const simMinRef = useRef(0);
+    const computeElapsedSec = (v: Cesium.Viewer, clockTime: Cesium.JulianDate): number => {
+        try { return simMinRef.current + JulianDate.secondsDifference(clockTime, v.clock.startTime); }
+        catch { return 0; }
+    };
 
     useEffect(() => {
         if (!czmlPositionWorkerRef.current) {
@@ -216,11 +241,11 @@ const useSimulation = () => {
                 useSimulationStore.getState().setCurrentTime(JulianDate.clone(viewer.clock.startTime));
                 useVehicleStore.getState().setActiveVehicleCount(0);
 
-                // worker 리셋
-                const startSimTime = Cesium.JulianDate.toDate(viewer.clock.startTime).getTime();
-                czmlPositionWorkerRef.current?.postMessage({ type: 'reset', currentTime: startSimTime });
+                // worker 리셋 — currentTime은 이제 절대 경과초(vehicle_sim.db timestep 기준)
+                czmlPositionWorkerRef.current?.postMessage({ type: 'reset', currentTime: computeElapsedSec(viewer, viewer.clock.startTime) });
 
-                // 신호 스타일 초기화
+                // 신호 스타일 초기화 (updateSignalStyles는 epoch-ms 기준 — computeElapsedSec와는 다른 단위)
+                const startSimTime = Cesium.JulianDate.toDate(viewer.clock.startTime).getTime();
                 try {
                     const signalTimeline = useSignalTimelineStore.getState().signalTimeline;
                     if (signalTimeline?.length) {
@@ -429,17 +454,26 @@ const useSimulation = () => {
             let timer: ReturnType<typeof setTimeout> | null = null;
             let lastModeSwitchAt = 0; // 밀집↔개별 마지막 전환 시각 (연속 전환 방지)
 
-            // 카메라 viewport bbox (한 변 MAX_BBOX_DEG 초과 시 null → fetch 생략)
+            // 카메라 viewport bbox — computeViewportMetrics()(공용 유틸, TrafficHeatmapCesiumLayer/
+            // TrafficTailCesiumLayer와 동일 계산)의 pixelSizeM으로 개별 차량 티어 여부를 판정하고,
+            // MAX_BBOX_DEG는 그 안에서 실제 요청 bbox 크기만 절삭한다(VEHICLE_ZOOM_TIER_PX_M 참고 —
+            // 세 줌 티어 임계값이 전부 이 pixelSizeM 단위 하나로 통일되어 서로 어긋날 수 없다).
             const computeBbox = (): { w: number; s: number; e: number; n: number } | null => {
                 const v = useCesiumStore.getState().viewer;
                 if (!v) return null;
-                const rect = v.camera.computeViewRectangle(v.scene.globe.ellipsoid);
-                if (!rect) return null;
-                let w = Cesium.Math.toDegrees(rect.west), e = Cesium.Math.toDegrees(rect.east);
-                let s = Cesium.Math.toDegrees(rect.south), n = Cesium.Math.toDegrees(rect.north);
+                const metrics = computeViewportMetrics(v);
+                if (!metrics) return null; // 하늘을 보는 시점 등 — 다음 정착 때 재시도
+                const { normalizedPixelSizeM } = metrics;
+
+                let { w, s, e, n } = metrics.bbox;
+                // 카메라 flight 애니메이션 중간 프레임 등에서 groundDist≈0 → bbox가 한 점으로
+                // 붕괴하는 이상치 프레임 방지 (그대로 fetch하면 서버가 0대 응답 → 차량 전체 소실).
+                if (e - w < VEHICLE_STREAMING.MIN_BBOX_DEG || n - s < VEHICLE_STREAMING.MIN_BBOX_DEG) return null;
+                // normalizedPixelSizeM 사용 — 네트워크 실제 크기 대비 상대적 줌 단계로 판정해야
+                // 소형(부천 규모)/광역 시나리오 모두에서 개별→flow 전환이 올바른 지점에서 일어난다.
+                if (normalizedPixelSizeM >= VEHICLE_STREAMING.MAX_PIXEL_SIZE_M) return null; // 줌아웃 → flow/히트맵 담당
+                // 소폭 초과는 중앙 기준으로 절삭 (요청 크기 안전판)
                 const MAX = VEHICLE_STREAMING.MAX_BBOX_DEG;
-                if (e - w > MAX * 2 || n - s > MAX * 2) return null; // 줌아웃 → 집계 히트맵 담당
-                // 소폭 초과는 중앙 기준으로 절삭
                 if (e - w > MAX) { const c = (w + e) / 2; w = c - MAX / 2; e = c + MAX / 2; }
                 if (n - s > MAX) { const c = (s + n) / 2; s = c - MAX / 2; n = c + MAX / 2; }
                 return { w, s, e, n };
@@ -456,9 +490,11 @@ const useSimulation = () => {
 
             let lastFetchWall = 0;
             let simMax = Infinity;
+            let pendingRetryTimer: ReturnType<typeof setTimeout> | null = null;
+            let retryAfterFetch = false;
 
             const doFetch = (force = false) => {
-                if (fetching) return;
+                if (fetching) { retryAfterFetch = true; return; } // 진행 중 fetch 끝나면 최신 상태로 재시도
                 const bbox = computeBbox();
                 if (!bbox) return;
                 const bboxKey = `${bbox.w.toFixed(4)},${bbox.s.toFixed(4)},${bbox.e.toFixed(4)},${bbox.n.toFixed(4)}`;
@@ -467,12 +503,21 @@ const useSimulation = () => {
                 if (!force && bboxKey === lastBboxKey && windowOk) return; // 같은 bbox + 창 여유 → 스킵
                 // 벽시계 최소 간격 — 재로드는 32MB fetch + 전체 시뮬 레이어 재구성이라, 재생 배속으로
                 // 시간창이 빨리 소진되어도 수 초마다 반복되면 시뮬/타일 렌더가 전부 굶는다.
-                if (!force && performance.now() - lastFetchWall < 8000) return;
+                const sinceLastFetch = performance.now() - lastFetchWall;
+                if (!force && sinceLastFetch < 8000) {
+                    // 쿨다운 내 요청을 그냥 버리면(기존 버그) — 재생이 정지된 상태거나 카메라가
+                    // 짧은 간격으로 두 번 움직인 경우 이후 트리거가 없어 마지막 뷰포트의 차량이
+                    // 영영 로드되지 않는다. 버리는 대신 쿨다운 종료 시점으로 재시도를 예약한다.
+                    if (pendingRetryTimer) clearTimeout(pendingRetryTimer);
+                    pendingRetryTimer = setTimeout(() => { pendingRetryTimer = null; doFetch(); }, 8000 - sinceLastFetch + 50);
+                    return;
+                }
 
-                // 시간창을 재생 배속에 비례해 확장하되 **상한 300s** — 배속 30x에 무제한 확장하면
-                // 창=시뮬 전체(3,600s)가 되어 차량 수천 대 전체 궤적 로드 → czml 엔티티 폭증으로
-                // FPS 한 자리 추락 (실사용 회귀). 창이 크면 선별 차량 수·heap 이 함께 커진다.
-                const mult = Math.min(2.5, Math.max(1, ((useVehicleStore.getState() as any).speedFactor || 1) / 12));
+                // 시간창을 재생 배속(Cesium clock multiplier)에 비례해 확장하되 **상한 300s** — 배속
+                // 30x에 무제한 확장하면 창=시뮬 전체(3,600s)가 되어 차량 수천 대 전체 궤적 로드 →
+                // czml 엔티티 폭증으로 FPS 한 자리 추락 (실사용 회귀). 창이 크면 선별 차량 수·heap
+                // 이 함께 커진다. speedFactor(차량 실주행 속도 km/h)가 아닌 실제 배속을 참조할 것.
+                const mult = Math.min(2.5, Math.max(1, ((useSimulationStore.getState() as any).speed || 1) / 12));
                 const windowSec = Math.min(300, VEHICLE_STREAMING.TIME_WINDOW_SEC * mult);
                 const from = Math.max(0, Math.floor(cur));
                 const to = from + windowSec;
@@ -490,9 +535,10 @@ const useSimulation = () => {
                 })
                     .then((r) => (r.ok ? r.json() : null))
                     .then((data) => {
-                        if (!data) return;
+                        if (!data) { console.warn('[진단] viewport 응답 없음(!data) — bbox=', bboxKey); return; }
                         simMin = Array.isArray(data.simRange) ? (data.simRange[0] ?? 0) : 0;
                         simMax = Array.isArray(data.simRange) ? (data.simRange[1] ?? Infinity) : Infinity;
+                        simMinRef.current = simMin; // worker 절대경과초 계산용 (컴포넌트 전역에서 공유)
                         windowFrom = from; windowTo = to;
                         lastBboxKey = bboxKey;
 
@@ -501,6 +547,7 @@ const useSimulation = () => {
                         // 경계값 부근에서 팬마다 왕복 진동 방지 + 최소 전환 간격으로 깜빡임 억제.
                         const total = Number(data.totalVehicles ?? 0);
                         const shown = Array.isArray(data.positions) ? data.positions.length : 0;
+                        console.log('[진단] viewport 응답:', { bbox: bboxKey, total, shown, truncated: data.truncated, positions: data.positions?.length, czml: data.czml?.length });
                         const wasDense = (useVehicleStore.getState() as any).denseViewport === true;
                         const exitThreshold = VEHICLE_STREAMING.MAX_VEHICLES * VEHICLE_STREAMING.DENSE_EXIT_RATIO;
                         let dense = wasDense ? total >= exitThreshold : data.truncated === true;
@@ -512,6 +559,7 @@ const useSimulation = () => {
                                 lastModeSwitchAt = nowMs;
                             }
                         }
+                        console.log('[진단] dense 판정:', { wasDense, dense, total, exitThreshold, truncated: data.truncated });
                         (useVehicleStore.getState() as any).setDenseViewport(dense);
                         (useVehicleStore.getState() as any).setViewportVehicleInfo(
                             { shown: dense ? 0 : shown, total, dense });
@@ -540,7 +588,10 @@ const useSimulation = () => {
                         firstLoad = false;
                     })
                     .catch((e) => console.warn('[useSimulation] viewport 스트리밍 실패:', e))
-                    .finally(() => { fetching = false; });
+                    .finally(() => {
+                        fetching = false;
+                        if (retryAfterFetch) { retryAfterFetch = false; doFetch(); }
+                    });
             };
 
             const schedule = () => {
@@ -585,6 +636,7 @@ const useSimulation = () => {
                 if (viewerWaitTimer) clearInterval(viewerWaitTimer);
                 unsubTime();
                 if (timer) clearTimeout(timer);
+                if (pendingRetryTimer) clearTimeout(pendingRetryTimer);
                 (useVehicleStore.getState() as any).setDenseViewport(false); // 시나리오 전환 시 밀집 모드 해제
                 (useVehicleStore.getState() as any).setViewportVehicleInfo(null);
             };
@@ -624,10 +676,19 @@ const useSimulation = () => {
             // 스트리밍 viewport 0대 응답(차량 없는 지역 팬/밀집 전환): 조기 반환만 하면
             // 이전 viewport 차량들이 마지막 위치에 그려진 채 남는다 → 차량 계열 레이어 제거.
             // ('analyze/traffic' 집계 히트맵은 removeSimulationLayers 대상이 아니라 밀집 모드 안전)
+            console.warn('[진단] vehicleRoute 0대 — removeSimulationLayers 실행');
             vehicleRouteStartEndRef.current = [];
             lastPositionsRef.current = [];
             czmlPositionWorkerRef.current?.postMessage({ type: 'init', czmlPackets: [], currentTime: 0 });
             layerManager?.removeSimulationLayers();
+            // traffic/flow는 개별 차량과 무관하게 자체 zoom 감지로 표시 여부를 결정하는
+            // 독립 레이어라, removeSimulationLayers()에 딸려 destroy된 뒤 여기서 다시 안 만들면
+            // setSimulation()이 재실행될 때까지(다음 번 0대가 아닌 응답이 올 때까지) 통째로
+            // 사라진 채로 남는다 — 개별 차량이 0대인 뷰포트(팬/밀집 전환 등)에서 정확히 이 순간에
+            // 나타나야 할 flow 레이어가 안 보이던 버그였다. 즉시 다시 생성한다.
+            layerManager?.addTrafficLayer();
+            layerManager?.addFlowLayer();
+            layerManager?.addOdFlowLayer();
             return;
         }
 
@@ -663,8 +724,15 @@ const useSimulation = () => {
         }
         if (currentTime - lastUpdateTime.current >= 50 && isRunningRef.current) {
             lastUpdateTime.current = currentTime;
-            czmlPositionWorkerRef.current.postMessage({ type: 'tick', currentTime: simTime });
+            // currentTime: 절대 경과초(vehicle_sim.db timestep 기준) — computeElapsedSec 주석 참고
+            czmlPositionWorkerRef.current.postMessage({ type: 'tick', currentTime: computeElapsedSec(viewer, viewer.clock.currentTime) });
             useSimulationStore.getState().setCurrentTime(JulianDate.clone(viewer.clock.currentTime));
+
+            // requestRenderMode(+ maximumRenderTimeChange:Infinity)에서는 카메라가 안 움직이면
+            // scene.preRender 자체가 다시 호출되지 않는다 — 이 함수가 preRender 리스너이므로,
+            // 재생 중에는 다음 프레임 렌더를 스스로 예약해 자기유지 루프를 만들어야 한다.
+            // 없으면 지도를 움직여 우연히 트리거된 렌더가 끝나는 순간(=팬 종료 시점) 재생이 멈춘다.
+            viewer.scene.requestRender();
 
             const signalInterval = Math.max(200, 1000 / (speedRef.current || 1));
             if (currentTime - lastSignalUpdateTime.current >= signalInterval) {
@@ -684,6 +752,8 @@ const useSimulation = () => {
 
     const setSimulation = async () => {
         if (!viewer || !czml || vehicleRoute.length === 0 || !layerManager) return;
+        const myGen = ++simGenRef.current;
+        console.log('[진단] setSimulation 시작 gen=', myGen, 'vehicleRoute.length=', vehicleRoute.length);
 
         // 스토어가 비어있으면 먼저 fetch
         let { models, vehicleTypes, setModels, setVehicleTypes } = useVehicleModelStore.getState();
@@ -702,14 +772,24 @@ const useSimulation = () => {
                 console.warn('[setSimulation] 모델 데이터 로드 실패:', e);
             }
         }
+        if (myGen !== simGenRef.current) return; // 대기 중 더 새 호출이 시작됨 — 중단
 
         connectionFeatureMapRef.current.clear();
 
-        loadCzmlDataSource(czml).then((czmlSource) => {
+        loadCzmlDataSource(czml, myGen).then((czmlSource) => {
+            if (!czmlSource || myGen !== simGenRef.current) {
+                console.warn('[진단] setSimulation gen=', myGen, '— stale로 중단 (czmlSource=', !!czmlSource, ', current gen=', simGenRef.current, ')');
+                return;
+            }
+            console.log('[진단] setSimulation gen=', myGen, '— 레이어 재구성 진행');
+
             viewer.clock.shouldAnimate = isRunningRef.current;
 
-            // 레이어 초기화
-            layerManager.removeSimulationLayers();
+            // 레이어 초기화 — 차량(Cesium VehiclePrimitive)은 여기서 destroy하지 않는다.
+            // addVehicleLayer()가 같은 차종(GLB)이면 기존 GPU 리소스를 유지한 채 인스턴스만
+            // 갱신한다(destroy+재생성 시 GLB 재파싱 대기 동안 차량이 사라지는 "나타났다
+            // 사라졌다" 현상 방지). 더 이상 나타나지 않는 차종은 아래 pruneVehicleTypes()가 정리.
+            layerManager.removeSimulationLayersExceptVehicle();
             const vectorSource = new VectorSource();
             const typeGroups  = new Map<string, any[]>();
             const scaleGroups = new Map<string, number[]>();  // per-vehicle length (m)
@@ -794,16 +874,29 @@ const useSimulation = () => {
                     layerManager.addVehicleLayer(paths, vectorSource, speedFactor, isRunningRef.current, glbUrl, resolveCorrectionHpr(vType, typeModel?.correctionHpr), vType, zOffset, scales, typeModel?.color);
                 });
             }
+            // 이번 refresh에 없는 차종(예: 이전 viewport엔 있었던 BUS가 새 viewport엔 없음)의
+            // VehiclePrimitive는 addVehicleLayer가 호출되지 않으므로 여기서 별도로 정리한다.
+            layerManager.pruneVehicleTypes(typeGroups.size > 0 ? Array.from(typeGroups.keys()) : ['default']);
             layerManager.addHeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, heatmapSetting);
             layerManager.addODArrows(vehicleRoute, speedFactor, isRunningRef.current);
             layerManager.addTripLayer(vehicleRoute, speedFactor, isRunningRef.current, typeGroups, vehicleTypeArray, typeColorMap);
             layerManager.addTrafficLayer();
+            layerManager.addFlowLayer();
+            layerManager.addOdFlowLayer();
 
             const VehicleModelData: { id: string; position: Cesium.Cartesian3; visible: boolean; model?: Cesium.Model }[] = [];
 
             vehicleDataRef.current = VehicleModelData;
 
             czmlPositionWorkerRef.current.onmessage = (e) => {
+                // 세대 검증 — 이 핸들러가 등록된 뒤 더 새 setSimulation()이 시작되면 worker의
+                // onmessage는 그 새 핸들러로 이미 교체되어 있어야 정상이지만, 이 메시지가 그
+                // "교체 시점" 직전에 큐잉된 이전 세대의 응답일 수 있다(연속 줌/팬으로 setSimulation이
+                // worker 왕복(용답)보다 빠르게 겹쳐 실행될 때). 검증 없이 적용하면 이전 세대의
+                // positions(길이가 다름)가 현재(재사용 중인) VehiclePrimitive의 instanceCount보다
+                // 커서 GPU 인스턴스 버퍼 범위를 넘어 읽는 상태가 되어 차량이 멈춘 것처럼 보인다
+                // ("레이어 재구성 완료"는 찍히는데 차량만 멈추는 증상의 원인) — 반드시 폐기할 것.
+                if (myGen !== simGenRef.current) return;
                 const result = e.data;
                 if (result) {
                     // types 배열이 있으면 vehicleType별로 분류하여 각 VehiclePrimitive에 전달
@@ -888,11 +981,16 @@ const useSimulation = () => {
             layerManager?.showLayer("analyze", "default");
             const { activeLayerName } = useLayerStore.getState();
             (activeLayerName ?? []).forEach(name => layerManager?.showLayer("analyze", name));
+            console.log('[진단] setSimulation gen=', myGen, '— 레이어 재구성 완료');
+        }).catch((e) => {
+            // 이전엔 여기서 에러가 나면 조용히 삼켜져서(catch 없음) preRender 리스너 재등록까지
+            // 끊긴 채 "시간은 가는데 차량은 안 보임" 상태로 영원히 멈췄다 — 최소한 콘솔에 남긴다.
+            console.error('[진단][setSimulation] gen=', myGen, '차량 레이어 재구성 실패 — 차량이 안 보일 수 있음:', e);
         });
     };
 
 
-    const loadCzmlDataSource = (czml) => {
+    const loadCzmlDataSource = (czml, myGen: number) => {
         const czmlSource = new Cesium.CzmlDataSource();
 
         // 재로드(viewport 스트리밍 등) 시 재생 위치 보존:
@@ -910,6 +1008,13 @@ const useSimulation = () => {
 
         return czmlSource.load(czml).then(() => {
             return viewer.dataSources.add(czmlSource).then((d) => {
+                if (myGen !== simGenRef.current) {
+                    // 더 새 setSimulation() 호출이 이미 시작됨 — 이 결과는 버리고 정리만 한다
+                    // (레이어/워커는 새 호출이 소유하므로 여기서 절대 건드리지 않는다).
+                    viewer.dataSources.remove(czmlSource, true);
+                    return null;
+                }
+
                 viewer?.scene.preRender.removeEventListener(updateFrameFunc);
                 czmlDataSourceRef.current = czmlSource;
 
@@ -932,12 +1037,27 @@ const useSimulation = () => {
                     useSimulationStore.getState().setCurrentTime(Cesium.JulianDate.clone(prevTime));
                 }
 
-                // 지형이 있으면 모든 웨이포인트에 지형 고도를 주입한 뒤 워커 초기화
+                // 워커를 원본(미보정) 경로로 즉시 초기화한다 — 지형 고도 보정(아래)은 원격 지형
+                // 타일 다운로드를 기다려야 해서 차량 수가 많을 때 수백ms~수 초씩 걸릴 수 있다.
+                // 이걸 기다렸다가 워커를 초기화하면, 그 사이 줌/팬으로 다음 세대가 먼저 시작될 때
+                // (연속 줌 등) 이 세대의 워커 init이 계속 밀려나 건너뛰어지는 동안 Cesium
+                // 프리미티브(updateInstances)는 이미 최신 인스턴스 수로 바뀌어 있어 — 워커가 들고
+                // 있는 옛 세대 경로와 개수가 안 맞아 위치가 하나도 안 나와 차량이 멈춘 것처럼
+                // 보이는 원인이었다("positions/instanceCount 불일치"). 먼저 즉시 초기화해 위치
+                // 확보를 보장하고, 지형 보정은 완료되는 대로(같은 세대일 때만) 높이만 다시 적용한다.
+                // currentTime: 절대 경과초(vehicle_sim.db timestep 기준) — computeElapsedSec 주석 참고.
+                // 이전엔 epoch-ms를 그대로 보내 worker가 init 호출 시점을 0초로 잘못 재설정했다.
+                czmlPositionWorkerRef.current?.postMessage({
+                    type: 'init',
+                    czmlPackets: vehicleRoute,
+                    currentTime: computeElapsedSec(viewer, viewer.clock.currentTime)
+                });
                 applyTerrainHeightsToRoute(vehicleRoute, viewer.terrainProvider).then(adjustedRoute => {
+                    if (myGen !== simGenRef.current) return; // stale — 더 새 호출의 워커 상태를 덮어쓰지 않음
                     czmlPositionWorkerRef.current?.postMessage({
                         type: 'init',
                         czmlPackets: adjustedRoute,
-                        currentTime: Cesium.JulianDate.toDate(viewer.clock.currentTime).getTime()
+                        currentTime: computeElapsedSec(viewer, viewer.clock.currentTime)
                     });
                 });
 

@@ -17,7 +17,8 @@ import { generateDummyPavementMarkings } from '@utils/pavementMarking';
 import { getNetworkForDummyGeneration } from '@utils/generationNetwork';
 import { autoSaveChangedLayers } from '@utils/autoSave';
 import { showAlert, showConfirm } from '@utils/dialog';
-import { NEXTSIM_REQUIRED_KEYS, validateAllRequired, FacilityValidationResult } from '@utils/nextSimValidation';
+import { NEXTSIM_REQUIRED_KEYS } from '@utils/nextSimValidation';
+import { useNextSimReadinessStore } from '@stores/useNextSimReadinessStore';
 import styles from "@css/ToolsPanel.module.css";
 
 export interface FacilityProps {
@@ -61,7 +62,8 @@ const Facility = ({ fields }: FacilityProps) => {
     const [generatingKey, setGeneratingKey] = useState<string | null>(null);
     const [vehicleExists, setVehicleExists] = useState<boolean | null>(null);
     const [vehicleLoading, setVehicleLoading] = useState(false);
-    const [validation, setValidation] = useState<Record<string, { loading: boolean } & Partial<FacilityValidationResult>>>({});
+    // NextSim 준비 상태(도로/신호등 무결성)는 헤더 배지와 상태를 공유 — 여기서는 행 옆 점 표시에만 사용
+    const validation = useNextSimReadinessStore((s) => s.validation);
 
     // store의 currentJsonData 변화를 감지해 visibleFields 재계산
     const [, setDataTick] = useState(0);
@@ -221,28 +223,6 @@ const Facility = ({ fields }: FacilityProps) => {
         }
     };
 
-    const runAllValidation = async () => {
-        setValidation(prev => {
-            const next = { ...prev };
-            NEXTSIM_REQUIRED_KEYS.forEach(key => { next[key] = { loading: true }; });
-            return next;
-        });
-        try {
-            const results = await validateAllRequired();
-            setValidation(prev => {
-                const next = { ...prev };
-                for (const [key, result] of Object.entries(results)) next[key] = { loading: false, ...result };
-                return next;
-            });
-        } catch (e) {
-            setValidation(prev => {
-                const next = { ...prev };
-                NEXTSIM_REQUIRED_KEYS.forEach(key => { next[key] = { loading: false, ok: false, issues: ['검증 중 오류가 발생했습니다.'] }; });
-                return next;
-            });
-        }
-    };
-
     const handleVehicleDelete = async () => {
         if (!await showConfirm('차량 시뮬레이션 데이터를 삭제하시겠습니까?')) return;
         const scenarioKey = getActiveVersionId();
@@ -318,8 +298,6 @@ const Facility = ({ fields }: FacilityProps) => {
         poll(0);
     };
 
-    const requiredLabel = (key: string) => fields.find(f => f.key === key)?.label ?? key;
-    const anyRequiredLoading = Array.from(NEXTSIM_REQUIRED_KEYS).some(k => validation[k]?.loading);
     const requiredDotColor = (key: string) => {
         const v = validation[key];
         if (v?.loading) return '#888';
@@ -331,41 +309,12 @@ const Facility = ({ fields }: FacilityProps) => {
         const v = validation[key];
         if (v?.loading) return '검증 중...';
         if (v?.ok === true) return 'NextSim 필수 데이터 — 검증 통과';
-        if (v?.ok === false) return `NextSim 필수 데이터 — 문제 ${v.issues?.length ?? 0}건 (상단 요약 참고)`;
-        return 'NextSim 필수 데이터 — 아직 검증 안 됨';
+        if (v?.ok === false) return `NextSim 필수 데이터 — 문제 ${v.issues?.length ?? 0}건 (헤더의 NextSim 배지 참고)`;
+        return 'NextSim 필수 데이터 — 아직 검증 안 됨 (헤더의 NextSim 배지에서 검증)';
     };
 
     return (
         <div>
-            {/* NextSim 준비 상태 요약 카드 */}
-            <div style={summaryCardStyle}>
-                <div style={{ display: 'flex', alignItems: 'center' }}>
-                    <span style={{ flex: 1, fontSize: 11, color: '#999' }}>NextSim 준비 상태</span>
-                    <button onClick={runAllValidation} disabled={anyRequiredLoading} style={validateBtnStyle}>
-                        {anyRequiredLoading ? '검증중...' : '전체 검증'}
-                    </button>
-                </div>
-                <div style={{ marginTop: 4 }}>
-                    {Array.from(NEXTSIM_REQUIRED_KEYS).map(key => {
-                        const v = validation[key];
-                        const icon = v?.loading ? '…' : v?.ok === true ? '✓' : v?.ok === false ? '⚠' : '·';
-                        const countSuffix = v?.ok === false ? ` ${v.issues?.length ?? 0}건` : '';
-                        return (
-                            <span key={key} style={{ color: requiredDotColor(key), fontSize: 11, marginRight: 10, fontWeight: 600 }}>
-                                {icon} {requiredLabel(key)}{countSuffix}
-                            </span>
-                        );
-                    })}
-                </div>
-                {Array.from(NEXTSIM_REQUIRED_KEYS).flatMap(key => {
-                    const v = validation[key];
-                    if (!v || v.ok !== false) return [];
-                    return (v.issues ?? []).map((issue, i) => (
-                        <div key={`${key}-${i}`} style={issueLineStyle}>· {requiredLabel(key)}: {issue}</div>
-                    ));
-                })}
-            </div>
-
             {/* 데이터 있는 레이어 */}
             {visibleFields.map((field) => {
                 const parentKey = field.key;
@@ -489,32 +438,6 @@ const generateBtnStyle: React.CSSProperties = {
     padding: '2px 6px',
     borderRadius: 4,
     flexShrink: 0,
-};
-
-const validateBtnStyle: React.CSSProperties = {
-    background: 'rgba(122,162,255,0.12)',
-    border: '1px solid rgba(122,162,255,0.3)',
-    color: '#7aa2ff',
-    cursor: 'pointer',
-    fontSize: 9,
-    padding: '2px 6px',
-    borderRadius: 4,
-    flexShrink: 0,
-    marginRight: 4,
-};
-
-const summaryCardStyle: React.CSSProperties = {
-    border: '1px solid rgba(255,255,255,0.12)',
-    borderRadius: 6,
-    padding: '6px 8px',
-    marginBottom: 8,
-    background: 'rgba(255,255,255,0.03)',
-};
-
-const issueLineStyle: React.CSSProperties = {
-    marginTop: 3,
-    fontSize: 10,
-    color: '#ff4757',
 };
 
 export default Facility;

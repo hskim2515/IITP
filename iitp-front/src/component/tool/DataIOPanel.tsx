@@ -30,17 +30,20 @@ import { useMapStore } from '@stores/useMapStore';
 // ── 레이어 설정 ─────────────────────────────────────────────────
 // xmlExportUrl: XML export/import 엔드포인트 베이스 경로 (null이면 XML 미지원)
 // filenameHints: XML 파일명 자동 감지용 키워드
+// busRouteWeekday/busRouteWeekend 는 busRoute 보다 먼저 와야 한다 — detectLayerFromFilename 은
+// 배열 순서상 첫 매치를 반환하므로, "roadPTline - weekday.xml" 같은 파일이 (더 뒤에 있는) busRoute의
+// 일반 'roadptline' 힌트에 먼저 걸려 weekday 구분이 무시되는 것을 방지한다.
 export const LAYER_CONFIG = [
     { key: 'network',            menuCode: 'NETWORK',             label: '네트워크',           store: useNetworkStore,            historyStore: useNetworkHistoryStore,            fullData: true,  xmlExportUrl: '/network',                        filenameHints: ['network', '네트워크'] },
-    { key: 'busStation',         menuCode: 'BUS_STATION',         label: '버스 정류장',         store: useBusStationStore,         historyStore: useBusStationHistoryStore,         fullData: false, xmlExportUrl: '/public-transit/station/bus',     filenameHints: ['bus_station', 'busstation', '버스정류장', 'bus-station'] },
+    { key: 'busStation',         menuCode: 'BUS_STATION',         label: '버스 정류장',         store: useBusStationStore,         historyStore: useBusStationHistoryStore,         fullData: false, xmlExportUrl: '/public-transit/station/bus',     filenameHints: ['bus_station', 'busstation', '버스정류장', 'bus-station', 'roadstation'] },
     { key: 'railStation',        menuCode: 'RAIL_STATION',        label: '철도 정류장',         store: useRailStationStore,        historyStore: useRailStationHistoryStore,        fullData: false, xmlExportUrl: '/public-transit/station/rail',    filenameHints: ['rail_station', 'railstation', '철도정류장', 'rail-station'] },
     { key: 'pavementMarking',    menuCode: 'PAVEMENT_MARKING',    label: '노면 표시',           store: usePavementMarkingStore,    historyStore: usePavementMarkingHistoryStore,    fullData: false, xmlExportUrl: null,                              filenameHints: ['pavement', '노면'] },
     { key: 'signal',             menuCode: 'SIGNAL',              label: '신호',                store: useSignalStore,             historyStore: useSignalHistoryStore,             fullData: false, xmlExportUrl: '/signal',                         filenameHints: ['signal', '신호'] },
     { key: 'signalTod',          menuCode: 'SIGNAL_TOD',          label: '신호 TOD',            store: useSignalTodStore,          historyStore: useSignalTodHistoryStore,          fullData: true,  xmlExportUrl: '/signal-tod',                     filenameHints: ['signal_tod', 'signaltod', 'signal-tod'] },
-    { key: 'busRoute',           menuCode: 'BUS_PT_LINE',         label: '버스 노선',           store: useBusPtLineStore,          historyStore: useBusPtLineHistoryStore,          fullData: true,  xmlExportUrl: '/public-transit/line/bus',         filenameHints: ['bus_pt_line', 'busroute', 'bus_route', '버스노선'] },
     { key: 'busRouteWeekday',    menuCode: 'BUS_PT_LINE_WEEKDAY', label: '버스 노선 (평일)',     store: useBusPtLineWeekdayStore,   historyStore: useBusPtLineWeekdayHistoryStore,   fullData: true,  xmlExportUrl: '/public-transit/line/bus/weekday', filenameHints: ['weekday', '평일'] },
     { key: 'busRouteWeekend',    menuCode: 'BUS_PT_LINE_WEEKEND', label: '버스 노선 (주말)',     store: useBusPtLineWeekendStore,   historyStore: useBusPtLineWeekendHistoryStore,   fullData: true,  xmlExportUrl: '/public-transit/line/bus/weekend', filenameHints: ['weekend', '주말'] },
-    { key: 'railRoute',          menuCode: 'RAIL_PT_LINE',        label: '철도 노선',           store: useRailPtLineStore,         historyStore: useRailPtLineHistoryStore,         fullData: true,  xmlExportUrl: '/public-transit/line/rail',        filenameHints: ['rail_pt_line', 'railroute', 'rail_route', '철도노선'] },
+    { key: 'busRoute',           menuCode: 'BUS_PT_LINE',         label: '버스 노선',           store: useBusPtLineStore,          historyStore: useBusPtLineHistoryStore,          fullData: true,  xmlExportUrl: '/public-transit/line/bus',         filenameHints: ['bus_pt_line', 'busroute', 'bus_route', '버스노선', 'roadptline'] },
+    { key: 'railRoute',          menuCode: 'RAIL_PT_LINE',        label: '철도 노선',           store: useRailPtLineStore,         historyStore: useRailPtLineHistoryStore,         fullData: true,  xmlExportUrl: '/public-transit/line/rail',        filenameHints: ['rail_pt_line', 'railroute', 'rail_route', '철도노선', 'railptline'] },
     { key: 'simulationScenario', menuCode: 'SIMULATION_SCENARIO', label: '시뮬레이션 시나리오',  store: useSimulationScenarioStore, historyStore: useSimulationScenarioHistoryStore, fullData: true,  xmlExportUrl: '/simulation-scenario',            filenameHints: ['simulation', 'scenario', '시나리오'] },
 ] as const;
 

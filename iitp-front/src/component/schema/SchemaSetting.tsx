@@ -72,7 +72,8 @@ const SchemaSetting = () => {
 
     const onClickMinimize = useCallback(() => {
         if (menuCode) minimizeSession(menuCode);
-    }, [menuCode, minimizeSession]);
+        setActiveSubmenu(null);
+    }, [menuCode, minimizeSession, setActiveSubmenu]);
 
     const onClickClose = useCallback(() => {
         if (menuCode) closeSession(menuCode);

@@ -35,6 +35,7 @@ export default class VehiclePrimitive {
 
     baseColor:   [number, number, number] = [1, 1, 1];
     vehicleType  = 'default';
+    glbUrl:      string;
     speed:       number;
     status:      string;
     correctionHpr: Cesium.HeadingPitchRoll;
@@ -92,6 +93,7 @@ export default class VehiclePrimitive {
         this.context       = viewer.scene.context;
         this.paths         = paths;
         this.instanceCount = paths.length;
+        this.glbUrl        = glbUrl;
         this.speed         = speed;
         this.status        = status;
         this.show          = true;
@@ -108,20 +110,21 @@ export default class VehiclePrimitive {
         this.initialize(glbUrl);
     }
 
-    // ─── 비동기 초기화 ────────────────────────────────────────────────────
-    async initialize(glbUrl: string) {
-        if (this.destroyed) return;
+    // GLB 파싱 결과(geometry+텍스처 이미지)를 glbUrl+targetSizeM 키로 캐싱한다.
+    // 뷰포트 스트리밍(팬/줌마다 setSimulation() 재실행)에서 removeSimulationLayers()가 기존
+    // VehiclePrimitive를 destroy()하고 addVehicleLayer()가 매번 새로 생성하는데, 그때마다
+    // fetch+GLTFLoader 파싱+텍스처 디코드(네트워크/CPU 비용)를 처음부터 반복하면 그 사이
+    // drawCommand가 없어 화면에 차량이 전혀 안 보이는 공백이 생긴다("시간은 가는데 차량이 사라짐").
+    // 파싱된 지오메트리/이미지를 재사용하면 재생성은 GPU 버퍼 업로드만 남아 사실상 즉시 끝난다.
+    private static glbAssetCache = new Map<string, Promise<{
+        verts: Float32Array; norms: Float32Array; uvs: Float32Array;
+        indicesTyped: Uint16Array | Uint32Array; textureImage: HTMLImageElement | null;
+    } | null>>();
 
-        const first = this.paths.find(p => p.length >= 4);
-        if (first) {
-            this.referenceCenter.x = first[1]!;
-            this.referenceCenter.y = first[2]!;
-            this.referenceCenter.z = first[3]!;
-        }
-
-        const corrM = Cesium.Matrix3.fromHeadingPitchRoll(this.correctionHpr);
-        Cesium.Quaternion.fromRotationMatrix(corrM, this.correctionQ);
-
+    private async loadGlbAssets(glbUrl: string): Promise<{
+        verts: Float32Array; norms: Float32Array; uvs: Float32Array;
+        indicesTyped: Uint16Array | Uint32Array; textureImage: HTMLImageElement | null;
+    } | null> {
         // ── GLB fetch ────────────────────────────────────────────────────
         let arrayBuffer: ArrayBuffer;
         try {
@@ -130,9 +133,8 @@ export default class VehiclePrimitive {
             arrayBuffer = await res.arrayBuffer();
         } catch (e) {
             console.error(`[VehiclePrimitive] GLB fetch 실패 (${glbUrl}):`, e);
-            return;
+            return null;
         }
-        if (this.destroyed) return;
 
         // ── GLB 바이너리 직접 파싱 (텍스처 추출용) ──────────────────────
         const glbJson = this.parseGLBJson(arrayBuffer);
@@ -146,9 +148,8 @@ export default class VehiclePrimitive {
             );
         } catch (e) {
             console.error('[VehiclePrimitive] GLB 파싱 실패:', e);
-            return;
+            return null;
         }
-        if (this.destroyed) return;
 
         // ── Mesh 수집 ─────────────────────────────────────────────────────
         const allPos:  number[] = [];
@@ -204,11 +205,10 @@ export default class VehiclePrimitive {
             });
         } catch (e) {
             console.error('[VehiclePrimitive] Mesh 수집 오류:', e);
-            return;
+            return null;
         }
 
-        if (!hasMesh) { console.error('[VehiclePrimitive] Mesh 없음:', glbUrl); return; }
-        if (this.destroyed) return;
+        if (!hasMesh) { console.error('[VehiclePrimitive] Mesh 없음:', glbUrl); return null; }
 
         // ── 모델 중심화 + 자동 스케일 ────────────────────────────────────
         const vCount = allPos.length / 3;
@@ -238,19 +238,61 @@ export default class VehiclePrimitive {
             : new Uint16Array(allIdx);
 
         // ── 텍스처 로드 (GLB 바이너리에서 차종별 이미지 추출) ────────────
+        let textureImage: HTMLImageElement | null = null;
         if (hasUV && glbJson && binOffset >= 0) {
             try {
-                const img = await this.extractTextureImage(glbJson, arrayBuffer, binOffset);
-                if (img && !this.destroyed) {
-                    this.cesiumTexture = new (Cesium as any).Texture({
-                        context: this.context,
-                        source:  img,
-                        flipY:   false,  // three.js가 이미 V좌표를 반전하므로 이중 반전 방지
-                    });
-                    this.hasTexture = true;
-                }
+                textureImage = await this.extractTextureImage(glbJson, arrayBuffer, binOffset);
             } catch (e) {
                 console.warn('[VehiclePrimitive] 텍스처 추출 실패, baseColor 사용:', e);
+            }
+        }
+
+        return { verts, norms, uvs, indicesTyped, textureImage };
+    }
+
+    // ─── 비동기 초기화 ────────────────────────────────────────────────────
+    async initialize(glbUrl: string) {
+        if (this.destroyed) return;
+
+        const first = this.paths.find(p => p.length >= 4);
+        if (first) {
+            this.referenceCenter.x = first[1]!;
+            this.referenceCenter.y = first[2]!;
+            this.referenceCenter.z = first[3]!;
+        }
+
+        const corrM = Cesium.Matrix3.fromHeadingPitchRoll(this.correctionHpr);
+        Cesium.Quaternion.fromRotationMatrix(corrM, this.correctionQ);
+
+        // targetSizeM(차종별 모델 스케일)에 따라 verts 정규화 결과가 달라지므로 캐시 키에 포함.
+        const cacheKey = `${glbUrl}::${this.targetSizeM}`;
+        let assetsPromise = VehiclePrimitive.glbAssetCache.get(cacheKey);
+        if (!assetsPromise) {
+            assetsPromise = this.loadGlbAssets(glbUrl);
+            VehiclePrimitive.glbAssetCache.set(cacheKey, assetsPromise);
+        }
+        const parsed = await assetsPromise;
+        if (this.destroyed) return;
+        if (!parsed) {
+            // 로드 실패 캐시는 남겨두지 않는다 — 다음 재시도(재생성)가 다시 fetch하도록.
+            if (VehiclePrimitive.glbAssetCache.get(cacheKey) === assetsPromise) {
+                VehiclePrimitive.glbAssetCache.delete(cacheKey);
+            }
+            return;
+        }
+        const { verts, norms, uvs, indicesTyped, textureImage } = parsed;
+
+        // ── 텍스처 GPU 업로드 (디코드는 캐시에서 재사용, 업로드만 인스턴스별 수행) ──
+        if (textureImage) {
+            try {
+                this.cesiumTexture = new (Cesium as any).Texture({
+                    context: this.context,
+                    source:  textureImage,
+                    flipY:   false,  // three.js가 이미 V좌표를 반전하므로 이중 반전 방지
+                });
+                this.hasTexture = true;
+            } catch (e) {
+                console.warn('[VehiclePrimitive] 텍스처 GPU 업로드 실패, baseColor 사용:', e);
             }
         }
 
@@ -568,6 +610,112 @@ export default class VehiclePrimitive {
         console.log(`[VehiclePrimitive] 초기화 완료: type=${this.vehicleType} texture=${this.hasTexture} count=${this.instanceCount}`);
     }
 
+    /**
+     * 같은 GLB(geometry/셰이더/텍스처)를 유지한 채 인스턴스 데이터(경로/개수/스케일)만 교체한다.
+     * destroy() 후 새 VehiclePrimitive를 생성하는 대신 이 메서드로 갱신하면 GLB fetch/파싱/텍스처
+     * 디코드를 건너뛸 수 있어, 뷰포트 재로드(팬/줌·재생 시간창 롤오버)마다 차량이 순간적으로
+     * 사라지는 "나타났다 사라졌다" 현상의 근본 원인(매번 전체 destroy+재생성)을 없앤다.
+     * 아직 initialize()가 끝나지 않았으면(vertexArray 없음) 필드만 갱신 — initialize()가 완료
+     * 시점의 this.paths/instanceScales를 그대로 읽어 처음부터 올바르게 구성한다.
+     */
+    updateInstances(paths: number[][], scales?: number[]): void {
+        if (this.destroyed) return;
+
+        this.paths          = paths;
+        this.instanceCount   = paths.length;
+        this.instanceScales  = new Float32Array(paths.length);
+        for (let i = 0; i < paths.length; i++) {
+            const len = scales?.[i];
+            this.instanceScales[i] = (len && len > 0) ? len / this.targetSizeM : 1.0;
+        }
+
+        if (!this.vertexArray) return; // 초기 GPU 리소스 준비 전 — initialize()가 이어서 처리
+
+        // RTC 기준점 재계산 — 뷰포트가 이동해 새 인스턴스 집합이 멀어졌을 수 있음
+        const first = this.paths.find(p => p.length >= 4);
+        if (first) {
+            this.referenceCenter.x = first[1]!;
+            this.referenceCenter.y = first[2]!;
+            this.referenceCenter.z = first[3]!;
+        }
+        const rc = this.referenceCenter;
+
+        const orientInit = new Float32Array(this.instanceCount * 4);
+        for (let i = 0; i < this.instanceCount; i++) {
+            const p = this.paths[i];
+            const from   = new Cesium.Cartesian3(p[1], p[2], p[3]);
+            const hasTwo = p.length >= 8;
+            const to     = hasTwo ? new Cesium.Cartesian3(p[5], p[6], p[7]) : from;
+            const h      = hasTwo ? computeHeading(from, to) : 0;
+            const q      = computeOrientationQuaternion(from, h, this.correctionHpr);
+            orientInit[i*4]=q.x; orientInit[i*4+1]=q.y; orientInit[i*4+2]=q.z; orientInit[i*4+3]=q.w;
+        }
+        const offsetInit = new Float32Array(this.instanceCount * 3);
+        for (let i = 0; i < this.instanceCount; i++) {
+            const p = this.paths[i];
+            offsetInit[i*3]   = p[1] - rc.x;
+            offsetInit[i*3+1] = p[2] - rc.y;
+            offsetInit[i*3+2] = p[3] - rc.z;
+        }
+
+        const ctx = this.context;
+        const BU  = Cesium.BufferUsage;
+
+        this.offsetBuffer?.destroy();
+        this.orientationBuffer?.destroy();
+        this.scaleBuffer?.destroy();
+        this.offsetBuffer      = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: offsetInit,          usage: BU.DYNAMIC_DRAW });
+        this.orientationBuffer = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: orientInit,          usage: BU.DYNAMIC_DRAW });
+        this.scaleBuffer       = Cesium.Buffer.createVertexBuffer({ context: ctx, typedArray: this.instanceScales, usage: BU.STATIC_DRAW });
+
+        this._offsetArr = new Float32Array(this.instanceCount * 3);
+        this._orientArr = new Float32Array(this.instanceCount * 4);
+
+        // 주의: 여기서 구 vertexArray/pointVertexArray를 destroy()하면 안 된다 — Cesium의
+        // VertexArray.destroy()는 자신의 attributes에 연결된 vertexBuffer/indexBuffer를 전부
+        // 연쇄적으로 destroy()한다. 그 목록엔 위에서 이미 destroy()한 구 offset/orientation/
+        // scale 버퍼(→ 이중 destroy로 DeveloperError)뿐 아니라, 계속 재사용해야 하는 공유
+        // geometry 버퍼(modelVertexBuffer 등, GLB 파싱 결과)까지 포함되어 있다. 구 VertexArray
+        // 참조를 그냥 교체(아래)만 하고 GC에 맡긴다 — 완전 정리는 destroy()(전체 폐기)에서만 수행.
+        this.vertexArray = new Cesium.VertexArray({
+            context: ctx,
+            attributes: [
+                { index: 0, vertexBuffer: this.modelVertexBuffer, componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT },
+                { index: 1, vertexBuffer: this.modelNormalBuffer, componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT },
+                { index: 2, vertexBuffer: this.modelUvBuffer,     componentsPerAttribute: 2, componentDatatype: Cesium.ComponentDatatype.FLOAT },
+                { index: 3, vertexBuffer: this.offsetBuffer,      componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
+                { index: 4, vertexBuffer: this.orientationBuffer, componentsPerAttribute: 4, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
+                { index: 5, vertexBuffer: this.scaleBuffer,       componentsPerAttribute: 1, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
+            ],
+            indexBuffer: this.modelIndexBuffer,
+        });
+
+        this.pointVertexArray = new Cesium.VertexArray({
+            context: ctx,
+            attributes: [
+                { index: 0, vertexBuffer: this.pointDummyBuffer,  componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT },
+                { index: 1, vertexBuffer: this.offsetBuffer,      componentsPerAttribute: 3, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
+                { index: 2, vertexBuffer: this.scaleBuffer,       componentsPerAttribute: 1, componentDatatype: Cesium.ComponentDatatype.FLOAT, instanceDivisor: 1 },
+            ],
+        });
+
+        if (this.drawCommand) {
+            this.drawCommand.vertexArray   = this.vertexArray;
+            this.drawCommand.instanceCount = this.instanceCount;
+        }
+        if (this.drawCommandPoint) {
+            this.drawCommandPoint.vertexArray   = this.pointVertexArray;
+            this.drawCommandPoint.instanceCount = this.instanceCount;
+        }
+
+        // 새 인스턴스 개수에 맞는 위치가 아직 없다 — 다음 setLatestPositions까지 이전(구 개수)
+        // latestPositions를 남겨두면 update()에서 개수 불일치로 어긋난 렌더가 나올 수 있어 비운다.
+        // (곧바로 이어지는 worker 'init' 응답이 즉시 채워준다 — czmlPositionWorker 참고)
+        this.latestPositions = undefined;
+        this.latestHeadings  = undefined;
+        console.log(`[진단][VehiclePrimitive] updateInstances 완료 type=${this.vehicleType} instanceCount=${this.instanceCount} show=${this.show} destroyed=${this.destroyed}`);
+    }
+
     // ─── GLB 파싱 유틸 ────────────────────────────────────────────────────
 
     /** GLB JSON 청크 파싱 */
@@ -701,6 +849,9 @@ export default class VehiclePrimitive {
 
     // ─── 외부 인터페이스 ──────────────────────────────────────────────────
     setLatestPositions(data: { positions: number[][]; headings: number[] }) {
+        // (참고: positions.length는 "이 순간 활성 차량 수", instanceCount는 "창에서 선별된 전체
+        // 차량 수"라 원래 다르다 — 선별 차량의 평균 체류시간이 창 길이보다 짧으면 항상 작게 나옴.
+        // 디버깅용 불일치 경고는 오탐 소지가 커서 제거함.)
         this.latestPositions = data.positions;
         this.latestHeadings  = data.headings;
     }

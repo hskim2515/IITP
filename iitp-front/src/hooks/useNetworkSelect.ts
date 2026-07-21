@@ -1578,7 +1578,14 @@ export const useNetworkSelect = () => {
             const drawStore = useNetworkDrawStore.getState();
 
             // 1순위: scene.pick() — Entity(노드)만 신뢰
-            const picked = scene.pick(e.position);
+            // 줌 중 LOD tier 전환으로 GroundPrimitive 가 비동기 재생성되는 순간과 겹치면
+            // Cesium 내부에서 scene.pick() 자체가 예외를 던질 수 있어 방어 (defaultEventHandler.ts 참고)
+            let picked: any;
+            try {
+                picked = scene.pick(e.position);
+            } catch (_) {
+                picked = undefined;
+            }
             if (Cesium.defined(picked) && picked.id instanceof Cesium.Entity) {
                 const props = picked.id.properties?.getValue(Cesium.JulianDate.now());
                 if (props?.featureType === 'nodes' && props?.id != null) {

@@ -15,6 +15,8 @@ interface TileEntry {
     lastUsed: number;
     /** 이 타일을 받아온 LOD tier 순서 (near=2 < detail=3). detail 요청 시 near 타일은 재요청 필요(차선 stripped) */
     tierOrder: number;
+    /** 이 타일을 받아온 LOD tier 문자열 — forceRefetch 에서 동일 tier로 재요청할 때 기본값으로 사용 */
+    lod: NetworkLodTier | string;
 }
 
 export interface NetworkTileManagerCallbacks {
@@ -189,7 +191,7 @@ export class NetworkTileManager {
                 // tier 업그레이드 스왑: onTileEvicted 를 부르지 않고 엔트리만 교체.
                 // (여기서 즉시 evict 하면 새 GroundPrimitive 비동기 빌드(수 초) 동안 도로가 사라지는
                 //  공백 발생 — 기존 청크의 지연 제거는 소비자(addTileChunk 승격 경로)가 담당)
-                this.tiles.set(key, { payload, lastUsed: stamp, tierOrder });
+                this.tiles.set(key, { payload, lastUsed: stamp, tierOrder, lod });
                 this.callbacks.onTileLoaded(key, payload, tierOrder);
                 // heap 절감: 소비자가 빌드를 마친 뒤 대형 payload(파싱된 링크/노드 JSON) 참조를 버린다.
                 // LRU 64타일 × 수 MB가 evict 콜백용으로만 유지되던 것을 제거 (detail 타일 기준 수백 MB).
@@ -239,6 +241,27 @@ export class NetworkTileManager {
     /** 해당 타일을 아직 보유 중인가 (비동기 빌드 중 evict race 방어용) */
     hasTile(key: string): boolean {
         return this.tiles.has(key);
+    }
+
+    /**
+     * 이미 로드된 타일을 강제로 재요청한다(소비자가 호출).
+     *
+     * - targetTierOrder/targetLod 생략: 현재 tier 그대로 재요청 — 이웃 타일 evict로 경계
+     *   횡단 링크/노드의 소유권이 풀렸을 때, 그 이웃(이미 로드돼 있어 통상적인 update() 로는
+     *   재요청 트리거가 없는 타일)에게 재클레임 기회를 주기 위함.
+     * - 지정: 그 tier 로 승격 재요청 — detail 은 ring=0(뷰포트 정확히 그 범위만 요청)이라,
+     *   경계 지오메트리를 소유한 타일이 현재 뷰포트 밖에 있으면 update() 로는 영영 승격
+     *   요청을 못 받는다(그 타일 소유의 레인/노드 엔티티가 near tier 에 갇혀 안 보이는 원인).
+     *   소비자가 claim 실패 시 이 tier 차이를 감지해 강제로 승격시킨다.
+     *
+     * 이미 로드 중(in-flight)이거나 이미 그 tier 이상이면 스킵.
+     */
+    forceRefetch(key: string, targetTierOrder?: number, targetLod?: NetworkLodTier | string): void {
+        const entry = this.tiles.get(key);
+        if (!entry || this.inFlight.has(key)) return;
+        const tierOrder = targetTierOrder ?? entry.tierOrder;
+        if (tierOrder < entry.tierOrder) return; // 다운그레이드 요청은 무시
+        this.fetchTile(key, targetLod ?? entry.lod, ++this.seq, tierOrder);
     }
 
     /** 전체 비우기 (레이어 dispose 시) */

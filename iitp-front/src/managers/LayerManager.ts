@@ -4,6 +4,8 @@ import TailPrimitive from "@primitives/TailPrimitive";
 import VehiclePrimitive from "@primitives/VehiclePrimitive";
 import SpeedHeatmapLayer from "@primitives/SpeedHeatmapLayer";
 import TrafficHeatmapCesiumLayer from "@primitives/TrafficHeatmapCesiumLayer";
+import TrafficTailCesiumLayer from "@primitives/TrafficTailCesiumLayer";
+import OdFlowCesiumLayer from "@primitives/OdFlowCesiumLayer";
 import SpeedHeatmapOlLayer from "@features/SpeedHeatmapOlLayer";
 import PrimitiveLayerManager from "./PrimitiveLayerManager";
 import BaseMapLayerManager from "./BaseMapLayerManager";
@@ -49,6 +51,10 @@ export class LayerManager {
 
     private layerGroups: Map<string, any> = new Map();
     private managers: Manager[] = [];
+    // 차종(vehicleType) → 현재 사용 중인 VehiclePrimitive. 뷰포트 재로드마다 destroy+재생성하지
+    // 않고 같은 GLB를 쓰는 기존 인스턴스를 재사용(updateInstances)하기 위한 추적 — addVehicleLayer/
+    // pruneVehicleTypes/removeVehicleLayer 참고.
+    private vehiclePrimitivesByType: Map<string, VehiclePrimitive> = new Map();
 
     constructor(
         private primitiveLayerManager: PrimitiveLayerManager,
@@ -170,7 +176,8 @@ export class LayerManager {
     }
 
     removeTripLayer(): void {
-        this._removeLayers("analyze", "trip", "speed", "traffic", "default"); // trip + speed + traffic + default
+        // trip + speed + traffic + flow + odFlow + default
+        this._removeLayers("analyze", "trip", "speed", "traffic", "flow", "odFlow", "default");
     }
 
     addTrafficLayer() {
@@ -189,6 +196,38 @@ export class LayerManager {
         // Cesium 3D (viewer 전달 → WallGeometry 빌드에 scene 필요)
         const trafficCesium = new TrafficHeatmapCesiumLayer(this.cesiumViewer);
         this.primitiveLayerManager.add(trafficCesium, groupName, layerName, false);
+    }
+
+    /**
+     * 교통 흐름(flow) tail 레이어 — 개별 차량(3D)과 히트맵(traffic) 사이의 중간 줌 티어.
+     * TrafficTailCesiumLayer가 카메라 zoom(pixelSize)을 자체 추적해 TRAFFIC_FLOW 임계값
+     * 구간에서만 스스로 활성화/표시하므로, 여기서는 traffic과 동일하게 매 refresh마다
+     * 생성만 하면 된다(별도 show/hide 로직 불필요).
+     */
+    addFlowLayer() {
+        const groupName = "analyze";
+        const layerName = "flow";
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        const flowCesium = new TrafficTailCesiumLayer(this.cesiumViewer);
+        this.primitiveLayerManager.add(flowCesium, groupName, layerName, false);
+    }
+
+    /**
+     * OD 흐름 레이어 — 히트맵보다도 더 축소된 가장 바깥 줌 티어. OdFlowCesiumLayer가 자체적으로
+     * 줌을 추적해 OD_FLOW 임계값 이상에서만 활성화되므로 addTrafficLayer/addFlowLayer와 동일하게
+     * 매 refresh마다 생성만 하면 된다. 기존 "od"(개별 차량 기반 ParabolicArrowPrimitive, addODArrows)
+     * 레이어와는 별개 — 데이터 소스가 백엔드 집계라 이름도 "odFlow"로 분리.
+     */
+    addOdFlowLayer() {
+        const groupName = "analyze";
+        const layerName = "odFlow";
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        const odFlowCesium = new OdFlowCesiumLayer(this.cesiumViewer);
+        this.primitiveLayerManager.add(odFlowCesium, groupName, layerName, false);
     }
 
     addVehicleLayer(
@@ -226,23 +265,35 @@ export class LayerManager {
             ?? [0.98, 0.74, 0.38];
 
         const targetSizeM = VEHICLE_TARGET_SIZE[vehicleType] ?? 4;
-        const primitive = new VehiclePrimitive(vehicleRoute, this.cesiumViewer, glbUrl, speedFactor, isRunning, correctionHpr, targetSizeM, zOffset, scales);
-        primitive.baseColor = resolvedColor;
-        (primitive as any).vehicleType = vehicleType;
-        this.primitiveLayerManager.add(primitive, groupName, "vehicle", true);
-        // DomePrimitive(주황 점) → PointSpritePrimitive(통합, 용량 기반 재할당)
-        // const primitiveCollections = this.primitiveLayerManager.add(
-        //     new PointSpritePrimitive(this.cesiumViewer.scene.context, { color: [1.0, 0.5, 0.0], alpha: 0.5, pointSize: 10, zOffset: 5 }),
-        //     groupName, "vehicle", true
-        // )
+
+        // 같은 차종(같은 glbUrl)의 기존 VehiclePrimitive가 있으면 destroy+재생성 대신 인스턴스
+        // 데이터만 갱신한다 — GLB가 이미 로드/GPU 업로드된 상태이므로 화면 공백 없이 즉시 반영된다.
+        // (뷰포트 팬/줌·재생 시간창 롤오버마다 전체 재생성하던 것이 "차량이 나타났다 사라졌다"의 원인이었음)
+        const existing = this.vehiclePrimitivesByType.get(vehicleType);
+        let primitive: VehiclePrimitive;
+        if (existing && !existing.destroyed && existing.glbUrl === glbUrl) {
+            existing.updateInstances(vehicleRoute, scales);
+            existing.baseColor = resolvedColor;
+            existing.zOffset = zOffset;
+            existing.setSpeed(speedFactor);
+            existing.setStatus(isRunning);
+            if (correctionHpr) existing.setCorrectionHpr(correctionHpr);
+            primitive = existing;
+        } else {
+            if (existing) this.primitiveLayerManager.removeInstance(groupName, existing);
+            primitive = new VehiclePrimitive(vehicleRoute, this.cesiumViewer, glbUrl, speedFactor, isRunning, correctionHpr, targetSizeM, zOffset, scales);
+            primitive.baseColor = resolvedColor;
+            primitive.vehicleType = vehicleType;
+            this.primitiveLayerManager.add(primitive, groupName, "vehicle", true);
+            this.vehiclePrimitivesByType.set(vehicleType, primitive);
+        }
         const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
-        // if (!managedCollection.includes(primitiveCollections)) {
-        //     managedCollection.push(primitiveCollections);
-        // }
 
         if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
         // Each vehicle type gets its own VectorSource to prevent color/position conflicts
+        // (OL feature layer는 GLB 같은 비동기 에셋 로딩이 없어 매번 재생성해도 화면 공백이 없음)
         if (this.vectorLayerManager) {
+            this._removeLayers(groupName, `vehicle_${vehicleType}`);
             const vehicleVectorSource = new VectorSource();
             const vehicleLayer = new VehicleFeatureLayer(vehicleRoute, vehicleVectorSource, speedFactor, isRunning, vehicleType, modelColor);
             const olLayerName = `vehicle_${vehicleType}`;
@@ -253,11 +304,28 @@ export class LayerManager {
 
     }
 
+    /**
+     * 이번 refresh에서 더 이상 나타나지 않는 차종의 VehiclePrimitive를 정리한다.
+     * addVehicleLayer()는 현재 데이터에 존재하는 차종만 호출되므로, 이전엔 있었지만 이번엔 없는
+     * 차종(예: 이전 viewport엔 BUS가 있었는데 새 viewport엔 없음)은 destroy+재생성 대상에서
+     * 빠져 갱신되지 않은 채 남는다 — setSimulation()에서 addVehicleLayer 호출들 뒤에 반드시 호출할 것.
+     */
+    pruneVehicleTypes(activeTypes: string[]): void {
+        const activeSet = new Set(activeTypes);
+        for (const [type, primitive] of Array.from(this.vehiclePrimitivesByType.entries())) {
+            if (activeSet.has(type)) continue;
+            this.primitiveLayerManager.removeInstance("analyze", primitive);
+            this.vehiclePrimitivesByType.delete(type);
+            this._removeLayers("analyze", `vehicle_${type}`);
+        }
+    }
+
     removeVehicleLayer(): void {
         // 차종별 OL 레이어 (vehicle_CAR, vehicle_TAXI 등) + Cesium primitive 모두 제거
         const vehicleTypes = ['default', 'CAR', 'TAXI', 'BUS', 'TRUCK', 'MOTO'];
         vehicleTypes.forEach(t => this._removeLayers("analyze", `vehicle_${t}`));
         this._removeLayers("analyze", "vehicle");
+        this.vehiclePrimitivesByType.clear();
     }
 
     /** 실행 중인 VehiclePrimitive의 방향 보정값을 즉시 갱신합니다. */
@@ -490,6 +558,19 @@ export class LayerManager {
         this.removeODArrows();
         this.removeVehicleLayer();
         // OL 맵 강제 재렌더링 - WebGL 레이어 제거 후 화면 즉시 갱신
+        this.olMap?.render();
+    }
+
+    /**
+     * removeSimulationLayers()와 동일하되 차량(Cesium VehiclePrimitive)은 건드리지 않는다.
+     * 뷰포트 스트리밍의 매 데이터 refresh(setSimulation)에서 사용 — 차량은 addVehicleLayer()가
+     * 같은 차종이면 updateInstances()로 갱신하고, 더 이상 없는 차종은 pruneVehicleTypes()가
+     * 정리한다. 시나리오 전환 등 완전 초기화가 필요한 경우엔 removeSimulationLayers()를 쓸 것.
+     */
+    removeSimulationLayersExceptVehicle() {
+        this.removeHeatmapLayer();
+        this.removeTripLayer();
+        this.removeODArrows();
         this.olMap?.render();
     }
 

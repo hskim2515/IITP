@@ -71,6 +71,9 @@ export const NETWORK_LOD_TIER_ORDER: Record<NetworkLodTier, number> = {
     detail:   3,
 };
 
+/** tier 순서 인덱스 → tier 이름 (NETWORK_LOD_TIER_ORDER 의 역방향 — 타일 강제 승격 요청 시 사용) */
+export const NETWORK_LOD_TIER_BY_ORDER: NetworkLodTier[] = ['overview', 'mid', 'near', 'detail'];
+
 /**
  * featureType이 처음 나타나는 최소 tier 인덱스.
  * 현재 tier 인덱스가 이 값 이상이면 해당 featureType을 표시한다.
@@ -202,19 +205,79 @@ export const SIGNAL_TILING = {
 } as const;
 
 /**
+ * 차량 줌 티어(개별 3D / flow / 히트맵 / OD흐름) 경계값 — pixelSizeM(m/px, computeViewportMetrics
+ * 기준) 단일 단위로 통일한 단일 소스. 이전엔 개별 차량은 bbox "도" 단위(MAX_BBOX_DEG), flow/
+ * 히트맵은 pixelSizeM 단위로 서로 달라서 경계를 맞추려면 감으로 환산해야 했고, 그 결과 flow
+ * 활성 구간이 개별 차량 범위 한참 안쪽에 파묻혀 줌아웃해도 전혀 안 바뀌는 것처럼 보이는 실측
+ * 버그가 있었다. VEHICLE_STREAMING(개별 차량)/TRAFFIC_FLOW/VEHICLE_AGGREGATION(히트맵)/
+ * OD_FLOW 전부 아래 값만 참조하므로 네 시스템이 어긋날 수 없다 — 임계값 조정은 여기 한 곳에서만.
+ *
+ * 단계: 개별(<INDIVIDUAL_MAX) → flow([INDIVIDUAL_MAX,FLOW_MAX)) → 히트맵([FLOW_MAX,HEATMAP_MAX))
+ * → OD 흐름(≥HEATMAP_MAX, 가장 축소된 overview).
+ */
+export const VEHICLE_ZOOM_TIER_PX_M = {
+    /** 미만: 개별 차량 3D 모델. (실측 후 30→10 하향 — 체감상 전환이 너무 늦었음) */
+    INDIVIDUAL_MAX: 10,
+    /** 이상 ~ HEATMAP_MAX 미만: 히트맵(집계). flow는 [INDIVIDUAL_MAX, FLOW_MAX) 구간만 담당. (200→60) */
+    FLOW_MAX: 60,
+    /** 이상: OD 흐름(가장 축소된 overview) — 히트맵은 [FLOW_MAX, HEATMAP_MAX) 구간만 담당. (800→250) */
+    HEATMAP_MAX: 250,
+} as const;
+
+/**
  * 차량 교통량 백엔드 집계 (멀리서 전체 교통량 — 개별 차량 대신 링크별 통계).
- * ON 이면 TrafficHeatmapFeatureLayer 가 overview/mid 에서 개별 차량 대신
+ * ON 이면 TrafficHeatmapFeatureLayer/TrafficHeatmapCesiumLayer가 개별 차량 대신
  * `/analytics/link-traffic` 집계를 호출해 히트맵을 칠한다 (개별 차량 위치 무시).
- * near(확대)에서는 기존 개별 차량 경로 유지. 기본 off — 기존 동작 무변화.
  */
 export const VEHICLE_AGGREGATION = {
     ENABLED: true,
-    /** 이 resolution 이상(멀리)에서 집계 모드 활성 — 미만(near)은 개별 차량 */
-    MIN_RESOLUTION: LOD_RES.NETWORK_LANE_DETAIL, // = 0.3 (near 이상)
+    /** 이 resolution 이상(멀리)에서 집계 모드 활성 — 미만(near)은 개별 차량/flow.
+     *  VEHICLE_ZOOM_TIER_PX_M.FLOW_MAX 공유 — flow→히트맵 경계가 끊기지 않는다. */
+    MIN_RESOLUTION: VEHICLE_ZOOM_TIER_PX_M.FLOW_MAX,
+    /** 이 resolution 이상이면 비활성 — OD 흐름(OD_FLOW)으로 전환. */
+    MAX_RESOLUTION: VEHICLE_ZOOM_TIER_PX_M.HEATMAP_MAX,
     /** 재생 현재 시각 기준 ± 집계 시간창 (초) */
     TIME_WINDOW_SEC: 60,
     /** moveend/재생 집계 호출 최소 간격 (ms, throttle) */
     THROTTLE_MS: 1000,
+} as const;
+
+/**
+ * 교통 흐름(flow) tail — 개별 차량(3D 모델)과 히트맵 사이의 중간 줌 티어.
+ * 새 백엔드 없이 VEHICLE_AGGREGATION과 동일한 `/analytics/link-traffic` 집계(volume/avgSpeed)를
+ * 재사용하고, 렌더링만 링크를 따라 흐르는 애니메이션 점선으로 다르게 표현한다(TrafficTailCesiumLayer).
+ * 개별 차량 3D 렌더 비용을 감당하기엔 차량이 많지만, 정적 히트맵으로 뭉개기엔 아직 확대된 구간을 담당.
+ */
+export const TRAFFIC_FLOW = {
+    ENABLED: true,
+    /** 이 resolution 미만(더 확대)에서는 비활성 — 개별 차량 3D 모델 구간 */
+    MIN_RESOLUTION: VEHICLE_ZOOM_TIER_PX_M.INDIVIDUAL_MAX,
+    /** 이 resolution 이상(더 축소)이면 비활성 — 히트맵(VEHICLE_AGGREGATION)으로 전환 */
+    MAX_RESOLUTION: VEHICLE_ZOOM_TIER_PX_M.FLOW_MAX,
+    /** 재생 현재 시각 기준 ± 집계 시간창 (초) — VEHICLE_AGGREGATION과 동일 */
+    TIME_WINDOW_SEC: 60,
+    /** moveend/재생 집계 호출 최소 간격 (ms, throttle) */
+    THROTTLE_MS: 1000,
+} as const;
+
+/**
+ * OD(origin-destination) 흐름 — 가장 축소된 overview 티어(히트맵보다도 더 멀리서).
+ * 새 백엔드 `/analytics/od-flow` 집계(차량별 시간창 내 첫/끝 위치를 격자 스냅해 집계, volume)를
+ * 사용 — 개별 차량 데이터가 전혀 필요 없어 아무리 축소해도 비용이 늘지 않는다. 기존 "od"
+ * 레이어(개별 차량의 현재위치→목적지를 매초 재계산하는 ParabolicArrowPrimitive, 근거리용)와는
+ * 별개의 "odFlow" 레이어로 렌더(OdFlowCesiumLayer) — 같은 ParabolicArrowPrimitive를 그대로
+ * 재사용하되 setOdData()에 집계 결과만 주입한다.
+ */
+export const OD_FLOW = {
+    ENABLED: true,
+    /** 이 resolution 이상에서만 활성 — 히트맵(VEHICLE_AGGREGATION)과 경계 공유 */
+    MIN_RESOLUTION: VEHICLE_ZOOM_TIER_PX_M.HEATMAP_MAX,
+    /** 재생 현재 시각 기준 ± 집계 시간창 (초) */
+    TIME_WINDOW_SEC: 60,
+    /** moveend/재생 집계 호출 최소 간격 (ms, throttle) */
+    THROTTLE_MS: 1500,
+    /** 반환받을 상위 OD 쌍 개수 (volume 내림차순) */
+    MAX_PAIRS: 100,
 } as const;
 
 /**
@@ -233,8 +296,17 @@ export const VEHICLE_STREAMING = {
     REFETCH_REMAIN_SEC: 30,
     /** 카메라 정착 후 fetch 디바운스 (ms) */
     DEBOUNCE_MS: 800,
-    /** bbox 한 변 최대 (도) — 이보다 넓으면(줌아웃) 개별 차량 fetch 생략 (집계 히트맵 담당) */
+    /** 이 pixelSizeM 이상(줌아웃)이면 개별 차량 fetch 생략 — flow/히트맵 담당.
+     *  VEHICLE_ZOOM_TIER_PX_M.INDIVIDUAL_MAX 공유 — 세 줌 티어가 항상 정렬되게 유지. */
+    MAX_PIXEL_SIZE_M: VEHICLE_ZOOM_TIER_PX_M.INDIVIDUAL_MAX,
+    /** bbox 한 변 최대 (도) — 실제 fetch 여부는 위 MAX_PIXEL_SIZE_M(pixelSizeM)이 결정하고,
+     *  이 값은 그 안에서 요청 bbox 자체가 과도하게 커지지 않도록 절삭하는 안전판 역할만 한다. */
     MAX_BBOX_DEG: 0.15,
+    /** bbox 한 변 최소 (도, ≈110m) — 더블클릭 줌 등 카메라 flight 애니메이션 중간 프레임에서
+     *  지면까지 거리가 순간적으로 0에 가까워져 bbox가 한 점(w≈e, s≈n)으로 붕괴하는 경우가 있다.
+     *  이 상태로 fetch하면 서버가 0대를 반환해 실제 뷰포트 차량이 전부 사라져 보임
+     *  ("시간은 가는데 차량이 안 보임"). 이보다 작으면 이상치 프레임으로 보고 fetch를 건너뛴다. */
+    MIN_BBOX_DEG: 0.001,
     /** 요청당 차량 상한 (서버 하드캡 10,000). 초과 시 viewport 체류시간 긴 차량 우선 선별 후
      *  집계 히트맵으로 전환. czml 엔티티는 개당 매 프레임 위치 보간 비용 — 1,500대 ≈ 60fps 예산,
      *  3,000대에서 FPS 한 자리 실측. */

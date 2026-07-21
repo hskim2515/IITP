@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useScenarioStore } from "@stores/useScenarioStore";
-import { Scenario } from "@type/Scenario";
+import { Scenario, ScenarioVersions } from "@type/Scenario";
 import MapRangePicker from "./MapRangePicker";
+import ScenarioPreviewPopover from "./ScenarioPreviewPopover";
 
 interface ScenarioForm {
     key: string;
@@ -19,6 +20,7 @@ const KEY_REGEX = /^[A-Za-z0-9_]*$/;
 
 const ScenarioSelector = () => {
     const setScenario = useScenarioStore((state) => state.setScenario);
+    const setVersion  = useScenarioStore((state) => state.setVersion);
     const [scenarioList, setScenarioList]   = useState<Scenario[]>([]);
     const [showModal, setShowModal]         = useState(false);
     const [modalMode, setModalMode]         = useState<ModalMode>("create");
@@ -30,6 +32,46 @@ const ScenarioSelector = () => {
     const [error, setError]                 = useState<string | null>(null);
     const [deleteConfirm, setDeleteConfirm] = useState<Scenario | null>(null);
     const debounceRef                       = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    /* ── hover 미리보기 ── */
+    const [hoveredKey, setHoveredKey] = useState<string | null>(null);
+    const hoverTimerRef               = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    const handleCardMouseEnter = (scenario: Scenario) => {
+        if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+        // 빠르게 스쳐 지나가는 hover 에서는 지도를 새로 띄우지 않도록 약간 지연
+        hoverTimerRef.current = setTimeout(() => setHoveredKey(scenario.key), 250);
+    };
+    const handleCardMouseLeave = () => {
+        if (hoverTimerRef.current) { clearTimeout(hoverTimerRef.current); hoverTimerRef.current = null; }
+        setHoveredKey(null);
+    };
+    useEffect(() => () => { if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current); }, []);
+
+    // hover 미리보기에서 버전을 클릭하면 시나리오 선택 화면에서 바로 그 버전으로 진입
+    // (별도의 "버전 선택" 팝업 단계는 제거 — 버전 선택은 hover 미리보기로 통일)
+    const handleSelectVersion = (scenario: Scenario, version: ScenarioVersions) => {
+        setScenario(scenario);
+        setVersion(version);
+    };
+
+    // hover 없이 카드를 바로 클릭한 경우(팝업 미표시) — 최근 수정된 버전으로 바로 진입.
+    // (구 VersionPopup 이 하던 "버전 1개면 자동 선택"을 일반화 — 특정 버전을 고르고
+    // 싶으면 hover 미리보기에서 해당 버전을 클릭)
+    const handleCardClick = async (scenario: Scenario) => {
+        try {
+            const res = await fetch(import.meta.env.VITE_API_URL + `/scenario/${scenario.id}/versions`, {
+                method: "GET",
+                headers: { "Content-Type": "application/json" },
+            });
+            const data: ScenarioVersions[] = await res.json();
+            if (!data.length) return; // 버전이 없는 시나리오 — 진입 불가(조용히 무시)
+            const latest = [...data].sort((a, b) => (b.modifyDate ?? "").localeCompare(a.modifyDate ?? ""))[0]!;
+            handleSelectVersion(scenario, latest);
+        } catch {
+            // 무시 — 카드에서 다시 클릭해 재시도 가능
+        }
+    };
 
     const fetchScenarios = () => {
         fetch(import.meta.env.VITE_API_URL + "/scenario", {
@@ -187,7 +229,13 @@ const ScenarioSelector = () => {
 
             <div className="card-container">
                 {scenarioList?.map((scenario) => (
-                    <div key={scenario.key} className="scenario-card" onClick={() => setScenario(scenario)}>
+                    <div
+                        key={scenario.key}
+                        className="scenario-card"
+                        onClick={() => handleCardClick(scenario)}
+                        onMouseEnter={() => handleCardMouseEnter(scenario)}
+                        onMouseLeave={handleCardMouseLeave}
+                    >
                         <div className="scenario-card-actions">
                             <button
                                 className="scenario-card-btn scenario-card-btn--edit"
@@ -202,6 +250,9 @@ const ScenarioSelector = () => {
                         </div>
                         <h2>{scenario.label}</h2>
                         <p>{scenario.description}</p>
+                        {hoveredKey === scenario.key && (
+                            <ScenarioPreviewPopover scenario={scenario} onSelectVersion={handleSelectVersion} />
+                        )}
                     </div>
                 ))}
                 <div className="scenario-card scenario-card--add" onClick={openCreateModal}>
