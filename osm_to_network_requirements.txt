@@ -1,0 +1,5 @@
+# OSM → network.xml 변환 도구 의존성
+# pip install -r osm_to_network_requirements.txt
+
+osmnx>=1.0.0
+shapely>=1.8.0
