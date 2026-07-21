@@ -15,8 +15,10 @@ public interface ScenarioService {
     Scenario updateScenario(Long id, Scenario scenario);
     void deleteScenario(Long id);
     boolean existsByKey(String key);
-    ScenarioVersion createVersion(Long scenarioId, String key, String label);
+    ScenarioVersion createVersion(Long scenarioId, String key, String label, String sourceVersionKey);
     void deleteVersion(Long scenarioId, Long versionId);
     void updateCoordinatesByKey(String key, double latitude, double longitude);
+    /** rotationDeg/scale 이 null이면 기존 값을 건드리지 않는다 (호출부가 "회전/축척은 모름"인 경우). */
+    void updateCoordinatesByKey(String key, double latitude, double longitude, Double rotationDeg, Double scale);
 }
 

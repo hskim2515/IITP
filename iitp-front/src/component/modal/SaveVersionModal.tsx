@@ -68,7 +68,7 @@ const SaveVersionModal: React.FC<SaveVersionModalProps> = ({ open, onConfirm, on
                 const response = await axiosInstance({
                     method: 'POST',
                     url: `/scenario/${selectedScenario.id}/versions`,
-                    data: { key: keyVal, label: labelVal },
+                    data: { key: keyVal, label: labelVal, sourceVersionKey: selectedScenarioVersion?.key ?? null },
                 });
                 newVersion = response.data;
                 createdNow = true;

@@ -32,7 +32,6 @@ import {useMenuStore} from "@stores/useMenuStore";
 import DrilldownGrid from "@component/util/DrilldownGrid";
 import SignalTodTimelineEditor from "@component/util/SignalTodTimelineEditor";
 import SignalGroupedEditor from "@component/util/SignalGroupedEditor";
-import SaveVersionModal from "@component/modal/SaveVersionModal";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTreeResponse
@@ -139,7 +138,6 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     }, [handleMouseMove, stopResizing]);
 
     const [reloadFlag, setReloadFlag] = useState(false);
-    const [versionModalOpen, setVersionModalOpen] = useState(false);
     useHistoryInit(reloadFlag);
 
     const doSave = async (versionKey: string) => {
@@ -168,19 +166,19 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
             setMessage({ type: 'info', text: '저장 완료' });
         } catch (error) {
             setMessage({ type: 'error', text: '저장 실패: ' + error });
-            // SaveVersionModal 이 실패를 인지해야 버전 전환/유령 버전 생성을 막는다
             throw error;
         }
     };
 
+    // 평소 저장 = 지금 버전에 제자리 저장 (OD Matrix/PASSENGER와 동일하게 새 버전을 만들지 않음)
     const handleSaveBtn = () => {
         const logJson = historyStore.getState().updateLogs;
         if (!logJson || logJson.length === 0) {
             setMessage({ type: 'warn', text: '변경사항이 없습니다.' });
             return;
         }
-        if (!selectedScenario) return;
-        setVersionModalOpen(true);
+        if (!selectedScenario || !selectedScenarioVersion) return;
+        doSave(selectedScenarioVersion.key);
     };
 
     const handleInitBtn = () => {
@@ -222,15 +220,6 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
 
     return (
         <>
-        <SaveVersionModal
-            open={versionModalOpen}
-            onConfirm={async (versionKey) => {
-                // 저장 성공 후에만 모달 닫기 — 실패 시 모달이 에러를 표시해야 함
-                await doSave(versionKey);
-                setVersionModalOpen(false);
-            }}
-            onCancel={() => setVersionModalOpen(false)}
-        />
         <div ref={overlayRef} className={styles.overlay} style={{ height: `${height}px` }}>
             <div className={styles.panel}>
                 {/* Resize handle */}
