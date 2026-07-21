@@ -57,7 +57,9 @@ export const TextEditor = memo<CellEditorProps>(function TextEditor({
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         e.stopPropagation();
-        if (e.key === "Enter") {
+        // Tab: AG Grid가 셀 이동을 가로채 blur의 setTimeout(0) 커밋보다 먼저
+        // 셀을 재렌더링해버려 편집값이 유실됨 — 여기서 동기적으로 먼저 커밋
+        if (e.key === "Enter" || e.key === "Tab") {
             onBlur?.();
         }
     };
@@ -111,7 +113,7 @@ export const NumberEditor = memo<CellEditorProps>(function NumberEditor({
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         e.stopPropagation();
-        if (e.key === "Enter") {
+        if (e.key === "Enter" || e.key === "Tab") {
             onBlur?.();
         }
     };
@@ -233,6 +235,8 @@ export const TextareaEditor = memo<CellEditorProps>(function TextareaEditor({
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             onBlur?.();
+        } else if (e.key === "Tab") {
+            onBlur?.();
         }
     };
 
@@ -319,10 +323,14 @@ export const TagsEditor = memo<
             e.preventDefault();
             e.stopPropagation();
             addTag(inputVal);
+        } else if (e.key === "Tab") {
+            e.stopPropagation();
+            if (inputVal.trim()) addTag(inputVal);
+            setTimeout(() => onBlur?.(), 0);
         } else if (e.key === "Backspace" && inputVal === "" && draft.length > 0) {
             removeTag(draft[draft.length - 1]!);
         }
-    }, [inputVal, draft, addTag, removeTag]);
+    }, [inputVal, draft, addTag, removeTag, onBlur]);
 
     const handleBlur = useCallback(() => {
         if (inputVal.trim()) {
