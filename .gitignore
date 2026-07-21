@@ -8,6 +8,9 @@ identifier.sqlite
 build/
 .gradle/
 iitp-rest/src/main/generated/
+*.class
+__pycache__/
+*.pyc
 
 # MS Office 임시 파일
 ~$*.pptx
