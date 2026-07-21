@@ -19,8 +19,8 @@ export function getActiveVersionId(): string | undefined {
     const s = useScenarioStore.getState();
     const key = s.selectedScenarioVersion?.key ?? s.selectedScenario?.key ?? undefined;
     if (key != null && s.selectedScenarioVersion?.key == null && s.selectedScenario?.key != null) {
-        // 버전 미선택 → scenario.key 폴백. Maps가 VersionPopup 뒤에 먼저 마운트되므로
-        // 버전 선택 전 렌더 단계에서 정상적으로 여러 번 지나감 — 키당 1회만 경고.
+        // 버전 미선택 → scenario.key 폴백. ScenarioSelector 는 시나리오+버전을 항상
+        // 함께 선택하지만, 방어적으로 남겨둔 폴백이라 키당 1회만 경고.
         if (!warnedFallbackKeys.has(String(key))) {
             warnedFallbackKeys.add(String(key));
             console.warn("[versionId] 버전 미선택 → scenario.key 폴백:", s.selectedScenario?.key);

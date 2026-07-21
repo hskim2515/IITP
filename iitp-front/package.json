@@ -39,6 +39,7 @@
     "deep-object-diff": "^1.1.9",
     "heatmap.js": "^2.0.5",
     "immer": "^10.1.1",
+    "jszip": "^3.10.1",
     "lodash": "^4.17.21",
     "lodash.debounce": "^4.0.8",
     "lodash.throttle": "^4.1.1",

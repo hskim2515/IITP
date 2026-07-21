@@ -6,7 +6,7 @@ import { useScenarioStore } from "@stores/useScenarioStore";
 import { Network } from "@type/Network";
 import { useNetworkTileStore } from "@stores/useNetworkTileStore";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
-import { LOD_ALT, LOD_RES, NETWORK_TILING, NETWORK_LOD_TIER_ORDER, getNetworkLodTierByResolution, type NetworkLodTier } from "@utils/lodConstants";
+import { LOD_ALT, LOD_RES, NETWORK_TILING, NETWORK_LOD_TIER_ORDER, NETWORK_LOD_TIER_BY_ORDER, getNetworkLodTierByResolution, type NetworkLodTier } from "@utils/lodConstants";
 import axiosInstance from "@api/axiosInstance";
 import { NetworkTileManager, type NetworkTilePayload } from "@managers/NetworkTileManager";
 import { assignTileGuids } from "@utils/tileGuid";
@@ -194,6 +194,14 @@ export default class NetworkDataSourceLayer {
      *  payload에 포함한 타일이 대신 빌드(claim)할 때 중복 빌드 방지용 */
     private linkOwnerTile: Map<string, string> = new Map();
     private nodeOwnerTile: Map<string, string> = new Map();
+    /** linkId → 그 링크(fromLink/toLink)가 아직 캐시에 없어 대기 중인 커넥션 목록.
+     *  addConnectionEntity가 인접 링크 미도착으로 스킵할 때 등록하고, 그 링크가 나중에
+     *  cachedLinkMap 에 들어오는 시점(addTileChunk)에 재시도한다 — 안 하면 노드는 이미
+     *  "빌드 완료"로 마킹돼(nodeEntityIds) 그 커넥션만 영구히 안 그려진다. */
+    private pendingConnectionsByLink: Map<string, { conn: any; node: any }[]> = new Map();
+    /** forceRefetchIfLoaded 로 재요청한 타일 키 — addTileChunk 가 소비(1회성)하며, 같은 tier로
+     *  이미 빌드돼 있어도 재클레임을 위해 재빌드하도록 조기 return 가드를 우회시킨다. */
+    private pendingForceRebuild: Set<string> = new Set();
     /** tileKey → 빌드된 tier 순서 (near=2/detail=3) — tier 승격 시 무공백 스왑 판단용 */
     private chunkTiers: Map<string, number> = new Map();
     /** fullBuild 산출물 존재 여부 — 타일 모드 load() 재진입 시 전면 wipe 를 모드 전환 때만 하도록 */
@@ -265,6 +273,8 @@ export default class NetworkDataSourceLayer {
     private _layerVisible: boolean = true;
     private currentLod: 'full' | 'link' | 'outline' = 'full';
     private cameraChangeUnsubscribe?: () => void;
+    /** applyVisibility()가 노드/포트/커넥션 엔티티를 전부 제거한 상태인지 (재표시 시 재빌드 트리거용) */
+    private entitiesHiddenByVisibility = false;
 
     // 지형 고도 캐시 (lng,lat 소수점5자리 키 → 미터 고도)
     private terrainHeightMap = new Map<string, number>();
@@ -588,10 +598,13 @@ export default class NetworkDataSourceLayer {
 
     /** 타일 키와 일치하는(home) 링크/노드만 청크 프리미티브로 빌드 → 경계 중복 없음 */
     private async addTileChunk(tileKey: string, payload: NetworkTilePayload, tierOrder?: number): Promise<void> {
+        // 이웃 evict로 인한 강제 재클레임 요청 — 같은 tier로 이미 빌드돼 있어도 재빌드해야
+        // 방금 소유권이 풀린 경계 지오메트리를 이번 claim() 에서 새로 가져올 수 있다.
+        const forceRebuild = this.pendingForceRebuild.delete(tileKey);
         const existing = this.chunkPrimitives.get(tileKey);
         if (existing) {
             const existingTier = this.chunkTiers.get(tileKey) ?? 99;
-            if (existingTier >= (tierOrder ?? 99)) return; // 같거나 높은 tier 이미 빌드됨
+            if (!forceRebuild && existingTier >= (tierOrder ?? 99)) return; // 같거나 높은 tier 이미 빌드됨
             // ── tier 승격 (near→detail) 무공백 스왑 ──
             // 기존 청크를 즉시 지우면 새 GroundPrimitive 비동기 빌드 동안 도로가 사라짐.
             // 새 청크를 먼저 빌드하고, 기존 프리미티브는 **새 청크가 ready 된 후** 제거.
@@ -624,16 +637,35 @@ export default class NetworkDataSourceLayer {
 
         // cached 맵 병합 (노드/링크 상호참조용)
         for (const node of payload.nodes) this.cachedNodeMap.set(String(node.id), node);
-        for (const link of payload.links) this.cachedLinkMap.set(String(link.id), link);
+        for (const link of payload.links) {
+            const linkId = String(link.id);
+            this.cachedLinkMap.set(linkId, link);
+            this.retryPendingConnections(linkId);
+        }
 
         // 소유권 결정 — home 타일(첫 좌표 기준)이 빌드하는 게 원칙이지만, home 타일이
         // 로드되지 않은 경계 횡단 링크/노드는 payload에 포함한 이 타일이 대신 빌드(claim).
         // detail은 ring=0이라 home 타일이 viewport 밖이면 영영 안 그려져
         // 도로/차선이 타일 경계에서 잘려 보이던 원인. owner 맵으로 중복 빌드 방지.
+        //
+        // 그런데 home(또는 먼저 claim한) 타일이 "살아있지만 더 낮은 tier"인 경우가 있다 —
+        // 카메라가 넓은 뷰(near/mid)일 때 로드된 타일이 그대로 캐시에 남아있는데, 이후
+        // detail로 확대하면서 그 타일이 ring=0 뷰포트 밖으로 밀려나면 다시는 승격 요청을
+        // 못 받는다. 그 결과 그 타일이 소유한 링크는 레인이 벗겨진(stripDetail) 채로,
+        // 그 타일이 소유한 노드는 detailOrder 미만이라는 이유로(syncNodeEntities 게이트)
+        // 영영 안 그려진다 — "교차로 중 한 링크만 레인이 안 보이고, 그 교차로의
+        // 노드/포트/커넥션도 안 보인다"는 증상의 실체. claim 실패 시 그 소유 타일을
+        // 현재 tier로 강제 승격 재요청한다.
+        const staleOwnerTiles = new Set<string>();
         const claim = (id: string, homeKey: string, owner: Map<string, string>): boolean => {
             const cur = owner.get(id);
             if (cur === tileKey) return true;                               // 같은 타일 재빌드(tier 승격)
-            if (cur !== undefined && this.tileHomeIds.has(cur)) return false; // 다른 살아있는 청크가 소유
+            if (cur !== undefined && this.tileHomeIds.has(cur)) {
+                if (cur !== tileKey && (this.chunkTiers.get(cur) ?? 0) < (tierOrder ?? 0)) {
+                    staleOwnerTiles.add(cur);
+                }
+                return false; // 다른 살아있는 청크가 소유
+            }
             if (homeKey === tileKey || !this.tileHomeIds.has(homeKey)) {
                 owner.set(id, tileKey);
                 return true;
@@ -646,6 +678,13 @@ export default class NetworkDataSourceLayer {
         const ownedLinkIds = payload.links
             .filter(lk => claim(String(lk.id), this.linkChunkKey(lk), this.linkOwnerTile))
             .map(lk => String(lk.id));
+        if (staleOwnerTiles.size > 0 && tierOrder !== undefined) {
+            const targetLod = NETWORK_LOD_TIER_BY_ORDER[tierOrder] ?? 'detail';
+            for (const staleKey of staleOwnerTiles) {
+                this.pendingForceRebuild.add(staleKey);
+                this.tileManager?.forceRefetch(staleKey, tierOrder, targetLod);
+            }
+        }
 
         // evict 정리용 소유 id 기록 (await 이전 — 빌드 중 evict돼도 캐시 정리 가능)
         this.tileHomeIds.set(tileKey, { nodeIds: ownedNodeIds, linkIds: ownedLinkIds });
@@ -745,6 +784,25 @@ export default class NetworkDataSourceLayer {
         }
     }
 
+    /** applyVisibility() 조건 미충족 시 노드/포트/커넥션 엔티티를 전부 제거 (dataSource.show 토글 대신 —
+     *  이유는 applyVisibility() 호출부 주석 참고). 빌드 대기 큐도 함께 비운다. */
+    private hideAllNodeEntities(): void {
+        this.nodeBuildQueue.clear();
+        if (this.nodeEntityIds.size === 0) return;
+        this.dataSource.entities.suspendEvents();
+        try {
+            for (const ids of this.nodeEntityIds.values()) {
+                for (const id of ids) {
+                    const ent = this.dataSource.entities.getById(id);
+                    if (ent) this.dataSource.entities.remove(ent);
+                }
+            }
+            this.nodeEntityIds.clear();
+        } finally {
+            this.dataSource.entities.resumeEvents();
+        }
+    }
+
     /** 노드 엔티티 빌드를 rAF로 프레임당 1타일씩 처리 (메인스레드 양보 → 줌/pan 부드럽게) */
     private scheduleNodeBuild(): void {
         if (this.nodeBuildRaf != null) return;
@@ -825,8 +883,53 @@ export default class NetworkDataSourceLayer {
             this.cachedLinkMap.delete(linkId);
             this.linkOwnerTile.delete(linkId);
         }
+        const hadOwnership = (home?.nodeIds?.length ?? 0) > 0 || (home?.linkIds?.length ?? 0) > 0;
         this.tileHomeIds.delete(tileKey);
         try { this.viewer.scene.requestRender(); } catch (_) {}
+
+        // 이 타일이 소유(claim)하고 있던 경계 횡단 링크/노드는 방금 소유권이 풀렸다.
+        // home 타일이 아니라서 애초에 claim 하지 못했던 살아있는 이웃 타일에게 재클레임
+        // 기회를 주지 않으면, 그 이웃은 이미 로드된 상태라 다시 요청할 트리거가 없어
+        // 이 링크/노드(와 거기 달린 레인/커넥션)가 세션 내내 고아로 남아 영구히 안 그려진다.
+        if (hadOwnership) {
+            for (const neighborKey of this.neighborTileKeys(tileKey)) {
+                if (this.tileHomeIds.has(neighborKey)) {
+                    this.pendingForceRebuild.add(neighborKey);
+                    this.tileManager?.forceRefetch(neighborKey);
+                }
+            }
+        }
+    }
+
+    /** "tx,ty" 타일 키의 8방향 인접 타일 키 (경계 횡단 지오메트리 재클레임용) */
+    private neighborTileKeys(tileKey: string): string[] {
+        const [txStr, tyStr] = tileKey.split(',');
+        const tx = Number(txStr), ty = Number(tyStr);
+        const keys: string[] = [];
+        for (let dx = -1; dx <= 1; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+                if (dx === 0 && dy === 0) continue;
+                keys.push(`${tx + dx},${ty + dy}`);
+            }
+        }
+        return keys;
+    }
+
+    /** linkId 가 캐시에 새로 들어왔을 때, 그 링크를 기다리던 커넥션들을 재시도한다. */
+    private retryPendingConnections(linkId: string): void {
+        const pending = this.pendingConnectionsByLink.get(linkId);
+        if (!pending || pending.length === 0) return;
+        this.pendingConnectionsByLink.delete(linkId);
+        let added = false;
+        for (const { conn, node } of pending) {
+            const ids = this.nodeEntityIds.get(String(node.id));
+            if (!ids) continue; // 노드가 이미 drop(카메라 이탈/evict)됨 — 되살리지 않음
+            if (this.addConnectionEntity(conn, node) && conn.__guid && !ids.includes(conn.__guid)) {
+                ids.push(conn.__guid);
+                added = true;
+            }
+        }
+        if (added) { try { this.viewer.scene.requestRender(); } catch (_) {} }
     }
 
     /** 노드 home 청크 키 (좌표 기준) */
@@ -886,8 +989,29 @@ export default class NetworkDataSourceLayer {
         // 노드/포트/커넥션 엔티티: alt 기반 full + **pixelSize 기반 detail** 둘 다 만족할 때만.
         // alt 기준만 쓰면 near(0.3~1.5m/px)에서도 detail 시절 쌓인 엔티티 수천 개가 전역 표시되어
         // FPS 급락 + "먼 엔티티까지 보임" (비타일 모드는 lastPixelTier='unknown' → 기존 동작).
+        //
+        // 예전엔 이 조건을 dataSource.show 로 한 번에 켜고 껐다 — 그런데 dataSource.show 토글은
+        // Cesium 내부적으로 그 안의 "모든" 엔티티의 isShowing 변경 이벤트를 한꺼번에 발생시키고,
+        // StaticGroundPolylinePerMaterialBatch(신호/커넥션 GroundPolyline 배치)는 그 이벤트를
+        // 내부 showsUpdated 큐에 넣어뒀다가 다음 렌더에서 처리한다. syncNodeEntities()가 카메라
+        // 정착마다 같은 타이밍에 노드 엔티티를 실제로 remove() 하는데, 그 엔티티가 방금 이 토글로
+        // showsUpdated에 큐잉된 상태에서 remove되면 큐의 참조가 남아 다음 프레임에서
+        // "Cannot read properties of undefined (reading 'id')"로 영구 크래시한다(Cesium 자체 버그,
+        // remove()가 showsUpdated를 청소하지 않음 — 실측: 줌/팬 반복 시 재현, 콘솔 스택
+        // Batch6.updateShows). dataSource.show를 아예 건드리지 않고, 조건 미충족 시 이 레이어가
+        // 이미 갖고 있는 "엔티티 제거" 경로(hideAllNodeEntities, syncNodeEntities와 동일 메커니즘)만
+        // 쓰면 토글-직후-제거 레이스 자체가 발생하지 않는다.
         const entityTierOk = this.lastPixelTier === 'unknown' || this.lastPixelTier === 'detail';
-        this.dataSource.show = layer && lod === 'full' && entityTierOk;
+        const shouldShowEntities = layer && lod === 'full' && entityTierOk;
+        if (!shouldShowEntities) {
+            if (!this.entitiesHiddenByVisibility) {
+                this.hideAllNodeEntities();
+                this.entitiesHiddenByVisibility = true;
+            }
+        } else if (this.entitiesHiddenByVisibility) {
+            this.entitiesHiddenByVisibility = false;
+            this.syncNodeEntities(); // 조건 충족 시 거리 기반으로 근접 노드 재빌드
+        }
         // GroundPolylinePrimitive(지형 클램프) 전환으로 depth test 를 항상 켜도 중심선이 안 묻힘
         // → 땅속 오브젝트가 투과되어 보이던 문제 제거
         this.viewer.scene.globe.depthTestAgainstTerrain = true;
@@ -1774,17 +1898,25 @@ export default class NetworkDataSourceLayer {
         }
 
         for (const conn of (node.connections ?? [])) {
-            this.addConnectionEntity(conn, node);
-            if (conn.__guid) ids.push(conn.__guid as string);
+            if (this.addConnectionEntity(conn, node) && conn.__guid) ids.push(conn.__guid as string);
         }
 
         this.nodeEntityIds.set(String(node.id), ids);
     }
 
-    private addConnectionEntity(conn: any, node: any): void {
+    /** 커넥션 엔티티를 실제로 추가했으면 true. fromLink/toLink 가 아직 캐시에 없어(로딩 중이거나
+     *  이웃 타일 소유) 스킵한 경우 false 를 반환하고, 그 링크가 나중에 들어오면
+     *  retryPendingConnections 가 재시도할 수 있도록 등록해둔다. */
+    private addConnectionEntity(conn: any, node: any): boolean {
         const fromLink = this.cachedLinkMap.get(String(conn.fromLink));
         const toLink = this.cachedLinkMap.get(String(conn.toLink));
-        if (!fromLink || !toLink || !conn.__guid) return;
+        if (!fromLink || !toLink || !conn.__guid) {
+            if (conn.__guid) {
+                if (!fromLink) this.registerPendingConnection(String(conn.fromLink), conn, node);
+                if (!toLink) this.registerPendingConnection(String(conn.toLink), conn, node);
+            }
+            return false;
+        }
 
         const isStraight = normalizeTurning(conn.turning) === 'Straight';
         // 3점 이상 = 변환기가 내부링크 경로(교통섬 순환·회전 동선)로 생성한 폴리라인 —
@@ -1806,13 +1938,13 @@ export default class NetworkDataSourceLayer {
             if (conn.coordinates?.length >= 2) {
                 const c0 = conn.coordinates[0];
                 const cL = conn.coordinates[conn.coordinates.length - 1];
-                if (!c0 || !cL) return;
+                if (!c0 || !cL) return false;
                 fromPt = Cesium.Cartesian3.fromDegrees(c0.lng, c0.lat);
                 toPt = Cesium.Cartesian3.fromDegrees(cL.lng, cL.lat);
             } else {
                 const fromPos = this.lanePositionMap.get(`${String(fromLink.id)}_${conn.fromLane}`);
                 const toPos = this.lanePositionMap.get(`${String(toLink.id)}_${conn.toLane}`);
-                if (!fromPos || !toPos) return;
+                if (!fromPos || !toPos) return false;
                 fromPt = fromPos.target;
                 toPt = toPos.source;
             }
@@ -1838,6 +1970,13 @@ export default class NetworkDataSourceLayer {
             },
             properties: conn,
         });
+        return true;
+    }
+
+    private registerPendingConnection(linkId: string, conn: any, node: any): void {
+        let list = this.pendingConnectionsByLink.get(linkId);
+        if (!list) { list = []; this.pendingConnectionsByLink.set(linkId, list); }
+        list.push({ conn, node });
     }
 
     // ─────────────────────────────────────────────

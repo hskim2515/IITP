@@ -106,6 +106,17 @@ class PrimitiveLayerManager {
         }
     }
 
+    // 특정 primitive 인스턴스 1개만 제거(destroy) — 같은 layerName을 공유하는 다른 인스턴스는 유지.
+    // 차종별 VehiclePrimitive처럼 layerName은 같아도 개별적으로 교체해야 하는 경우에 사용.
+    removeInstance(groupName, primitive) {
+        const group = this.layerGroups[groupName];
+        if (!group || !group.contains(primitive)) return;
+        group.remove(primitive);
+        if (typeof this.onRemove === 'function') {
+            this.onRemove(primitive, groupName, primitive.layer);
+        }
+    }
+
     // 그룹 전체 제거
     removeGroup(groupName) {
         const group = this.layerGroups[groupName];

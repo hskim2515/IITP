@@ -8,6 +8,7 @@ import { useHeatmapSettingStore } from "@stores/useHeatmapSettingStore";
 import { useSimulationStore } from "@stores/useSimulationStore";
 import { Link } from "@type/Network";
 import { VEHICLE_AGGREGATION } from "@utils/lodConstants";
+import { computeViewportMetrics } from "@utils/viewportMetrics";
 import axiosInstance from "@api/axiosInstance";
 import { JulianDate } from "cesium";
 import {
@@ -162,29 +163,29 @@ export default class TrafficHeatmapCesiumLayer {
 
     // ─────────────── 백엔드 집계 모드 (원거리, 2D 레이어와 동일 패턴) ───────────────
 
-    /** 화면 중앙 지면점 기준 bbox + 재생 시간창으로 집계 fetch → emaByLink/_aggLinkCoords 주입 */
+    /** 화면 중앙 지면점 기준 bbox + 재생 시간창으로 집계 fetch → emaByLink/_aggLinkCoords 주입
+     *  (computeViewportMetrics 공용 유틸 — TrafficTailCesiumLayer/차량 뷰포트 스트리밍과 동일 계산) */
     private _updateAggregation(): void {
         if (!VEHICLE_AGGREGATION.ENABLED || this.destroyed) return;
-        const scene = this._scene;
-        const camera = this._viewer.camera;
-        const canvas = scene.canvas;
 
-        const center = new Cesium.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2);
-        const ray = camera.getPickRay(center);
-        const ground = ray ? scene.globe.pick(ray, scene) : undefined;
-        if (!ground) return;
-
-        const groundDist = Cesium.Cartesian3.distance(camera.positionWC, ground);
-        const frustum: any = camera.frustum;
-        const fovy = frustum.fovy ?? frustum.fov ?? Cesium.Math.toRadians(60);
-        const canvasH = canvas.clientHeight || 900;
-        const canvasW = canvas.clientWidth || 1200;
-        const pixelSizeM = (2 * groundDist * Math.tan(fovy / 2)) / canvasH;
+        const metrics = computeViewportMetrics(this._viewer);
+        if (!metrics) return;
+        const { normalizedPixelSizeM, bbox } = metrics;
 
         // near(확대) 미만에서는 집계 비활성 → 개별 차량 표시로 복귀.
+        // MAX_RESOLUTION 이상(더 축소)이면 OD_FLOW(OdFlowCesiumLayer)로 넘어가므로 여기서도 비활성.
         // 단 denseViewport(viewport 차량 상한 초과)면 줌 무관 집계 유지 — 개별 차량 대체 가시화.
+        // normalizedPixelSizeM 사용 — 네트워크 실제 크기 대비 상대적 줌 단계로 판정.
         const dense = (useVehicleStore.getState() as any).denseViewport === true;
-        this._aggregationActive = dense || pixelSizeM >= VEHICLE_AGGREGATION.MIN_RESOLUTION;
+        this._aggregationActive = dense ||
+            (normalizedPixelSizeM >= VEHICLE_AGGREGATION.MIN_RESOLUTION && normalizedPixelSizeM < VEHICLE_AGGREGATION.MAX_RESOLUTION);
+
+        // ⚠️ show는 원래 밀집 모드(개별 차량 대수 초과) 토글이 외부에서 showLayer/hideLayer로만
+        // 켜고 껐다 — 근데 이 히트맵 줌 구간(정규화 200~800)에서는 개별 차량 fetch 자체가 이미
+        // 멈춘 상태라 그 밀집 토글이 아예 실행되지 않아, 데이터(_aggregationActive)는 정상인데
+        // show가 영원히 꺼진 채로 남는 버그가 있었다. TrafficTailCesiumLayer/OdFlowCesiumLayer와
+        // 동일하게 자체 zoom 판정으로 show를 직접 관리한다(밀집 모드로 켜진 경우도 포함됨).
+        this.show = this._aggregationActive;
         if (!this._aggregationActive) return;
 
         const now = performance.now();
@@ -194,18 +195,11 @@ export default class TrafficHeatmapCesiumLayer {
         const versionId = getActiveVersionId();
         if (!versionId) return;
 
-        const halfHeightM = pixelSizeM * canvasH / 2;
-        const halfWidthM  = pixelSizeM * canvasW / 2;
-        const carto = Cesium.Cartographic.fromCartesian(ground);
-        const cLng = Cesium.Math.toDegrees(carto.longitude);
-        const cLat = Cesium.Math.toDegrees(carto.latitude);
-        const hLat = halfHeightM / 111320;
-        const hLng = (halfWidthM / 111320) / Math.max(Math.cos(carto.latitude), 0.01);
-
+        const { w, s, e, n } = bbox;
         const { fromTime, toTime } = this._timeWindow();
 
         axiosInstance.get(`/analytics/link-traffic/${versionId}`, {
-            params: { bbox: `${cLng - hLng},${cLat - hLat},${cLng + hLng},${cLat + hLat}`, fromTime, toTime },
+            params: { bbox: `${w},${s},${e},${n}`, fromTime, toTime },
         }).then((res) => {
             if (this.destroyed) return;
             const links = res.data?.links ?? [];

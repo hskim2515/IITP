@@ -14,6 +14,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
 import java.util.*;
@@ -158,6 +159,40 @@ public ResponseEntity<SignalNodeResponseData> getSignal(@PathVariable String ver
             return ResponseEntity.ok().headers(headers).body(bytes);
         } catch (Exception e) {
             logger.error("[SignalController] export 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /** signal.xml 파일 업로드 → 파싱(flat 변환) + DB 저장 + SFTP 동기화 + 신호 타일 재빌드 */
+    @PostMapping("/{versionId}/import")
+    public ResponseEntity<SignalNodeResponseData> importSignalXml(
+            @PathVariable String versionId,
+            @RequestParam("file") MultipartFile file) {
+        logger.info("[SignalController] IMPORT versionId={}, size={}bytes", versionId, file.getSize());
+        try {
+            byte[] xmlBytes = file.getBytes();
+            SignalXml parsed = signalJaxbParser.parse(new ByteArrayInputStream(xmlBytes));
+            List<SignalResponse> flat = signalService.fromSignalXml(parsed);
+
+            SignalSaveRequest request = new SignalSaveRequest();
+            request.setData(flat);
+            request.setLogs(new com.iitp.iitp_rest.model.LogsData());
+            signalService.saveSignal(request, versionId);
+
+            fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "signal.xml");
+
+            try {
+                signalTileService.invalidate(versionId);
+                signalTileService.ingest(versionId, flat);
+            } catch (Exception e) {
+                logger.warn("[importSignalXml] 신호 타일 사전 빌드 실패 (lazy 빌드로 폴백): {}", e.getMessage());
+            }
+
+            SignalNodeResponseData result = new SignalNodeResponseData();
+            result.setSignals(flat);
+            return ResponseEntity.ok(result);
+        } catch (Exception e) {
+            logger.error("[SignalController] 임포트 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

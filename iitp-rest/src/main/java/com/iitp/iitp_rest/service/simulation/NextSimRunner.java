@@ -15,12 +15,18 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -30,7 +36,7 @@ import java.util.regex.Pattern;
  *
  * <p>배포판(nextsim-linux-x64) 바이너리를 Docker(linux/amd64)로 실행한다.
  * 버전 스토리지의 입력 파일(network.xml / signal.xml / signalTOD.xml / odmatrix.xml /
- * scenario.xml — 모두 NextSim 형식 그대로 플랫폼이 관리 중)을 실행 워크스페이스에
+ * scenario.xml / passenger.xml — 모두 NextSim 형식 그대로 플랫폼이 관리 중)을 실행 워크스페이스에
  * 스테이징하고, route-generator → nextsim 순으로 실행한 뒤 결과
  * simulation_output.db 를 그대로 {versionId}/vehicle_sim.db 로 회수한다
  * (NextSim VehicleEvent 스키마 == 백엔드 VehicleDataReader 신형 스키마 — 변환 불필요).
@@ -177,15 +183,40 @@ public class NextSimRunner {
                 log.info("[NextSimRunner] 경로 캐시 히트: {} (hash={})", versionId, inputsHash.substring(0, 12));
             } else {
                 progress.accept("경로 생성 중 (route-generator)...");
-                String routeLog = runStage(versionId, workDir, "route-generator", "RouteGenerator", progress);
+                String routeLog = runStageWithCrashRecovery(
+                        versionId, workDir, networkDir, "route-generator", "RouteGenerator", progress);
                 if (!Files.exists(routeJson)) {
                     throw new RuntimeException("route-generator 가 Route.json 을 생성하지 않았습니다. " +
                             "odmatrix.xml 의 source/sink 노드가 네트워크와 일치하는지 확인하세요.\n" + tail(routeLog, 800));
                 }
             }
 
+            // route-generator 직후(=Route.json 이 완성된 시점) 스냅샷 — 캐시는 이 시점 기준으로
+            // 저장한다. nextsim 단계에서 크래시 복구가 추가로 network.xml 을 건드리거나(노드
+            // 재격리) nextsim 자신이 Route.json 을 다시 열어 쓰는 경우(실측: 복구 재시도 시
+            // Route.json 이 0바이트로 잘리는 현상 발생 — nextsim 이 쓰기 모드로 열고 실패)에도
+            // 캐시가 "route-generator 가 실제로 만든 유효한 Route.json"을 가리키게 한다.
+            String routeGenHash = sha256Of(networkDir.resolve("network.xml"));
+            Path routeJsonSnapshot = networkDir.resolveSibling("Route.json.snapshot");
+            Files.copy(routeJson, routeJsonSnapshot, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            Path ptRouteJson = networkDir.resolve("PTRoute.json");
+            Path ptRouteJsonSnapshot = Files.exists(ptRouteJson)
+                    ? networkDir.resolveSibling("PTRoute.json.snapshot") : null;
+            if (ptRouteJsonSnapshot != null) {
+                Files.copy(ptRouteJson, ptRouteJsonSnapshot, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+
             progress.accept("시뮬레이션 실행 중 (nextsim)...");
-            String simLog = runStage(versionId, workDir, "nextsim", "Simulation", progress);
+            // route-generator 와 동일한 std::out_of_range 크래시가 시뮬레이션 엔진 자체에서도
+            // 발생함을 실측(원인 불명의 특정 터미널 노드 — route-generator 단계를 통과했어도
+            // nextsim 의 "Initializing Terminals/Garage" 초기화 단계에서 별도로 재현될 수 있음)
+            // → 동일한 개별 격리 재시도를 여기도 적용.
+            // ⚠️ 알려진 단순화: 이 단계에서 노드를 격리해도 Route.json(위 스냅샷)은 재생성하지
+            // 않는다 — 그 노드를 지나는 기존 경로 항목이 남을 수 있음. 지금까지 실측 범위에선
+            // 시뮬레이션 결과 자체엔 문제 없었으나, 추가 크래시 유형으로 나타나면 이 단계에서
+            // Route.json 도 함께 무효화하는 방향으로 확장 필요.
+            String simLog = runStageWithCrashRecovery(
+                    versionId, workDir, networkDir, "nextsim", "Simulation", progress);
 
             Path resultDb = outputDir.resolve("simulation_output.db");
             if (!Files.exists(resultDb) || Files.size(resultDb) == 0) {
@@ -199,8 +230,15 @@ public class NextSimRunner {
             }
             vehicleDataReader.invalidateDbCache(versionId);
 
-            // 경로 캐시 갱신 — 다음 실행(같은 network/OD)은 route-generator 생략
-            saveRouteCache(cacheDir, inputsHash, routeJson, networkDir.resolve("PTRoute.json"));
+            // 경로 캐시 갱신 — 다음 실행(같은 network/OD)은 route-generator 생략.
+            // route-generator 직후 스냅샷(routeGenHash/routeJsonSnapshot) 기준으로 저장 —
+            // route-generator 크래시 복구로 노드가 격리된 상태는 반영하면서(원본 해시와 다르므로
+            // 다음 실행이 원본 network.xml 로 재크래시하지 않음), nextsim 단계가 Route.json 을
+            // 건드렸어도 영향받지 않는다.
+            saveRouteCache(cacheDir, routeGenHash, routeJsonSnapshot,
+                    ptRouteJsonSnapshot != null ? ptRouteJsonSnapshot : ptRouteJson);
+            Files.deleteIfExists(routeJsonSnapshot);
+            if (ptRouteJsonSnapshot != null) Files.deleteIfExists(ptRouteJsonSnapshot);
 
             log.info("[NextSimRunner] 완료: versionId={}, result={} bytes", versionId, Files.size(resultDb));
             return tail(simLog, 2000);
@@ -345,7 +383,10 @@ public class NextSimRunner {
         // 5) 네트워크 종속이지만 플랫폼 미관리 파일 — 빈 템플릿 (배포판 bucheon 스키마 준수,
         //    아래 형태들은 실행 이진탐색으로 무해 검증됨)
         writeIfAbsent(networkDir, "events.xml", xml("<Events />"));
-        writeIfAbsent(networkDir, "passenger.xml", xml("<Passenger>\n\t<od_pax>\n\t</od_pax>\n</Passenger>"));
+        if (!copyOptional(versionId, "passenger.xml", networkDir)) {
+            Files.writeString(networkDir.resolve("passenger.xml"),
+                    xml("<Passenger>\n\t<od_pax>\n\t</od_pax>\n</Passenger>"), StandardCharsets.UTF_8);
+        }
         writeIfAbsent(networkDir, "footpathNetwork.xml", xml("<Network id=\"0\">\n    <nodes>\n    </nodes>\n    <links>\n    </links>\n</Network>"));
         writeIfAbsent(networkDir, "roadPTline.xml", xml("<Lines mode=\"Bus\">\n</Lines>"));
         writeIfAbsent(networkDir, "roadStation.xml", xml("<PublicTransit>\n  <Stations>\n  </Stations>\n</PublicTransit>"));
@@ -399,8 +440,16 @@ public class NextSimRunner {
      *                    type="normal" 로 전환 (route-generator 전 터미널 쌍 계산 축소)
      */
     private void injectRequiredNetworkAttrs(Path networkXml, Set<String> keepNodeIds) throws IOException {
+        // 분단 컴포넌트 터미널 격리 (실측: 대전 오정동 bbox — 4개 연결요소 중 2개가
+        // 3노드 고립 섬, 터미널이 섬에 걸쳐 있으면 route-generator 가 전 터미널 쌍 최단경로
+        // 계산 중 도달불가 쌍에서 std::out_of_range 크래시(OD 내용과 무관 — 빈 OD 도 재현,
+        // route-generator 는 odmatrix 무관 network.xml 의 전 터미널을 열거하기 때문).
+        // 최대 연결요소 밖 터미널은 OD 참조 여부와 무관하게 garage 로 전환 — 도달 불가능한
+        // 쌍 자체를 만들지 않는다(그 경로는 실제로도 존재하지 않으므로 의미상 정확).
+        Set<String> mainComponentIds = computeMainComponentNodeIds(networkXml);
+
         Path tmp = networkXml.resolveSibling(networkXml.getFileName() + ".compat");
-        long injected = 0, pruned = 0, keptTerminals = 0;
+        long injected = 0, pruned = 0, keptTerminals = 0, isolatedPruned = 0;
         long connFixedNodes = 0;
         Pattern idAttr = Pattern.compile("\\bid=\"([^\"]+)\"");
         try (var reader = Files.newBufferedReader(networkXml, StandardCharsets.UTF_8);
@@ -434,9 +483,14 @@ public class NextSimRunner {
                             && !t.contains("type=\"terminal\"") && !t.contains("type=\"garage\"")) {
                         t = t.replaceFirst("type=\"\\w+\"", "type=\"terminal\"");
                     }
-                    if (keepNodeIds != null && t.contains("type=\"terminal\"")) {
+                    if (t.contains("type=\"terminal\"")) {
                         Matcher m = idAttr.matcher(t);
-                        if (m.find() && !keepNodeIds.contains(m.group(1))) {
+                        String nid = m.find() ? m.group(1) : null;
+                        if (nid != null && !mainComponentIds.isEmpty() && !mainComponentIds.contains(nid)) {
+                            // 최대 연결요소 밖 — OD 참조 여부와 무관하게 격리(도달 불가능한 쌍 원천 차단)
+                            t = t.replace("type=\"terminal\"", "type=\"garage\"");
+                            isolatedPruned++;
+                        } else if (keepNodeIds != null && nid != null && !keepNodeIds.contains(nid)) {
                             // garage: 막다른(단일 포트) 노드의 정식 타입 — "normal" 로 바꾸면
                             // route-generator 가 std::out_of_range 크래시(실측, 통과 노드 가정),
                             // garage 는 소스/싱크 열거에서 빠지면서 그래프 로드도 안전(실측 검증).
@@ -473,6 +527,67 @@ public class NextSimRunner {
             log.info("[NextSimRunner] 터미널 가지치기: 유지 {} / 전환 {} (OD 참조 노드 {}개)",
                     keptTerminals, pruned, keepNodeIds.size());
         }
+        if (isolatedPruned > 0) {
+            log.warn("[NextSimRunner] 분단 컴포넌트 터미널 격리: {}개 (최대 연결요소 밖 — OD 로 참조해도 도달 불가하므로 garage 전환)",
+                    isolatedPruned);
+        }
+    }
+
+    /**
+     * network.xml 을 스트림 스캔해 (undirected) 링크 인접을 구성하고 최대 연결요소의
+     * 노드 id 집합을 반환한다. 수백 MB 파일 대응 — 태그 속성만 추출(DOM 로드 금지),
+     * extractLinkIds 와 동일한 4MB+carry 청크 스캔 패턴.
+     *
+     * @return 최대 연결요소 노드 id 집합. 컴포넌트가 1개(전부 연결)면 빈 Set — 호출부는
+     *         빈 Set 을 "제약 없음"으로 해석해 모든 노드를 통과시킨다.
+     */
+    private static Set<String> computeMainComponentNodeIds(Path networkXml) throws IOException {
+        Set<String> allNodeIds = new HashSet<>();
+        Map<String, List<String>> adj = new HashMap<>();
+        Pattern nodeIdPat = Pattern.compile("<node id=\"([^\"]+)\"");
+        Pattern linkPat = Pattern.compile("<link id=\"[^\"]+\" from_node=\"([^\"]+)\" to_node=\"([^\"]+)\"");
+        try (var reader = Files.newBufferedReader(networkXml, StandardCharsets.UTF_8)) {
+            char[] buf = new char[1 << 22]; // 4MB
+            String carry = "";
+            int n;
+            while ((n = reader.read(buf)) > 0) {
+                String chunk = carry + new String(buf, 0, n);
+                Matcher nm = nodeIdPat.matcher(chunk);
+                while (nm.find()) allNodeIds.add(nm.group(1));
+                Matcher lm = linkPat.matcher(chunk);
+                while (lm.find()) {
+                    String f = lm.group(1), t = lm.group(2);
+                    adj.computeIfAbsent(f, k -> new ArrayList<>()).add(t);
+                    adj.computeIfAbsent(t, k -> new ArrayList<>()).add(f);
+                }
+                carry = chunk.length() > 512 ? chunk.substring(chunk.length() - 512) : chunk;
+            }
+        }
+        if (allNodeIds.isEmpty()) return Set.of();
+
+        Set<String> visited = new HashSet<>();
+        Set<String> largest = Set.of();
+        int componentCount = 0;
+        for (String start : allNodeIds) {
+            if (visited.contains(start)) continue;
+            componentCount++;
+            Set<String> comp = new HashSet<>();
+            Deque<String> stack = new ArrayDeque<>();
+            stack.push(start);
+            while (!stack.isEmpty()) {
+                String cur = stack.pop();
+                if (!comp.add(cur)) continue;
+                for (String nb : adj.getOrDefault(cur, List.of())) {
+                    if (!comp.contains(nb)) stack.push(nb);
+                }
+            }
+            visited.addAll(comp);
+            if (comp.size() > largest.size()) largest = comp;
+        }
+        if (componentCount <= 1) return Set.of(); // 단일 컴포넌트 — 제약 불필요
+        log.warn("[NextSimRunner] network.xml 이 {}개 연결요소로 분단됨 (최대 {}개 노드, 나머지 {}개는 격리 대상)",
+                componentCount, largest.size(), allNodeIds.size() - largest.size());
+        return largest;
     }
 
     /** 여는 태그 이후부터 종료 태그(포함)까지 읽기 — 노드 블록 수집용 */
@@ -603,6 +718,219 @@ public class NextSimRunner {
         return ids;
     }
 
+    // ─────────────────────────── 터미널 크래시 자동 복구 (route-generator + nextsim 공용) ─────
+
+    /** 크래시 복구에 쓸 수 있는 총 재시도 예산 (부천 규모 — 터미널 수백 개 대비 여유 확보) */
+    private static final int MAX_CRASH_RECOVERY_ATTEMPTS = 600;
+
+    /**
+     * doctest FAILURE 시그니처 이후 무한 행(hang)하는 크래시로 확인된 경우(실측: `std::out_of_range`
+     * — 특정 터미널 노드(들)가 원인, 구조는 정상인데 **문제 노드 단독으로는 성공하고 다른
+     * 터미널과 동시에 존재할 때만 크래시하는 경우도, 노드 단독으로도 크래시하는 경우도 실측됨**.
+     * 배포판 바이너리라 소스 레벨 근본 수정 불가) 자동 복구를 시도한다.
+     *
+     * <p><b>전략 — 재귀 이분탐색으로 최대 안전 부분집합 탐색</b>: 터미널이 수십~수백 개 규모일 때
+     * 하나씩 선형으로 테스트하면 시도 횟수가 터미널 수에 비례해 비싸진다(실측 — scenario1_2 4개
+     * 중 하나씩 제거로는 아예 못 풀림: 문제 노드가 2개 이상인 경우 선형 제거로는 해결 불가).
+     * 절반씩 쪼개 각 절반을 독립적으로 테스트 → 성공한 절반은 그대로 안전 확정(문제 노드가
+     * 드물면 대부분의 절반이 한 번에 통과해 O(log N) 수준으로 저렴), 실패한 절반만 재귀로 더
+     * 쪼갠다(크기 1까지 내려가면 그 노드가 원인). 양쪽 절반의 안전 부분집합을 합쳐 재테스트해
+     * 교차 상호작용도 검증하고, 합친 것도 크래시하면 한쪽을 기준으로 다른 쪽 원소를 하나씩
+     * 병합(범위가 절반 크기로 줄어 저렴)해 상호작용 원인만 걸러낸다.
+     *
+     * <p>route-generator("RouteGenerator")와 nextsim("Simulation") 양쪽에서 동일한 크래시
+     * 시그니처가 실측 확인됨(전자를 통과해도 후자의 "Initializing Terminals/Garage" 초기화
+     * 단계에서 별도 재현될 수 있음) — 두 단계 모두 이 래퍼로 감싼다.
+     *
+     * <p>안전 집합이 끝내 비거나 예산({@link #MAX_CRASH_RECOVERY_ATTEMPTS}) 소진 시 그 시점까지
+     * 확정된 부분집합으로 진행하며, 아예 비면 최초 크래시로 실패한다.
+     */
+    private String runStageWithCrashRecovery(
+            String versionId, Path workDir, Path networkDir, String binary, String testCase,
+            Consumer<String> progress) throws Exception {
+        Path networkXml = networkDir.resolve("network.xml");
+        try {
+            return runStage(versionId, workDir, binary, testCase, progress);
+        } catch (TerminalNodeCrashException first) {
+            List<String> candidates = extractTerminalIds(networkXml);
+            log.warn("[NextSimRunner] {} {} 크래시 — 터미널 {}개 중 이분탐색으로 안전 부분집합 탐색",
+                    versionId, testCase, candidates.size());
+
+            int[] attemptsLeft = { MAX_CRASH_RECOVERY_ATTEMPTS };
+            String[] lastGoodLog = { null };
+            CrashRecoveryCtx ctx = new CrashRecoveryCtx(
+                    versionId, workDir, networkXml, binary, testCase, progress, candidates, attemptsLeft, lastGoodLog);
+            List<String> safeSet = resolveChunk(ctx, candidates);
+
+            if (!safeSet.isEmpty()) {
+                // 재귀 탐색 도중 network.xml 의 노드 type 은 매 시도마다 정확히 복원되지만
+                // (activateOnly), Route.json 등 스테이지 산출물은 그 복원으로 되살아나지
+                // 않는다 — 실측: 탐색 마지막 실제 호출이 (다른 조합의) 실패 시도였던 경우
+                // route-generator 가 "Removed previous json" 후 크래시해 Route.json 이
+                // 비거나 잘린 채로 남음. 반환 직전 확정된 safeSet 으로 한 번 더 실행해
+                // 산출물을 safeSet 과 확실히 일치시킨다(이미 검증된 조합이라 실패할 수 없음).
+                if (!tryActivate(ctx, safeSet)) {
+                    throw new RuntimeException(testCase + " 최종 확인 실행이 실패했습니다 " +
+                            "(이미 성공 검증된 안전 부분집합 " + safeSet.size() + "개) — 재시도해주세요.");
+                }
+                log.warn("[NextSimRunner] {} {} — 안전 부분집합 {}/{} 개로 진행(시도 {}회 소모) — " +
+                        "제외된 노드는 NextSim 바이너리 결함 우회(해당 노드를 참조하는 OD 수요는 무시됨)",
+                        versionId, testCase, safeSet.size(), candidates.size(),
+                        MAX_CRASH_RECOVERY_ATTEMPTS - attemptsLeft[0]);
+                return lastGoodLog[0];
+            }
+            throw new RuntimeException(
+                    testCase + " 가 반복적으로 크래시했습니다 (터미널 " + candidates.size() + "개 중 어떤 조합으로도 성공 못 함) — " +
+                    "NextSim 바이너리 결함으로 추정됩니다. OD 매트릭스의 source/sink 조합을 바꿔보세요.\n" +
+                    tail(first.getMessage(), 800));
+        }
+    }
+
+    /** 크래시 복구 재귀 호출에 공통으로 필요한 컨텍스트 묶음 */
+    private record CrashRecoveryCtx(
+            String versionId, Path workDir, Path networkXml, String binary, String testCase,
+            Consumer<String> progress, List<String> allCandidates, int[] attemptsLeft, String[] lastGoodLog) {}
+
+    /**
+     * chunk 를 단독 활성화했을 때 크래시한다는 전제(호출부 보장) 하에 재귀 이분탐색으로
+     * chunk 의 최대 안전 부분집합을 반환한다.
+     */
+    private List<String> resolveChunk(CrashRecoveryCtx ctx, List<String> chunk) throws Exception {
+        if (chunk.size() <= 1) return List.of(); // 단독도 크래시 — 이 노드(들)가 원인
+        int mid = chunk.size() / 2;
+        List<String> left = chunk.subList(0, mid);
+        List<String> right = chunk.subList(mid, chunk.size());
+
+        List<String> safeLeft = testChunkOrRecurse(ctx, left);
+        List<String> safeRight = testChunkOrRecurse(ctx, right);
+        if (safeLeft.isEmpty()) return safeRight;
+        if (safeRight.isEmpty()) return safeLeft;
+        if (ctx.attemptsLeft()[0] <= 0) return safeLeft;
+
+        List<String> merged = new ArrayList<>(safeLeft);
+        merged.addAll(safeRight);
+        ctx.progress().accept(ctx.testCase() + " 크래시 복구 — 부분집합 병합 시도 (" + merged.size() + "개)");
+        if (tryActivate(ctx, merged)) return merged;
+
+        // 교차 상호작용 — safeLeft(이미 안전 확정) 기준으로 safeRight 원소를 하나씩 병합
+        return mergeOneByOne(ctx, safeLeft, safeRight);
+    }
+
+    /** chunk 를 단독 테스트 — 성공하면 그대로, 크래시하면 재귀 이분탐색(예산 소진 시 보수적으로 빈 집합) */
+    private List<String> testChunkOrRecurse(CrashRecoveryCtx ctx, List<String> chunk) throws Exception {
+        if (chunk.isEmpty() || ctx.attemptsLeft()[0] <= 0) return List.of();
+        ctx.progress().accept(ctx.testCase() + " 크래시 복구 — 구간 테스트 (" + chunk.size() + "개)");
+        if (tryActivate(ctx, chunk)) return chunk;
+        return resolveChunk(ctx, chunk);
+    }
+
+    /** safeBase(이미 안전 확정) 에 candidates 를 하나씩 병합 시도 — 실패한 노드는 제외하고 계속 */
+    private List<String> mergeOneByOne(CrashRecoveryCtx ctx, List<String> safeBase, List<String> candidates) throws Exception {
+        List<String> merged = new ArrayList<>(safeBase);
+        for (String candidate : candidates) {
+            if (ctx.attemptsLeft()[0] <= 0) break;
+            List<String> trial = new ArrayList<>(merged);
+            trial.add(candidate);
+            ctx.progress().accept(ctx.testCase() + " 크래시 복구 — 노드 " + candidate + " 병합 시도");
+            if (tryActivate(ctx, trial)) {
+                merged = trial;
+            } else {
+                activateOnly(ctx.networkXml(), ctx.allCandidates(), merged); // 실패 — 파일만 복원(재실행 없음, 예산 안 씀)
+            }
+        }
+        return merged;
+    }
+
+    /**
+     * allCandidates 중 active 에 속한 것만 terminal, 나머지는 garage 로 맞추고 실행 —
+     * 성공하면 true(lastGoodLog 갱신), 크래시하면 false. 예산을 1 소모한다.
+     * (파일 상태만 맞추고 재실행하지 않는 호출은 이 메서드를 거치지 않음 — mergeOneByOne 의
+     * 복원 참고)
+     */
+    private boolean tryActivate(CrashRecoveryCtx ctx, List<String> active) throws Exception {
+        activateOnly(ctx.networkXml(), ctx.allCandidates(), active);
+        ctx.attemptsLeft()[0]--;
+        try {
+            ctx.lastGoodLog()[0] = runStage(ctx.versionId(), ctx.workDir(), ctx.binary(), ctx.testCase(), ctx.progress());
+            return true;
+        } catch (TerminalNodeCrashException e) {
+            return false;
+        }
+    }
+
+    /** allCandidates 중 active 에 속한 노드만 terminal, 나머지는 garage — 한 번의 스트림 패스로 일괄 반영 */
+    private static void activateOnly(Path networkXml, List<String> allCandidates, List<String> active) throws IOException {
+        Set<String> activeSet = new HashSet<>(active);
+        Map<String, String> updates = new java.util.HashMap<>();
+        for (String c : allCandidates) updates.put(c, activeSet.contains(c) ? "terminal" : "garage");
+        setNodeTypes(networkXml, updates);
+    }
+
+    /** route-generator/nextsim 공용 크래시 표식 — doctest FAILURE 시그니처 감지 후 즉시 종료했을 때 던짐 */
+    private static class TerminalNodeCrashException extends RuntimeException {
+        TerminalNodeCrashException(String output) { super(output); }
+    }
+
+    /** network.xml 의 현재 terminal 노드 id 목록 (크래시 복구 후보) — 수백 MB 대비 청크 스캔 */
+    private static List<String> extractTerminalIds(Path networkXml) throws IOException {
+        List<String> ids = new ArrayList<>();
+        Pattern p = Pattern.compile("<node id=\"([^\"]+)\" type=\"terminal\"");
+        try (var reader = Files.newBufferedReader(networkXml, StandardCharsets.UTF_8)) {
+            char[] buf = new char[1 << 22];
+            String carry = "";
+            int n;
+            while ((n = reader.read(buf)) > 0) {
+                String chunk = carry + new String(buf, 0, n);
+                Matcher m = p.matcher(chunk);
+                while (m.find()) ids.add(m.group(1));
+                carry = chunk.length() > 256 ? chunk.substring(chunk.length() - 256) : chunk;
+            }
+        }
+        return ids;
+    }
+
+    /**
+     * network.xml 에서 여러 노드의 type 속성을 한 번의 스트림 패스로 일괄 교체 (태그 단위, 대용량
+     * 대응). 크래시 복구가 매 시도마다 노드 하나씩 별도 패스로 파일을 다시 쓰면 후보가
+     * 수백 개일 때 비용이 커져 — 활성화할 부분집합 전체를 한 번에 반영한다.
+     */
+    private static void setNodeTypes(Path networkXml, Map<String, String> typeById) throws IOException {
+        if (typeById.isEmpty()) return;
+        Path tmp = networkXml.resolveSibling(networkXml.getFileName() + ".toggle");
+        Pattern idAttr = Pattern.compile("id=\"([^\"]+)\"");
+        try (var reader = Files.newBufferedReader(networkXml, StandardCharsets.UTF_8);
+             var writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
+            StringBuilder tag = null;
+            int c;
+            while ((c = reader.read()) >= 0) {
+                char ch = (char) c;
+                if (tag == null) {
+                    if (ch == '<') { tag = new StringBuilder("<"); } else { writer.write(ch); }
+                    continue;
+                }
+                tag.append(ch);
+                if (ch != '>') continue;
+                String t = tag.toString();
+                tag = null;
+                if (t.startsWith("<node id=\"")) {
+                    Matcher m = idAttr.matcher(t);
+                    String newType = m.find() ? typeById.get(m.group(1)) : null;
+                    if (newType != null) {
+                        int typeIdx = t.indexOf("type=\"");
+                        if (typeIdx >= 0) {
+                            int typeStart = typeIdx + 6;
+                            int typeEnd = t.indexOf('"', typeStart);
+                            t = t.substring(0, typeStart) + newType + t.substring(typeEnd);
+                        }
+                    }
+                }
+                writer.write(t);
+            }
+            if (tag != null) writer.write(tag.toString());
+        }
+        Files.move(tmp, networkXml, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+    }
+
     // ─────────────────────────── 단계 실행 (docker / native) ───────────────────────────
 
     /**
@@ -657,6 +985,8 @@ public class NextSimRunner {
         // 메인 스레드에서 readLine 하면 프로세스가 출력 없이 살아있는 동안 블록돼
         // waitFor(timeout) 에 도달하지 못한다 (타임아웃 무력화 — 수도권 77분 실행으로 실측).
         StringBuilder tailBuf = new StringBuilder();
+        AtomicBoolean crashDetected = new AtomicBoolean(false);
+        final String containerName = container;
         Thread reader = new Thread(() -> {
             try (var br = new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream()))) {
                 String line;
@@ -665,6 +995,16 @@ public class NextSimRunner {
                     synchronized (tailBuf) {
                         tailBuf.append(line).append('\n');
                         if (tailBuf.length() > 16000) tailBuf.delete(0, tailBuf.length() - 12000);
+                    }
+                    // doctest FAILURE 시그니처 — 실측: 이 줄 이후 프로세스가 출력 없이 CPU 100%로
+                    // 무한 행(hang)한다(doctest 가 SIGABRT 를 캐치해 리포트만 하고 정지 안 함).
+                    // 타임아웃(최대 nextsim.timeout-seconds, 기본 1시간)까지 기다리지 않고 즉시 종료.
+                    if (line.contains("[doctest] Status: FAILURE!") && crashDetected.compareAndSet(false, true)) {
+                        log.warn("[NextSimRunner] {} 크래시 시그니처 감지 — 행 방지를 위해 즉시 종료", testCase);
+                        process.destroyForcibly();
+                        if (containerName != null) {
+                            try { new ProcessBuilder("docker", "rm", "-f", containerName).start(); } catch (Exception ignored) {}
+                        }
                     }
                     long now = System.currentTimeMillis();
                     if (now - lastProgressAt > 3000 && !line.isBlank()) {
@@ -689,12 +1029,15 @@ public class NextSimRunner {
                     "대규모 네트워크는 nextsim.timeout-seconds 상향 또는 Linux 서버 네이티브 실행을 고려하세요");
         }
         reader.join(5000); // 잔여 출력 수집
-        int exit = process.exitValue();
         String output;
         synchronized (tailBuf) { output = tailBuf.toString(); }
         if (cancelRequested.remove(versionId)) {
             throw new CancelledException();
         }
+        if (crashDetected.get()) {
+            throw new TerminalNodeCrashException(tail(output, 1200));
+        }
+        int exit = process.exitValue();
         if (exit != 0) {
             throw new RuntimeException("NextSim 실행 실패 (exit=" + exit + "):\n" + tail(output, 1200));
         }

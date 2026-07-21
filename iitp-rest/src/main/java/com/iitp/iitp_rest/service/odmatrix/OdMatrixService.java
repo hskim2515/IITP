@@ -37,23 +37,38 @@ public class OdMatrixService {
                 .orElse(versionId);
     }
 
-    public OdMatrixXml getByVersionId(String versionId) throws IOException {
+    /** versionId 폴더 우선, scenario key 폴더 폴백 — NextSimRunner.candidateDirs 와 동일 규약 */
+    private java.util.List<String> candidateDirs(String versionId) {
         String scenarioKey = resolveScenarioKey(versionId);
-        String url = remoteUrl + scenarioKey + "/odmatrix.xml";
-        log.info("[OdMatrixService] fetching: {} (versionId={}, scenarioKey={})", url, versionId, scenarioKey);
-        try (InputStream is = new URL(url).openStream()) {
-            return parse(is);
+        return scenarioKey.equals(versionId)
+                ? java.util.List.of(versionId) : java.util.List.of(versionId, scenarioKey);
+    }
+
+    /**
+     * 버전 폴더 우선 조회 + scenario key 폴백. 저장은 항상 versionId 폴더(버전별 격리) —
+     * 새 버전은 첫 저장 전까지 부모 시나리오의 OD 를 물려받는 copy-on-write 동작이 된다.
+     */
+    public OdMatrixXml getByVersionId(String versionId) throws IOException {
+        IOException last = null;
+        for (String dir : candidateDirs(versionId)) {
+            String url = remoteUrl + dir + "/odmatrix.xml";
+            try (InputStream is = new URL(url).openStream()) {
+                log.info("[OdMatrixService] fetching: {} (versionId={})", url, versionId);
+                return parse(is);
+            } catch (IOException e) {
+                last = e;
+            }
         }
+        throw last != null ? last : new FileNotFoundException(versionId + "/odmatrix.xml");
     }
 
     public void saveByVersionId(String versionId, OdMatrixXml odMatrix) throws Exception {
-        String scenarioKey = resolveScenarioKey(versionId);
         byte[] xmlBytes = marshal(odMatrix);
-        fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), scenarioKey, "odmatrix.xml");
-        log.info("[OdMatrixService] SFTP 저장 완료: {}/odmatrix.xml (versionId={}, scenarioKey={})", scenarioKey, versionId, scenarioKey);
+        fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "odmatrix.xml");
+        log.info("[OdMatrixService] SFTP 저장 완료: {}/odmatrix.xml", versionId);
     }
 
-    private OdMatrixXml parse(InputStream is) {
+    public OdMatrixXml parse(InputStream is) {
         try {
             JAXBContext ctx = JAXBContext.newInstance(OdMatrixXml.class);
             Unmarshaller u = ctx.createUnmarshaller();

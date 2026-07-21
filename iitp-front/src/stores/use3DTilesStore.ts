@@ -19,6 +19,8 @@ interface State {
 interface Actions {
     fetchTilesets: () => Promise<void>;
     setTilesetEnabled: (id: number, enabled: boolean, viewer?: Cesium.Viewer) => void;
+    createTileset: (label: string, urls: string[]) => Promise<void>;
+    deleteTileset: (id: number) => Promise<void>;
     destroyAll: () => void;
 }
 
@@ -107,6 +109,42 @@ const use3DTilesStoreBase = create<State & Actions>((set, get) => ({
                     ),
                 }));
             });
+        }
+    },
+
+    createTileset: async (label, urls) => {
+        try {
+            const sortOrder = get().tilesets.length;
+            const res = await fetch(`${BASE_URL}/threed-tileset`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ label, sortOrder, urls }),
+            });
+            if (!res.ok) throw new Error(`등록 실패 (${res.status})`);
+            const created: { id: number; label: string; sortOrder: number; urls: string[] } = await res.json();
+            set(state => ({
+                tilesets: [...state.tilesets, {
+                    id: created.id, label: created.label, sortOrder: created.sortOrder,
+                    urls: created.urls ?? [], enabled: false,
+                }],
+            }));
+        } catch (e) {
+            console.error('[3DTiles] 등록 실패:', e);
+            throw e;
+        }
+    },
+
+    deleteTileset: async (id) => {
+        const entry = get().tilesets.find(t => t.id === id);
+        // 로드돼 있던 Cesium3DTileset들은 씬에서 완전히 제거(destroy) — show=false 만으로는 GPU 메모리가 안 풀림
+        entry?.tilesets?.forEach(ts => { if (!ts.isDestroyed()) ts.destroy(); });
+        set(state => ({ tilesets: state.tilesets.filter(t => t.id !== id) }));
+        try {
+            const res = await fetch(`${BASE_URL}/threed-tileset/${id}`, { method: 'DELETE' });
+            if (!res.ok) throw new Error(`삭제 실패 (${res.status})`);
+        } catch (e) {
+            console.error('[3DTiles] 삭제 실패:', e);
+            throw e;
         }
     },
 

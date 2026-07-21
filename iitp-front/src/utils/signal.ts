@@ -127,7 +127,10 @@ export const applyOlSignalStyle = (feature: any, state: SignalState) => {
 // Cesium 스타일 적용
 export const applyCesiumSignalStyle = (viewer: Cesium.Viewer, guid: string, state: SignalState) => {
     if (!guid) return;
-    const dataSource = viewer.dataSources.get(0);
+    // 인덱스(0번)로 가져오면 안 된다 — 차량 CZML 데이터소스가 뷰포트 스트리밍(팬/줌)마다
+    // remove+add 되면서 dataSources 컬렉션 순서가 바뀌어, 네트워크가 아닌 차량 CZML(마침 교체
+    // 중인) 쪽을 잡을 수 있다. NetworkDataSourceLayer가 부여한 이름으로 조회한다.
+    const dataSource = viewer.dataSources.getByName("network")[0];
     if (!dataSource) return;
 
     const entity = dataSource.entities.getById(guid);
@@ -135,7 +138,12 @@ export const applyCesiumSignalStyle = (viewer: Cesium.Viewer, guid: string, stat
 
     const { cesium } = getSignalColor(state);
     entity.polyline.material = new Cesium.PolylineArrowMaterialProperty(cesium);
-    entity.polyline.clampToGround = true;
+    // clampToGround는 NetworkDataSourceLayer가 커넥션 엔티티 생성 시 이미 true로 고정한다
+    // (변하지 않는 값). 재생 중 200ms마다 여기서 재대입하면 Cesium의 ground-polyline
+    // 배치(재질별로 묶어 관리)가 매번 다시 dirty 처리된다 — syncNodeEntities()가 카메라
+    // 거리 기준으로 같은 커넥션 엔티티를 줌아웃/줌인마다 대량 add/remove 하는 것과 겹치면
+    // "Cannot read properties of undefined (reading 'id')"로 렌더 루프가 멈추는 게 실측
+    // 재현됐다("줌아웃 후 줌인하면 바로 발생"). 안 바뀌는 값은 다시 대입하지 않는다.
 };
 
 export const getNetworkGuid = (layerManager: LayerManager | null, signalGuid: string) => {

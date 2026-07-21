@@ -179,7 +179,7 @@ public class DummyVehicleGenerator {
 
                 // ── 링크 주행 ──────────────────────────────────────────
                 while (posX < queuePosX && t < durationSeconds) {
-                    addEvent(countingSink, vehicleId, t, linkId, laneIdx, posX, posY, spd);
+                    addEvent(countingSink, vehicleId, t, linkId, laneIdx, posX, posY, spd, roadMap);
                     posX += spd * TIMESTEP;
                     t    += TIMESTEP;
                 }
@@ -201,7 +201,7 @@ public class DummyVehicleGenerator {
                         double waitEnd = Math.min(greenAt, t + MAX_WAIT_SEC);
                         waitEnd = Math.min(waitEnd, durationSeconds);
                         while (t < waitEnd) {
-                            addEvent(countingSink, vehicleId, t, linkId, laneIdx, queuePosX, posY, 0.0);
+                            addEvent(countingSink, vehicleId, t, linkId, laneIdx, queuePosX, posY, 0.0, roadMap);
                             t += TIMESTEP;
                         }
                         if (t >= durationSeconds) break;
@@ -212,7 +212,7 @@ public class DummyVehicleGenerator {
 
                 // 정지선→링크 끝 구간 이동 (신호 통과 후 교차로 진입)
                 while (posX < len && t < durationSeconds) {
-                    addEvent(countingSink, vehicleId, t, linkId, laneIdx, posX, posY, spd);
+                    addEvent(countingSink, vehicleId, t, linkId, laneIdx, posX, posY, spd, roadMap);
                     posX += spd * TIMESTEP;
                     t    += TIMESTEP;
                 }
@@ -445,17 +445,83 @@ public class DummyVehicleGenerator {
 
     // ── 내부 유틸 ────────────────────────────────────────────────────────
 
+    /**
+     * posX(링크 시작점부터 진행방향 거리, m) + posY(좌측 엣지 기준 횡offset, m)를 저장하기 전에
+     * 네트워크 절대 로컬 좌표(node.center와 동일 좌표계)로 변환한다. 실제 NextSim이 pos_x/pos_y를
+     * 이 좌표계로 출력하므로(VehicleController/CoordinateConverter 참고), 더미 생성기도 동일한
+     * 규약으로 맞춰야 재생 파이프라인이 두 소스를 동일하게 처리한다.
+     */
     private void addEvent(java.util.function.Consumer<VehicleEvent> sink, String vehicleId, double t,
-                          String linkId, int laneIdx, double posX, double posY, double spd) {
+                          String linkId, int laneIdx, double posX, double posY, double spd,
+                          Map<String, RoadResponse.Road> roadMap) {
         VehicleEvent e = new VehicleEvent();
         e.setId(vehicleId);
         e.setTimestep(Math.round(t * 10.0) / 10.0);
         e.setLinkId(linkId);
         e.setLaneId(String.valueOf(laneIdx));
-        e.setPosX((float) posX);
-        e.setPosY((float) posY);
+
+        RoadResponse.Road road = roadMap.get(linkId);
+        double[] abs = road != null ? toAbsoluteLocal(road, posX, posY) : new double[]{posX, posY};
+        e.setPosX((float) abs[0]);
+        e.setPosY((float) abs[1]);
+
         e.setSpeed((float) spd);
         sink.accept(e);
+    }
+
+    /** posX(진행거리)+posY(횡offset) → 링크 도형(shape) 기준 절대 로컬 좌표 [x, y]. */
+    private double[] toAbsoluteLocal(RoadResponse.Road road, double posX, double posY) {
+        double halfWidth = road.getHalfWidth() != null ? road.getHalfWidth() : 0.0;
+        List<double[]> shape = road.getLaneShape();
+        if (shape != null && !shape.isEmpty()) {
+            return walkShapeWithOffset(shape, posX, posY, halfWidth);
+        }
+
+        // 직선 폴백: base→target 방향 벡터 기준
+        double baseE = road.getBaseEasting() != null ? road.getBaseEasting() : 0.0;
+        double baseN = road.getBaseNorthing() != null ? road.getBaseNorthing() : 0.0;
+        double tgtE  = road.getTargetEasting() != null ? road.getTargetEasting() : baseE;
+        double tgtN  = road.getTargetNorthing() != null ? road.getTargetNorthing() : baseN;
+
+        double dirX = tgtE - baseE, dirY = tgtN - baseN;
+        double len = Math.sqrt(dirX * dirX + dirY * dirY);
+        if (len > 0) { dirX /= len; dirY /= len; }
+
+        double leftEdgeX = baseE + halfWidth * (-dirY);
+        double leftEdgeY = baseN + halfWidth * dirX;
+        double absX = leftEdgeX + posX * dirX + posY * dirY;
+        double absY = leftEdgeY + posX * dirY - posY * dirX;
+        return new double[]{absX, absY};
+    }
+
+    /** 링크 shape 폴리라인을 따라 posX 거리만큼 이동 후, 진행방향 기준 posY 횡offset을 적용한다. */
+    private double[] walkShapeWithOffset(List<double[]> shape, double posX, double posY, double halfWidth) {
+        double remaining = posX;
+        for (int i = 0; i < shape.size() - 1; i++) {
+            double[] from = shape.get(i);
+            double[] to   = shape.get(i + 1);
+            double dx = to[0] - from[0];
+            double dy = to[1] - from[1];
+            double segLen = Math.sqrt(dx * dx + dy * dy);
+
+            if (remaining <= segLen || i == shape.size() - 2) {
+                double t = segLen > 0 ? Math.min(remaining / segLen, 1.0) : 0.0;
+                double cx = from[0] + t * dx;
+                double cy = from[1] + t * dy;
+
+                if (segLen > 0) {
+                    double ux = dx / segLen, uy = dy / segLen;
+                    double lx = cx - halfWidth * uy;
+                    double ly = cy + halfWidth * ux;
+                    cx = lx + posY * uy;
+                    cy = ly - posY * ux;
+                }
+                return new double[]{cx, cy};
+            }
+            remaining -= segLen;
+        }
+        double[] last = shape.get(shape.size() - 1);
+        return new double[]{last[0], last[1]};
     }
 
     /** linkId의 laneIdx번째 차선 중심까지의 횡방향 오프셋(posY, 좌측 엣지 기준)을 반환한다. */

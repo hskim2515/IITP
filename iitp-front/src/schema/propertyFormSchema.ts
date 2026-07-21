@@ -21,34 +21,8 @@ export interface PropertyFormSchemaProps {
  * }
  */
 export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
-    // NETWORK/KTDB/OSM 임포트는 FileImportModal(헤더 파일>가져오기)로 통합 — 스키마 엔트리 제거
-    DEMAND_IMPORT: {
-        type:"",
-        fields: [
-            { name: "filePath", label: "filePath", type: "text" },
-            { name: "fileFormat", label: "fileFormat", type: "text" },
-        ],
-        inputFields: [],
-        rowFields: []
-    },
-    SIGNAL_IMPORT: {
-        type:"",
-        fields: [
-            { name: "filePath", label: "filePath", type: "text" },
-            { name: "fileFormat", label: "fileFormat", type: "text" },
-        ],
-        inputFields: [],
-        rowFields: []
-    },
-    EXPORT: {
-        type:"",
-        fields: [
-            { name: "filePath", label: "filePath", type: "text" },
-            { name: "fileFormat", label: "fileFormat", type: "text" },
-        ],
-        inputFields: [],
-        rowFields: []
-    },
+    // NETWORK/KTDB/OSM/DEMAND/SIGNAL 임포트, EXPORT는 FileImportModal/DataIOPanel
+    // (헤더 파일>가져오기/내보내기)로 통합 — 대응 DB 메뉴 row 자체가 삭제되어 스키마 엔트리도 제거
     SCHEMA_NETWORK:{
         type:"",
         layer: "network",

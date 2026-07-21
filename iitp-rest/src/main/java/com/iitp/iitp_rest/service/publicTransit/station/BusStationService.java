@@ -7,6 +7,7 @@ import com.iitp.iitp_rest.model.publicTransit.TransitMode;
 import com.iitp.iitp_rest.model.publicTransit.bus.*;
 import com.iitp.iitp_rest.repository.BusStationLogsRepository;
 import com.iitp.iitp_rest.repository.BusStationVersionsRepository;
+import com.iitp.iitp_rest.util.FileStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.iitp.iitp_rest.util.RemoteXmlFetch;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
@@ -27,6 +29,7 @@ public class BusStationService {
     private final BusStationLogsRepository busStationLogsRepository;
     private final BusStationJaxbParser busStationJaxbParser;
     private final BusStationMapper busStationMapper;
+    private final FileStorageService fileStorage;
 
     @Value("${database.vehicle_sim.remoteUrl}")
     private String remoteUrl;
@@ -123,6 +126,39 @@ public class BusStationService {
         PublicTransitXml xml = new PublicTransitXml();
         xml.setBusStations(xmlStations);
         return xml;
+    }
+
+    /** List&lt;BusStationResponse&gt; → List&lt;BusStationData&gt; (XML 임포트 → DB 저장용). 필드가 거의 1:1 대응. */
+    public List<BusStationData> toDataList(List<BusStationResponse> responses) {
+        return responses.stream().map(r -> {
+            BusStationData d = new BusStationData();
+            d.setId(r.getId());
+            d.setTransitMode(r.getTransitMode() != null ? r.getTransitMode().getValue() : null);
+            d.setLinkRef(r.getLinkRef());
+            d.setLaneRef(r.getLaneRef());
+            d.setOffset(r.getOffset());
+            d.setType(r.getType() != null ? r.getType().getValue() : null);
+            d.setParkingLots(r.getParkingLots());
+            d.setAddress(r.getAddress());
+            d.setCenter(r.getCenter());
+            d.setLine(r.getLine());
+            return d;
+        }).toList();
+    }
+
+    /** roadStation.xml 업로드 → 파싱 + DB 저장 + SFTP 동기화 */
+    @Transactional
+    public PublicTransitResponse importFromXml(byte[] xmlBytes, String versionId) throws Exception {
+        PublicTransitXml xml = busStationJaxbParser.parse(new ByteArrayInputStream(xmlBytes));
+        PublicTransitResponse response = busStationMapper.toResponse(xml);
+
+        BusStationSaveRequest request = new BusStationSaveRequest();
+        request.setData(toDataList(response.getBusStations()));
+        request.setLogs(new com.iitp.iitp_rest.model.LogsData());
+        saveBusStationsByVersionId(request, versionId);
+
+        fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "roadStation.xml");
+        return response;
     }
 
     private PublicTransitResponse getFromXml(String versionId) throws IOException {

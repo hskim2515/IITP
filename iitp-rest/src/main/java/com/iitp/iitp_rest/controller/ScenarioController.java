@@ -36,13 +36,13 @@ public class ScenarioController {
             @PathVariable Long id,
             @RequestBody ScenarioVersionRequest request) {
         try {
-            return ResponseEntity.ok(scenarioService.createVersion(id, request.key(), request.label()));
+            return ResponseEntity.ok(scenarioService.createVersion(id, request.key(), request.label(), request.sourceVersionKey()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().build();
         }
     }
 
-    record ScenarioVersionRequest(String key, String label) {}
+    record ScenarioVersionRequest(String key, String label, String sourceVersionKey) {}
 
     @DeleteMapping("/{id}/versions/{versionId}")
     public ResponseEntity<Void> deleteVersion(@PathVariable Long id, @PathVariable Long versionId) {

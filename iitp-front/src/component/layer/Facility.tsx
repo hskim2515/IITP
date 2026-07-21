@@ -17,6 +17,8 @@ import { generateDummyPavementMarkings } from '@utils/pavementMarking';
 import { getNetworkForDummyGeneration } from '@utils/generationNetwork';
 import { autoSaveChangedLayers } from '@utils/autoSave';
 import { showAlert, showConfirm } from '@utils/dialog';
+import { NEXTSIM_REQUIRED_KEYS } from '@utils/nextSimValidation';
+import { useNextSimReadinessStore } from '@stores/useNextSimReadinessStore';
 import styles from "@css/ToolsPanel.module.css";
 
 export interface FacilityProps {
@@ -60,6 +62,8 @@ const Facility = ({ fields }: FacilityProps) => {
     const [generatingKey, setGeneratingKey] = useState<string | null>(null);
     const [vehicleExists, setVehicleExists] = useState<boolean | null>(null);
     const [vehicleLoading, setVehicleLoading] = useState(false);
+    // NextSim 준비 상태(도로/신호등 무결성)는 헤더 배지와 상태를 공유 — 여기서는 행 옆 점 표시에만 사용
+    const validation = useNextSimReadinessStore((s) => s.validation);
 
     // store의 currentJsonData 변화를 감지해 visibleFields 재계산
     const [, setDataTick] = useState(0);
@@ -294,6 +298,21 @@ const Facility = ({ fields }: FacilityProps) => {
         poll(0);
     };
 
+    const requiredDotColor = (key: string) => {
+        const v = validation[key];
+        if (v?.loading) return '#888';
+        if (v?.ok === true) return '#2ed573';
+        if (v?.ok === false) return '#ff4757';
+        return '#888';
+    };
+    const requiredDotTitle = (key: string) => {
+        const v = validation[key];
+        if (v?.loading) return '검증 중...';
+        if (v?.ok === true) return 'NextSim 필수 데이터 — 검증 통과';
+        if (v?.ok === false) return `NextSim 필수 데이터 — 문제 ${v.issues?.length ?? 0}건 (헤더의 NextSim 배지 참고)`;
+        return 'NextSim 필수 데이터 — 아직 검증 안 됨 (헤더의 NextSim 배지에서 검증)';
+    };
+
     return (
         <div>
             {/* 데이터 있는 레이어 */}
@@ -301,6 +320,7 @@ const Facility = ({ fields }: FacilityProps) => {
                 const parentKey = field.key;
                 const nestedFields = nestedArrayFieldsMap[parentKey] || [];
                 const isExpanded = expandedParents[parentKey] ?? false;
+                const isRequired = NEXTSIM_REQUIRED_KEYS.has(parentKey);
 
                 return (
                     <div key={parentKey}>
@@ -313,7 +333,12 @@ const Facility = ({ fields }: FacilityProps) => {
                                     {isExpanded ? '▼' : '▶'}
                                 </span>
                             )}
-                            <span style={{ flex: 1 }}>{field.label}</span>
+                            <span style={{ flex: 1 }}>
+                                {field.label}
+                                {isRequired && (
+                                    <span title={requiredDotTitle(parentKey)} style={{ color: requiredDotColor(parentKey), marginLeft: 5, fontSize: 10 }}>●</span>
+                                )}
+                            </span>
                             <button
                                 onClick={(e) => { e.stopPropagation(); handleDelete(field); }}
                                 title={`${field.label} 데이터 삭제`}
@@ -347,7 +372,12 @@ const Facility = ({ fields }: FacilityProps) => {
             {/* 데이터 없고 더미 생성 가능한 레이어 */}
             {emptyDummyFields.map((field) => (
                 <div key={field.key} className={styles.sectionLabel} style={{ opacity: 0.5, cursor: 'default' }}>
-                    <span style={{ flex: 1 }}>{field.label}</span>
+                    <span style={{ flex: 1 }}>
+                        {field.label}
+                        {NEXTSIM_REQUIRED_KEYS.has(field.key) && (
+                            <span title={requiredDotTitle(field.key)} style={{ color: requiredDotColor(field.key), marginLeft: 5, fontSize: 10 }}>●</span>
+                        )}
+                    </span>
                     <button
                         onClick={(e) => { e.stopPropagation(); handleGenerate(field); }}
                         disabled={generatingKey === field.key}

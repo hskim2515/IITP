@@ -41,7 +41,7 @@ public class RailPtLineService {
         log.info("[RailPtLineService] SFTP 저장 완료: {}/railPTLine.xml", scenarioKey);
     }
 
-    private RailPtLineXml parse(InputStream is) {
+    public RailPtLineXml parse(InputStream is) {
         try {
             JAXBContext ctx = JAXBContext.newInstance(RailPtLineXml.class);
             Unmarshaller u = ctx.createUnmarshaller();

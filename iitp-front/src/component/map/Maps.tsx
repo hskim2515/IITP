@@ -144,15 +144,19 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
         };
     }, []);
 
+    // OSM/KTDB bbox 선택(DragBox)과 기준점 선택(coordPick)은 둘 다 OL(2D) 지도에만
+    // 리스너를 건다 — 3D(Cesium) 화면을 클릭해도 아무 반응이 없어 보이는 문제를 막기 위해,
+    // 선택 모드에 들어가면 강제로 2D 단일 화면으로 전환해 클릭이 항상 OL로 들어가게 한다.
+    const forceOl2D = selecting || coordPickActive;
     useEffect(() => {
-        if (selecting) {
+        if (forceOl2D) {
             prevModeRef.current = mapViewMode;
             setMapViewMode('2D');
         } else if (prevModeRef.current !== null) {
             setMapViewMode(prevModeRef.current);
             prevModeRef.current = null;
         }
-    }, [selecting]);
+    }, [forceOl2D]);
 
     const handleMouseDown = () => {
         isResizing.current = true;

@@ -5,6 +5,7 @@ import com.iitp.iitp_rest.model.network.NetworkDiffRequest;
 import com.iitp.iitp_rest.model.network.NetworkResponse;
 import com.iitp.iitp_rest.model.network.NetworkXml;
 import com.iitp.iitp_rest.model.network.OsmSaveResponse;
+import com.iitp.iitp_rest.model.odmatrix.OdMatrixXml;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerLog;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerSaveRequest;
 import com.iitp.iitp_rest.repository.BusStationLogsRepository;
@@ -19,14 +20,18 @@ import com.iitp.iitp_rest.repository.SignalVersionsRepository;
 import com.iitp.iitp_rest.repository.VehicleRouteRepository;
 import com.iitp.iitp_rest.repository.XmlLayerLogRepository;
 import com.iitp.iitp_rest.repository.XmlLayerVersionRepository;
+import com.iitp.iitp_rest.service.network.NetworkIdNormalizer;
 import com.iitp.iitp_rest.service.network.NetworkJaxbParser;
 import com.iitp.iitp_rest.service.network.NetworkService;
 import com.iitp.iitp_rest.service.network.NetworkTileService;
 import com.iitp.iitp_rest.service.network.OsmNetworkValidator;
+import com.iitp.iitp_rest.service.odmatrix.OdMatrixService;
+import com.iitp.iitp_rest.service.odmatrix.OdTerminalIdBandService;
 import com.iitp.iitp_rest.service.scenario.ScenarioService;
 import com.iitp.iitp_rest.service.xmllayer.XmlLayerConverter;
 import com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService;
 import com.iitp.iitp_rest.util.FileStorageService;
+import com.iitp.iitp_rest.util.VehicleDataReader;
 import org.springframework.transaction.annotation.Transactional;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -56,6 +61,9 @@ public class NetworkController {
     private final NetworkService networkService;
     private final NetworkTileService networkTileService;
     private final com.iitp.iitp_rest.service.network.NetworkStreamingDiffService networkStreamingDiffService;
+    private final NetworkIdNormalizer networkIdNormalizer;
+    private final OdTerminalIdBandService odTerminalIdBandService;
+    private final OdMatrixService odMatrixService;
     private final NetworkMapper networkMapper;
     private final NetworkJaxbParser networkJaxbParser;
     private final FileStorageService fileStorage;
@@ -74,6 +82,7 @@ public class NetworkController {
     private final XmlLayerVersionRepository xmlLayerVersionRepository;
     private final XmlLayerLogRepository xmlLayerLogRepository;
     private final VehicleRouteRepository vehicleRouteRepository;
+    private final VehicleDataReader vehicleDataReader;
 
     /** DB 우선, 없으면 XML fallback → NetworkResponse 반환 */
     @GetMapping("/{versionId}")
@@ -198,7 +207,7 @@ public class NetworkController {
      * 기존 전체 저장 {@code POST /{versionId}} 와 병존. 전국 규모에서 저장 payload 를 변경분으로 축소.
      */
     @PostMapping("/{versionId}/diff")
-    public ResponseEntity<Void> saveNetworkDiff(
+    public ResponseEntity<Map<String, Object>> saveNetworkDiff(
             @PathVariable String versionId,
             @RequestBody NetworkDiffRequest request) {
         log.info("[NetworkController] POST diff versionId={} upsertL={} delL={} upsertN={} delN={}",
@@ -222,7 +231,7 @@ public class NetworkController {
                         request.getDeleteLinkIds(), request.getDeleteNodeIds());
                 xmlLayerVersionService.deleteVersion(LAYER_KEY, versionId); // stale jsonb → 파일 폴백
                 networkTileService.invalidate(versionId);
-                return ResponseEntity.ok().build();
+                return ResponseEntity.ok(Map.of("linkIdRemap", Map.of(), "nodeIdRemap", Map.of(), "odNodeIdRemap", Map.of()));
             }
 
             NetworkResponse merged = networkTileService.applyDiff(
@@ -230,18 +239,50 @@ public class NetworkController {
                     request.getUpsertLinks(), request.getUpsertNodes(),
                     request.getDeleteLinkIds(), request.getDeleteNodeIds());
 
+            // 1b) 수동 편집(지도 드로우)이 붙인 id는 Network ID naming 스펙과 무관한 프론트
+            // 임시값(Date.now())이라, 형식 자체가 안 맞는 신규 노드/링크만 여기서 채번한다.
+            // 이미 규칙에 맞는 기존 노드는 이번 편집으로 degree가 바뀌어도 여기서는 절대
+            // 재채번하지 않는다 — odmatrix.xml/signal.xml 등 다른 레이어가 이미 그 id를
+            // 참조하고 있을 수 있어서다(아래 1c 참고).
+            NetworkIdNormalizer.NormalizeResult normalized = networkIdNormalizer.normalize(merged);
+            merged = normalized.network();
+
             // 2) 기존 저장 경로 재사용 (DB 저장 + network.xml 파일 동기화 + 타일 캐시 무효화)
             Map<String, Object> cleanData = XmlLayerConverter.toMap(merged);
             xmlLayerVersionService.save(LAYER_KEY, versionId, cleanData, new com.iitp.iitp_rest.model.LogsData());
             networkTileService.invalidate(versionId);
+
+            Map<String, String> odBandRemap = Map.of();
             try {
                 NetworkXml networkXml = networkMapper.fromResponse(merged);
+
+                // 1c) OD 매트릭스가 이미 source/sink로 참조 중인 노드가 이번 네트워크 편집으로
+                // degree 드리프트를 일으켜 id 대역(터미널 11xxxxxx/일반 10xxxxxx)이 실제와 안
+                // 맞게 됐다면 보정한다 — NextSim route-generator가 이 대역 불일치로 실제 크래시
+                // 함이 확인돼 있고(OdTerminalIdBandService 참고), prune-unused-terminals 설계상
+                // 크래시 유발 경로는 OD 참조 노드로 좁혀지므로 그 외 노드는 건드리지 않는다.
+                odBandRemap = odTerminalIdBandService.reconcileAfterNetworkEdit(versionId, networkXml);
+                if (!odBandRemap.isEmpty()) {
+                    try {
+                        OdMatrixXml currentOd = odMatrixService.getByVersionId(versionId);
+                        odTerminalIdBandService.applyRemapToOdMatrix(currentOd, odBandRemap);
+                        odMatrixService.saveByVersionId(versionId, currentOd);
+                        xmlLayerVersionService.save("od_matrix", versionId,
+                                XmlLayerConverter.toMap(currentOd), new com.iitp.iitp_rest.model.LogsData());
+                    } catch (Exception odErr) {
+                        log.warn("[NetworkController] OD 참조 id 대역 보정 반영 실패(무시): {}", odErr.getMessage());
+                    }
+                }
+
                 byte[] xmlBytes = networkJaxbParser.marshal(networkXml);
                 fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "network.xml");
             } catch (Exception e) {
                 log.warn("[NetworkController] diff 저장 network.xml 동기화 실패 (DB는 정상): {}", e.getMessage());
             }
-            return ResponseEntity.ok().build();
+            return ResponseEntity.ok(Map.of(
+                    "linkIdRemap", normalized.linkIdRemap(),
+                    "nodeIdRemap", normalized.nodeIdRemap(),
+                    "odNodeIdRemap", odBandRemap));
         } catch (java.io.FileNotFoundException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (Exception e) {
@@ -363,12 +404,20 @@ public class NetworkController {
                     .body(new OsmSaveResponse(null, validation.warnings(), validation.errors()));
         }
 
+        // versionId 폴더에 저장 — 모든 읽기 경로(getNetworkXmlByVersionId: export/backup/타일 DB
+        // 전체재빌드, OsmImportController/KtdbImportController 의 다른 두 네트워크 생성 경로)가
+        // versionId 폴더만 읽고 상위 scenarioKey 폴더로 폴백하지 않는다. 예전엔 여기만 scenarioKey
+        // (상위 시나리오 공유 폴더)에 썼던 탓에, 임포트가 그 순간엔 반영된 것처럼 보여도(같은 요청의
+        // in-memory 응답을 타일 캐시에 바로 적재하므로) export/backup 은 즉시 낡은 데이터를 돌려주고,
+        // 서버 재시작 등으로 타일 캐시가 파일에서 다시 빌드되면 방금 임포트한 내용이 통째로 사라졌다
+        // (실측 재현: 재임포트 직후 /export·/backup 이 예전 값을 반환).
         String scenarioKey = scenarioVersionRepository.findByKeyWithScenario(versionId)
                 .map(v -> v.getScenario().getKey())
                 .orElse(versionId);
-        fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), scenarioKey, "network.xml");
-        log.info("SFTP 업로드 완료: {}/network.xml (scenarioKey={}, versionId={})", scenarioKey, scenarioKey, versionId);
+        fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "network.xml");
+        log.info("SFTP 업로드 완료: {}/network.xml (versionId={})", versionId, versionId);
         // GET /network 은 DB(xml_layer_versions) 우선 — 옛 편집본 레코드를 지워야 새 XML이 반영된다
+        // (scenarioKey 쪽도 과거에 거기 쓰던 시절의 낡은 DB 오버라이드가 남아있을 수 있어 함께 정리)
         xmlLayerVersionService.deleteVersion(LAYER_KEY, versionId);
         if (!scenarioKey.equals(versionId)) xmlLayerVersionService.deleteVersion(LAYER_KEY, scenarioKey);
 
@@ -393,6 +442,141 @@ public class NetworkController {
         }
 
         return ResponseEntity.ok(new OsmSaveResponse(response, validation.warnings(), validation.errors()));
+    }
+
+    /**
+     * 이미 임포트된 네트워크의 기준점(base_lat/base_lon)만 다시 잡는다 — 파일 재업로드 없이,
+     * 로컬 shape/center 좌표는 그대로 두고 WGS84 좌표 전체를 새 기준점으로 재계산해 SFTP에
+     * 재저장한다. /import(파일 재업로드) 와 같은 후처리(DB 캐시 무효화, 시나리오 좌표 동기화,
+     * 타일 캐시 재빌드)를 그대로 따른다.
+     */
+    @PostMapping("/{versionId}/reanchor")
+    public ResponseEntity<OsmSaveResponse> reanchorNetwork(
+            @PathVariable String versionId,
+            @RequestParam("latitude") double latitude,
+            @RequestParam("longitude") double longitude
+    ) {
+        log.info("네트워크 기준점 재설정: versionId={}, lat={}, lon={}", versionId, latitude, longitude);
+        try {
+            NetworkXml networkXml = networkService.reanchor(versionId, latitude, longitude);
+
+            OsmNetworkValidator.Result validation = validator.validate(networkXml);
+            if (!validation.valid()) {
+                log.warn("네트워크 검증 실패: {}", validation.errors());
+                return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                        .body(new OsmSaveResponse(null, validation.warnings(), validation.errors()));
+            }
+
+            byte[] xmlBytes = networkJaxbParser.marshal(networkXml);
+            fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "network.xml");
+            log.info("SFTP 업로드 완료: {}/network.xml (기준점 재설정, versionId={})", versionId, versionId);
+
+            String scenarioKey = scenarioVersionRepository.findByKeyWithScenario(versionId)
+                    .map(v -> v.getScenario().getKey())
+                    .orElse(versionId);
+            xmlLayerVersionService.deleteVersion(LAYER_KEY, versionId);
+            if (!scenarioKey.equals(versionId)) xmlLayerVersionService.deleteVersion(LAYER_KEY, scenarioKey);
+
+            // 네트워크뿐 아니라 정류장/차량 시뮬레이션도 Scenario 좌표를 기준점으로 쓰므로 함께 갱신
+            scenarioService.updateCoordinatesByKey(versionId, latitude, longitude);
+            log.info("시나리오 기준 좌표 저장 완료: versionId={}, lat={}, lon={}", versionId, latitude, longitude);
+            invalidateVehicleRouteCache(versionId);
+
+            NetworkResponse response = networkMapper.toResponse(networkXml);
+
+            try {
+                networkTileService.invalidate(versionId);
+                networkTileService.ingest(versionId, response);
+            } catch (Exception e) {
+                log.warn("[reanchorNetwork] 타일 사전 빌드 실패 (첫 요청 시 lazy 빌드로 폴백): {}", e.getMessage());
+            }
+
+            return ResponseEntity.ok(new OsmSaveResponse(response, validation.warnings(), validation.errors()));
+        } catch (java.io.FileNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            log.error("[NetworkController] 기준점 재설정 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * 2점 캘리브레이션 — 네트워크 상에 표시된 두 지점(src)이 실제로는 어디에 있어야 하는지(dst)
+     * 지정하면 회전각·축척·기준점을 함께 역산해 적용한다. reanchor(위치만 이동)의 상위 호환.
+     */
+    @PostMapping("/{versionId}/calibrate")
+    public ResponseEntity<OsmSaveResponse> calibrateNetwork(
+            @PathVariable String versionId,
+            @RequestParam double srcLat1, @RequestParam double srcLon1,
+            @RequestParam double dstLat1, @RequestParam double dstLon1,
+            @RequestParam double srcLat2, @RequestParam double srcLon2,
+            @RequestParam double dstLat2, @RequestParam double dstLon2
+    ) {
+        log.info("네트워크 2점 캘리브레이션: versionId={}, p1=({},{})->({},{}), p2=({},{})->({},{})",
+                versionId, srcLat1, srcLon1, dstLat1, dstLon1, srcLat2, srcLon2, dstLat2, dstLon2);
+        try {
+            NetworkXml networkXml = networkService.calibrate(
+                    versionId, srcLat1, srcLon1, dstLat1, dstLon1, srcLat2, srcLon2, dstLat2, dstLon2);
+
+            OsmNetworkValidator.Result validation = validator.validate(networkXml);
+            if (!validation.valid()) {
+                log.warn("네트워크 검증 실패: {}", validation.errors());
+                return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                        .body(new OsmSaveResponse(null, validation.warnings(), validation.errors()));
+            }
+
+            byte[] xmlBytes = networkJaxbParser.marshal(networkXml);
+            fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "network.xml");
+            log.info("SFTP 업로드 완료: {}/network.xml (캘리브레이션, versionId={})", versionId, versionId);
+
+            String scenarioKey = scenarioVersionRepository.findByKeyWithScenario(versionId)
+                    .map(v -> v.getScenario().getKey())
+                    .orElse(versionId);
+            xmlLayerVersionService.deleteVersion(LAYER_KEY, versionId);
+            if (!scenarioKey.equals(versionId)) xmlLayerVersionService.deleteVersion(LAYER_KEY, scenarioKey);
+
+            // Scenario.latitude/longitude/baseRotation/baseScale 도 새 기준점으로 동기화 —
+            // 차량 시뮬레이션(CoordinateConverter)이 network.xml이 아니라 이 Scenario 값을
+            // 기준점으로 쓰므로, 회전/축척까지 함께 넘기지 않으면 도로는 회전·확대됐는데
+            // 차량만 이동(translation)만 반영돼 도로에서 어긋나 보이는 문제가 생긴다.
+            scenarioService.updateCoordinatesByKey(
+                    versionId, networkXml.getBaseLat(), networkXml.getBaseLon(),
+                    networkXml.getBaseRotation(), networkXml.getBaseScale());
+            invalidateVehicleRouteCache(versionId);
+
+            NetworkResponse response = networkMapper.toResponse(networkXml);
+
+            try {
+                networkTileService.invalidate(versionId);
+                networkTileService.ingest(versionId, response);
+            } catch (Exception e) {
+                log.warn("[calibrateNetwork] 타일 사전 빌드 실패 (첫 요청 시 lazy 빌드로 폴백): {}", e.getMessage());
+            }
+
+            return ResponseEntity.ok(new OsmSaveResponse(response, validation.warnings(), validation.errors()));
+        } catch (java.io.FileNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                    .body(new OsmSaveResponse(null, List.of(), List.of(e.getMessage())));
+        } catch (Exception e) {
+            log.error("[NetworkController] 캘리브레이션 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * 기준점 재설정(reanchor/calibrate) 후 차량 시뮬레이션이 이전 위치에 남아있지 않도록
+     * 관련 캐시를 모두 지운다 — VehicleController가 차량 좌표를 매 요청마다 재계산하지 않고
+     * "완성된 WGS84 좌표가 이미 포함된 CZML/positions"를 DB(vehicle_routes)와
+     * VehicleDataReader의 SQLite 커넥션 캐시에 재사용하기 때문에, Scenario 좌표만 갱신해서는
+     * 다음 재생 요청도 여전히 예전 위치로 계산된 캐시를 그대로 돌려준다.
+     * vehicleDataReader.invalidateDbCache()는 등록된 리스너를 통해 VehicleController의
+     * viewportCtxCache(스트리밍용 인메모리 캐시)도 함께 비운다.
+     */
+    private void invalidateVehicleRouteCache(String versionId) {
+        vehicleRouteRepository.deleteByVersionId(versionId);
+        vehicleDataReader.invalidateDbCache(versionId);
     }
 
     private static final ObjectMapper JSON_MAPPER = new ObjectMapper();

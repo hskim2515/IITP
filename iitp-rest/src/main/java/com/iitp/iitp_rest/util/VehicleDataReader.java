@@ -363,9 +363,16 @@ public class VehicleDataReader {
                  Statement stmt = conn.createStatement()) {
                 stmt.execute("ATTACH DATABASE '" + tempDbFile.getAbsolutePath() + "' AS vehicle_sim_db");
 
-                boolean hasDebugging = tableExists(conn, "vehicle_sim_db", "VehicleEventDebugging");
-                boolean hasEvent = !hasDebugging && tableExists(conn, "vehicle_sim_db", "VehicleEvent");
-                if (!hasDebugging && !hasEvent) return out; // vehicle_sim 테이블 형식은 미지원(좌표 기반) → 빈 결과
+                // ⚠️ VehicleEvent(신형)를 반드시 먼저 확인할 것 — 이 파일이 파일러 두 테이블을 모두
+                // 갖고 있을 수 있는데(VehicleEventDebugging이 빈 레거시 스키마로 같이 존재하는 경우),
+                // "존재 여부만" 보고 VehicleEventDebugging을 먼저 고르면 실제 데이터(VehicleEvent)가
+                // 아니라 빈 테이블을 조회하게 되어 항상 0건이 나온다(readVehicleEventsFiltered 등
+                // 이 파일의 다른 메서드는 전부 VehicleEvent를 먼저 확인하는데 이 메서드만 반대였음 —
+                // link-traffic 집계가 늘 빈 응답을 내던 원인, TrafficHeatmapCesiumLayer/
+                // TrafficTailCesiumLayer가 전혀 안 보이던 버그).
+                boolean hasEvent = tableExists(conn, "vehicle_sim_db", "VehicleEvent");
+                boolean hasDebugging = !hasEvent && tableExists(conn, "vehicle_sim_db", "VehicleEventDebugging");
+                if (!hasEvent && !hasDebugging) return out; // vehicle_sim 테이블 형식은 미지원(좌표 기반) → 빈 결과
                 String tableName = hasEvent ? "VehicleEvent" : "VehicleEventDebugging";
                 boolean hasSpd = hasDebugging;
 
@@ -391,6 +398,90 @@ public class VehicleDataReader {
             }
         } catch (Exception e) {
             logger.error("[readLinkTraffic] 집계 실패 versionId={}", versionId, e);
+        }
+        return out;
+    }
+
+    /** 차량 1대의 시간창 내 시작/끝 로컬 좌표 (원거리 OD 흐름 집계용) */
+    public record VehicleOd(double fromX, double fromY, double toX, double toY) {}
+
+    /**
+     * bbox 내 링크를 지나는 차량들의 시간창 내 첫/마지막 위치(로컬 좌표, 미변환) 목록 — OD 흐름
+     * 집계(가장 축소된 overview 티어)용. 좌표 변환(로컬→위경도)은 Scenario 정보가 필요해 호출측
+     * (AnalyticsController)에서 수행한다 — 이 리더는 DB 접근만 담당.
+     *
+     * <p>차량 선별은 readVehicleEventsFiltered와 동일(시간창 내 bbox 링크를 지난 veh_id).
+     * SQLite 윈도우 함수 버전 의존을 피하기 위해 MIN/MAX(timestep)로 첫/끝 시각을 구한 뒤
+     * 그 시각의 실제 row를 자기조인으로 가져오는 2단계 방식을 쓴다.
+     *
+     * @param maxVehicles 선별 차량 수 상한 (응답 폭주 방지 — 집계용이라 개별 차량 상한보다 낮아도 됨)
+     */
+    public List<VehicleOd> readVehicleFirstLastPositions(String versionId, List<String> linkIds,
+                                                          double fromTime, double toTime, int maxVehicles) {
+        List<VehicleOd> out = new ArrayList<>();
+        if (linkIds == null || linkIds.isEmpty()) return out;
+
+        try {
+            File dbFile = prepareDbFileCached(versionId);
+            try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:");
+                 Statement stmt = conn.createStatement()) {
+                stmt.execute("ATTACH DATABASE '" + dbFile.getAbsolutePath() + "' AS vehicle_sim_db");
+
+                boolean isNewSchema = tableExists(conn, "vehicle_sim_db", "VehicleEvent");
+                String tableName = isNewSchema ? "VehicleEvent" : "VehicleEventDebugging";
+                boolean useTimeWindow = !(fromTime == 0 && toTime == 0);
+                String timeFilter = useTimeWindow ? " AND timestep >= " + fromTime + " AND timestep < " + toTime : "";
+
+                stmt.execute("CREATE TEMP TABLE bbox_links (id TEXT PRIMARY KEY)");
+                try (PreparedStatement ps = conn.prepareStatement("INSERT OR IGNORE INTO bbox_links(id) VALUES (?)")) {
+                    for (String id : linkIds) { ps.setString(1, id); ps.addBatch(); }
+                    ps.executeBatch();
+                }
+
+                // 1) 시간창 내 bbox 링크를 지난 차량 (상한 적용 — 집계 표본이라 정밀 선별 불필요)
+                stmt.execute("CREATE TEMP TABLE sel_vehicles AS " +
+                        "SELECT DISTINCT veh_id AS id FROM vehicle_sim_db." + tableName + " e " +
+                        "JOIN bbox_links b ON e.link_id = b.id WHERE 1=1" + timeFilter +
+                        " LIMIT " + maxVehicles);
+
+                // 2) 선별 차량별 시간창 내 첫/끝 시각
+                stmt.execute("CREATE TEMP TABLE veh_range AS " +
+                        "SELECT e.veh_id AS id, MIN(e.timestep) AS min_t, MAX(e.timestep) AS max_t " +
+                        "FROM vehicle_sim_db." + tableName + " e " +
+                        "JOIN sel_vehicles s ON e.veh_id = s.id WHERE 1=1" + timeFilter +
+                        " GROUP BY e.veh_id");
+
+                // 3) 그 시각의 실제 좌표 (min_t/max_t가 같으면 첫 row만 나옴 — Java에서 스킵)
+                String sql = "SELECT e.veh_id, e.timestep, e.pos_x, e.pos_y " +
+                        "FROM vehicle_sim_db." + tableName + " e " +
+                        "JOIN veh_range g ON e.veh_id = g.id AND (e.timestep = g.min_t OR e.timestep = g.max_t) " +
+                        "WHERE 1=1" + timeFilter + " ORDER BY e.veh_id, e.timestep";
+
+                String curVehId = null;
+                double fx = 0, fy = 0, tx = 0, ty = 0;
+                boolean haveFrom = false, haveTo = false;
+                try (ResultSet rs = stmt.executeQuery(sql)) {
+                    while (rs.next()) {
+                        String vehId = rs.getString("veh_id");
+                        if (!vehId.equals(curVehId)) {
+                            if (haveFrom && haveTo && (fx != tx || fy != ty)) {
+                                out.add(new VehicleOd(fx, fy, tx, ty));
+                            }
+                            curVehId = vehId;
+                            fx = rs.getFloat("pos_x"); fy = rs.getFloat("pos_y");
+                            haveFrom = true; haveTo = false;
+                        } else {
+                            tx = rs.getFloat("pos_x"); ty = rs.getFloat("pos_y");
+                            haveTo = true;
+                        }
+                    }
+                    if (haveFrom && haveTo && (fx != tx || fy != ty)) {
+                        out.add(new VehicleOd(fx, fy, tx, ty));
+                    }
+                }
+            }
+        } catch (SQLException | IOException e) {
+            logger.error("[readVehicleFirstLastPositions] 조회 실패 versionId={}", versionId, e);
         }
         return out;
     }

@@ -97,19 +97,40 @@ public class SumoNetConverter {
                 inEdges.computeIfAbsent(e.toJunction(), k -> new ArrayList<>()).add(e.sumoId());
         }
 
-        // ID 재부여
+        // Link/Node ID 재부여 (Network ID naming 스펙) — Link=2, Node(교차로)=1,
+        // Terminal(출입구)=11 로 시작하는 8자리 숫자. Link와 일반 Node는 생성 순서(=엣지
+        // 원본 순서로 스캔)에 따라 하나의 인덱스를 공유하고, Terminal은 연결된 단 하나의
+        // Link와 뒷자리 6자리가 동일해야 한다 — 엣지를 스캔하며 그 자리에서 endpoint
+        // junction을 처음 만나면 바로 배정하면 두 규칙을 한 번에 만족한다.
         Map<String, Long> nodeIdMap = new LinkedHashMap<>();
-        long intCnt = 10000001L, termCnt = 11000001L;
-        for (JunctionInfo junc : junctions.values()) {
-            int total = inEdges.getOrDefault(junc.sumoId(), List.of()).size()
-                      + outEdges.getOrDefault(junc.sumoId(), List.of()).size();
-            boolean terminal = total <= 1 || "dead_end".equals(junc.type());
-            nodeIdMap.put(junc.sumoId(), terminal ? termCnt++ : intCnt++);
-        }
-
         Map<String, Long> linkIdMap = new LinkedHashMap<>();
-        long linkCnt = 20000001L;
-        for (String id : edges.keySet()) linkIdMap.put(id, linkCnt++);
+        NetworkIdAssigner idAssigner = new NetworkIdAssigner();
+        for (EdgeInfo e : edges.values()) {
+            long linkId = idAssigner.nextLinkId();
+            linkIdMap.put(e.sumoId(), linkId);
+            // 양 끝이 둘 다 터미널(고립된 신규 세그먼트 등)이면 뒷자리 파생은 한쪽에만 적용 —
+            // 안 그러면 둘 다 같은 링크에서 파생돼 서로 다른 두 junction이 같은 id를 갖게 됨.
+            boolean derivedTerminalUsed = false;
+            for (String juncId : new String[]{e.fromJunction(), e.toJunction()}) {
+                if (juncId == null || !junctions.containsKey(juncId) || nodeIdMap.containsKey(juncId)) continue;
+                JunctionInfo junc = junctions.get(juncId);
+                int total = inEdges.getOrDefault(juncId, List.of()).size()
+                          + outEdges.getOrDefault(juncId, List.of()).size();
+                boolean terminal = total <= 1 || "dead_end".equals(junc.type());
+                if (!terminal) {
+                    nodeIdMap.put(juncId, idAssigner.nextNormalNodeId());
+                } else if (!derivedTerminalUsed) {
+                    nodeIdMap.put(juncId, NetworkIdAssigner.terminalIdFor(linkId));
+                    derivedTerminalUsed = true;
+                } else {
+                    nodeIdMap.put(juncId, idAssigner.nextIsolatedTerminalId());
+                }
+            }
+        }
+        // 어느 엣지에도 연결되지 않은 고립 junction(비정상 데이터) — 페어링할 Link가 없어 fallback
+        for (String juncId : junctions.keySet()) {
+            nodeIdMap.putIfAbsent(juncId, idAssigner.nextIsolatedTerminalId());
+        }
 
         // connection key → 우리 ID 매핑 (신호 추출에 사용)
         Map<String, Long> connKeyToId = new HashMap<>();

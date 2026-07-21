@@ -84,9 +84,12 @@ const TopMenu: React.FC<{ title: string; children: any[] }> = ({ title, children
     const openSession = (item: any) => (useWorkflowStore.getState() as any).openSession(item);
     const [open, setOpen] = useState(false);
 
+    const availableChildren = children.filter((item: any) => item.available !== 'N');
+
     const handleItemClick = (item: any) => {
         setOpen(false);
-        const hasChildren = item.children && item.children.length > 0;
+        const visibleChildren = (item.children ?? []).filter((c: any) => c.available !== 'N');
+        const hasChildren = visibleChildren.length > 0;
         if (hasChildren) {
             setActiveDropdownMenu(item);
         } else {
@@ -105,7 +108,7 @@ const TopMenu: React.FC<{ title: string; children: any[] }> = ({ title, children
             <span className={styles.title}>{title}</span>
             {open && (
                 <div className={styles.dropdown}>
-                    {children.map((item: any) => (
+                    {availableChildren.map((item: any) => (
                         <div key={item.menuId} className={styles.item} onClick={() => handleItemClick(item)}>
                             {item.nameKor}
                         </div>
@@ -152,16 +155,14 @@ const HeaderMenu = () => {
 
     return (
         <>
-            <nav className={styles['nav']}>
-                <FileDropdown onSelect={handleFileAction} />
-                {topMenus.map(menuItem => (
-                    <TopMenu
-                        key={menuItem.menuId}
-                        title={menuItem.nameKor ?? ''}
-                        children={menuItem.children ?? []}
-                    />
-                ))}
-            </nav>
+            <FileDropdown onSelect={handleFileAction} />
+            {topMenus.map(menuItem => (
+                <TopMenu
+                    key={menuItem.menuId}
+                    title={menuItem.nameKor ?? ''}
+                    children={menuItem.children ?? []}
+                />
+            ))}
 
             {activeAction === 'import' && (
                 <FileImportModal onClose={() => setActiveAction(null)} />

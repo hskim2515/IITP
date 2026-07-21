@@ -143,9 +143,27 @@ export async function saveNetworkDiffTileAware(versionKey: string): Promise<'sav
         ? { ...diff, baseVersionId: String(activeId) }
         : diff;
 
-    await axiosInstance({ method: 'POST', url: `/network/${versionKey}/diff`, data: payload });
+    const res = await axiosInstance({ method: 'POST', url: `/network/${versionKey}/diff`, data: payload });
     store.clearDeletedRecords?.();
     // setChange(false) → isChanged true→false 구독(onEditsCleared)이 편집 마스킹 정리 + MVT 재fetch
     store.setChange(false);
+
+    // 수동 편집으로 새로 그린 노드/링크는 프론트 임시 id(Date.now())를 들고 있었는데,
+    // 백엔드가 저장 시점에 Network ID naming 규칙(8자리 Link/Node/Terminal)으로 재채번했을
+    // 수 있다(NetworkIdNormalizer, 신규 요소만). odNodeIdRemap은 OD 매트릭스가 이미 참조
+    // 중이던 기존 노드가 이번 편집으로 degree 드리프트를 일으켜 대역이 재조정된 경우
+    // (OdTerminalIdBandService — 그 외 기존 노드는 절대 안 바뀜). 프론트가 들고 있던 id는
+    // 이제 stale이므로 로컬에서 직접 교체하는 대신 뷰포트를 서버 authoritative 데이터로
+    // 다시 받아온다.
+    const linkIdRemap = res?.data?.linkIdRemap;
+    const nodeIdRemap = res?.data?.nodeIdRemap;
+    const odNodeIdRemap = res?.data?.odNodeIdRemap;
+    const hasRemap = (linkIdRemap && Object.keys(linkIdRemap).length > 0)
+        || (nodeIdRemap && Object.keys(nodeIdRemap).length > 0)
+        || (odNodeIdRemap && Object.keys(odNodeIdRemap).length > 0);
+    if (hasRemap) {
+        const { refreshNetworkTiles } = await import('@utils/networkRefresh');
+        refreshNetworkTiles();
+    }
     return 'saved';
 }

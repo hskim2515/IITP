@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { BaseMapType, useMapStore } from '@stores/useMapStore';
 import { LayerField } from "@stores/useLayerSchemaStore";
 import { useLayerStore } from "@stores/useLayerStore";
+import { useCesiumStore } from "@stores/useCesiumStore";
 import styles from "@css/ToolsPanel.module.css";
 
 export interface Props {
@@ -12,6 +13,8 @@ const BaseMap = ({ fields }: Props) => {
     const currentBaseMap = useMapStore.state.currentBaseMap();
     const setCurrentBaseMap = useMapStore.actions.setCurrentBaseMap();
     const layerManager = useLayerStore.state.layerManager();
+    const terrainEnabled = useCesiumStore.state.terrainEnabled();
+    const setTerrainEnabled = useCesiumStore.getState().setTerrainEnabled;
 
     useEffect(() => {
         if (currentBaseMap) return;
@@ -36,6 +39,15 @@ const BaseMap = ({ fields }: Props) => {
 
     return (
         <div>
+            <label className={styles.layerItem}>
+                <input
+                    type="checkbox"
+                    checked={terrainEnabled}
+                    onChange={(e) => setTerrainEnabled(e.target.checked)}
+                />
+                지형
+            </label>
+            <div className={styles.sectionDivider} />
             {allFields.map(field => (
                 <label key={field.key} className={styles.layerItem}>
                     <input

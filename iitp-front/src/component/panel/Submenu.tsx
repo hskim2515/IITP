@@ -20,11 +20,13 @@ const Submenu = () => {
 
   if (!activeDropdownMenu) return null;
 
-  const submenuData: MenuTreeResponse[] | undefined = activeDropdownMenu.children;
+  const submenuData: MenuTreeResponse[] | undefined = activeDropdownMenu.children?.filter(
+      (item) => item.available !== 'N'
+  );
 
   // propertyFormSchema 없이도 전용 세션을 여는 메뉴 코드 목록
   // (KTDB/OSM/NETWORK 임포트는 FileImportModal(헤더 파일>가져오기)로 통합되어 제거)
-  const MODAL_MENU_CODES = new Set(['OD_MATRIX']);
+  const MODAL_MENU_CODES = new Set(['OD_MATRIX', 'PASSENGER']);
 
   const handleClickSubmenu = (item: MenuTreeResponse) => {
     if(!item.menuCode) return

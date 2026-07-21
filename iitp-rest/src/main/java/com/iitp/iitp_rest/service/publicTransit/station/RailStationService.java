@@ -2,8 +2,12 @@ package com.iitp.iitp_rest.service.publicTransit.station;
 
 import com.iitp.iitp_rest.model.BaseVersion;
 import com.iitp.iitp_rest.model.geometry.Coordinates;
+import com.iitp.iitp_rest.model.publicTransit.rail.ExitData;
+import com.iitp.iitp_rest.model.publicTransit.rail.RailPublicTransitResponse;
 import com.iitp.iitp_rest.model.publicTransit.rail.RailPublicTransitXml;
+import com.iitp.iitp_rest.model.publicTransit.rail.RailStationData;
 import com.iitp.iitp_rest.model.publicTransit.rail.RailStationLogs;
+import com.iitp.iitp_rest.model.publicTransit.rail.RailStationResponse;
 import com.iitp.iitp_rest.model.publicTransit.rail.RailStationSaveRequest;
 import com.iitp.iitp_rest.model.publicTransit.rail.RailStationVersion;
 import com.iitp.iitp_rest.model.scenario.Scenario;
@@ -12,8 +16,10 @@ import com.iitp.iitp_rest.repository.RailStationLogsRepository;
 import com.iitp.iitp_rest.repository.RailStationVersionsRepository;
 import com.iitp.iitp_rest.repository.ScenarioRepository;
 import com.iitp.iitp_rest.repository.ScenarioVersionRepository;
+import com.iitp.iitp_rest.mapper.publicTransit.RailStationMapper;
 import com.iitp.iitp_rest.service.network.RoadService;
 import com.iitp.iitp_rest.util.CoordinateUtils;
+import com.iitp.iitp_rest.util.FileStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -21,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import com.iitp.iitp_rest.util.RemoteXmlFetch;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.List;
@@ -35,7 +42,9 @@ public class RailStationService {
     private final RailStationVersionsRepository railStationVersionsRepository;
     private final RailStationLogsRepository railStationLogsRepository;
     private final RailStationJaxbParser railStationJaxbParser;
+    private final RailStationMapper railStationMapper;
     private final RoadService roadService;
+    private final FileStorageService fileStorage;
 
     @Value("${database.vehicle_sim.remoteUrl}")
     private String remoteUrl;
@@ -96,9 +105,61 @@ public class RailStationService {
         return railStationJaxbParser.marshal(xml);
     }
 
+    /** railStation.xml 업로드 → 파싱(좌표 변환 포함) + DB 저장 + SFTP 동기화 */
+    @Transactional
+    public RailPublicTransitResponse importFromXml(byte[] xmlBytes, String versionId) throws Exception {
+        RailPublicTransitXml xml = streamToDto(new ByteArrayInputStream(xmlBytes));
+        xml = transformRailPublicTransitCoordinates(versionId, xml);
+        RailPublicTransitResponse response = railStationMapper.toResponse(xml);
+
+        RailStationSaveRequest request = new RailStationSaveRequest();
+        request.setData(toDataList(response.getRailStations()));
+        request.setLogs(new com.iitp.iitp_rest.model.LogsData());
+        saveRailStationByVersionId(request, versionId);
+
+        fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "railStation.xml");
+        return response;
+    }
+
+    /**
+     * List&lt;RailStationResponse&gt; → List&lt;RailStationData&gt; (XML 임포트 → DB 저장용).
+     * lineList는 응답에서 공백 구분 원본 문자열(XML lineList 속성 그대로) → 토큰 리스트로 분해.
+     * exits는 문자열/숫자 필드 타입이 갈라져 있어(offset/accessTime: String↔double 등) 개별 파싱.
+     */
+    public List<RailStationData> toDataList(List<RailStationResponse> responses) {
+        return responses.stream().map(r -> RailStationData.builder()
+                .id(r.getId())
+                .transitMode(r.getTransitMode() != null ? r.getTransitMode().getValue() : null)
+                .address(r.getAddress())
+                .center(r.getCenter())
+                .coordinates(r.getCoordinates())
+                .lineList(r.getLineList() == null || r.getLineList().isBlank()
+                        ? new java.util.ArrayList<>()
+                        : new java.util.ArrayList<>(java.util.Arrays.asList(r.getLineList().trim().split("\\s+"))))
+                .exits(r.getExits() == null ? new java.util.ArrayList<>() : r.getExits().stream().map(e ->
+                        ExitData.builder()
+                                .id(e.getId())
+                                .linkRef(parseIntSafe(e.getLinkRef()))
+                                .offset(e.getOffset() != null ? e.getOffset() : 0.0)
+                                .accessTime(parseDoubleSafe(e.getAccessTime()))
+                                .coord(e.getCoord())
+                                .build()
+                ).collect(java.util.stream.Collectors.toCollection(java.util.ArrayList::new)))
+                .build()
+        ).toList();
+    }
+
+    private static int parseIntSafe(String s) {
+        try { return s != null ? Integer.parseInt(s.trim()) : 0; } catch (NumberFormatException e) { return 0; }
+    }
+
+    private static double parseDoubleSafe(String s) {
+        try { return s != null ? Double.parseDouble(s.trim()) : 0.0; } catch (NumberFormatException e) { return 0.0; }
+    }
+
     public RailPublicTransitXml transformRailPublicTransitCoordinates(String versionKey, RailPublicTransitXml dto) {
         Scenario scenario = scenarioVersionRepository.findByKey(versionKey)
-                .map(ScenarioVersion::getScenario)
+                .map(ScenarioVersion::toEffectiveScenario)
                 .orElseGet(() -> scenarioRepository.findByKey(versionKey).orElse(null));
 
         if (scenario == null || scenario.getLatitude() == null || scenario.getLongitude() == null) {
@@ -108,10 +169,12 @@ public class RailStationService {
 
         double baseLatitude = scenario.getLatitude();
         double baseLongitude = scenario.getLongitude();
+        double rotationRad = Math.toRadians(scenario.getBaseRotation() != null ? scenario.getBaseRotation() : 0.0);
+        double scale = scenario.getBaseScale() != null ? scenario.getBaseScale() : 1.0;
 
         dto.getRailStations().forEach(railStation -> {
             List<Coordinates> transformedStationCoords = CoordinateUtils.parseAndTransform(
-                    railStation.getCenter(), baseLongitude, baseLatitude
+                    railStation.getCenter(), baseLongitude, baseLatitude, rotationRad, scale
             );
             if (!transformedStationCoords.isEmpty()) {
                 railStation.setCoordinates(transformedStationCoords.getFirst());

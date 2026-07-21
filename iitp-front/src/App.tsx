@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import './App.css'
-import { ScenarioVersions } from "@type/Scenario";
 import Header from "./component/header/Header";
 import LeftPanel from "./component/panel/LeftPanel";
 import { useScenarioStore } from "@stores/useScenarioStore";
@@ -10,6 +9,7 @@ import { isDescendantOf, useMenuStore } from "@stores/useMenuStore";
 import { usePropertyStore } from "@stores/usePropertyStore";
 import { MessagePopup } from "@component/message/MessagePopup";
 import PerformancePanel from "@component/util/PerformancePanel";
+import ViewportDebugPanel from "@component/util/ViewportDebugPanel";
 import { getActiveVersionId } from "@utils/versionId";
 import { useSchemaStore } from "@stores/useSchemaStore";
 import SchemaSetting from "@component/schema/SchemaSetting";
@@ -19,6 +19,7 @@ import { propertyFormSchema } from "@schema/propertyFormSchema";
 import Maps from "@component/map/Maps";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
 import OdMatrixModal from "@component/modal/OdMatrixModal";
+import PassengerModal from "@component/modal/PassengerModal";
 import Taskbar from "@component/panel/Taskbar";
 import DashboardLeft from "@component/panel/DashboardLeft";
 import DashboardRight from "@component/panel/DashboardRight";
@@ -37,47 +38,6 @@ import { usePavementMarkingStore } from "@stores/usePavementMarkingStore";
 import { autoSaveChangedLayers } from "@utils/autoSave";
 import { useBackgroundTaskStore } from "@stores/useBackgroundTaskStore";
 import { useNextSimRunStore, checkNextSimAvailable, startNextSimRun, cancelNextSimRun, resumeNextSimPollingIfRunning, formatElapsed } from "@utils/nextsim";
-
-function VersionPopup({ scenarioId, onSelect }: { scenarioId: number; onSelect: (v: ScenarioVersions) => void }) {
-    const [versions, setVersions] = useState<ScenarioVersions[] | null>(null);
-
-    useEffect(() => {
-        fetch(import.meta.env.VITE_API_URL + `/scenario/${scenarioId}/versions`, {
-            method: "GET",
-            headers: { "Content-Type": "application/json" },
-        }).then((r) => r.json()).then((data: ScenarioVersions[]) => {
-            // 버전이 1개이면 자동 선택 (팝업 표시 없이)
-            if (data.length === 1) {
-                onSelect(data[0]);
-            } else {
-                setVersions(data);
-            }
-        });
-    }, [scenarioId]);
-
-    // fetch 완료 전 또는 자동 선택 시 팝업 숨김
-    if (!versions) return null;
-
-    return (
-        <div className="version-popup">
-            <div className="version-popup-content">
-                <h2>시나리오 버전을 선택하세요</h2>
-                <select
-                    defaultValue=""
-                    onChange={(e) => {
-                        const selected = versions.find((v) => v.key === e.target.value);
-                        if (selected) onSelect(selected);
-                    }}
-                >
-                    <option value="" disabled>버전을 선택하세요</option>
-                    {versions.map((v) => (
-                        <option key={v.key} value={v.key}>{v.label}</option>
-                    ))}
-                </select>
-            </div>
-        </div>
-    );
-}
 
 function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const step = useOnboardingStore((s) => s.step);
@@ -439,15 +399,10 @@ function App() {
 
     const selectedScenario = useScenarioStore((state) => state.selectedScenario);
     const selectedScenarioVersion = useScenarioStore((state) => state.selectedScenarioVersion);
-    const setVersion = useScenarioStore((state) => state.setVersion);
-
-    const handleVersionSelect = (v: ScenarioVersions) => {
-        setVersion(v);
-    };
 
     const fetchSchema = useSchemaStore((state) => state.fetchSchema)
 
-    const { sessions, activeMenuCode, minimizeSession } = useWorkflowStore();
+    const { sessions, activeMenuCode, minimizeSession, closeSession } = useWorkflowStore();
 
     const {
         menu,
@@ -481,17 +436,12 @@ function App() {
             <ScenarioSelector/>
         ) : (
             <div>
-                {!selectedScenarioVersion && (
-                    <VersionPopup
-                        scenarioId={selectedScenario.id}
-                        onSelect={handleVersionSelect}
-                    />
-                )}
                 {selectedScenarioVersion && <OnboardingGuide onOpenImport={() => setShowFileImport(true)} />}
                 {showFileImport && <FileImportModal onClose={() => setShowFileImport(false)} />}
                 <Header onDashboard={() => setShowDashboard(prev => !prev)} isDashboardOpen={showDashboard} dashboardMode={showDashboard}/>
                 <MessagePopup/>
                 <PerformancePanel/>
+                <ViewportDebugPanel/>
                 <PropertyModal/>
                 <main
                     style={{
@@ -526,6 +476,10 @@ function App() {
                             <OdMatrixModal/>
                         )}
 
+                        {!showDashboard && activeSession && activeSession.menuCode === 'PASSENGER' && (
+                            <PassengerModal/>
+                        )}
+
                         {!showDashboard && activeSession && (
                             isDescendantOf(menu, 'SCHEMA_SETTING', activeSession.menuCode) ? (
                                 <SchemaSetting/>
@@ -534,14 +488,14 @@ function App() {
                                     activePopupMenu={activeSession.menu}
                                     open={true}
                                     config={propertyFormSchema['VEHICLE_TYPE']}
-                                    onClose={() => setActiveSubmenu(null)}
+                                    onClose={() => { closeSession('VEHICLE_TYPE'); setActiveSubmenu(null); }}
                                 />
                             ) : activeSession.menuCode === 'VEHICLE_MODEL' ? (
                                 <PropertyForm
                                     activePopupMenu={activeSession.menu}
                                     open={true}
                                     config={propertyFormSchema['VEHICLE_MODEL']}
-                                    onClose={() => setActiveSubmenu(null)}
+                                    onClose={() => { closeSession('VEHICLE_MODEL'); setActiveSubmenu(null); }}
                                 />
                             ) : menuCodeToStoreMap[activeSession.menuCode] ? (
                                 <PropertyPanel

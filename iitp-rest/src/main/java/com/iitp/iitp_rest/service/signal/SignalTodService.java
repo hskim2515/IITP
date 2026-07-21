@@ -23,16 +23,35 @@ import java.net.URL;
 public class SignalTodService {
 
     private final FileStorageService fileStorage;
+    private final com.iitp.iitp_rest.repository.ScenarioVersionRepository scenarioVersionRepository;
 
     @Value("${database.vehicle_sim.remoteUrl}")
     private String remoteUrl;
 
+    /**
+     * 버전 폴더 우선 조회 + 부모 scenario key 폴더 폴백 (레거시 공유 레이어 상속) —
+     * NextSimRunner.candidateDirs / OdMatrixService 와 동일 규약. 저장은 versionId 폴더.
+     */
     public SignalTodXml getByScenarioKey(String scenarioKey) throws IOException {
-        String url = remoteUrl + scenarioKey + "/signalTOD.xml";
-        log.info("[SignalTodService] fetching: {}", url);
-        try (InputStream is = new URL(url).openStream()) {
-            return parse(is);
+        IOException last = null;
+        for (String dir : candidateDirs(scenarioKey)) {
+            String url = remoteUrl + dir + "/signalTOD.xml";
+            try (InputStream is = new URL(url).openStream()) {
+                log.info("[SignalTodService] fetching: {}", url);
+                return parse(is);
+            } catch (IOException e) {
+                last = e;
+            }
         }
+        throw last != null ? last : new java.io.FileNotFoundException(scenarioKey + "/signalTOD.xml");
+    }
+
+    private java.util.List<String> candidateDirs(String versionId) {
+        String parentKey = scenarioVersionRepository.findByKeyWithScenario(versionId)
+                .map(v -> v.getScenario().getKey())
+                .orElse(versionId);
+        return parentKey.equals(versionId)
+                ? java.util.List.of(versionId) : java.util.List.of(versionId, parentKey);
     }
 
     public void saveByScenarioKey(String scenarioKey, SignalTodXml data) throws Exception {
@@ -41,7 +60,7 @@ public class SignalTodService {
         log.info("[SignalTodService] SFTP 저장 완료: {}/signalTOD.xml", scenarioKey);
     }
 
-    private SignalTodXml parse(InputStream is) {
+    public SignalTodXml parse(InputStream is) {
         try {
             JAXBContext ctx = JAXBContext.newInstance(SignalTodXml.class);
             Unmarshaller u = ctx.createUnmarshaller();

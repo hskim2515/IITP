@@ -19,6 +19,7 @@ public class ScenarioServiceImpl implements ScenarioService {
     private final ScenarioRepository scenarioRepository;
     private final ScenarioVersionRepository versionRepository;
     private final FileStorageService fileStorage;
+    private final ScenarioVersionCloneService versionCloneService;
 
     @Override
     public List<Scenario> getAllScenarios() {
@@ -39,9 +40,12 @@ public class ScenarioServiceImpl implements ScenarioService {
     @Override
     public Scenario getScenarioByKey(String key) {
         // 버전별 격리 이후 호출측(차량 생성/viewport/임포트)은 version key 를 넘긴다.
-        // scenario 직접 조회 → 없으면 version key 로 부모 scenario 해석 (좌표 등 시나리오 속성용).
+        // scenario 직접 조회 → 없으면 version key 로 해석하되, 좌표/회전/축척은 버전 자체
+        // 캘리브레이션 값을 우선 사용한다(toEffectiveScenario) — 그렇지 않으면 한 버전을
+        // 캘리브레이션했을 때 부모 Scenario에 저장된 값이 같은 시나리오의 다른 버전에도
+        // 적용되어 그 버전의 차량 시뮬레이션/시설물이 어긋나 보이는 문제가 생긴다.
         return scenarioRepository.findByKey(key)
-                .or(() -> versionRepository.findByKeyWithScenario(key).map(ScenarioVersion::getScenario))
+                .or(() -> versionRepository.findByKeyWithScenario(key).map(ScenarioVersion::toEffectiveScenario))
                 .orElseThrow(() -> new RuntimeException("Scenario not found key: " + key));
     }
 
@@ -77,22 +81,49 @@ public class ScenarioServiceImpl implements ScenarioService {
 
     @Override
     public void updateCoordinatesByKey(String key, double latitude, double longitude) {
-        // versionKey일 수도 있으므로 ScenarioVersion → Scenario 순으로 조회
-        Scenario scenario = versionRepository.findByKey(key)
-                .map(ScenarioVersion::getScenario)
-                .orElseGet(() -> scenarioRepository.findByKey(key).orElse(null));
+        // 회전/축척은 건드리지 않음 — OSM/KTDB/SUMO 임포트 등 기존 호출부는 애초에 회전/축척
+        // 개념이 없던 경로라, 여기서 null로 리셋하면 그 사이 캘리브레이션된 값을 실수로 지울 수 있다.
+        updateCoordinatesByKey(key, latitude, longitude, null, null);
+    }
+
+    @Override
+    public void updateCoordinatesByKey(String key, double latitude, double longitude, Double rotationDeg, Double scale) {
+        // versionKey로 먼저 조회 — 네트워크 캘리브레이션(reanchor/calibrate)은 버전별 network.xml
+        // 단위로 이루어지므로, 좌표/회전/축척도 부모 Scenario가 아니라 이 ScenarioVersion 자체에
+        // 저장해야 한다. 부모에 저장하면 같은 시나리오의 다른 버전에도 이 캘리브레이션이 새어
+        // 들어가 그 버전의 차량 시뮬레이션·시설물이 실제로는 캘리브레이션 안 됐는데도 회전/확대
+        // 되어 보이는 문제가 생긴다.
+        java.util.Optional<ScenarioVersion> versionOpt = versionRepository.findByKey(key);
+        if (versionOpt.isPresent()) {
+            ScenarioVersion version = versionOpt.get();
+            version.setLatitude(latitude);
+            version.setLongitude(longitude);
+            if (rotationDeg != null) version.setBaseRotation(rotationDeg);
+            if (scale != null) version.setBaseScale(scale);
+            versionRepository.save(version);
+            log.info("[ScenarioService] 버전 좌표 업데이트: versionKey={}, lat={}, lon={}, rotation={}, scale={}",
+                    key, latitude, longitude, rotationDeg, scale);
+            return;
+        }
+
+        // versionKey로 못 찾으면(예: 버전이 아직 없는 신규 scenario key) 부모 Scenario에 기록 —
+        // 이후 생성되는 첫 버전이 캘리브레이션 전까지 이 값을 기본값으로 상속한다.
+        Scenario scenario = scenarioRepository.findByKey(key).orElse(null);
         if (scenario == null) {
-            log.warn("[ScenarioService] updateCoordinatesByKey: key={}에 해당하는 시나리오를 찾을 수 없습니다.", key);
+            log.warn("[ScenarioService] updateCoordinatesByKey: key={}에 해당하는 시나리오/버전을 찾을 수 없습니다.", key);
             return;
         }
         scenario.setLatitude(latitude);
         scenario.setLongitude(longitude);
+        if (rotationDeg != null) scenario.setBaseRotation(rotationDeg);
+        if (scale != null) scenario.setBaseScale(scale);
         scenarioRepository.save(scenario);
-        log.info("[ScenarioService] 시나리오 좌표 업데이트: key={}, lat={}, lon={}", scenario.getKey(), latitude, longitude);
+        log.info("[ScenarioService] 시나리오 좌표 업데이트: key={}, lat={}, lon={}, rotation={}, scale={}",
+                scenario.getKey(), latitude, longitude, rotationDeg, scale);
     }
 
     @Override
-    public ScenarioVersion createVersion(Long scenarioId, String key, String label) {
+    public ScenarioVersion createVersion(Long scenarioId, String key, String label, String sourceVersionKey) {
         if (!key.matches("[A-Za-z0-9_]+")) {
             throw new IllegalArgumentException("버전 키는 영문자, 숫자, 밑줄(_)만 허용됩니다.");
         }
@@ -101,13 +132,27 @@ public class ScenarioServiceImpl implements ScenarioService {
         }
         Scenario scenario = scenarioRepository.findById(scenarioId)
                 .orElseThrow(() -> new IllegalArgumentException("Scenario not found: " + scenarioId));
-        ScenarioVersion version = ScenarioVersion.builder()
+
+        // 분기 원본 버전의 캘리브레이션(좌표/회전/축척)을 물려받는다 — 이걸 안 물려받으면
+        // 복사해온 network.xml의 원본 좌표가 부모 Scenario 기본 캘리브레이션으로 잘못 변환된다.
+        ScenarioVersion.ScenarioVersionBuilder builder = ScenarioVersion.builder()
                 .scenario(scenario)
                 .key(key)
                 .label(label)
-                .insertDate(java.time.LocalDateTime.now())
-                .build();
-        return versionRepository.save(version);
+                .insertDate(java.time.LocalDateTime.now());
+        if (sourceVersionKey != null) {
+            versionRepository.findByKey(sourceVersionKey).ifPresent(src -> builder
+                    .baseRotation(src.getBaseRotation())
+                    .baseScale(src.getBaseScale())
+                    .latitude(src.getLatitude())
+                    .longitude(src.getLongitude()));
+        }
+        ScenarioVersion version = versionRepository.save(builder.build());
+
+        if (sourceVersionKey != null && !sourceVersionKey.equals(key)) {
+            versionCloneService.cloneFiles(sourceVersionKey, key);
+        }
+        return version;
     }
 
     @Override
