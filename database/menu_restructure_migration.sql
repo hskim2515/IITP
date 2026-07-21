@@ -230,3 +230,86 @@ UPDATE menu SET available = 'N' WHERE menu_id = 51;  -- PAX_ROUTE
 -- 헤더가 FILE 루트 메뉴 트리를 렌더하지 않아(FileDropdown 대체) 도달 불가였던
 -- 구 메뉴 모달(KtdbImportModal/OsmImportModal/NetworkImportModal)은 프론트에서 삭제됨.
 UPDATE menu SET available = 'N' WHERE menu_code IN ('KTDB_IMPORT', 'OSM_IMPORT', 'NETWORK_IMPORT');
+
+-- ── 2026-07-21: NextSim 필수 흐름 기준 메뉴 재구성 ──────────────────────────
+-- NEXTSIM_DATA_STRUCTURE.md 기준으로 실제 NextSim 입력에 대응하지 않거나
+-- 구현이 없는 메뉴를 정리하고, FACILITY 그룹을 NextSim 입력 단위(network/
+-- signal/대중교통 정류장)에 맞춰 3분할.
+
+-- 1. 고아/미구현 메뉴 삭제
+-- AGENT: NextSim 데이터 구조 문서 전체에 대응 개념이 없고 프론트/백엔드
+-- 어디서도 구현되지 않음.
+DELETE FROM menu WHERE menu_code = 'AGENT';
+
+-- SCENARIO_EDIT / SCENARIO_SETTINGS: 코드베이스 전체에서 참조 0건인 고아 메뉴.
+DELETE FROM menu WHERE menu_code = 'SCENARIO_SETTINGS';
+DELETE FROM menu WHERE menu_code = 'SCENARIO_EDIT';
+
+-- FILE 하위 NETWORK(4)/SCENARIO(5) 서브트리: HeaderMenu.tsx의 파일 드롭다운이
+-- DB 메뉴 트리를 렌더링하지 않고 자체 하드코딩(FILE_ITEMS)을 쓰므로 구조적으로
+-- 도달 불가능한 죽은 row. menu_code='NETWORK'가 depth 1(id4)과 depth 2(id16,
+-- 도로)에 중복 존재해 menu_id로 지정.
+DELETE FROM menu WHERE menu_id IN (52, 53, 12, 15, 13, 14);
+DELETE FROM menu WHERE menu_id = 4;  -- FILE > 네트워크
+DELETE FROM menu WHERE menu_id = 5;  -- FILE > 시나리오
+
+-- 2. 자동 생성 산출물 메뉴 삭제 / 미완성이나 편집 필요한 원본 데이터는 유지
+-- ROUTE(차량 경로)/PAX_ROUTE(승객 경로): Route.json/PaxRoute.json은 문서상
+-- "생성 필요" — route-generator가 network/odmatrix/mode로부터 자동 파생하는
+-- 산출물이라 사용자가 편집할 원본이 아님. 편집 UI 불필요 → 삭제.
+DELETE FROM menu WHERE menu_id IN (50, 51);
+
+-- PASSENGER: passenger.xml(선택)은 OD Matrix와 대칭되는 승객 OD 수요 "원본
+-- 입력"이지 자동 파생 산출물이 아님. PassengerController/Service가 없어
+-- NextSimRunner가 실행 시 항상 빈 <od_pax/>만 기록하는 미완성 상태이지만,
+-- 편집이 필요한 데이터이므로 메뉴는 유지하고 향후 구현 대상으로 남긴다.
+
+-- DRT_STATION/TRAM_STATION/BUS_GARAGE/TRAM_GARAGE/TRAM_PT_LINE: NextSim 데이터
+-- 구조에 대응 개념이 없고, DB menuCode와 정확히 일치하는 apiConfig/store 배선도
+-- 없어 클릭해도 저장되지 않음. 자동 산출물은 아니지만 NextSim 기반 재구성
+-- 범위에서 구현 여부 판단 보류 → 우선 숨김.
+UPDATE menu SET available = 'N'
+WHERE menu_code IN ('DRT_STATION', 'TRAM_STATION', 'BUS_GARAGE', 'TRAM_GARAGE', 'TRAM_PT_LINE');
+
+-- 3. FACILITY(6) → 도로망 / 신호 / 대중교통 정류장 3분할
+UPDATE menu SET menu_code = 'ROAD_NETWORK_GROUP', name_en = 'Road Network', name_kor = '도로망', sort_order = 1
+WHERE menu_id = 6;
+UPDATE menu SET sort_order = 1 WHERE menu_id = 16;  -- NETWORK(도로)
+UPDATE menu SET sort_order = 2 WHERE menu_id = 24;  -- PAVEMENT_MARKING
+
+INSERT INTO menu (menu_code, available, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date)
+VALUES ('SIGNAL_GROUP', 'Y', 1, 'ko-KR', 'Signal', '신호', 2, 2, 2, 'system', now());
+UPDATE menu SET parents_id = (SELECT menu_id FROM menu WHERE menu_code = 'SIGNAL_GROUP'), root_id = 2, sort_order = 1 WHERE menu_id = 23;  -- SIGNAL
+UPDATE menu SET parents_id = (SELECT menu_id FROM menu WHERE menu_code = 'SIGNAL_GROUP'), root_id = 2, sort_order = 2 WHERE menu_id = 46;  -- SIGNAL_TOD
+
+INSERT INTO menu (menu_code, available, depth, language, name_en, name_kor, sort_order, parents_id, root_id, created_by, created_date)
+VALUES ('PT_STATION_GROUP', 'Y', 1, 'ko-KR', 'Transit Stations', '대중교통 정류장', 3, 2, 2, 'system', now());
+UPDATE menu SET parents_id = (SELECT menu_id FROM menu WHERE menu_code = 'PT_STATION_GROUP'), root_id = 2, sort_order = 1 WHERE menu_id = 17;  -- BUS_STATION
+UPDATE menu SET parents_id = (SELECT menu_id FROM menu WHERE menu_code = 'PT_STATION_GROUP'), root_id = 2, sort_order = 2 WHERE menu_id = 19;  -- RAIL_STATION
+UPDATE menu SET parents_id = (SELECT menu_id FROM menu WHERE menu_code = 'PT_STATION_GROUP'), root_id = 2, sort_order = 3 WHERE menu_id = 18;  -- DRT_STATION (숨김)
+UPDATE menu SET parents_id = (SELECT menu_id FROM menu WHERE menu_code = 'PT_STATION_GROUP'), root_id = 2, sort_order = 4 WHERE menu_id = 20;  -- TRAM_STATION (숨김)
+UPDATE menu SET parents_id = (SELECT menu_id FROM menu WHERE menu_code = 'PT_STATION_GROUP'), root_id = 2, sort_order = 5 WHERE menu_id = 21;  -- BUS_GARAGE (숨김)
+UPDATE menu SET parents_id = (SELECT menu_id FROM menu WHERE menu_code = 'PT_STATION_GROUP'), root_id = 2, sort_order = 6 WHERE menu_id = 22;  -- TRAM_GARAGE (숨김)
+
+-- EDIT(2) 하위 나머지 그룹 sort_order 재정렬
+UPDATE menu SET sort_order = 4 WHERE menu_id = 7;   -- DEMAND
+UPDATE menu SET sort_order = 5 WHERE menu_id = 9;   -- VEHICLE
+UPDATE menu SET sort_order = 6 WHERE menu_id = 10;  -- PT_LINE
+
+-- ── 2026-07-21 (추가): DRT/TRAM 스키마 메뉴 숨김 ────────────────────────────
+-- SCHEMA_DRT_STATION/SCHEMA_TRAM_STATION: propertyFormSchema.ts에 layer 키가
+-- 없어 SchemaSetting.tsx가 빈 화면만 띄움(getSchemaByLayerName(null)). DRT/TRAM
+-- 시설물 편집 메뉴를 숨긴 것과 일관되게 스키마 편집 쪽도 숨김.
+UPDATE menu SET available = 'N' WHERE menu_code IN ('SCHEMA_DRT_STATION', 'SCHEMA_TRAM_STATION');
+
+-- ── 2026-07-21 (추가): SIMULATION 최상위 메뉴 제거, 편집 하위로 흡수 ─────────
+-- SIMULATION_LEVEL(mode.xml)은 propertyFormSchema가 빈 스텁이고 App.tsx 렌더
+-- 분기에도 대응 케이스가 없어 클릭해도 아무 화면도 안 뜨는 죽은 메뉴였음(숨김
+-- 처리). SIMULATION_CONFIG는 이미 이전 마이그레이션에서 평탄화되어 자식 없이
+-- 방치된 사문화 노드라 삭제. 남는 유일한 실동작 항목 SIMULATION_SCENARIO 하나
+-- 때문에 최상위 메뉴를 유지할 이유가 없어 EDIT 하위로 흡수하고 SIMULATION
+-- 최상위 자체를 제거.
+UPDATE menu SET parents_id = 2, depth = 1, root_id = 2, sort_order = 7 WHERE menu_id = 47;  -- SIMULATION_SCENARIO
+UPDATE menu SET parents_id = 2, depth = 1, root_id = 2, sort_order = 8, available = 'N' WHERE menu_id = 34;  -- SIMULATION_LEVEL
+DELETE FROM menu WHERE menu_id = 11;  -- SIMULATION_CONFIG (자식 없는 사문화 노드)
+DELETE FROM menu WHERE menu_id = 3;   -- SIMULATION 최상위 메뉴
