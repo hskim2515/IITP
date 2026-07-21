@@ -128,6 +128,12 @@ export const apiConfig:ApiConfig = {
         historyList: { url: '/od-matrix/histories', method: 'GET',  useFormData: false },
         origin:      { url: '/od-matrix/origin',    method: 'GET',  useFormData: false },
     },
+    PASSENGER: {
+        list:        { url: '/passenger',           method: 'GET',  useFormData: false },
+        update:      { url: '/passenger',           method: 'POST', useFormData: false },
+        historyList: { url: '/passenger/histories', method: 'GET',  useFormData: false },
+        origin:      { url: '/passenger/origin',    method: 'GET',  useFormData: false },
+    },
 
 } as const;
 
