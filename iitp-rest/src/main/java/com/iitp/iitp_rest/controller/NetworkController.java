@@ -654,14 +654,23 @@ public class NetworkController {
     public ResponseEntity<Void> deleteDependentData(@PathVariable String versionId) {
         log.info("[NetworkController] DELETE dependent versionId={}", versionId);
 
-        // signal.xml / vehicle_sim.db SFTP 삭제 (실패해도 계속 진행)
-        for (String sfptPath : List.of(versionId + "/signal.xml", versionId + "/vehicle_sim.db")) {
-            try {
-                fileStorage.deleteFile(sfptPath);
-                log.info("[NetworkController] SFTP 삭제: {}", sfptPath);
-            } catch (Exception e) {
-                log.warn("[NetworkController] SFTP 삭제 실패(무시): {} — {}", sfptPath, e.getMessage());
-            }
+        // vehicle_sim.db SFTP 삭제 (실패해도 계속 진행)
+        // ⚠️ signal.xml 은 여기서 지우지 않는다 — KTDB/OSM 재임포트는 이 delete-dependent 호출과
+        // 별개로 NextSimInputScaffolder.scaffoldForImport 를 비동기(CompletableFuture.runAsync)로
+        // 백그라운드 실행해 signal.xml/signalTOD.xml 을 함께(backup-then-write) 재생성한다.
+        // 예전엔 여기서도 signal.xml 을 명시적으로 삭제했는데, 프론트의 "지도에 반영" 확인
+        // 흐름(백업 ZIP 다운로드 확인창 등)이 사용자 응답 속도에 따라 스캐폴딩보다 늦게 끝날 수
+        // 있어 — 스캐폴딩이 signal.xml/TOD 를 정확히 일치하게 다 써놓은 "직후"에 이 delete 가
+        // 뒤늦게 실행되며 방금 만든 정상 파일을 통째로 지워버리는 레이스가 실측 확인됐다(파일을
+        // 폴링해 스캐폴딩 완료 2.5초 뒤 signal.xml 이 사라지는 것을 직접 관측). 그 이후로는 이
+        // 임포트용 스캐폴딩이 다시 돌지 않아 파일이 영구히 사라진 채로 남았다. scaffoldForImport
+        // 자체가 이미 낡은 파일을 감지해 안전하게 백업 후 재생성하므로, 별도의 경쟁하는 삭제
+        // 경로는 불필요하고 위험하다 — signal.xml 은 scaffoldForImport 가 유일한 관리 주체가 된다.
+        try {
+            fileStorage.deleteFile(versionId + "/vehicle_sim.db");
+            log.info("[NetworkController] SFTP 삭제: {}/vehicle_sim.db", versionId);
+        } catch (Exception e) {
+            log.warn("[NetworkController] SFTP 삭제 실패(무시): {}/vehicle_sim.db — {}", versionId, e.getMessage());
         }
 
         // XmlLayer 기반 종속 레이어 버전/로그 삭제

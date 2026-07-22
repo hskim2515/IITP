@@ -1044,15 +1044,20 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
             refreshNetworkTiles(); // MVT/타일 캐시 무효화 — 이전 네트워크 타일 잔존 방지
             injectAll(pendingFacilities);
 
-            // KTDB: intersection 노드 기반 더미 신호 자동 생성 (프론트에서 즉시 가능한 경우만 —
-            // 대형망은 pendingData 가 간소화 응답이라 connections 가 없어 여기서는 0건 생성됨)
+            // KTDB: intersection 노드 기반 더미 신호를 프론트에서 즉시 미리보기로만 표시
+            // (백엔드 스캐폴딩이 끝날 때까지 지도가 신호 없이 비어 보이지 않도록). 화면
+            // 표시용일 뿐 setChange(true)는 절대 하지 않는다 — 여기서 변경 표시를 하면 아래
+            // autoSaveChangedLayers가 이 클라이언트製 더미(TOD 없이 만들어짐, 옛 단일-plan
+            // 포맷)를 signal.xml에 그대로 저장해버려서, 뒤이어 끝나는 백엔드의 진짜 스캐폴딩
+            // 결과(평시/혼잡 2-plan + signalTOD 완전 매칭)를 매번 덮어쓰는 경쟁이 있었다
+            // (실측: 재임포트할 때마다 신호 TOD 커버리지가 계속 깨짐). 진짜 데이터는
+            // pollKtdbScaffoldStatus 완료 시 refetchSignalAndTod가 서버에서 다시 받아와 교체한다.
             if (type === 'ktdb') {
                 const signals = generateDummySignals(pendingData);
                 if (signals.length > 0) {
                     const signalData = { signals };
                     assignPropertyToResponseData(signalData);
                     useSignalStore.getState().setCurrentJsonData(signalData);
-                    useSignalStore.getState().setChange(true);
                 }
                 // 백엔드는 이 가져오기 응답과 별개로 더미 신호/OD/TOD 생성 + 타일 재빌드를
                 // 백그라운드에서 계속 진행 중이다(대형망은 수십 초~수 분) — 완료 여부를 폴링해
