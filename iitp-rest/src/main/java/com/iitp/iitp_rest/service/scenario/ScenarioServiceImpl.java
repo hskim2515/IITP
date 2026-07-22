@@ -20,6 +20,7 @@ public class ScenarioServiceImpl implements ScenarioService {
     private final ScenarioVersionRepository versionRepository;
     private final FileStorageService fileStorage;
     private final ScenarioVersionCloneService versionCloneService;
+    private final ScenarioVersionPurgeService versionPurgeService;
 
     @Override
     public List<Scenario> getAllScenarios() {
@@ -68,10 +69,20 @@ public class ScenarioServiceImpl implements ScenarioService {
 
     @Override
     public void deleteScenario(Long id) {
-        if (!scenarioRepository.existsById(id)) {
-            throw new IllegalArgumentException("Scenario not found: " + id);
-        }
+        Scenario scenario = scenarioRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Scenario not found: " + id));
+        // 버전 key 목록을 삭제 전에 확보 (삭제 후에는 조회 불가)
+        List<String> versionKeys = versionRepository.findByScenarioId(id).stream()
+                .map(ScenarioVersion::getKey).toList();
+        String scenarioKey = scenario.getKey();
+
         scenarioRepository.deleteById(id);
+
+        // 연쇄 정리 — 전 버전 폴더 + 시나리오 base key 폴더까지 (best-effort)
+        for (String key : versionKeys) versionPurgeService.purgeVersionData(key);
+        if (scenarioKey != null && !versionKeys.contains(scenarioKey)) {
+            versionPurgeService.purgeVersionData(scenarioKey);
+        }
     }
 
     @Override
@@ -168,6 +179,10 @@ public class ScenarioServiceImpl implements ScenarioService {
         }
         versionRepository.deleteById(versionId);
         log.info("[ScenarioService] 버전 삭제: id={}, key={}", versionId, version.getKey());
+
+        // 연쇄 정리 — 이 버전 key에 딸린 SFTP 폴더/DB 캐시/타일 DB 전부 (best-effort,
+        // 실패해도 버전 삭제 자체는 이미 완료된 상태를 유지)
+        versionPurgeService.purgeVersionData(version.getKey());
     }
 
     @Override

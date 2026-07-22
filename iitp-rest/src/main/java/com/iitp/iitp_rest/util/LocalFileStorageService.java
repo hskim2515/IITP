@@ -54,6 +54,21 @@ public class LocalFileStorageService implements FileStorageService {
     }
 
     @Override
+    public void deleteDirectory(String subDir) throws IOException {
+        if (subDir == null || subDir.isBlank() || subDir.contains("..")) {
+            throw new IOException("잘못된 디렉토리 경로: " + subDir);
+        }
+        Path dir = Paths.get(basePath, subDir);
+        if (!Files.exists(dir)) return;
+        // 하위 파일부터 역순 삭제 (walk 는 부모 → 자식 순이므로 reverse)
+        try (java.util.stream.Stream<Path> walk = Files.walk(dir)) {
+            java.util.List<Path> paths = walk.sorted(java.util.Comparator.reverseOrder()).toList();
+            for (Path p : paths) Files.deleteIfExists(p);
+        }
+        log.info("로컬 디렉토리 삭제: {}", dir);
+    }
+
+    @Override
     public byte[] readFile(String fileName) throws IOException {
         Path target = Paths.get(basePath, fileName);
         return Files.readAllBytes(target);

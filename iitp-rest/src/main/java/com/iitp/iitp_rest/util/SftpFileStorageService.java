@@ -80,6 +80,38 @@ public class SftpFileStorageService implements FileStorageService {
     }
 
     @Override
+    public void deleteDirectory(String subDir) throws IOException {
+        if (subDir == null || subDir.isBlank() || subDir.contains("..") || subDir.startsWith("/")) {
+            throw new IOException("잘못된 디렉토리 경로: " + subDir);
+        }
+        ChannelSftp ch = connect();
+        try {
+            rmRecursive(ch, basePath + subDir);
+            log.info("SFTP 디렉토리 삭제: {}", subDir);
+        } catch (SftpException e) {
+            if (e.id == ChannelSftp.SSH_FX_NO_SUCH_FILE) return; // 이미 없음 — no-op
+            throw new IOException("SFTP 디렉토리 삭제 실패: " + subDir, e);
+        } finally {
+            disconnect(ch);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private void rmRecursive(ChannelSftp ch, String path) throws SftpException {
+        SftpATTRS attrs = ch.stat(path);
+        if (!attrs.isDir()) {
+            ch.rm(path);
+            return;
+        }
+        for (ChannelSftp.LsEntry entry : (java.util.Vector<ChannelSftp.LsEntry>) ch.ls(path)) {
+            String name = entry.getFilename();
+            if (".".equals(name) || "..".equals(name)) continue;
+            rmRecursive(ch, path + "/" + name);
+        }
+        ch.rmdir(path);
+    }
+
+    @Override
     public byte[] readFile(String fileName) throws IOException {
         ChannelSftp ch = connect();
         try {
