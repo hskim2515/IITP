@@ -16,7 +16,7 @@ import java.util.stream.Collectors;
  *
  * ID 규칙 (Network ID naming 스펙, {@link NetworkIdAssigner} 참고):
  *   1xxxxxxx : 교차로/일반 노드 (2개 이상 링크 연결) — Link와 생성 순서 인덱스 공유
- *   11xxxxxx : 터미널 노드 (1개 링크만 연결, 출입구) — 연결된 Link와 뒷자리 6자리 동일
+ *   11xxxxxx : 터미널 노드 (1개 링크만 연결, 출입구) — 연결된 Link와 뒷자리 3자리 동일
  *   2xxxxxxx : 링크
  *
  * 주의: connection의 차선별 연결은 휴리스틱 기반 → 수동 보정 권장
@@ -109,7 +109,7 @@ public class OsmNetworkConverter {
         // 5+6. Link/Node ID 할당 (Network ID naming 스펙) — Link=2, Node(교차로)=1,
         // Terminal(출입구)=11 로 시작하는 8자리 숫자. Link와 일반 Node는 생성 순서(=엣지
         // 원본 순서로 스캔)에 따라 하나의 인덱스를 공유하고, Terminal은 연결된 단 하나의
-        // Link와 뒷자리 6자리가 동일해야 한다 — 엣지를 스캔하며 그 자리에서 endpoint 노드를
+        // Link와 뒷자리 3자리가 동일해야 한다 — 엣지를 스캔하며 그 자리에서 endpoint 노드를
         // 처음 만나면 바로 배정하면 두 규칙을 한 번에 만족한다.
         Map<Long, Long> nodeIdMap = new LinkedHashMap<>();
         Map<Integer, Long> edgeLinkId = new LinkedHashMap<>(); // index → linkId
@@ -127,7 +127,7 @@ public class OsmNetworkConverter {
                 if (total > 1) {
                     nodeIdMap.put(osmId, idAssigner.nextNormalNodeId());
                 } else if (!derivedTerminalUsed) {
-                    nodeIdMap.put(osmId, NetworkIdAssigner.terminalIdFor(linkId));
+                    nodeIdMap.put(osmId, idAssigner.terminalIdFor(linkId));
                     derivedTerminalUsed = true;
                 } else {
                     nodeIdMap.put(osmId, idAssigner.nextIsolatedTerminalId());

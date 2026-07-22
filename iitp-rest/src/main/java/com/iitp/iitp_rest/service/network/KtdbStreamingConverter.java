@@ -164,7 +164,7 @@ public class KtdbStreamingConverter {
         // Link/Node 최종 id 재부여 (Network ID naming 스펙) — Link=2, Node(교차로)=1,
         // Terminal(출입구)=11 로 시작하는 8자리 숫자. Link와 일반 Node는 생성 순서(=allLinks
         // 누적 순서로 스캔)에 따라 하나의 인덱스를 공유하고, Terminal은 연결된 단 하나의
-        // Link와 뒷자리 6자리가 동일해야 한다. 원본 KTDB id(stableId)를 그대로 쓰면 Link에
+        // Link와 뒷자리 3자리가 동일해야 한다. 원본 KTDB id(stableId)를 그대로 쓰면 Link에
         // 접두사가 없을뿐더러, 터미널/일반 노드가 같은 id 공간에 뒤섞여 route-generator 내부
         // 배열 인덱싱이 범위를 벗어나 std::out_of_range(_Map_base::at) 로 크래시함(gdb 역공학
         // 확인 — KAIST 배포판 bucheon/toy grid 예시가 전부 terminal=11xxxxxx, 그 외=10xxxxxx로
@@ -1037,7 +1037,7 @@ public class KtdbStreamingConverter {
      * Link/클러스터(=교차로 노드) 최종 id 부여 (Network ID naming 스펙, {@link NetworkIdAssigner}
      * 참고). Link와 일반 Node(비터미널 클러스터)는 allLinks 누적 순서(=생성 순서)에 따라 하나의
      * 인덱스를 공유하고, Terminal(in+out 외부 링크 합 ≤ 1인 클러스터)은 연결된 단 하나의 Link와
-     * 뒷자리 6자리가 동일하도록 그 자리에서 파생시킨다. clusters/clusterMemberCnt/clusterIn/
+     * 뒷자리 3자리가 동일하도록 그 자리에서 파생시킨다. clusters/clusterMemberCnt/clusterIn/
      * clusterOut/clusterInternalAdj/allLinks 를 모두 새 id 로 일관되게 재구성한다(같은 ExtLink
      * 인스턴스를 세 컬렉션이 공유하므로 allLinks 기준으로 재구성 후 clusterIn/clusterOut 은 다시
      * 파생 — applyJunctionSetbacks 의 교체 패턴과 동일 원칙). ExtLink.origId()(원본 KTDB stableId)는
@@ -1075,7 +1075,7 @@ public class KtdbStreamingConverter {
                 if (degree.getOrDefault(oldCid, 0) > 1) {
                     clusterIdRemap.put(oldCid, idAssigner.nextNormalNodeId());
                 } else if (!derivedTerminalUsed) {
-                    clusterIdRemap.put(oldCid, NetworkIdAssigner.terminalIdFor(newLinkId));
+                    clusterIdRemap.put(oldCid, idAssigner.terminalIdFor(newLinkId));
                     derivedTerminalUsed = true;
                 } else {
                     clusterIdRemap.put(oldCid, idAssigner.nextIsolatedTerminalId());

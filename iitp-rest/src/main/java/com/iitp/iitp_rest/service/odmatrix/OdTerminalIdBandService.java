@@ -4,6 +4,7 @@ import com.iitp.iitp_rest.model.network.NetworkXml;
 import com.iitp.iitp_rest.model.network.link.LinkXml;
 import com.iitp.iitp_rest.model.network.node.NodeXml;
 import com.iitp.iitp_rest.model.odmatrix.OdMatrixXml;
+import com.iitp.iitp_rest.service.network.NetworkIdAssigner;
 import com.iitp.iitp_rest.service.network.NetworkJaxbParser;
 import com.iitp.iitp_rest.util.FileStorageService;
 import lombok.RequiredArgsConstructor;
@@ -158,6 +159,13 @@ public class OdTerminalIdBandService {
         if (nextTerminal <= TERMINAL_BAND_START) nextTerminal = TERMINAL_BAND_START;
         if (nextNormal <= NORMAL_BAND_START) nextNormal = NORMAL_BAND_START;
 
+        // 뒷자리 3자리 매칭(NetworkIdAssigner.terminalIdFor)으로 파생시키되, 기존 터미널
+        // id들과 충돌하면 순번(nextTerminal 이어받음)으로 자동 폴백하도록 등록해둔다.
+        NetworkIdAssigner idAssigner = new NetworkIdAssigner(nextTerminal - TERMINAL_BAND_START);
+        for (Long eid : existingIds) {
+            if (eid >= TERMINAL_BAND_START && eid < TERMINAL_BAND_END) idAssigner.registerExistingTerminalId(eid);
+        }
+
         Map<Long, Long> idRemap = new LinkedHashMap<>();
         for (String idStr : targetIds) {
             Long id;
@@ -173,8 +181,16 @@ public class OdTerminalIdBandService {
 
             long newId;
             if (shouldBeTerminalBand) {
-                newId = nextTerminal++;
-                while (existingIds.contains(newId)) newId = nextTerminal++;
+                // Network ID naming 스펙: Terminal은 연결된 단 하나의 Link와 뒷자리 3자리가
+                // 동일해야 한다(NetworkIdAssigner.terminalIdFor와 동일 규칙 — 임포트 변환기·
+                // NetworkIdNormalizer는 전부 이걸로 신규 터미널을 만드는데, 여기(재배정)만
+                // 순번을 매겨 이 규칙을 어기고 있었다). degree=1이면 유일한 연결 링크에서
+                // 파생(충돌 시 idAssigner가 자동으로 순번 폴백), degree=0(고립 노드, 페어링할
+                // 링크 없음)이면 부득이 순번 배정.
+                Long pairedLinkId = degree == 1 ? parseLinkId(node.getPorts().get(0).getLinkId()) : null;
+                newId = pairedLinkId != null
+                        ? idAssigner.terminalIdFor(pairedLinkId)
+                        : idAssigner.nextIsolatedTerminalId();
             } else {
                 newId = nextNormal++;
                 while (existingIds.contains(newId)) newId = nextNormal++;
@@ -203,6 +219,38 @@ public class OdTerminalIdBandService {
             strRemap.put(String.valueOf(e.getKey()), String.valueOf(e.getValue()));
         }
         return strRemap;
+    }
+
+    /**
+     * 네트워크 편집으로 노드가 완전히 삭제된 경우(대역 재배정과 달리 노드 자체가 없어져
+     * 재배정할 대상이 없음) odmatrix.xml에서 그 노드를 source/sink로 참조하던 demand
+     * 항목을 제거한다 — 안 하면 존재하지 않는 노드를 참조하는 수요가 그대로 남아
+     * NextSim 실행 시 무효 참조로 남는다. od를 in-place로 수정한다.
+     *
+     * @return 제거된 demand 수 (0이면 od 미변경 — 재저장 불필요)
+     */
+    public int pruneDanglingReferences(NetworkXml network, OdMatrixXml od) {
+        if (od == null || od.getOdMatrices() == null) return 0;
+        Set<String> existingNodeIds = new HashSet<>();
+        if (network.getNodes() != null) {
+            for (NodeXml n : network.getNodes()) {
+                if (n.getId() != null) existingNodeIds.add(String.valueOf(n.getId()));
+            }
+        }
+        int removed = 0;
+        for (OdMatrixXml.OdMatrixItemXml item : od.getOdMatrices()) {
+            if (item.getNvodMatrix() == null || item.getNvodMatrix().getDemands() == null) continue;
+            var demands = item.getNvodMatrix().getDemands();
+            int before = demands.size();
+            demands.removeIf(d ->
+                    (d.getSource() != null && !existingNodeIds.contains(d.getSource())) ||
+                    (d.getSink()   != null && !existingNodeIds.contains(d.getSink())));
+            removed += before - demands.size();
+        }
+        if (removed > 0) {
+            log.info("[OdTerminalIdBandService] 네트워크 편집으로 삭제된 노드를 참조하던 OD 수요 {}건 제거", removed);
+        }
+        return removed;
     }
 
     /** idRemap 을 newOd 의 source/sink 참조에 반영(재배정된 노드가 OD 에 새로 추가되는 경우) */
@@ -246,5 +294,10 @@ public class OdTerminalIdBandService {
             if (id >= start && id < endExclusive && id > max) max = id;
         }
         return max;
+    }
+
+    private Long parseLinkId(String linkIdStr) {
+        if (linkIdStr == null) return null;
+        try { return Long.parseLong(linkIdStr); } catch (NumberFormatException e) { return null; }
     }
 }

@@ -2,6 +2,9 @@ package com.iitp.iitp_rest;
 
 import com.iitp.iitp_rest.model.odmatrix.OdMatrixXml;
 import com.iitp.iitp_rest.model.network.NetworkXml;
+import com.iitp.iitp_rest.model.network.node.NodeXml;
+import com.iitp.iitp_rest.model.network.port.PortType;
+import com.iitp.iitp_rest.model.network.port.PortXml;
 import com.iitp.iitp_rest.service.network.NetworkJaxbParser;
 import com.iitp.iitp_rest.service.odmatrix.OdMatrixService;
 import com.iitp.iitp_rest.service.odmatrix.OdTerminalIdBandService;
@@ -13,8 +16,11 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -108,6 +114,28 @@ class OdTerminalIdBandServiceTest {
 
         verify(storage).uploadFile(any(), eq("v1"), eq("network.xml"));
         assertTrue(uploaded.size() > 0);
+    }
+
+    /**
+     * Network ID naming 스펙: Terminal은 연결된 단 하나의 Link와 뒷자리 3자리가 동일해야
+     * 한다(NetworkIdAssigner.terminalIdFor와 동일 규칙 — 임포트 변환기·NetworkIdNormalizer는
+     * 전부 이 규칙으로 신규 터미널을 만드는데, 재배정 경로만 순번 배정이라 규칙을 어기고
+     * 있었음. 이 테스트는 그 회귀 방지용).
+     */
+    @Test
+    void rebanded_terminal_matches_paired_link_suffix() throws Exception {
+        ByteArrayOutputStream uploaded = new ByteArrayOutputStream();
+        FileStorageService storage = mockStorage(uploaded);
+        OdTerminalIdBandService svc = new OdTerminalIdBandService(storage, new NetworkJaxbParser(), mock(OdMatrixService.class));
+
+        // 5000001의 유일한 연결 링크는 20000001 — 뒷자리 3자리 "001"
+        OdMatrixXml oldOd = od();
+        OdMatrixXml newOd = od("5000001", "11000005");
+
+        Map<String, String> remap = svc.reconcileTerminalIds("v1", oldOd, newOd);
+
+        assertEquals("11000001", remap.get("5000001"),
+                "Terminal 뒷자리 3자리가 연결된 Link(20000001)의 뒷자리 3자리와 동일해야 함");
     }
 
     @Test
@@ -238,5 +266,98 @@ class OdTerminalIdBandServiceTest {
         Map<String, String> remap = svc.reconcileAfterNetworkEdit("v1", parsedNetwork());
 
         assertTrue(remap.isEmpty());
+    }
+
+    // ── pruneDanglingReferences — 네트워크 편집으로 노드가 완전히 삭제된 경우 ──────────────
+
+    @Test
+    void pruneDanglingReferences_removesDemandsReferencingDeletedNode() {
+        OdTerminalIdBandService svc = new OdTerminalIdBandService(
+                mock(FileStorageService.class), new NetworkJaxbParser(), mock(OdMatrixService.class));
+
+        // network.xml에는 5000001/11000005/7000002/10000009만 존재 — "99999999"는 이번 편집으로
+        // 삭제됐다고 가정(더 이상 network의 어느 노드에도 없음).
+        OdMatrixXml odData = od("5000001", "99999999", "10000009", "11000005");
+        int removed = svc.pruneDanglingReferences(parsedNetwork(), odData);
+
+        assertEquals(1, removed, "삭제된 노드를 참조하는 demand 1건만 제거돼야 함");
+        var demands = odData.getOdMatrices().get(0).getNvodMatrix().getDemands();
+        assertEquals(1, demands.size());
+        assertEquals("10000009", demands.get(0).getSource());
+        assertEquals("11000005", demands.get(0).getSink());
+    }
+
+    @Test
+    void pruneDanglingReferences_keepsDemandsWhenBothEndsExist() {
+        OdTerminalIdBandService svc = new OdTerminalIdBandService(
+                mock(FileStorageService.class), new NetworkJaxbParser(), mock(OdMatrixService.class));
+
+        OdMatrixXml odData = od("5000001", "11000005", "10000009", "7000002");
+        int removed = svc.pruneDanglingReferences(parsedNetwork(), odData);
+
+        assertEquals(0, removed);
+        assertEquals(2, odData.getOdMatrices().get(0).getNvodMatrix().getDemands().size());
+    }
+
+    @Test
+    void pruneDanglingReferences_noOdData_returnsZero() {
+        OdTerminalIdBandService svc = new OdTerminalIdBandService(
+                mock(FileStorageService.class), new NetworkJaxbParser(), mock(OdMatrixService.class));
+
+        assertEquals(0, svc.pruneDanglingReferences(parsedNetwork(), null));
+        assertEquals(0, svc.pruneDanglingReferences(parsedNetwork(), new OdMatrixXml()));
+    }
+
+    // ── 대규모 스트레스 — OD가 참조하는 수백 개 노드가 한 번에 재배정 대상이 되는 경우 ──
+
+    /**
+     * 실측 재현: OD가 참조 중인 노드 300개가 전부 "일반 대역(10xxxxxx)인데 실제 degree는
+     * 1(터미널이어야 함)"로 드리프트된 상태를 한 번에 재배정한다 — 뒷자리 3자리 슬롯(1000개)
+     * 대비 300개면 충돌 빈도는 낮지만, 페어링 링크 id를 일부러 반복시켜(마지막 3자리를
+     * 겹치게) 충돌 폴백이 실제로 여러 번 발동하도록 만든다. 이 규모에서도 최종적으로
+     * 전부 유일하고 올바른 대역(11xxxxxx)에 있어야 한다.
+     */
+    @Test
+    void reconcileAfterNetworkEdit_largeScale_manyDriftedNodesHeavyCollisions_allUniqueAndBanded() throws Exception {
+        NetworkXml network = new NetworkXml();
+        List<NodeXml> nodes = new ArrayList<>();
+        Set<String> odIds = new HashSet<>();
+
+        final int count = 300;
+        for (int i = 0; i < count; i++) {
+            long nodeId = 10_010_000L + i; // 일반 대역이지만 아래서 degree=1로 만듦(드리프트 재현)
+            NodeXml n = new NodeXml();
+            n.setId(nodeId);
+            PortXml p = new PortXml();
+            p.setType(PortType.out);
+            // 일부러 뒷자리 3자리를 (i % 50)로 자주 겹치게 만들어 충돌 폴백을 대량 유발
+            long pairedLinkId = 20_000_000L + (i % 50);
+            p.setLinkId(String.valueOf(pairedLinkId));
+            n.setPorts(List.of(p)); // degree=1 → shouldBeTerminalBand=true 인데 현재 10M대역 — 재배정 대상
+            nodes.add(n);
+            odIds.add(String.valueOf(nodeId));
+        }
+        network.setNodes(nodes);
+        network.setLinks(List.of());
+
+        OdMatrixService odMatrixService = mock(OdMatrixService.class);
+        when(odMatrixService.getByVersionId("v1")).thenReturn(od(odIds.toArray(new String[0])));
+        OdTerminalIdBandService svc = new OdTerminalIdBandService(
+                mock(FileStorageService.class), new NetworkJaxbParser(), odMatrixService);
+
+        Map<String, String> remap = assertDoesNotThrow(() -> svc.reconcileAfterNetworkEdit("v1", network));
+
+        assertEquals(count, remap.size(), "드리프트된 노드 전부 재배정 대상");
+
+        Set<String> newIds = new HashSet<>(remap.values());
+        assertEquals(count, newIds.size(), "재배정된 id가 전부 유일해야 함 — 중복은 NextSim 크래시 유발");
+        for (String idStr : newIds) {
+            long id = Long.parseLong(idStr);
+            assertTrue(id >= 11_000_000L && id < 12_000_000L, "터미널 대역이어야 함: " + id);
+        }
+
+        // network 객체 자체에도 새 id가 일관되게 반영됐는지
+        Set<Long> finalNodeIds = new HashSet<>();
+        for (NodeXml n : network.getNodes()) assertTrue(finalNodeIds.add(n.getId()), "network 내 중복 id: " + n.getId());
     }
 }
