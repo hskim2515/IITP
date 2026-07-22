@@ -162,6 +162,19 @@ export async function saveNetworkDiffTileAware(versionKey: string): Promise<'sav
         || (nodeIdRemap && Object.keys(nodeIdRemap).length > 0)
         || (odNodeIdRemap && Object.keys(odNodeIdRemap).length > 0);
     if (hasRemap) {
+        // useNetworkDrawStore 가 들고 있는 id 참조("교차로 지정" 태그, 이어 그리기 재개
+        // 지점, 선택 상태 등)도 서버 재채번을 그대로 반영해야 저장 이후에도 계속 유효하다
+        // — nodeIdRemap/linkIdRemap 은 Map<Long,Long> 이 JSON 직렬화되며 값이 숫자가 되므로
+        // String() 으로 통일한다.
+        const nodeRemapStr: Record<string, string> = {};
+        for (const [k, v] of Object.entries(nodeIdRemap ?? {})) nodeRemapStr[k] = String(v);
+        for (const [k, v] of Object.entries(odNodeIdRemap ?? {})) nodeRemapStr[k] = String(v);
+        const linkRemapStr: Record<string, string> = {};
+        for (const [k, v] of Object.entries(linkIdRemap ?? {})) linkRemapStr[k] = String(v);
+
+        const { useNetworkDrawStore } = await import('@stores/useNetworkDrawStore');
+        useNetworkDrawStore.getState().remapStaleIds(nodeRemapStr, linkRemapStr);
+
         const { refreshNetworkTiles } = await import('@utils/networkRefresh');
         refreshNetworkTiles();
     }

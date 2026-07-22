@@ -9,6 +9,7 @@ import {
     applyNetworkUpdate,
     deleteLinkFromNetwork,
     reverseLinkDirection,
+    reconcileSignalConnectionIds,
 } from '@hooks/useNetworkSelect';
 
 const menuBtnStyle: React.CSSProperties = {
@@ -64,18 +65,21 @@ const LinkContextMenu: React.FC = () => {
         net = regenerateNodeConnections(net, link.fromNode);
         net = regenerateNodeConnections(net, link.toNode);
         applyNetworkUpdate(net);
+        const clearedCount = reconcileSignalConnectionIds(net, [link.fromNode, link.toNode]);
         useMessageStore.getState().setMessage({
             type: 'info',
-            text: `링크 방향을 반전하고 양끝 교차로 커넥션을 재생성했습니다`,
+            text: `링크 방향을 반전하고 양끝 교차로 커넥션을 재생성했습니다${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}`,
         });
         hide();
     };
 
     const handleDelete = () => {
-        applyNetworkUpdate(deleteLinkFromNetwork(network, linkId));
+        const next = deleteLinkFromNetwork(network, linkId);
+        applyNetworkUpdate(next);
+        const clearedCount = reconcileSignalConnectionIds(next, [link.fromNode, link.toNode]);
         useNetworkEditStore.getState().addDeleted([String(linkId)]);
         useNetworkDrawStore.getState().clearSelection();
-        useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${String(linkId)} 삭제됨` });
+        useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${String(linkId)} 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}` });
         hide();
     };
 

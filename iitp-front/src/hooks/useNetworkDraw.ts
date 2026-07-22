@@ -14,7 +14,7 @@ import { useNetworkUndoStore } from '@stores/useNetworkUndoStore';
 import { useNodeContextMenuStore } from '@stores/useNodeContextMenuStore';
 import { useEditGuideStore } from '@stores/useEditGuideStore';
 import { useNetworkEditStore } from '@stores/useNetworkEditStore';
-import { markRemovedForTileMask } from '@hooks/useNetworkSelect';
+import { markRemovedForTileMask, reconcileSignalConnectionIds } from '@hooks/useNetworkSelect';
 import { useOpenLayersStore } from '@stores/useOpenLayersStore';
 import { useCesiumStore } from '@stores/useCesiumStore';
 import { useMapStore } from '@stores/useMapStore';
@@ -23,6 +23,7 @@ import { generateGUID, assignPropertyToResponseData } from '@utils/guid';
 import { normalizeTurning } from '@utils/turning';
 import { Network, Node, Link, Lane, Cell, Segment, Port, Connection, Coordinates } from '@type/Network';
 import { UpdateLogEntry } from '@type/HistoryTypes';
+import { LAYER_CONFIG } from '@component/tool/DataIOPanel';
 
 /** 신규 추가 객체의 모든 필드를 added 항목으로 수집 */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -56,6 +57,7 @@ function collectAdded(item: any): NonNullable<UpdateLogEntry['added']> {
 }
 
 const SNAP_RADIUS_M = 25;
+const TAGGED_SNAP_RADIUS_M = 40; // "교차로로 지정"된 노드는 놓치지 않도록 스냅 반경을 넓힘
 const SNAP_LINK_RADIUS_M = 15;   // 링크 위 스냅 임계값 (m)
 const OL_PREVIEW_Z = 500;
 
@@ -136,6 +138,30 @@ const linkSnapStyle = [
     }),
 ];
 
+// ── 교차로로 지정된 노드 마커 (항상 표시, 커서 근접 여부 무관) ────────
+// 지금 화면에 로드돼있으면(currentJsonData 에 노드가 존재) 금색 별 — 여기 스냅하면
+// 실제로 이 노드에 연결된다. 로드 안 돼있으면(타일 evict) 경고 스타일로 구분해,
+// "여기 그려도 지금은 진짜 이 노드에 안 붙는다"는 걸 사용자가 알 수 있게 한다.
+function taggedNodeStyle(loaded: boolean): Style {
+    const color = loaded ? 'rgba(255,215,0,1)' : 'rgba(255,120,60,0.9)';
+    return new Style({
+        image: new RegularShape({
+            points: 5,
+            radius: 10,
+            radius2: 4,
+            fill: new Fill({ color }),
+            stroke: new Stroke({ color: '#fff', width: 1.2 }),
+        }),
+        text: loaded ? undefined : new OlText({
+            text: '⚠ 로드 안 됨 — 이 지역을 한 번 더 방문하세요',
+            font: '10px sans-serif',
+            fill: new Fill({ color: 'rgba(255,120,60,1)' }),
+            stroke: new Stroke({ color: 'rgba(0,0,0,0.8)', width: 2 }),
+            offsetY: -14,
+        }),
+    });
+}
+
 // ── CAD 가이드 스타일 ──────────────────────────────────────────
 // 노드 정렬 레이: 기존 링크 방향의 확장선 (비활성)
 const alignRayStyle = new Style({
@@ -172,11 +198,16 @@ function buildRoadPolygon(p1: Coordinate, p2: Coordinate, halfW: number): Coordi
     ];
 }
 
-function findSnapNode(nodes: Node[], lonLat: number[]): Node | null {
-    let best: Node | null = null, minDist = SNAP_RADIUS_M;
+/** taggedIds 에 속한 노드는 SNAP_RADIUS_M 대신 TAGGED_SNAP_RADIUS_M(더 넓음)을 적용 —
+ *  "교차로로 지정"한 노드를 화면 이동 후에도 놓치지 않고 정확히 그 id로 스냅하기 위함
+ *  (여전히 실제 노드 객체만 반환하므로 서로 다른 노드가 잘못 합쳐질 여지는 없음). */
+function findSnapNode(nodes: Node[], lonLat: number[], taggedIds?: Set<string>): Node | null {
+    let best: Node | null = null;
+    let bestDist = Infinity;
     for (const n of nodes) {
+        const radius = taggedIds?.has(String(n.id)) ? TAGGED_SNAP_RADIUS_M : SNAP_RADIUS_M;
         const d = getDistance([n.coordinates.lng, n.coordinates.lat], [lonLat[0], lonLat[1]]);
-        if (d < minDist) { minDist = d; best = n; }
+        if (d < radius && d < bestDist) { bestDist = d; best = n; }
     }
     return best;
 }
@@ -289,14 +320,16 @@ function findAlignmentSnap(
 
 // ── 교차 노드 커넥션 자동 재생성 ────────────────────────────────
 // 노드의 모든 in-link / out-link 조합으로 S/L/R 커넥션을 새로 계산
-export function createIntersectionAtNode(nodeId: number | string): void {
+// 반환값: 재생성으로 무효해진 connectionId를 참조하던 신호 개수(참조 초기화됨) — 호출부에서 안내용.
+export function createIntersectionAtNode(nodeId: number | string): number {
     const network = useNetworkStore.getState().currentJsonData;
-    if (!network) return;
+    if (!network) return 0;
     useNetworkUndoStore.getState().push(network);
     const updated = regenerateNodeConnections(network, nodeId);
     assignPropertyToResponseData(updated as any);
     useNetworkStore.getState().setCurrentJsonData(updated);
     useNetworkStore.getState().setChange(true);
+    return reconcileSignalConnectionIds(updated, [nodeId]);
 }
 
 /** 노드의 커넥션을 in/out 링크 조합으로 전면 재생성 (링크 반전·병합 후 정합성 복구용) */
@@ -618,6 +651,118 @@ function makeLink(
     } as Link;
 }
 
+// ── 교차로 setback: 새로 그린 링크가 3방향 이상(실제 교차로)에 닿으면 그 끝을 약간
+// 후퇴시켜 connection(회전 동선) 곡선이 그려질 공간을 만든다. KTDB 임포트 변환기
+// (KtdbNetworkConverter)가 이미 하는 것과 같은 원리인데, 손으로 그린 링크는 노드
+// 정중앙까지 그대로 이어져 있어 3방향 이상 모이는 교차로에서 connection이 겹쳐
+// 보이거나 교차로 영역을 침범해 그려졌었다.
+//
+// ⚠️ 반드시 "방금 이 도구가 새로 만든 링크"만 대상으로 한다 — 기존(특히 KTDB 임포트로
+// 들어와 타일 stripDetail로 lanes/cells가 비어있을 수 있는) 링크는 절대 건드리지 않는다.
+// 새 링크는 이번에 makeLink로 막 만들어져 lanes/cells를 스스로 온전히 들고 있으므로
+// coordinates/length/lanes를 자유롭게 고쳐도 다른 시스템(타일 stripDetail↔서버
+// restoreStrippedDetail 매칭)과 충돌할 위험이 없다.
+const JUNCTION_MIN_DEGREE       = 3;  // 이 이상 연결된 노드만 실제 교차로로 간주(통과점 제외)
+const JUNCTION_SETBACK_MIN_M    = 8;
+const JUNCTION_SETBACK_MAX_M    = 20; // 시가지 도로 규모 고려(KTDB 최대 35m는 간선 위주라 더 보수적으로)
+const JUNCTION_SETBACK_MARGIN_M = 5;
+const JUNCTION_SETBACK_MAX_FRAC = 0.35; // 짧은 링크 보호: 링크 길이의 35% 초과해서 자르지 않음
+
+function junctionSetbackDistance(widths: number[]): number {
+    const maxWidth = widths.reduce((m, w) => Math.max(m, w), 0);
+    return Math.min(JUNCTION_SETBACK_MAX_M, Math.max(JUNCTION_SETBACK_MIN_M, maxWidth + JUNCTION_SETBACK_MARGIN_M));
+}
+
+/** coordsOl(OL 투영 좌표)의 start/end 쪽 끝을 setbackM만큼 안쪽으로 당긴 새 배열.
+ *  트림 후 점이 2개 미만이 되면(링크가 너무 짧음) null. */
+function trimCoordsOl(coordsOl: Coordinate[], end: 'start' | 'end', setbackM: number): Coordinate[] | null {
+    if (coordsOl.length < 2) return null;
+    const arr = coordsOl.map(c => [c[0]!, c[1]!] as Coordinate);
+    let remaining = setbackM;
+    if (end === 'end') {
+        while (arr.length >= 2 && remaining > 0) {
+            const last = arr[arr.length - 1]!, prev = arr[arr.length - 2]!;
+            const segLen = Math.hypot(last[0]! - prev[0]!, last[1]! - prev[1]!);
+            if (segLen < 1e-6) { arr.pop(); continue; }
+            if (segLen <= remaining) { remaining -= segLen; arr.pop(); continue; }
+            const frac = (segLen - remaining) / segLen;
+            arr[arr.length - 1] = [prev[0]! + frac * (last[0]! - prev[0]!), prev[1]! + frac * (last[1]! - prev[1]!)];
+            break;
+        }
+    } else {
+        while (arr.length >= 2 && remaining > 0) {
+            const first = arr[0]!, next = arr[1]!;
+            const segLen = Math.hypot(next[0]! - first[0]!, next[1]! - first[1]!);
+            if (segLen < 1e-6) { arr.shift(); continue; }
+            if (segLen <= remaining) { remaining -= segLen; arr.shift(); continue; }
+            const frac = remaining / segLen;
+            arr[0] = [first[0]! + frac * (next[0]! - first[0]!), first[1]! + frac * (next[1]! - first[1]!)];
+            break;
+        }
+    }
+    return arr.length >= 2 ? arr : null;
+}
+
+/** entries에 나열된 (새로 만든) 링크들만, 그 링크가 닿는 노드가 이번 편집으로 3방향
+ *  이상(실제 교차로)이 됐으면 그 쪽 끝을 setback만큼 후퇴시킨다. 그 외 링크는 전혀
+ *  손대지 않는다 — node.ports는 이미 이번 편집이 반영된 network.nodes 기준이므로
+ *  degree는 항상 "이 링크를 추가한 이후"의 최종 값이다. */
+function setbackNewLinks(
+    network: Network,
+    entries: Array<{ linkId: number | string; nodeEnd: 'start' | 'end'; nodeId: number | string }>,
+): Network {
+    let links = network.links;
+    let changed = false;
+
+    for (const { linkId, nodeEnd, nodeId } of entries) {
+        const node = network.nodes.find(n => String(n.id) === String(nodeId));
+        if (!node) continue;
+        const degree = new Set(node.ports.map((p: any) => String(p.linkId))).size;
+        if (degree < JUNCTION_MIN_DEGREE) continue;
+
+        const linkIdx = links.findIndex(l => String(l.id) === String(linkId));
+        if (linkIdx < 0) continue;
+        const link = links[linkIdx]!;
+
+        const touchingWidths = node.ports
+            .map((p: any) => links.find(l => String(l.id) === String(p.linkId))?.width)
+            .filter((w: any): w is number => typeof w === 'number');
+        const setbackM = Math.min(
+            junctionSetbackDistance(touchingWidths),
+            link.length * JUNCTION_SETBACK_MAX_FRAC,
+        );
+        if (setbackM <= 0) continue;
+
+        const coordsOl = link.coordinates.map(c => fromLonLat([c.lng, c.lat]));
+        const trimmedOl = trimCoordsOl(coordsOl, nodeEnd, setbackM);
+        if (!trimmedOl) continue;
+
+        const trimmedWgs84 = trimmedOl.map(c => { const ll = toLonLat(c); return { lng: ll[0]!, lat: ll[1]! }; });
+        let newLength = 0;
+        for (let i = 0; i < trimmedOl.length - 1; i++) {
+            newLength += Math.hypot(trimmedOl[i + 1]![0]! - trimmedOl[i]![0]!, trimmedOl[i + 1]![1]! - trimmedOl[i]![1]!);
+        }
+        const newNumCell = Math.max(1, Math.ceil(newLength / DEFAULT_CELL_LENGTH));
+        const firstWgs = trimmedWgs84[0]!, lastWgs = trimmedWgs84[trimmedWgs84.length - 1]!;
+
+        if (links === network.links) links = [...network.links]; // copy-on-write
+        links[linkIdx] = {
+            ...link,
+            coordinates: trimmedWgs84,
+            length: newLength,
+            lanes: link.lanes.map(lane => ({
+                ...lane,
+                coordinates: [firstWgs, lastWgs],
+                numCell: newNumCell,
+                segments: lane.segments.map(seg => ({ ...seg, endPoint: newLength })),
+            })),
+        };
+        changed = true;
+    }
+
+    return changed ? { ...network, links } : network;
+}
+
 // ── 차선 끝점 OL 좌표 계산 (NetworkFeatureLayer 동일 로직) ────────
 function getLaneEndpointWgs84(link: Link, laneIdx: number, which: 'source' | 'target'): Coordinates {
     const ol = getLaneEndpointOl(link, laneIdx, which);
@@ -901,8 +1046,48 @@ export const useNetworkDraw = () => {
         return useNetworkStore.subscribe((state, prevState) => {
             const cur  = (state as any).importEpoch as number;
             const prev = (prevState as any).importEpoch as number;
-            if (cur !== prev) useNetworkUndoStore.getState().clear();
+            if (cur !== prev) {
+                useNetworkUndoStore.getState().clear();
+                useNetworkDrawStore.getState().clearChainEndpoint();
+            }
         });
+    }, []);
+
+    // ── 항상 활성: 저장 안 된 변경사항이 있으면 탭 닫기/새로고침 경고 ──────
+    // 부천시급 네트워크를 손으로 그리는 건 수 시간짜리 작업일 수 있는데, 그리기 자체는
+    // 저장을 트리거하지 않고(finishSegment 등은 store만 갱신) 자동저장/이탈경고도 전혀
+    // 없었다 — 탭이 실수로 닫히거나 새로고침되면 undo 스택(메모리 전용, 50단계)째로
+    // 경고 없이 전부 유실됐다. LAYER_CONFIG 기준(DataIOPanel 저장 배지와 동일 판정)으로
+    // 하나라도 isChanged 면 브라우저 기본 이탈 확인 다이얼로그를 띄운다.
+    useEffect(() => {
+        const onBeforeUnload = (e: BeforeUnloadEvent) => {
+            // beforeunload 는 동기적으로만 응답 가능 — 동적 import 불가, 정적 import 필요.
+            const hasChanges = LAYER_CONFIG.some(cfg => cfg.store.getState().isChanged);
+            if (!hasChanges) return;
+            e.preventDefault();
+            e.returnValue = '';
+        };
+        window.addEventListener('beforeunload', onBeforeUnload);
+        return () => window.removeEventListener('beforeunload', onBeforeUnload);
+    }, []);
+
+    // ── 항상 활성: 그리기/커넥션/배치 모드 중 주기적 자동저장 ─────────────
+    // 넓은 지역을 오래 그릴 때 수동 저장을 잊기 쉬우므로, 편집 모드가 켜져있는 동안
+    // 60초마다 변경사항이 있으면 autoSaveChangedLayers 로 체크포인트를 남긴다
+    // (diff 저장이라 부담 적음 — saveNetworkDiffTileAware 가 뷰포트분만 전송).
+    useEffect(() => {
+        const AUTOSAVE_INTERVAL_MS = 60_000;
+        const timer = setInterval(async () => {
+            const draw = useNetworkDrawStore.getState();
+            if (!draw.isActive && !draw.isConnectionActive && draw.placementMode === 'none') return;
+            if (!useNetworkStore.getState().isChanged) return;
+            const { getActiveVersionId } = await import('@utils/versionId');
+            const versionKey = getActiveVersionId();
+            if (!versionKey) return;
+            const { autoSaveChangedLayers } = await import('@utils/autoSave');
+            await autoSaveChangedLayers(versionKey);
+        }, AUTOSAVE_INTERVAL_MS);
+        return () => clearInterval(timer);
     }, []);
 
     // ── OL 이벤트 & 프리뷰 ──────────────────────────────────────
@@ -941,7 +1126,28 @@ export const useNetworkDraw = () => {
                 setDrawGuide('start');
             }
         } else {
-            setDrawGuide('start');
+            // 이전 이어 그리기 체인의 끝점이 남아있으면(그리기 중지 → 팬 → 재시작) 자동 재개.
+            // 타일 모드는 그리기 활성 중 팬이 동결되므로, 화면 밖으로 이어지는 도로는 이
+            // 재개가 없으면 매번 끝점을 다시 찾아 클릭해야 한다. 그 노드가 팬 도중 타일에서
+            // evict돼 더 이상 로드돼있지 않으면(화면 밖으로 멀리 이동한 경우) 조용히 포기하고
+            // 새 시작점 선택으로 되돌아간다.
+            const chainEndpoint = useNetworkDrawStore.getState().chainEndpoint;
+            const data = useNetworkStore.getState().currentJsonData;
+            const resumeNode = chainEndpoint ? data?.nodes.find(n => String(n.id) === chainEndpoint.nodeId) : null;
+            if (chainEndpoint && resumeNode) {
+                const olCoord = fromLonLat([resumeNode.coordinates.lng, resumeNode.coordinates.lat]);
+                startOlCoordRef.current = olCoord;
+                startNodeIdRef.current  = resumeNode.id;
+                startWgs84Ref.current   = resumeNode.coordinates;
+                useMessageStore.getState().setMessage({
+                    type: 'info',
+                    text: '이전 이어 그리기 끝점에서 계속합니다. (더블클릭으로 종료)',
+                });
+                setDrawGuide('segment');
+            } else {
+                if (chainEndpoint) useNetworkDrawStore.getState().clearChainEndpoint();
+                setDrawGuide('start');
+            }
         }
 
         // ── OL 공통 렌더링 함수 ──────────────────────────────────
@@ -951,10 +1157,14 @@ export const useNetworkDraw = () => {
             const nodes = data?.nodes ?? [];
             const links = data?.links ?? [];
             const lonLat = toLonLat(cursor);
+            const intersectionNodes = useNetworkDrawStore.getState().intersectionNodes;
+            const taggedIds = new Set(Object.keys(intersectionNodes));
 
             // 스냅 우선순위: 노드 > 링크 > 자유점. Alt 누르면 스냅 전부 해제(자유점).
+            // 교차로로 지정된 노드는 더 넓은 반경(TAGGED_SNAP_RADIUS_M)으로 스냅 — 하지만
+            // findSnapNode는 항상 실제 로드된 노드 객체만 반환하므로 오판 병합 위험은 없다.
             const snapOff = altRef.current;
-            const snapNode = snapOff ? null : findSnapNode(nodes, lonLat);
+            const snapNode = snapOff ? null : findSnapNode(nodes, lonLat, taggedIds);
             snapNodeRef.current = snapNode;
 
             const snapLink = snapOff ? null : findSnapLink(links, cursor, !!snapNode);
@@ -987,6 +1197,17 @@ export const useNetworkDraw = () => {
             }
 
             source.clear();
+
+            // ── ⓪ 교차로로 지정된 노드는 항상 마커로 표시(커서 근접 여부 무관) ──
+            //   화면 밖으로 팬해도 다시 이 노드 근처로 오면 바로 보여, 넓어진 스냅 반경과
+            //   함께 정확히 이 지점에 스냅해 연결하기 쉽게 한다. 로드 안 돼있으면(타일
+            //   evict) 경고 스타일로 구분해 "지금은 여기 그려도 실제로 안 붙는다"를 알린다.
+            const nodeIdSet = new Set(nodes.map(n => String(n.id)));
+            for (const [taggedId, coord] of Object.entries(intersectionNodes)) {
+                const markerF = new Feature(new Point(fromLonLat([coord.lng, coord.lat])));
+                markerF.setStyle(taggedNodeStyle(nodeIdSet.has(taggedId)));
+                source.addFeature(markerF);
+            }
 
             // ── ① 노드 정렬 가이드 레이 (snapNode 시 연결 링크 방향 확장선 + 방위각 라벨) ──
             if (snapNode) {
@@ -1134,7 +1355,9 @@ export const useNetworkDraw = () => {
         }, 33);
 
         // ── 구간 완성 (OL·Cesium 공유) ───────────────────────────
-        function finishSegment(endOlCoord: Coordinate, endWgs84: Coordinates, snapEnd: Node | null) {
+        // splitEndFromLink: snapEnd가 방금 이 클릭으로 기존 링크를 분할해 만든 노드인 경우 true
+        // — 완료 메시지에서 "기존 노드 스냅"이 아니라 "링크 분할로 생성된 노드"임을 구분해 안내한다.
+        function finishSegment(endOlCoord: Coordinate, endWgs84: Coordinates, snapEnd: Node | null, splitEndFromLink?: boolean) {
             const network = useNetworkStore.getState().currentJsonData;
             if (!network) return;
             useNetworkUndoStore.getState().push(network);
@@ -1319,94 +1542,55 @@ export const useNetworkDraw = () => {
             // 신규 객체에 경로 기반 GUID 부여 (기존 객체는 __guid 있으므로 skip)
             assignPropertyToResponseData(newNetwork as any);
 
-            // ── 교차로 지정 노드 자동 병합 & connection 재생성 ──────────
-            let autoNetwork = newNetwork;
-            const intersectionIds = useNetworkDrawStore.getState().intersectionNodeIds;
-            const autoNodeIds: (number | string)[] = [];
-            const MERGE_RADIUS_M = 50; // snap 반경(25m)보다 크게: 근접 노드 자동 병합
+            // ⚠️ 예전엔 여기서 "새로 생성된 노드가 교차로 지정 노드 근처(50m)면 자동 병합"을
+            // 거리 기반으로 했는데, 조밀한 도심에서는 진짜 서로 다른 두 교차로가 50m 이내로
+            // 붙어있는 경우가 흔해 잘못 병합될 위험이 있었다(사용자 지적). 지금은 "교차로로
+            // 지정"이 순전히 스냅 대상 힌트(넓은 스냅 반경 + 항상 보이는 마커)일 뿐이라,
+            // 태그된 노드에 실제로 연결하려면 findSnapNode가 그 노드를 snapEnd로 찾아줘야
+            // 한다 — 그러면 아래(포트/커넥션 갱신)는 태그 여부와 무관하게 이미 동작하는
+            // "기존 노드에 스냅" 경로를 그대로 타므로, 서로 다른 노드를 잘못 합칠 여지가
+            // 전혀 없다(항상 정확히 같은 id의 실제 노드에만 연결됨).
 
-            // 1) 새로 생성된 fromNode가 교차로 지정 노드 근처이면 병합
-            if (isNewFromNode) {
-                const newNode = autoNetwork.nodes.find(n => String(n.id) === String(fromNodeId));
-                for (const iid of intersectionIds) {
-                    if (iid === String(fromNodeId)) continue;
-                    const existing = autoNetwork.nodes.find(n => String(n.id) === iid);
-                    if (!existing || !newNode) continue;
-                    const dist = getDistance(
-                        [existing.coordinates.lng, existing.coordinates.lat],
-                        [newNode.coordinates.lng,  newNode.coordinates.lat],
-                    );
-                    if (dist < MERGE_RADIUS_M) {
-                        autoNetwork = mergeNodes(autoNetwork, existing.id, fromNodeId);
-                        fromNodeId = existing.id;
-                        break;
-                    }
-                }
+            // ── 교차로 setback: 방금 만든 링크(newLink/reverseLink)가 닿은 노드가 이번
+            // 편집으로 3방향 이상(실제 교차로)이 됐으면, 그 쪽 끝만 후퇴시켜 connection이
+            // 그려질 공간을 만든다. 다른(기존) 링크는 건드리지 않는다.
+            const setbackEntries: Array<{ linkId: number | string; nodeEnd: 'start' | 'end'; nodeId: number | string }> = [
+                { linkId, nodeEnd: 'start', nodeId: fromNodeId },
+                { linkId, nodeEnd: 'end',   nodeId: toNodeId },
+            ];
+            if (isBidirectionalRef.current) {
+                const reverseId = ts + 3;
+                setbackEntries.push(
+                    { linkId: reverseId, nodeEnd: 'start', nodeId: toNodeId },
+                    { linkId: reverseId, nodeEnd: 'end',   nodeId: fromNodeId },
+                );
             }
+            const finalNetwork = setbackNewLinks(newNetwork, setbackEntries);
 
-            // 2) 새로 생성된 toNode가 교차로 지정 노드 근처이면 병합
-            if (isNewToNode) {
-                const newNode = autoNetwork.nodes.find(n => String(n.id) === String(toNodeId));
-                for (const iid of intersectionIds) {
-                    if (iid === String(toNodeId)) continue;
-                    const existing = autoNetwork.nodes.find(n => String(n.id) === iid);
-                    if (!existing || !newNode) continue;
-                    const dist = getDistance(
-                        [existing.coordinates.lng, existing.coordinates.lat],
-                        [newNode.coordinates.lng,  newNode.coordinates.lat],
-                    );
-                    if (dist < MERGE_RADIUS_M) {
-                        autoNetwork = mergeNodes(autoNetwork, existing.id, toNodeId);
-                        toNodeId = existing.id;
-                        break;
-                    }
-                }
-            }
-
-            // 3) 교차로 지정 노드에서 connection 재생성 (in+out 포트가 모두 있을 때)
-            const checkedIds = new Set<string>();
-            for (const nid of [fromNodeId, toNodeId]) {
-                const sid = String(nid);
-                if (checkedIds.has(sid) || !intersectionIds.includes(sid)) continue;
-                checkedIds.add(sid);
-                const n = autoNetwork.nodes.find(n => String(n.id) === sid);
-                if (!n) continue;
-                const inOk  = n.ports.some((p: any) => p.type === 'in');
-                const outOk = n.ports.some((p: any) => p.type === 'out');
-                if (inOk && outOk) {
-                    autoNetwork = regenerateNodeConnections(autoNetwork, nid);
-                    autoNodeIds.push(nid);
-                }
-            }
-            // 병합/재생성이 일어났으면 신규 객체에 GUID 부여
-            if (autoNodeIds.length > 0 || autoNetwork !== newNetwork) {
-                assignPropertyToResponseData(autoNetwork as any);
-            }
-
-            useNetworkStore.getState().setCurrentJsonData(autoNetwork);
+            useNetworkStore.getState().setCurrentJsonData(finalNetwork);
             useNetworkStore.getState().setChange(true);
 
             // ── history 로그 ─────────────────────────────────────────────
             const historyEntry: UpdateLogEntry = { added: [], modified: [] };
 
-            // 신규 링크
-            const addedLink = autoNetwork.links.find(l => String(l.id) === String(linkId));
+            // 신규 링크 (setback 반영된 최종 좌표/길이 기준)
+            const addedLink = finalNetwork.links.find(l => String(l.id) === String(linkId));
             if (addedLink) historyEntry.added!.push(...collectAdded(addedLink));
 
             // 역방향 링크 (양방향)
             if (isBidirectionalRef.current) {
                 const reverseId = ts + 3;
-                const addedRev = autoNetwork.links.find(l => String(l.id) === String(reverseId));
+                const addedRev = finalNetwork.links.find(l => String(l.id) === String(reverseId));
                 if (addedRev) historyEntry.added!.push(...collectAdded(addedRev));
             }
 
             // 신규 노드
             if (isNewFromNode) {
-                const addedNode = autoNetwork.nodes.find(n => String(n.id) === String(fromNodeId));
+                const addedNode = finalNetwork.nodes.find(n => String(n.id) === String(fromNodeId));
                 if (addedNode) historyEntry.added!.push(...collectAdded(addedNode));
             } else {
                 const oldFN = network.nodes.find(n => String(n.id) === String(fromNodeId));
-                const newFN = autoNetwork.nodes.find(n => String(n.id) === String(fromNodeId));
+                const newFN = finalNetwork.nodes.find(n => String(n.id) === String(fromNodeId));
                 if (oldFN && newFN) {
                     newFN.ports.slice(oldFN.ports.length).forEach(p => historyEntry.added!.push(...collectAdded(p)));
                     newFN.connections.slice(oldFN.connections.length).forEach(c => historyEntry.added!.push(...collectAdded(c)));
@@ -1417,11 +1601,11 @@ export const useNetworkDraw = () => {
                 }
             }
             if (isNewToNode) {
-                const addedNode = autoNetwork.nodes.find(n => String(n.id) === String(toNodeId));
+                const addedNode = finalNetwork.nodes.find(n => String(n.id) === String(toNodeId));
                 if (addedNode) historyEntry.added!.push(...collectAdded(addedNode));
             } else {
                 const oldTN = network.nodes.find(n => String(n.id) === String(toNodeId));
-                const newTN = autoNetwork.nodes.find(n => String(n.id) === String(toNodeId));
+                const newTN = finalNetwork.nodes.find(n => String(n.id) === String(toNodeId));
                 if (oldTN && newTN) {
                     newTN.ports.slice(oldTN.ports.length).forEach(p => historyEntry.added!.push(...collectAdded(p)));
                     newTN.connections.slice(oldTN.connections.length).forEach(c => historyEntry.added!.push(...collectAdded(c)));
@@ -1436,32 +1620,26 @@ export const useNetworkDraw = () => {
                 useNetworkHistoryStore.getState().setUpdateLogs(historyEntry);
             }
 
-            // connection 생성 결과 메시지
-            let resultMsg = `도로 추가 완료 (${laneCountRef.current}차선, ${Math.round(newLink.length)}m)`;
-            if (autoNodeIds.length > 0) {
-                const totalConns = autoNodeIds.reduce((acc: number, nid) => {
-                    return acc + (autoNetwork.nodes.find(n => String(n.id) === String(nid))?.connections.length ?? 0);
-                }, 0);
-                resultMsg += ` · 교차로 connection ${totalConns}개 자동 생성`;
-            } else {
-                // 교차로 지정 노드인데 connection이 안 생성된 경우 안내
-                const pendingIntersectionNode = [fromNodeId, toNodeId].find(nid =>
-                    intersectionIds.includes(String(nid))
-                );
-                if (pendingIntersectionNode) {
-                    const n = autoNetwork.nodes.find(n => String(n.id) === String(pendingIntersectionNode));
-                    const hasIn  = n?.ports.some((p: any) => p.type === 'in');
-                    const hasOut = n?.ports.some((p: any) => p.type === 'out');
-                    if (hasIn && !hasOut) resultMsg += ` · 교차로 노드(${pendingIntersectionNode}) — 나가는 도로 추가 필요`;
-                    else if (!hasIn && hasOut) resultMsg += ` · 교차로 노드(${pendingIntersectionNode}) — 들어오는 도로 추가 필요`;
-                }
-            }
-            useMessageStore.getState().setMessage({ type: 'info', text: resultMsg });
+            // 시작/끝이 각각 새 노드인지 기존 노드에 스냅됐는지 명시 — "분명히 스냅했는데
+            // 커넥션이 안 생긴다"는 문제를 조사할 때, 실제로는 스냅이 안 되고 근처에 별개의
+            // 새 노드가 생겼을 가능성을 즉시 구분할 수 있게 한다.
+            const endpointLabel = (isNew: boolean, nodeId: number | string, splitFrom?: boolean) =>
+                isNew ? '새 노드' : splitFrom ? `링크 분할로 생성된 노드(${nodeId})` : `기존 노드(${nodeId}) 스냅`;
+            useMessageStore.getState().setMessage({
+                type: 'info',
+                text: `도로 추가 완료 (${laneCountRef.current}차선, ${Math.round(addedLink?.length ?? newLink.length)}m)`
+                    + ` · 시작: ${endpointLabel(isNewFromNode, fromNodeId)} · 끝: ${endpointLabel(isNewToNode, toNodeId, splitEndFromLink)}`,
+            });
 
             // 이어 그리기: 끝점을 새 시작점으로
             startOlCoordRef.current = endOlCoord;
             startNodeIdRef.current = toNodeId;
             startWgs84Ref.current = endWgs84;
+
+            // 체인 끝점을 스토어에도 남겨둔다 — "그리기 중지" 후 화면 밖으로 팬했다가
+            // 다시 "그리기 시작"을 눌러도(타일 모드는 그리기 중 팬이 동결되므로 넓은 지역을
+            // 이어 그릴 땐 이 재시작이 불가피하다) 이 지점에서 자동으로 이어진다.
+            useNetworkDrawStore.getState().setChainEndpoint(toNodeId, endWgs84);
         }
         finishSegmentRef.current = finishSegment;
 
@@ -1491,6 +1669,7 @@ export const useNetworkDraw = () => {
                 startWgs84Ref.current   = null;
                 snapNodeRef.current     = null;
                 source.clear();
+                useNetworkDrawStore.getState().clearChainEndpoint();
                 useMessageStore.getState().setMessage({ type: 'info', text: '이어 그리기를 끝냈습니다.' });
                 setDrawGuide('start');
                 return;
@@ -1519,6 +1698,10 @@ export const useNetworkDraw = () => {
                 const ll    = toLonLat(chosenOl);
                 chosenWgs84 = { lng: ll[0]!, lat: ll[1]! };
             }
+
+            // 편집모드 로드뷰가 "지도 중심"이 아니라 방금 확정한 이 점을 바로 따라가도록 알림
+            // (useNaverPanorama가 구독 — 지도 pan 임계값과 무관하게 즉시 이동).
+            useNetworkDrawStore.getState().setLastDrawnPoint(chosenWgs84);
 
             // ── 링크 스냅: 기존 링크를 분할하고 교차 노드 생성 ──
             if (!snapNode && snapLink && !startOlCoordRef.current) {
@@ -1561,7 +1744,7 @@ export const useNetworkDraw = () => {
                 // finishSegment는 최신 network를 getState로 읽으므로
                 // split 후 store가 반영된 뒤에 실행
                 const splitNode = updatedNetwork.nodes.find(n => n.id === newNodeId) ?? null;
-                finishSegment(chosenOl, chosenWgs84, splitNode);
+                finishSegment(chosenOl, chosenWgs84, splitNode, true);
                 return;
             }
 
@@ -2347,7 +2530,11 @@ export const useNetworkDraw = () => {
                 useNetworkStore.getState().setCurrentJsonData(newNetwork);
                 useNetworkStore.getState().setChange(true);
                 renderEditPhase();
-                useMessageStore.getState().setMessage({ type: 'info', text: '교차로 connection 전체 삭제' });
+                const clearedCount = reconcileSignalConnectionIds(newNetwork, [selectedNodeId]);
+                useMessageStore.getState().setMessage({
+                    type: 'info',
+                    text: `교차로 connection 전체 삭제${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}`,
+                });
             }
         };
 
@@ -2736,7 +2923,11 @@ export const useNetworkDraw = () => {
                 useNetworkStore.getState().setCurrentJsonData(newNetwork);
                 useNetworkStore.getState().setChange(true);
                 renderEditPhase();
-                useMessageStore.getState().setMessage({ type: 'info', text: '교차로 connection 전체 삭제' });
+                const clearedCount = reconcileSignalConnectionIds(newNetwork, [selectedNodeId]);
+                useMessageStore.getState().setMessage({
+                    type: 'info',
+                    text: `교차로 connection 전체 삭제${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}`,
+                });
             }
         };
         document.addEventListener('keydown', onKeyDown);
@@ -3042,97 +3233,154 @@ function segmentIntersectOl(
     return [a1[0]! + t * d1x, a1[1]! + t * d1y];
 }
 
+// ── 링크 쌍 후보 좁히기용 공간 그리드 (broad-phase) ─────────────────
+// 실측: 부천 시내처럼 조밀한 구간에 수천 링크가 로드된 상태로 전수비교(O(L²))하면
+// 체감 프리징이 생긴다. bbox가 겹치는 링크끼리만 정밀 교차검사를 하도록 좁힌다 —
+// bbox 겹침은 실제 교차의 필요조건이라(겹치지 않으면 절대 교차 불가) 정확도 손실 없음.
+const GRID_CELL_M = 150; // 대략적 단위(웹메르카토르 "m") — 정확도엔 무관, 버킷 크기만 좌우
+
+type LinkOlCache = { coordsOl: Coordinate[]; bbox: [number, number, number, number] };
+
+function buildLinkOlCache(links: Link[]): LinkOlCache[] {
+    return links.map(link => {
+        const coordsOl = link.coordinates.map(c => fromLonLat([c.lng, c.lat]));
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const [x, y] of coordsOl) {
+            if (x! < minX) minX = x!; if (x! > maxX) maxX = x!;
+            if (y! < minY) minY = y!; if (y! > maxY) maxY = y!;
+        }
+        return { coordsOl, bbox: [minX, minY, maxX, maxY] };
+    });
+}
+
+function bboxOverlap(a: [number, number, number, number], b: [number, number, number, number]): boolean {
+    return a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3];
+}
+
+/** bbox가 겹칠 가능성이 있는 링크 인덱스 쌍(i<j)만 골라 반환 (그리드 버킷 기반 broad-phase) */
+function findCandidateLinkPairs(cache: LinkOlCache[]): Array<[number, number]> {
+    const cellMap = new Map<string, number[]>();
+    for (let idx = 0; idx < cache.length; idx++) {
+        const [minX, minY, maxX, maxY] = cache[idx]!.bbox;
+        const cx0 = Math.floor(minX / GRID_CELL_M), cx1 = Math.floor(maxX / GRID_CELL_M);
+        const cy0 = Math.floor(minY / GRID_CELL_M), cy1 = Math.floor(maxY / GRID_CELL_M);
+        for (let cx = cx0; cx <= cx1; cx++) {
+            for (let cy = cy0; cy <= cy1; cy++) {
+                const key = `${cx}_${cy}`;
+                let bucket = cellMap.get(key);
+                if (!bucket) { bucket = []; cellMap.set(key, bucket); }
+                bucket.push(idx);
+            }
+        }
+    }
+
+    const tried = new Set<string>();
+    const pairs: Array<[number, number]> = [];
+    for (const bucket of cellMap.values()) {
+        for (let a = 0; a < bucket.length; a++) {
+            for (let b = a + 1; b < bucket.length; b++) {
+                const i = Math.min(bucket[a]!, bucket[b]!);
+                const j = Math.max(bucket[a]!, bucket[b]!);
+                const key = `${i}_${j}`;
+                if (tried.has(key)) continue;
+                tried.add(key);
+                if (!bboxOverlap(cache[i]!.bbox, cache[j]!.bbox)) continue;
+                pairs.push([i, j]);
+            }
+        }
+    }
+    return pairs;
+}
+
 // ── 기하학적 교차 감지 → Link 분할 → 교차로 자동 생성 ─────────────
-// 반환값: 새로 생성된 교차로 노드 수
-export function detectAndSplitIntersections(): number {
+// 반환값: { created: 새로 생성된 교차로 노드 수, signalsCleared: 커넥션 재생성으로 참조 초기화된 신호 수 }
+export function detectAndSplitIntersections(): { created: number; signalsCleared: number } {
     let network = useNetworkStore.getState().currentJsonData;
-    if (!network) return 0;
+    if (!network) return { created: 0, signalsCleared: 0 };
 
     let created = 0;
     let ts = Date.now() + 5000; // finishSegment ts와 충돌 방지
 
-    // 교차 감지는 반복적으로: 한 번 분할 후 링크 목록이 바뀌므로 재시도
+    // 교차 감지는 반복적으로: 한 번 분할 후 링크 목록이 바뀌므로 재시도.
+    // 매 재시도마다 그리드를 다시 짓는 비용은 O(L)이라, 기존 O(L²) 전수비교보다 훨씬 싸다.
     let changed = true;
     while (changed) {
         changed = false;
         const links = network.links;
+        const cache = buildLinkOlCache(links);
+        const candidatePairs = findCandidateLinkPairs(cache);
 
         outer:
-        for (let i = 0; i < links.length; i++) {
-            const linkA = links[i]!;
-            const aCoords = linkA.coordinates;
+        for (const [i, j] of candidatePairs) {
+            const linkA = links[i]!, linkB = links[j]!;
 
-            for (let j = i + 1; j < links.length; j++) {
-                const linkB = links[j]!;
+            // 같은 fromNode / toNode 를 공유하면 이미 연결됨 → 스킵
+            if (String(linkA.fromNode) === String(linkB.fromNode) ||
+                String(linkA.fromNode) === String(linkB.toNode) ||
+                String(linkA.toNode)   === String(linkB.fromNode) ||
+                String(linkA.toNode)   === String(linkB.toNode)) continue;
 
-                // 같은 fromNode / toNode 를 공유하면 이미 연결됨 → 스킵
-                if (String(linkA.fromNode) === String(linkB.fromNode) ||
-                    String(linkA.fromNode) === String(linkB.toNode) ||
-                    String(linkA.toNode)   === String(linkB.fromNode) ||
-                    String(linkA.toNode)   === String(linkB.toNode)) continue;
+            const aCoordsOl = cache[i]!.coordsOl;
+            const bCoordsOl = cache[j]!.coordsOl;
 
-                const bCoords = linkB.coordinates;
+            for (let si = 0; si < aCoordsOl.length - 1; si++) {
+                const a1 = aCoordsOl[si]!, a2 = aCoordsOl[si + 1]!;
 
-                for (let si = 0; si < aCoords.length - 1; si++) {
-                    const a1 = fromLonLat([aCoords[si]!.lng, aCoords[si]!.lat]);
-                    const a2 = fromLonLat([aCoords[si + 1]!.lng, aCoords[si + 1]!.lat]);
+                for (let sj = 0; sj < bCoordsOl.length - 1; sj++) {
+                    const b1 = bCoordsOl[sj]!, b2 = bCoordsOl[sj + 1]!;
 
-                    for (let sj = 0; sj < bCoords.length - 1; sj++) {
-                        const b1 = fromLonLat([bCoords[sj]!.lng, bCoords[sj]!.lat]);
-                        const b2 = fromLonLat([bCoords[sj + 1]!.lng, bCoords[sj + 1]!.lat]);
+                    const pt = segmentIntersectOl(a1, a2, b1, b2);
+                    if (!pt) continue;
 
-                        const pt = segmentIntersectOl(a1, a2, b1, b2);
-                        if (!pt) continue;
+                    const ll = toLonLat(pt);
+                    const wgs84: Coordinates = { lng: ll[0]!, lat: ll[1]! };
 
-                        const ll = toLonLat(pt);
-                        const wgs84: Coordinates = { lng: ll[0]!, lat: ll[1]! };
+                    // 기존 노드에 너무 가까우면 스킵 (이미 교차로가 있음)
+                    const tooClose = network.nodes.some(n =>
+                        getDistance(
+                            [n.coordinates.lng, n.coordinates.lat],
+                            [wgs84.lng, wgs84.lat],
+                        ) < SNAP_RADIUS_M
+                    );
+                    if (tooClose) continue;
 
-                        // 기존 노드에 너무 가까우면 스킵 (이미 교차로가 있음)
-                        const tooClose = network.nodes.some(n =>
-                            getDistance(
-                                [n.coordinates.lng, n.coordinates.lat],
-                                [wgs84.lng, wgs84.lat],
-                            ) < SNAP_RADIUS_M
-                        );
-                        if (tooClose) continue;
+                    // ① linkA 분할 → 새 노드 nodeA_id 생성
+                    ts += 20;
+                    const { updatedNetwork: n1, newNodeId: nodeA_id } =
+                        splitLinkInNetwork(network, linkA, wgs84, ts);
+                    network = n1;
 
-                        // ① linkA 분할 → 새 노드 nodeA_id 생성
-                        ts += 20;
-                        const { updatedNetwork: n1, newNodeId: nodeA_id } =
-                            splitLinkInNetwork(network, linkA, wgs84, ts);
-                        network = n1;
-
-                        // ② linkB 분할 → 새 노드 nodeB_id 생성
-                        ts += 20;
-                        const linkBCurrent = network.links.find(l =>
-                            String(l.id) === String(linkB.id)
-                        );
-                        let nodeB_id: number | string | null = null;
-                        if (linkBCurrent) {
-                            const { updatedNetwork: n2, newNodeId } =
-                                splitLinkInNetwork(network, linkBCurrent, wgs84, ts);
-                            network = n2;
-                            nodeB_id = newNodeId;
-                        }
-
-                        // ③ 두 분할 노드를 하나로 병합 (nodeA_id 유지)
-                        if (nodeB_id !== null) {
-                            network = mergeNodes(network, nodeA_id, nodeB_id);
-                        }
-
-                        // ④ 병합된 교차로 노드에서 connection 재생성
-                        network = regenerateNodeConnections(network, nodeA_id);
-
-                        assignPropertyToResponseData(network as any);
-                        created++;
-                        changed = true;
-                        break outer; // 링크 배열이 바뀌었으므로 재시작
+                    // ② linkB 분할 → 새 노드 nodeB_id 생성
+                    ts += 20;
+                    const linkBCurrent = network.links.find(l =>
+                        String(l.id) === String(linkB.id)
+                    );
+                    let nodeB_id: number | string | null = null;
+                    if (linkBCurrent) {
+                        const { updatedNetwork: n2, newNodeId } =
+                            splitLinkInNetwork(network, linkBCurrent, wgs84, ts);
+                        network = n2;
+                        nodeB_id = newNodeId;
                     }
+
+                    // ③ 두 분할 노드를 하나로 병합 (nodeA_id 유지)
+                    if (nodeB_id !== null) {
+                        network = mergeNodes(network, nodeA_id, nodeB_id);
+                    }
+
+                    // ④ 병합된 교차로 노드에서 connection 재생성
+                    network = regenerateNodeConnections(network, nodeA_id);
+
+                    assignPropertyToResponseData(network as any);
+                    created++;
+                    changed = true;
+                    break outer; // 링크 배열이 바뀌었으므로 재시작
                 }
             }
         }
     }
 
+    let signalsCleared = 0;
     if (created > 0) {
         // 이미 연결된 교차로의 connection도 정리
         const intersectionNodes = network.nodes.filter(node => {
@@ -3150,15 +3398,18 @@ export function detectAndSplitIntersections(): number {
         useNetworkStore.getState().setChange(true);
         // 분할로 사라진 원본 링크/병합된 노드 — 타일 모드 MVT 마스킹·동기화 제외
         markRemovedForTileMask(before, network);
+        // 재생성으로 커넥션 id가 바뀌어 무효해진 신호 connectionId 정리 — 네트워크 전역에 영향을 주는 작업이라 특히 중요
+        signalsCleared = reconcileSignalConnectionIds(network, intersectionNodes.map(n => n.id));
     }
 
-    return created;
+    return { created, signalsCleared };
 }
 
 // ── 기존 노드 기반 connection 일괄 재생성 (링크는 이미 끊어진 경우) ──
-export function autoGenerateAllIntersections(): number {
+// 반환값: { count: 재생성된 교차로 노드 수, signalsCleared: 참조 초기화된 신호 수 }
+export function autoGenerateAllIntersections(): { count: number; signalsCleared: number } {
     const network = useNetworkStore.getState().currentJsonData;
-    if (!network) return 0;
+    if (!network) return { count: 0, signalsCleared: 0 };
 
     const intersectionNodes = network.nodes.filter(node => {
         const inCount  = node.ports?.filter((p: any) => p.type === 'in').length ?? 0;
@@ -3175,8 +3426,9 @@ export function autoGenerateAllIntersections(): number {
     useNetworkUndoStore.getState().push(network);
     useNetworkStore.getState().setCurrentJsonData(result);
     useNetworkStore.getState().setChange(true);
+    const signalsCleared = reconcileSignalConnectionIds(result, intersectionNodes.map(n => n.id));
 
-    return intersectionNodes.length;
+    return { count: intersectionNodes.length, signalsCleared };
 }
 
 // ── 자동 교차로 플래시: Cesium (생성된 connection을 2초간 화살표로 표시) ──

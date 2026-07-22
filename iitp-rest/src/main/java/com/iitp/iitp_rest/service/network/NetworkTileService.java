@@ -5,6 +5,8 @@ import com.iitp.iitp_rest.mapper.network.NetworkMapper;
 import com.iitp.iitp_rest.model.geometry.Coordinates;
 import com.iitp.iitp_rest.model.network.NetworkResponse;
 import com.iitp.iitp_rest.model.network.NetworkXml;
+import com.iitp.iitp_rest.model.network.cell.CellResponse;
+import com.iitp.iitp_rest.model.network.lane.LaneResponse;
 import com.iitp.iitp_rest.model.network.link.LinkResponse;
 import com.iitp.iitp_rest.model.network.link.LinkXml;
 import com.iitp.iitp_rest.model.network.node.NodeResponse;
@@ -567,6 +569,13 @@ public class NetworkTileService {
                 linkMap.put(l.getId(), l);
             }
         }
+        // 수동으로 그린 새 링크(또는 그 어떤 이유로든 cells 가 빈 링크)는 restoreStrippedDetail
+        // 이 복원할 원본 자체가 없다 — numCell 은 맞게 저장되는데 실제 <cell> 원소가 하나도
+        // 없는 채로 network.xml에 저장돼, CTM 기반 NextSim 시뮬레이션 입력이 비어있는
+        // 잠재 위험이 있었다(KtdbNetworkConverter.buildLanes 만 cells 를 실제로 채움). 여기서
+        // 같은 알고리즘(균등 분할)으로 빠진 cells 를 채운다 — 도로 편집 모드/그리드 편집 어느
+        // 경로로 저장되든 이 applyDiff 를 공통으로 거치므로 한 곳에서 처리하면 충분하다.
+        for (LinkResponse l : linkMap.values()) ensureCellsGenerated(l);
         net.setLinks(new ArrayList<>(linkMap.values()));
 
         // ── 노드 ──
@@ -622,6 +631,36 @@ public class NetworkTileService {
         }
         if (upsert.getShape() == null && existing.getShape() != null) {
             upsert.setShape(existing.getShape());
+        }
+    }
+
+    /** KtdbNetworkConverter.buildLanes 와 동일한 균등 분할 — 새 링크의 numCell 규약을 그대로
+     *  존중해(프론트 makeLink 는 5m 간격, KTDB 임포트는 69.44m 간격으로 서로 다르게 계산해둔
+     *  numCell 이 이미 저장돼 있음) 그 개수만큼만 실제 cell 원소를 채운다. numCell 이 0 이하면
+     *  링크 길이 기준으로 대략적으로 계산(폴백). */
+    private static final double FALLBACK_CELL_LEN_M = 20.0;
+
+    public static void ensureCellsGenerated(LinkResponse link) {
+        if (link.getLanes() == null || link.getLength() <= 0) return;
+        for (LaneResponse lane : link.getLanes()) {
+            if (lane.getCells() != null && !lane.getCells().isEmpty()) continue;
+            int nCells = lane.getNumCell() > 0
+                    ? lane.getNumCell()
+                    : Math.max(1, (int) Math.ceil(link.getLength() / FALLBACK_CELL_LEN_M));
+            double cellLen = link.getLength() / nCells;
+            List<CellResponse> cells = new ArrayList<>(nCells);
+            double offset = 0;
+            for (int c = 0; c < nCells; c++) {
+                double clen = (c == nCells - 1) ? (link.getLength() - cellLen * (nCells - 1)) : cellLen;
+                CellResponse cell = new CellResponse();
+                cell.setId((long) c);
+                cell.setLength(Math.round(Math.max(0.01, clen) * 100.0) / 100.0);
+                cell.setOffset(Math.round(offset * 100.0) / 100.0);
+                cells.add(cell);
+                offset += clen;
+            }
+            lane.setCells(cells);
+            if (lane.getNumCell() != nCells) lane.setNumCell(nCells);
         }
     }
 }

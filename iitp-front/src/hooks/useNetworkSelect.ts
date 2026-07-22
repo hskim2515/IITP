@@ -22,6 +22,10 @@ import { useEditGuideStore } from '@stores/useEditGuideStore';
 import { useNodeContextMenuStore } from '@stores/useNodeContextMenuStore';
 import { useLinkContextMenuStore } from '@stores/useLinkContextMenuStore';
 import { useMessageStore } from '@stores/useMessageStore';
+import { useSignalStore, useSignalHistoryStore } from '@stores/useSignalStore';
+import { useSignalTodStore, useSignalTodHistoryStore } from '@stores/useSignalTodStore';
+import { useBusStationStore, useBusStationHistoryStore } from '@stores/useBusStationStore';
+import { useRailStationStore, useRailStationHistoryStore } from '@stores/useRailStationStore';
 import { assignPropertyToResponseData } from '@utils/guid';
 import { getNetworkLodTierByResolution } from '@utils/lodConstants';
 import { useModeStore } from '@stores/useModeStore';
@@ -258,6 +262,244 @@ export function deleteNodeFromNetwork(network: Network, nodeId: number | string)
     return { ...result, nodes: result.nodes.filter(n => String(n.id) !== String(nodeId)) };
 }
 
+// ── 통과 노드 판별 + 링크 병합(레인 포함) ────────────────────────────
+// 단순 통과점(in 링크 1개 + out 링크 1개, 차선 수 동일)을 삭제하면
+// 두 링크를 잘라내는 대신 하나로 이어붙인다 — 도로가 끊기지 않도록.
+// 차로 증/감 지점이거나 실제 교차로(in/out 2개 초과)면 false → 호출부는 기존 cascade 삭제로 폴백.
+export function isPassThroughNode(network: Network, nodeId: number | string): boolean {
+    const node = network.nodes.find(n => String(n.id) === String(nodeId));
+    if (!node || node.ports.length !== 2) return false;
+    const inPorts  = node.ports.filter(p => p.type === 'in');
+    const outPorts = node.ports.filter(p => p.type === 'out');
+    if (inPorts.length !== 1 || outPorts.length !== 1) return false;
+    const linkIn  = network.links.find(l => String(l.id) === String(inPorts[0]!.linkId));
+    const linkOut = network.links.find(l => String(l.id) === String(outPorts[0]!.linkId));
+    if (!linkIn || !linkOut || String(linkIn.id) === String(linkOut.id)) return false;
+    if (String(linkIn.fromNode) === String(linkOut.toNode)) return false; // 병합하면 셀프루프가 되는 경우 제외
+    return linkIn.numLane === linkOut.numLane;
+}
+
+// 두 레인을 이어붙임 — segments는 뒤쪽 것을 오프셋만큼 밀어서 concat, cells는 양쪽 다 있을 때만 유지(그 외 빈 배열 규약 준수).
+function concatLaneDerived(laneIn: any, laneOut: any, lenIn: number, lenOut: number, coords: Coordinates[]): any {
+    const segsIn  = laneIn.segments?.length  > 0 ? laneIn.segments  : [{ featureType: 'segments', id: 0, block: false, initPoint: 0, endPoint: lenIn }];
+    const segsOut = laneOut.segments?.length > 0 ? laneOut.segments : [{ featureType: 'segments', id: 0, block: false, initPoint: 0, endPoint: lenOut }];
+    const segments = [
+        ...segsIn,
+        ...segsOut.map((s: any, i: number) => ({ ...s, id: segsIn.length + i, initPoint: s.initPoint + lenIn, endPoint: s.endPoint + lenIn })),
+    ];
+    const cells = (laneIn.cells?.length > 0 && laneOut.cells?.length > 0)
+        ? [...laneIn.cells, ...laneOut.cells.map((c: any, i: number) => ({ ...c, id: laneIn.cells.length + i, offset: c.offset + lenIn }))]
+        : [];
+    const newLength = lenIn + lenOut;
+    return {
+        ...laneIn, coordinates: coords, segments, cells,
+        numCell: cells.length > 0 ? cells.length : Math.max(1, Math.ceil(newLength / 100)),
+    };
+}
+
+// 통과 노드가 아니면 null — 호출부는 null이면 deleteNodeFromNetwork(cascade 삭제)로 폴백.
+export function mergeLinksAtNode(network: Network, nodeId: number | string): Network | null {
+    if (!isPassThroughNode(network, nodeId)) return null;
+    const node = network.nodes.find(n => String(n.id) === String(nodeId))!;
+    const linkIn  = network.links.find(l => String(l.id) === String(node.ports.find(p => p.type === 'in')!.linkId))!;
+    const linkOut = network.links.find(l => String(l.id) === String(node.ports.find(p => p.type === 'out')!.linkId))!;
+
+    const mergedCoords = [...linkIn.coordinates, ...linkOut.coordinates.slice(1)];
+    const lenIn  = linkIn.length  || calcPathLength(linkIn.coordinates);
+    const lenOut = linkOut.length || calcPathLength(linkOut.coordinates);
+
+    const mergedLanes = linkIn.lanes.map((laneIn, i) => {
+        const laneOut = linkOut.lanes[i];
+        if (!laneOut) return laneIn;
+        const laneCoords = [...laneIn.coordinates, ...laneOut.coordinates.slice(1)];
+        return concatLaneDerived(laneIn, laneOut, lenIn, lenOut, laneCoords);
+    });
+
+    // linkIn의 id를 그대로 유지 → toNode 쪽 끝점(endNode)만 linkOut→linkIn 참조 갱신하면 됨
+    const mergedLink: Link = {
+        ...linkIn,
+        toNode: linkOut.toNode,
+        coordinates: mergedCoords,
+        length: calcPathLength(mergedCoords),
+        lanes: mergedLanes,
+    };
+
+    const endNodeId = linkOut.toNode;
+    const updatedNodes = network.nodes
+        .filter(n => String(n.id) !== String(nodeId))
+        .map(n => {
+            if (String(n.id) !== String(endNodeId)) return n;
+            return {
+                ...n,
+                ports: n.ports.map(p => String(p.linkId) === String(linkOut.id) ? { ...p, linkId: linkIn.id } : p),
+                connections: n.connections.map((c: any) =>
+                    String(c.fromLink) === String(linkOut.id) ? { ...c, fromLink: linkIn.id, coordinates: [] } : c
+                ),
+            };
+        });
+
+    const updatedLinks = network.links
+        .filter(l => String(l.id) !== String(linkOut.id))
+        .map(l => String(l.id) === String(linkIn.id) ? mergedLink : l);
+
+    return { ...network, nodes: updatedNodes, links: updatedLinks };
+}
+
+// 노드별로 통과점이면 병합, 아니면 cascade 삭제 — 다중 선택 삭제의 기본 진입점.
+export function batchDeleteOrMergeNodes(network: Network, nodeIds: (number | string)[]): Network {
+    return nodeIds.reduce((net, id) => mergeLinksAtNode(net, id) ?? deleteNodeFromNetwork(net, id), network);
+}
+
+// ── 노드(교차로) 삭제 연쇄: 신호/신호TOD 정리 ──────────────────────
+// network.nodes에서 노드는 지워도 signal/signalTod는 별도 스토어라 자동으로 안 지워짐 → 명시 처리.
+export function countSignalsForNodes(nodeIds: (number | string)[]): number {
+    const ids = new Set(nodeIds.map(String));
+    const signals = (useSignalStore.getState().currentJsonData as { signals?: any[] } | undefined)?.signals ?? [];
+    return signals.filter(s => ids.has(String(s.nodeId))).length;
+}
+
+// 실제로 사라지는 링크 수 — 통과 노드는 병합되어 링크가 안 사라지므로 제외하고 셈.
+export function countLinksLostForNodes(network: Network, nodeIds: (number | string)[]): number {
+    const cascadeIds = new Set(nodeIds.filter(id => !isPassThroughNode(network, id)).map(String));
+    if (cascadeIds.size === 0) return 0;
+    return new Set(
+        network.nodes
+            .filter(n => cascadeIds.has(String(n.id)))
+            .flatMap(n => n.ports.map(p => String(p.linkId)))
+    ).size;
+}
+
+// cascade 삭제(병합 아님) 대상 노드들의 "먼 쪽" 끝 노드 id — 그 노드도 연결 링크가 사라지며 커넥션이 바뀜.
+export function farNodeIdsForCascadeDelete(network: Network, nodeIds: (number | string)[]): string[] {
+    const cascadeIds = new Set(nodeIds.filter(id => !isPassThroughNode(network, id)).map(String));
+    if (cascadeIds.size === 0) return [];
+    const far = new Set<string>();
+    for (const node of network.nodes) {
+        if (!cascadeIds.has(String(node.id))) continue;
+        for (const p of node.ports) {
+            const link = network.links.find(l => String(l.id) === String(p.linkId));
+            if (!link) continue;
+            const otherEnd = String(link.fromNode) === String(node.id) ? link.toNode : link.fromNode;
+            if (!cascadeIds.has(String(otherEnd))) far.add(String(otherEnd));
+        }
+    }
+    return [...far];
+}
+
+export function deleteSignalsForNodes(nodeIds: (number | string)[]): void {
+    if (nodeIds.length === 0) return;
+    const ids = new Set(nodeIds.map(String));
+
+    const signals = (useSignalStore.getState().currentJsonData as { signals?: any[] } | undefined)?.signals ?? [];
+    const signalGuids = signals
+        .filter(s => ids.has(String(s.nodeId)))
+        .map(s => s.__guid)
+        .filter((g): g is string => !!g);
+    if (signalGuids.length > 0) {
+        useSignalStore.getState().removeRecordsByGuid(signalGuids, useSignalHistoryStore as any);
+    }
+
+    const todNodes = (useSignalTodStore.getState().currentJsonData as { nodes?: any[] } | undefined)?.nodes ?? [];
+    const todGuids = todNodes
+        .filter(n => ids.has(String(n.id)))
+        .map(n => n.__guid)
+        .filter((g): g is string => !!g);
+    if (todGuids.length > 0) {
+        useSignalTodStore.getState().removeRecordsByGuid(todGuids, useSignalTodHistoryStore as any);
+    }
+}
+
+// ── 링크 삭제 연쇄: 정류장 정리 ──────────────────────────────────
+// busStation/railStation은 linkRef로 특정 링크 위 위치를 참조하는 별개 스토어라 링크가
+// 사라져도(직접 삭제든 노드 삭제로 인한 연쇄든) 자동으로는 안 지워진다. 신호(connectionId만
+// null로 초기화)와 달리 정류장은 위치 자체가 그 링크에 종속돼 "참조만 비우기"가 불가능하므로
+// (남기면 위치를 잃은 고아 레코드) 삭제 대상으로 본다.
+function stationCountForLinkIdSet(ids: Set<string>): number {
+    if (ids.size === 0) return 0;
+    const busStations = (useBusStationStore.getState().currentJsonData as { busStations?: any[] } | undefined)?.busStations ?? [];
+    const railStations = (useRailStationStore.getState().currentJsonData as { railStations?: any[] } | undefined)?.railStations ?? [];
+    return busStations.filter(s => s.linkRef != null && ids.has(String(s.linkRef))).length
+         + railStations.filter(s => s.linkRef != null && ids.has(String(s.linkRef))).length;
+}
+
+/** 지금 당장 이 링크들이 삭제되면 사라질 정류장 수 — 삭제 실행 "전" 확인 다이얼로그용. */
+export function countStationsForLinks(linkIds: (number | string)[]): number {
+    return stationCountForLinkIdSet(new Set(linkIds.map(String)));
+}
+
+/** 노드 삭제로 (통과 노드 병합을 제외하고) 함께 사라질 링크에 걸린 정류장 수 — 확인
+ *  다이얼로그용. countLinksLostForNodes와 동일한 "cascade 대상 링크" 계산을 공유한다. */
+export function countStationsForNodes(network: Network, nodeIds: (number | string)[]): number {
+    const cascadeIds = new Set(nodeIds.filter(id => !isPassThroughNode(network, id)).map(String));
+    if (cascadeIds.size === 0) return 0;
+    const linkIds = new Set(
+        network.nodes
+            .filter(n => cascadeIds.has(String(n.id)))
+            .flatMap(n => n.ports.map((p: any) => String(p.linkId)))
+    );
+    return stationCountForLinkIdSet(linkIds);
+}
+
+/** 실제로 사라진 링크 id 목록(삭제 적용 "후" markDeleted가 계산한 diff)을 받아 그 위의
+ *  정류장을 실제로 지운다. 반환값은 지워진 정류장 수(안내 메시지용). */
+export function deleteStationsForLinks(linkIds: (number | string)[]): number {
+    const ids = new Set(linkIds.map(String));
+    if (ids.size === 0) return 0;
+    let count = 0;
+
+    const busStations = (useBusStationStore.getState().currentJsonData as { busStations?: any[] } | undefined)?.busStations ?? [];
+    const busGuids = busStations
+        .filter(s => s.linkRef != null && ids.has(String(s.linkRef)))
+        .map(s => s.__guid)
+        .filter((g): g is string => !!g);
+    if (busGuids.length > 0) {
+        useBusStationStore.getState().removeRecordsByGuid(busGuids, useBusStationHistoryStore as any);
+        count += busGuids.length;
+    }
+
+    const railStations = (useRailStationStore.getState().currentJsonData as { railStations?: any[] } | undefined)?.railStations ?? [];
+    const railGuids = railStations
+        .filter(s => s.linkRef != null && ids.has(String(s.linkRef)))
+        .map(s => s.__guid)
+        .filter((g): g is string => !!g);
+    if (railGuids.length > 0) {
+        useRailStationStore.getState().removeRecordsByGuid(railGuids, useRailStationHistoryStore as any);
+        count += railGuids.length;
+    }
+    return count;
+}
+
+// 커넥션 삭제/재생성(regenerateNodeConnections, deleteLinkFromNetwork, numLane 감소 등) 뒤
+// 더 이상 존재하지 않는 connectionId를 참조하는 신호를 찾아 정리한다.
+// 신호 자체(nodeId/turning/plans)는 살아있는 movement라 유지하고, 무효해진 connectionId만
+// null로 초기화 — 방치하면 NextSim 무결성 검사(validateSignalAgainstNetwork의 badConn)에서
+// 편집 시점과 동떨어진 채 뒤늦게 걸려 원인 추적이 어려워진다. network는 반드시 이 연산 "이후"의
+// 네트워크(node.connections가 최신 상태)를 넘겨야 한다.
+export function reconcileSignalConnectionIds(network: Network, nodeIds: (number | string)[]): number {
+    const ids = new Set(nodeIds.map(String));
+    if (ids.size === 0) return 0;
+    const connIdsByNode = new Map<string, Set<string>>();
+    for (const node of network.nodes) {
+        if (ids.has(String(node.id))) {
+            connIdsByNode.set(String(node.id), new Set(node.connections.map((c: any) => String(c.id))));
+        }
+    }
+    const signals = (useSignalStore.getState().currentJsonData as { signals?: any[] } | undefined)?.signals ?? [];
+    let clearedCount = 0;
+    for (const sig of signals) {
+        if (sig.connectionId == null || !ids.has(String(sig.nodeId))) continue;
+        const validConnIds = connIdsByNode.get(String(sig.nodeId));
+        if (validConnIds && !validConnIds.has(String(sig.connectionId))) {
+            useSignalStore.getState().updateCurrentJsonData(
+                { __guid: sig.__guid, connectionId: null } as any,
+                useSignalHistoryStore as any,
+            );
+            clearedCount++;
+        }
+    }
+    return clearedCount;
+}
+
 /**
  * 링크 길이 변경 시 레인 파생물(cells/segments) 정합 갱신.
  *
@@ -287,6 +529,16 @@ function rescaleLaneDerived(lane: any, oldLen: number, newLen: number, coords: C
         ...lane, coordinates: coords, segments: segs, cells,
         numCell: cells.length > 0 ? cells.length : Math.max(1, Math.ceil(newLen / 100)),
     };
+}
+
+// 링크 끝점이 이동할 때, 레인 고유의 형상(오프셋 곡선 등)을 링크 중심선으로 뭉개지 않고
+// 이동한 끝점만 델타 이동해 나머지 정점(중간 형상)은 그대로 보존한다.
+function shiftEndpoint(coords: Coordinates[] | undefined, isFromEnd: boolean, dLat: number, dLng: number): Coordinates[] {
+    if (!coords?.length) return coords ?? [];
+    const next = coords.map(c => ({ ...c }));
+    const idx = isFromEnd ? 0 : next.length - 1;
+    next[idx] = { ...next[idx]!, lat: next[idx]!.lat + dLat, lng: next[idx]!.lng + dLng };
+    return next;
 }
 
 function rebuildLanes(link: Link, numLane: number): Lane[] {
@@ -354,16 +606,32 @@ export function updateLinkCoordinates(network: Network, linkId: number | string,
     const newTo    = newCoords[newCoords.length - 1]!;
     const oldFrom  = link.coordinates[0];
     const oldTo    = link.coordinates[link.coordinates.length - 1];
-    const endpointMoved =
-        newFrom.lng !== oldFrom?.lng || newFrom.lat !== oldFrom?.lat ||
-        newTo.lng   !== oldTo?.lng   || newTo.lat   !== oldTo?.lat;
+    const fromMoved = newFrom.lng !== oldFrom?.lng || newFrom.lat !== oldFrom?.lat;
+    const toMoved   = newTo.lng   !== oldTo?.lng   || newTo.lat   !== oldTo?.lat;
+    const endpointMoved = fromMoved || toMoved;
+    // 정점 개수가 그대로면(끝점만 이동) 레인도 끝점만 델타 이동해 고유 형상 보존.
+    // 정점이 추가/삭제됐으면(중간 형상 편집) 레인 대응점을 알 수 없어 링크 중심선으로 재계산.
+    const onlyEndpointsChanged = newCoords.length === link.coordinates.length;
+    const dFromLat = fromMoved ? newFrom.lat - (oldFrom?.lat ?? newFrom.lat) : 0;
+    const dFromLng = fromMoved ? newFrom.lng - (oldFrom?.lng ?? newFrom.lng) : 0;
+    const dToLat   = toMoved   ? newTo.lat   - (oldTo?.lat   ?? newTo.lat)   : 0;
+    const dToLng   = toMoved   ? newTo.lng   - (oldTo?.lng   ?? newTo.lng)   : 0;
 
     const oldLen = link.length || calcPathLength(link.coordinates);
     const updatedLinks = network.links.map(l => {
         if (String(l.id) !== String(linkId)) return l;
         return {
             ...l, coordinates: newCoords, length,
-            lanes: l.lanes.map((lane: any) => rescaleLaneDerived(lane, oldLen, length, newCoords)),
+            lanes: l.lanes.map((lane: any) => {
+                let laneCoords = lane.coordinates;
+                if (onlyEndpointsChanged) {
+                    if (fromMoved) laneCoords = shiftEndpoint(laneCoords, true, dFromLat, dFromLng);
+                    if (toMoved)   laneCoords = shiftEndpoint(laneCoords, false, dToLat, dToLng);
+                } else {
+                    laneCoords = newCoords;
+                }
+                return rescaleLaneDerived(lane, oldLen, length, laneCoords);
+            }),
         };
     });
 
@@ -461,14 +729,25 @@ export function mergeNodesInNetwork(
         let coords = [...l.coordinates];
         let fromNode = l.fromNode;
         let toNode   = l.toNode;
-        if (String(l.fromNode) === String(removeNodeId)) { fromNode = keepNodeId as number; coords = [keepCoord, ...coords.slice(1)]; }
-        if (String(l.toNode)   === String(removeNodeId)) { toNode   = keepNodeId as number; coords = [...coords.slice(0, -1), keepCoord]; }
+        let fromMoved = false, toMoved = false;
+        if (String(l.fromNode) === String(removeNodeId)) { fromNode = keepNodeId as number; coords = [keepCoord, ...coords.slice(1)]; fromMoved = true; }
+        if (String(l.toNode)   === String(removeNodeId)) { toNode   = keepNodeId as number; coords = [...coords.slice(0, -1), keepCoord]; toMoved = true; }
         if (fromNode === l.fromNode && toNode === l.toNode) return l;
         const newLen = calcPathLength(coords);
         const oldLen = l.length || calcPathLength(l.coordinates);
+        const oldFrom = l.coordinates[0]!, oldTo = l.coordinates[l.coordinates.length - 1]!;
+        const dFromLat = fromMoved ? keepCoord.lat - oldFrom.lat : 0;
+        const dFromLng = fromMoved ? keepCoord.lng - oldFrom.lng : 0;
+        const dToLat   = toMoved   ? keepCoord.lat - oldTo.lat   : 0;
+        const dToLng   = toMoved   ? keepCoord.lng - oldTo.lng   : 0;
         return {
             ...l, fromNode, toNode, coordinates: coords, length: newLen,
-            lanes: (l.lanes ?? []).map((lane: any) => rescaleLaneDerived(lane, oldLen, newLen, coords)),
+            lanes: (l.lanes ?? []).map((lane: any) => {
+                let laneCoords = lane.coordinates;
+                if (fromMoved) laneCoords = shiftEndpoint(laneCoords, true, dFromLat, dFromLng);
+                if (toMoved)   laneCoords = shiftEndpoint(laneCoords, false, dToLat, dToLng);
+                return rescaleLaneDerived(lane, oldLen, newLen, laneCoords);
+            }),
         };
     });
 
@@ -544,10 +823,20 @@ export function moveNode(network: Network, nodeId: number | string, newCoord: Co
         if (isTo)   coords[coords.length - 1] = newCoord;
         const length = calcPathLength(coords);
         const oldLen = l.length || calcPathLength(l.coordinates);
-        // 레인 coordinates는 link.coordinates를 따름 + cells/segments 비율 갱신
+        const oldFrom = l.coordinates[0]!, oldTo = l.coordinates[l.coordinates.length - 1]!;
+        const dFromLat = isFrom ? newCoord.lat - oldFrom.lat : 0;
+        const dFromLng = isFrom ? newCoord.lng - oldFrom.lng : 0;
+        const dToLat   = isTo   ? newCoord.lat - oldTo.lat   : 0;
+        const dToLng   = isTo   ? newCoord.lng - oldTo.lng   : 0;
+        // 레인은 링크 중심선으로 덮어쓰지 않고 이동한 끝점만 델타 이동 — 레인 고유 형상 보존 + cells/segments 비율 갱신
         return {
             ...l, coordinates: coords, length,
-            lanes: l.lanes.map((lane: any) => rescaleLaneDerived(lane, oldLen, length, coords)),
+            lanes: l.lanes.map((lane: any) => {
+                let laneCoords = lane.coordinates;
+                if (isFrom) laneCoords = shiftEndpoint(laneCoords, true, dFromLat, dFromLng);
+                if (isTo)   laneCoords = shiftEndpoint(laneCoords, false, dToLat, dToLng);
+                return rescaleLaneDerived(lane, oldLen, length, laneCoords);
+            }),
         };
     });
     return { ...network, nodes: updatedNodes, links: updatedLinks };
@@ -1399,57 +1688,124 @@ export const useNetworkSelect = () => {
                     const removedNodes = [...beforeNodeIds].filter(id => !afterNodes.has(id));
                     if (removedLinks.length > 0) useNetworkEditStore.getState().addDeleted(removedLinks);
                     if (removedNodes.length > 0) useNetworkEditStore.getState().addDeletedNodes(removedNodes);
+                    return removedLinks;
                 };
                 // 멀티셀렉트 일괄 삭제
                 if (selectedLinkIds.length > 0) {
-                    applyNetworkUpdate(batchDeleteLinksFromNetwork(network, selectedLinkIds));
-                    markDeleted();
-                    useNetworkDrawStore.getState().clearSelection();
-                    useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkIds.length}개 삭제됨` });
+                    const affectedNodeIds = new Set(
+                        network.links
+                            .filter(l => selectedLinkIds.includes(String(l.id)))
+                            .flatMap(l => [String(l.fromNode), String(l.toNode)])
+                    );
+                    // 정류장은 link 삭제로 완전히 사라지는 레코드(신호처럼 참조만 비울 수
+                    // 없음) — 파괴적 연쇄라 다른 삭제 확인들과 동일하게 사전에 알린다.
+                    const stationCount = countStationsForLinks(selectedLinkIds);
+                    const proceedDelete = () => {
+                        // 확인 다이얼로그를 거치는 동안 network가 바뀌었을 수 있어 최신본을 다시 읽는다
+                        // (doDelete와 동일 원칙 — 클로저로 캡처한 network는 confirm 클릭 시점엔 낡았을 수 있음).
+                        const net = useNetworkStore.getState().currentJsonData;
+                        if (!net) return;
+                        const next = batchDeleteLinksFromNetwork(net, selectedLinkIds);
+                        applyNetworkUpdate(next);
+                        const clearedCount = reconcileSignalConnectionIds(next, [...affectedNodeIds]);
+                        const removedLinks = markDeleted();
+                        const removedStationCount = deleteStationsForLinks(removedLinks);
+                        useNetworkDrawStore.getState().clearSelection();
+                        useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkIds.length}개 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}` });
+                    };
+                    if (stationCount > 0) {
+                        useMessageStore.getState().setMessage({
+                            type: 'confirm',
+                            text: `링크 ${selectedLinkIds.length}개를 삭제합니다. 이 링크 위 정류장 ${stationCount}개도 함께 삭제됩니다. 계속할까요?`,
+                            onConfirm: proceedDelete,
+                        });
+                    } else {
+                        proceedDelete();
+                    }
                 } else if (selectedNodeIds.length > 0) {
-                    // 연쇄 삭제 확인 — 노드 삭제는 연결 링크까지 함께 사라지므로 조용히 지우면 위험
-                    const linkedCount = new Set(
-                        network.nodes
-                            .filter(n => selectedNodeIds.includes(String(n.id)))
-                            .flatMap(n => n.ports.map(p => String(p.linkId)))
-                    ).size;
+                    // 연쇄 삭제 확인 — 통과 노드(in1+out1, 차선수 동일)는 링크 자동 병합, 나머지는 연결 링크·커넥션·신호·정류장까지 cascade
+                    const mergeCount = selectedNodeIds.filter(id => isPassThroughNode(network, id)).length;
+                    const linkedCount = countLinksLostForNodes(network, selectedNodeIds);
+                    const signalCount = countSignalsForNodes(selectedNodeIds);
+                    const stationCount = countStationsForNodes(network, selectedNodeIds);
                     const doDelete = () => {
                         const net = useNetworkStore.getState().currentJsonData;
                         if (!net) return;
-                        applyNetworkUpdate(batchDeleteNodesFromNetwork(net, selectedNodeIds));
-                        markDeleted();
+                        const farIds = farNodeIdsForCascadeDelete(net, selectedNodeIds);
+                        const next = batchDeleteOrMergeNodes(net, selectedNodeIds);
+                        applyNetworkUpdate(next);
+                        const clearedCount = reconcileSignalConnectionIds(next, farIds);
+                        deleteSignalsForNodes(selectedNodeIds);
+                        const removedLinks = markDeleted();
+                        const removedStationCount = deleteStationsForLinks(removedLinks);
                         useNetworkDrawStore.getState().clearSelection();
-                        useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${selectedNodeIds.length}개 삭제됨` });
+                        useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${selectedNodeIds.length}개 삭제됨${mergeCount > 0 ? ` (통과 노드 ${mergeCount}개는 링크 자동 병합)` : ''}${signalCount > 0 ? `, 신호 ${signalCount}개 삭제` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}${clearedCount > 0 ? `, 인접 신호 ${clearedCount}개 커넥션 참조 초기화` : ''}` });
                     };
-                    if (linkedCount > 0) {
+                    if (linkedCount > 0 || signalCount > 0 || stationCount > 0) {
                         useMessageStore.getState().setMessage({
                             type: 'confirm',
-                            text: `노드 ${selectedNodeIds.length}개를 삭제하면 연결된 링크 ${linkedCount}개도 함께 삭제됩니다. 계속할까요?`,
+                            text: `노드 ${selectedNodeIds.length}개를 삭제합니다.${linkedCount > 0 ? ` 연결 링크 ${linkedCount}개가 함께 삭제되고,` : ''}${mergeCount > 0 ? ` 통과 노드 ${mergeCount}개는 링크가 자동 병합되며,` : ''}${signalCount > 0 ? ` 신호 ${signalCount}개도 삭제됩니다.` : ''}${stationCount > 0 ? ` 정류장 ${stationCount}개도 삭제됩니다.` : ''} 계속할까요?`,
                             onConfirm: doDelete,
                         });
                     } else {
                         doDelete();
                     }
                 } else if (sl !== null) {
-                    applyNetworkUpdate(deleteLinkFromNetwork(network, sl));
-                    markDeleted();
-                    useNetworkDrawStore.getState().clearSelection();
-                    useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${sl} 삭제됨` });
+                    const delLink = network.links.find(l => String(l.id) === String(sl));
+                    const stationCount = countStationsForLinks([sl]);
+                    const proceedDelete = () => {
+                        // 확인 다이얼로그를 거치는 동안 network가 바뀌었을 수 있어 최신본을 다시 읽는다.
+                        const net = useNetworkStore.getState().currentJsonData;
+                        if (!net) return;
+                        const next = deleteLinkFromNetwork(net, sl);
+                        applyNetworkUpdate(next);
+                        const clearedCount = delLink ? reconcileSignalConnectionIds(next, [delLink.fromNode, delLink.toNode]) : 0;
+                        const removedLinks = markDeleted();
+                        const removedStationCount = deleteStationsForLinks(removedLinks);
+                        useNetworkDrawStore.getState().clearSelection();
+                        useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${sl} 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}` });
+                    };
+                    if (stationCount > 0) {
+                        useMessageStore.getState().setMessage({
+                            type: 'confirm',
+                            text: `링크 ${sl}을(를) 삭제합니다. 이 링크 위 정류장 ${stationCount}개도 함께 삭제됩니다. 계속할까요?`,
+                            onConfirm: proceedDelete,
+                        });
+                    } else {
+                        proceedDelete();
+                    }
                 } else if (sn !== null) {
-                    const node = network.nodes.find(n => String(n.id) === String(sn));
-                    const linkedCount = new Set((node?.ports ?? []).map(p => String(p.linkId))).size;
+                    const passThrough = isPassThroughNode(network, sn);
+                    const linkedCount = countLinksLostForNodes(network, [sn]);
+                    const signalCount = countSignalsForNodes([sn]);
+                    const stationCount = countStationsForNodes(network, [sn]);
                     const doDelete = () => {
                         const net = useNetworkStore.getState().currentJsonData;
                         if (!net) return;
-                        applyNetworkUpdate(deleteNodeFromNetwork(net, sn));
-                        markDeleted();
+                        const merged = mergeLinksAtNode(net, sn);
+                        const farIds = merged ? [] : farNodeIdsForCascadeDelete(net, [sn]);
+                        const next = merged ?? deleteNodeFromNetwork(net, sn);
+                        applyNetworkUpdate(next);
+                        const clearedCount = reconcileSignalConnectionIds(next, farIds);
+                        deleteSignalsForNodes([sn]);
+                        const removedLinks = markDeleted();
+                        const removedStationCount = deleteStationsForLinks(removedLinks);
                         useNetworkDrawStore.getState().clearSelection();
-                        useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${sn} 및 연결 링크 ${linkedCount}개 삭제됨` });
+                        useMessageStore.getState().setMessage({
+                            type: 'info',
+                            text: (merged
+                                ? `노드 ${sn} 삭제 및 인접 링크 자동 병합됨${signalCount > 0 ? ` (신호 ${signalCount}개 삭제)` : ''}`
+                                : `노드 ${sn} 및 연결 링크 ${linkedCount}개${signalCount > 0 ? `, 신호 ${signalCount}개` : ''} 삭제됨`)
+                                + (removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : '')
+                                + (clearedCount > 0 ? `, 인접 신호 ${clearedCount}개 커넥션 참조 초기화` : ''),
+                        });
                     };
-                    if (linkedCount > 0) {
+                    if (linkedCount > 0 || signalCount > 0 || stationCount > 0) {
                         useMessageStore.getState().setMessage({
                             type: 'confirm',
-                            text: `노드 ${sn}을(를) 삭제하면 연결된 링크 ${linkedCount}개도 함께 삭제됩니다. 계속할까요?`,
+                            text: passThrough
+                                ? `노드 ${sn}은(는) 통과 노드로 판단되어 인접 링크가 자동 병합됩니다.${signalCount > 0 ? ` 신호 ${signalCount}개는 삭제됩니다.` : ''}${stationCount > 0 ? ` 정류장 ${stationCount}개도 삭제됩니다.` : ''} 계속할까요?`
+                                : `노드 ${sn}을(를) 삭제하면 연결된 링크 ${linkedCount}개, 커넥션${signalCount > 0 ? `, 신호 ${signalCount}개` : ''}${stationCount > 0 ? `, 정류장 ${stationCount}개` : ''}도 함께 삭제됩니다. 계속할까요?`,
                             onConfirm: doDelete,
                         });
                     } else {

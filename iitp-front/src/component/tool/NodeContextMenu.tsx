@@ -34,9 +34,10 @@ const NodeContextMenu: React.FC = () => {
     const outCount = node?.ports?.filter((p: any) => p.type === 'out').length ?? 0;
     const canCreate = inCount >= 1 && outCount >= 1;
     const connCount = node?.connections?.length ?? 0;
+    const isTagged = String(nodeId) in useNetworkDrawStore.getState().intersectionNodes;
 
     const menuW = 210;
-    const menuH = 120;
+    const menuH = 220;
     const left = Math.min(screenX + 4, window.innerWidth  - menuW - 8);
     const top  = Math.min(screenY + 4, window.innerHeight - menuH - 8);
 
@@ -49,10 +50,11 @@ const NodeContextMenu: React.FC = () => {
             hide();
             return;
         }
-        createIntersectionAtNode(nodeId);
+        const clearedCount = createIntersectionAtNode(nodeId);
         useMessageStore.getState().setMessage({
             type: 'info',
-            text: `교차로 생성 완료 (노드 ${String(nodeId)}, connection ${connCount > 0 ? '재' : ''}생성)`,
+            text: `교차로 생성 완료 (노드 ${String(nodeId)}, connection ${connCount > 0 ? '재' : ''}생성)`
+                + (clearedCount > 0 ? ` — 신호 ${clearedCount}개의 커넥션 참조 초기화` : ''),
         });
         hide();
     };
@@ -60,6 +62,33 @@ const NodeContextMenu: React.FC = () => {
     const handleSelectNode = () => {
         useNetworkDrawStore.getState().setSelectActive(true);
         useNetworkDrawStore.getState().setSelectedNode(nodeId);
+        hide();
+    };
+
+    // 지금은 포트가 한쪽뿐(in 또는 out만)이라 바로 교차로를 만들 수 없는 노드를 "지정"해두면,
+    // 그리기 중 화면에 항상 마커로 표시되고 스냅 반경도 넓어져(findSnapNode), 나중에 다른
+    // 지역을 그리다 여기로 돌아와도 놓치지 않고 정확히 이 노드에 스냅해 연결할 수 있다.
+    // 거리 기반 자동 병합은 하지 않는다 — 항상 실제로 스냅된 "같은 id의 노드"에만 연결되므로
+    // 서로 다른 두 교차로가 잘못 합쳐질 위험이 없다.
+    const handleToggleIntersectionTag = () => {
+        if (isTagged) {
+            useNetworkDrawStore.getState().removeIntersectionNode(nodeId);
+            useMessageStore.getState().setMessage({ type: 'info', text: `교차로 지정 해제 (노드 ${String(nodeId)})` });
+        } else {
+            if (!node) { hide(); return; }
+            useNetworkDrawStore.getState().addIntersectionNode(nodeId, node.coordinates);
+            useMessageStore.getState().setMessage({
+                type: 'info',
+                text: `교차로로 지정했습니다 (노드 ${String(nodeId)}) — 그리기 모드에서 항상 마커로 표시되며, 나중에 이 지점에 스냅해 도로를 연결하면 자동 완성됩니다.`,
+            });
+        }
+        hide();
+    };
+
+    // 이 노드에서 바로 도로 그리기를 시작 — 화면을 옮겨가며 이어 그릴 때 매번 지도에서
+    // 끝점을 다시 찾아 클릭할 필요 없이, 컨텍스트 메뉴로 바로 이어갈 수 있게 한다.
+    const handleStartDrawingHere = () => {
+        useNetworkDrawStore.getState().activateAndReset(String(nodeId));
         hide();
     };
 
@@ -108,6 +137,36 @@ const NodeContextMenu: React.FC = () => {
                         </span>
                         <span style={{ fontSize: 10, color: canCreate ? '#4caf50' : '#555' }}>
                             {canCreate ? 'S/L/R 자동 생성' : `in:${inCount} out:${outCount} — 포트 부족`}
+                        </span>
+                    </div>
+                </button>
+
+                {/* 이 노드에서 도로 그리기 시작 */}
+                <button
+                    style={menuBtnStyle}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(122,162,255,0.12)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                    onClick={handleStartDrawingHere}
+                >
+                    <span style={{ fontSize: 15, color: '#7aa2ff' }}>✏</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <span>여기서 도로 그리기 시작</span>
+                        <span style={{ fontSize: 10, color: '#555' }}>이 노드를 시작점으로 바로 이어 그리기</span>
+                    </div>
+                </button>
+
+                {/* 교차로 지정 (지연 병합) */}
+                <button
+                    style={menuBtnStyle}
+                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(255,180,70,0.12)')}
+                    onMouseLeave={e => (e.currentTarget.style.background = 'none')}
+                    onClick={handleToggleIntersectionTag}
+                >
+                    <span style={{ fontSize: 15, color: '#ffb347' }}>{isTagged ? '★' : '☆'}</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        <span>{isTagged ? '교차로 지정 해제' : '교차로로 지정'}</span>
+                        <span style={{ fontSize: 10, color: '#555' }}>
+                            {isTagged ? '지정됨 — 그리기 중 마커로 표시 · 넓은 스냅 반경' : '그리기 중 마커 표시 + 넓은 스냅 반경으로 나중에 찾기 쉽게'}
                         </span>
                     </div>
                 </button>
