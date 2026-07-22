@@ -6,6 +6,7 @@ import com.iitp.iitp_rest.repository.SignalVersionsRepository;
 import com.iitp.iitp_rest.service.signal.SignalJaxbParser;
 import com.iitp.iitp_rest.service.signal.SignalService;
 import com.iitp.iitp_rest.service.signal.SignalTileService;
+import com.iitp.iitp_rest.service.simulation.NextSimInputScaffolder;
 import com.iitp.iitp_rest.util.FileStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,15 +29,30 @@ public class SignalController {
     private final SignalVersionsRepository signalVersionsRepository;
     private final SignalJaxbParser signalJaxbParser;
     private final FileStorageService fileStorage;
+    private final NextSimInputScaffolder nextSimInputScaffolder;
 
     public SignalController(SignalService signalService, SignalTileService signalTileService,
                             SignalVersionsRepository signalVersionsRepository,
-                            SignalJaxbParser signalJaxbParser, FileStorageService fileStorage) {
+                            SignalJaxbParser signalJaxbParser, FileStorageService fileStorage,
+                            NextSimInputScaffolder nextSimInputScaffolder) {
         this.signalService = signalService;
         this.signalTileService = signalTileService;
         this.signalVersionsRepository = signalVersionsRepository;
         this.signalJaxbParser = signalJaxbParser;
         this.fileStorage = fileStorage;
+        this.nextSimInputScaffolder = nextSimInputScaffolder;
+    }
+
+    /**
+     * signalTOD.xml을 signal.xml의 플랜 보유 노드와 다시 맞춘다(KTDB 재임포트 없이 즉시 실행).
+     * signal.xml에 플랜이 있는 노드인데 TOD 일정이 없으면 NextSim이 크래시하는데, 이 정합은
+     * 원래 KTDB 재임포트마다 자동으로 돌던 것 — 그 로직이 생기기 전에 이미 임포트된 버전은
+     * 재임포트를 다시 하지 않는 한 낡은 상태로 방치된다. signal.xml 자체는 건드리지 않는다.
+     */
+    @PostMapping("/{versionId}/repair-tod")
+    public ResponseEntity<Map<String, Boolean>> repairSignalTod(@PathVariable String versionId) {
+        boolean repaired = nextSimInputScaffolder.repairSignalTod(versionId);
+        return ResponseEntity.ok(Map.of("repaired", repaired));
     }
 
     /**

@@ -19,6 +19,7 @@ import { autoSaveChangedLayers } from '@utils/autoSave';
 import { showAlert, showConfirm } from '@utils/dialog';
 import { NEXTSIM_REQUIRED_KEYS } from '@utils/nextSimValidation';
 import { useNextSimReadinessStore } from '@stores/useNextSimReadinessStore';
+import { useBackgroundTaskStore } from '@stores/useBackgroundTaskStore';
 import styles from "@css/ToolsPanel.module.css";
 
 export interface FacilityProps {
@@ -64,6 +65,9 @@ const Facility = ({ fields }: FacilityProps) => {
     const [vehicleLoading, setVehicleLoading] = useState(false);
     // NextSim 준비 상태(도로/신호등 무결성)는 헤더 배지와 상태를 공유 — 여기서는 행 옆 점 표시에만 사용
     const validation = useNextSimReadinessStore((s) => s.validation);
+    // KTDB 가져오기 백그라운드 스캐폴딩(백엔드가 signal.xml/OD 를 직접 재생성 중)과 겹치면
+    // 안 됨 — 같은 신호 데이터를 프론트/백엔드가 동시에 다른 경로로 써서 서로 덮어쓸 수 있다.
+    const ktdbScaffolding = useBackgroundTaskStore((s) => !!s.tasks['ktdb-scaffold']);
 
     // store의 currentJsonData 변화를 감지해 visibleFields 재계산
     const [, setDataTick] = useState(0);
@@ -380,11 +384,13 @@ const Facility = ({ fields }: FacilityProps) => {
                     </span>
                     <button
                         onClick={(e) => { e.stopPropagation(); handleGenerate(field); }}
-                        disabled={generatingKey === field.key}
-                        title={`${field.label} 더미 생성`}
-                        style={generateBtnStyle}
+                        disabled={generatingKey === field.key || ktdbScaffolding}
+                        title={ktdbScaffolding
+                            ? '백그라운드에서 서버가 신호/OD 데이터를 생성 중입니다 — 완료 후 다시 시도하세요'
+                            : `${field.label} 더미 생성`}
+                        style={{ ...generateBtnStyle, opacity: (generatingKey === field.key || ktdbScaffolding) ? 0.6 : 1 }}
                     >
-                        {generatingKey === field.key ? '...' : '더미 생성'}
+                        {generatingKey === field.key ? '생성 중...' : ktdbScaffolding ? '서버 생성 중...' : '더미 생성'}
                     </button>
                 </div>
             ))}
@@ -405,11 +411,13 @@ const Facility = ({ fields }: FacilityProps) => {
                     ) : (
                         <button
                             onClick={handleVehicleGenerate}
-                            disabled={vehicleLoading}
-                            title="차량 시뮬레이션 더미 생성"
-                            style={generateBtnStyle}
+                            disabled={vehicleLoading || ktdbScaffolding}
+                            title={ktdbScaffolding
+                                ? '백그라운드에서 서버가 신호/OD 데이터를 생성 중입니다 — 완료 후 다시 시도하세요'
+                                : '차량 시뮬레이션 더미 생성'}
+                            style={{ ...generateBtnStyle, opacity: (vehicleLoading || ktdbScaffolding) ? 0.6 : 1 }}
                         >
-                            {vehicleLoading ? '...' : '더미 생성'}
+                            {vehicleLoading ? '생성 중...' : ktdbScaffolding ? '서버 생성 중...' : '더미 생성'}
                         </button>
                     )}
                 </div>

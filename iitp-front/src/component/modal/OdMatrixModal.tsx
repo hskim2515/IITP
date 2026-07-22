@@ -3,6 +3,7 @@ import axiosInstance from '@api/axiosInstance';
 import { useScenarioStore } from '@stores/useScenarioStore';
 import { useWorkflowStore } from '@stores/useWorkflowStore';
 import { useMenuStore } from '@stores/useMenuStore';
+import { useNextSimReadinessStore } from '@stores/useNextSimReadinessStore';
 import type { DemandEntry, OdMatrixData, OdMatrixItem } from '@type/OdMatrix';
 
 const MENU_CODE = 'OD_MATRIX';
@@ -226,6 +227,10 @@ const OdMatrixModal: React.FC = () => {
                 logs: { added: [], modified: [], deleted: [] },
             });
             setSaveMsg({ ok: true, text: '저장 완료' });
+            // OD는 LAYER_CONFIG의 isChanged 추적 대상이 아니라(전용 컴포넌트 로컬 상태) 저장
+            // 성공 시점에 직접 무효화해야 한다 — 안 하면 OD를 바꿔도 이전 검증 결과(✓)가
+            // 그대로 남아 실제로는 재검증이 필요한 상태를 사용자가 놓칠 수 있다.
+            useNextSimReadinessStore.getState().invalidate();
             return true;
         } catch (e: any) {
             setSaveMsg({ ok: false, text: e.message ?? '저장 실패' });
