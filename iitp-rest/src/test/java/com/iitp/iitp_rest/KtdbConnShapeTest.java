@@ -69,4 +69,45 @@ class KtdbConnShapeTest {
         // 순환 링 경유 동선(802→801→804 등)이 존재하므로 다중 점 shape가 반드시 있어야 함
         assertTrue(multiPointConns > 0, "내부링크 경유 다중 점 커넥션이 있어야 함");
     }
+
+    /**
+     * 회귀 검증: 오프셋 없는 단일 차선끼리의 통과 커넥션은 시작/끝 좌표가 사실상 같은 지점이
+     * 되어 length="1.0"인데 shape는 길이 0(같은 점 반복 또는 점 1개)인 축퇴 지오메트리가
+     * 되던 문제. NextSim이 이런 축퇴 커넥션 근처에서 불안정하게 동작하는 경향이 관측되어
+     * (out-link 진행 방향으로 length만큼 밀어낸) shape로 대체하도록 수정 — 이제 모든 커넥션의
+     * shape 실제 길이가 length 속성과 (반올림 오차 범위 내에서) 일치해야 한다.
+     */
+    @Test
+    void no_connection_has_degenerate_zero_length_shape() {
+        var result = converter.convert(
+                36.345, 127.405, 36.352, 127.416,
+                36.3485, 127.4105, 1);
+
+        int totalConns = 0, degenerate = 0;
+        String sample = null;
+        for (NodeXml n : result.networkXml().getNodes()) {
+            if (n.getConnections() == null) continue;
+            for (ConnectionXml c : n.getConnections()) {
+                totalConns++;
+                String[] pts = c.getShape().trim().split("\\s+");
+                boolean isDegenerate;
+                if (pts.length < 2) {
+                    isDegenerate = true;
+                } else {
+                    String[] first = pts[0].split(",");
+                    String[] last = pts[pts.length - 1].split(",");
+                    double dx = Double.parseDouble(first[0]) - Double.parseDouble(last[0]);
+                    double dy = Double.parseDouble(first[1]) - Double.parseDouble(last[1]);
+                    isDegenerate = Math.hypot(dx, dy) < 1e-6;
+                }
+                if (isDegenerate) {
+                    degenerate++;
+                    if (sample == null) sample = "node=" + n.getId() + " " + c.getShape();
+                }
+            }
+        }
+        System.out.printf("커넥션 %d개 중 축퇴(0길이) shape %d개%n", totalConns, degenerate);
+        assertTrue(totalConns > 0, "커넥션이 생성되어야 함");
+        assertTrue(degenerate == 0, "축퇴(0길이) shape 커넥션이 없어야 함 — 예: " + sample);
+    }
 }

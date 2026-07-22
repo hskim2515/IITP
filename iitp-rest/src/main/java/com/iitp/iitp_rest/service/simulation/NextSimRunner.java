@@ -651,9 +651,17 @@ public class NextSimRunner {
     }
 
     private static String connXml(int id, String fromLink, String toLink, String cx, String cy) {
+        // shape 두 점이 노드 center 로 완전히 동일하면 length="1.0" 과 불일치하는 축퇴(0길이)
+        // 지오메트리가 된다(KtdbNetworkConverter 등에서 실측된 것과 동일 문제) — 이 보완 커넥션은
+        // 실제 링크 지오메트리 조회 없이 텍스트 블록만으로 생성되므로 정확한 진행방향 대신
+        // 임의의 로컬 +x 방향으로 length(1.0m)만큼 떨어진 두 번째 점을 사용해 실제 길이를 갖는 shape로 만든다.
+        double cxVal, cyVal;
+        try { cxVal = Double.parseDouble(cx); cyVal = Double.parseDouble(cy); }
+        catch (NumberFormatException e) { cxVal = 0; cyVal = 0; }
+        String cx2 = String.valueOf(cxVal + 1.0);
         return "<connection id=\"" + id + "\" from_link=\"" + fromLink + "\" from_lane=\"0\" to_link=\"" + toLink
                 + "\" to_lane=\"0\" turning=\"S\" length=\"1.0\" width=\"3.0\" ff_spd=\"30.0\" shape=\""
-                + cx + "," + cy + " " + cx + "," + cy + "\"/>";
+                + cx + "," + cy + " " + cx2 + "," + cy + "\"/>";
     }
 
     private static Set<String> collect(Pattern p, String s) {
@@ -756,10 +764,21 @@ public class NextSimRunner {
             log.warn("[NextSimRunner] {} {} 크래시 — 터미널 {}개 중 이분탐색으로 안전 부분집합 탐색",
                     versionId, testCase, candidates.size());
 
+            // odmatrix.xml pristine 스냅샷 — 이분탐색 도중 어떤 후보를 garage 로 돌려도
+            // 그 노드를 source/sink 로 참조하던 수요가 "고아 참조"로 남아 InitializeVehicleDemand()
+            // 에서 별개의 std::out_of_range 크래시를 유발한다(실측 확인 — network.xml 만 바꾸고
+            // odmatrix.xml 은 그대로 두면, 진짜 문제 노드가 1개뿐이어도 그 노드를 참조하는 수요가
+            // 조금이라도 남는 거의 모든 부분집합이 이 고아 참조 크래시로 오염돼 이분탐색이
+            // 무의미해진다). 매 시도마다 이 pristine 기준으로 다시 써서 active 집합에
+            // 대응하는 odmatrix 만 남긴다(누적 삭제 아님 — activateOnly 와 동일한 전량 재작성 방식).
+            Path odMatrixXml = networkDir.resolve("odmatrix.xml");
+            String odMatrixPristine = Files.readString(odMatrixXml, StandardCharsets.UTF_8);
+
             int[] attemptsLeft = { MAX_CRASH_RECOVERY_ATTEMPTS };
             String[] lastGoodLog = { null };
             CrashRecoveryCtx ctx = new CrashRecoveryCtx(
-                    versionId, workDir, networkXml, binary, testCase, progress, candidates, attemptsLeft, lastGoodLog);
+                    versionId, workDir, networkXml, odMatrixXml, odMatrixPristine,
+                    binary, testCase, progress, candidates, attemptsLeft, lastGoodLog);
             List<String> safeSet = resolveChunk(ctx, candidates);
 
             if (!safeSet.isEmpty()) {
@@ -773,10 +792,12 @@ public class NextSimRunner {
                     throw new RuntimeException(testCase + " 최종 확인 실행이 실패했습니다 " +
                             "(이미 성공 검증된 안전 부분집합 " + safeSet.size() + "개) — 재시도해주세요.");
                 }
+                List<String> excluded = new ArrayList<>(candidates);
+                excluded.removeAll(safeSet);
                 log.warn("[NextSimRunner] {} {} — 안전 부분집합 {}/{} 개로 진행(시도 {}회 소모) — " +
-                        "제외된 노드는 NextSim 바이너리 결함 우회(해당 노드를 참조하는 OD 수요는 무시됨)",
+                        "제외된 노드({})는 NextSim 바이너리 결함 우회(해당 노드를 참조하는 OD 수요는 무시됨)",
                         versionId, testCase, safeSet.size(), candidates.size(),
-                        MAX_CRASH_RECOVERY_ATTEMPTS - attemptsLeft[0]);
+                        MAX_CRASH_RECOVERY_ATTEMPTS - attemptsLeft[0], excluded);
                 return lastGoodLog[0];
             }
             throw new RuntimeException(
@@ -788,7 +809,8 @@ public class NextSimRunner {
 
     /** 크래시 복구 재귀 호출에 공통으로 필요한 컨텍스트 묶음 */
     private record CrashRecoveryCtx(
-            String versionId, Path workDir, Path networkXml, String binary, String testCase,
+            String versionId, Path workDir, Path networkXml, Path odMatrixXml, String odMatrixPristine,
+            String binary, String testCase,
             Consumer<String> progress, List<String> allCandidates, int[] attemptsLeft, String[] lastGoodLog) {}
 
     /**
@@ -835,7 +857,9 @@ public class NextSimRunner {
             if (tryActivate(ctx, trial)) {
                 merged = trial;
             } else {
-                activateOnly(ctx.networkXml(), ctx.allCandidates(), merged); // 실패 — 파일만 복원(재실행 없음, 예산 안 씀)
+                // 실패 — 파일만 복원(재실행 없음, 예산 안 씀)
+                activateOnly(ctx.networkXml(), ctx.allCandidates(), merged);
+                filterOdMatrixForActive(ctx.odMatrixXml(), ctx.odMatrixPristine(), ctx.allCandidates(), merged);
             }
         }
         return merged;
@@ -849,6 +873,7 @@ public class NextSimRunner {
      */
     private boolean tryActivate(CrashRecoveryCtx ctx, List<String> active) throws Exception {
         activateOnly(ctx.networkXml(), ctx.allCandidates(), active);
+        filterOdMatrixForActive(ctx.odMatrixXml(), ctx.odMatrixPristine(), ctx.allCandidates(), active);
         ctx.attemptsLeft()[0]--;
         try {
             ctx.lastGoodLog()[0] = runStage(ctx.versionId(), ctx.workDir(), ctx.binary(), ctx.testCase(), ctx.progress());
@@ -864,6 +889,49 @@ public class NextSimRunner {
         Map<String, String> updates = new java.util.HashMap<>();
         for (String c : allCandidates) updates.put(c, activeSet.contains(c) ? "terminal" : "garage");
         setNodeTypes(networkXml, updates);
+    }
+
+    private static final Pattern OD_DEMAND = Pattern.compile("<demand\\b[^>]*?/>");
+    private static final Pattern OD_SOURCE = Pattern.compile("\\bsource=\"([^\"]+)\"");
+    private static final Pattern OD_SINK = Pattern.compile("\\bsink=\"([^\"]+)\"");
+
+    /**
+     * pristine(전체 후보가 terminal 이던 시점의 원본 odmatrix.xml) 기준으로, allCandidates 중
+     * active 에 없는(=이번 시도에서 garage 로 전환된) 노드를 source 또는 sink 로 참조하는
+     * 수요를 제거해 스테이징 odmatrix.xml 을 다시 쓴다.
+     *
+     * <p>activateOnly 로 노드를 garage 로 돌려도 odmatrix.xml 을 그대로 두면, 그 노드를 참조하던
+     * 수요가 고아 참조로 남아 InitializeVehicleDemand() 에서 activateOnly 가 격리하려던 것과
+     * 동일한 시그니처의 std::out_of_range 크래시를 별도로 유발한다(실측 확인 — 진짜 문제 노드가
+     * 단 1개뿐이어도, 이 필터링 없이는 그 노드를 참조하는 수요가 조금이라도 살아있는 거의 모든
+     * 부분집합이 "고아 참조" 크래시로 오염되어 이분탐색이 무의미해진다). 매 시도마다 pristine에서
+     * 새로 필터링한다(activateOnly 와 동일하게 누적 아닌 전량 재작성 — 이전 시도의 삭제가 다음
+     * 시도에 남지 않음).
+     */
+    static void filterOdMatrixForActive(
+            Path odMatrixXml, String pristine, List<String> allCandidates, List<String> active) throws IOException {
+        Set<String> garaged = new HashSet<>(allCandidates);
+        garaged.removeAll(active);
+        if (garaged.isEmpty()) {
+            Files.writeString(odMatrixXml, pristine, StandardCharsets.UTF_8);
+            return;
+        }
+        StringBuilder out = new StringBuilder(pristine.length());
+        Matcher dm = OD_DEMAND.matcher(pristine);
+        int last = 0;
+        while (dm.find()) {
+            out.append(pristine, last, dm.start());
+            last = dm.end();
+            String tag = dm.group();
+            Matcher sm = OD_SOURCE.matcher(tag);
+            Matcher km = OD_SINK.matcher(tag);
+            String src = sm.find() ? sm.group(1) : null;
+            String snk = km.find() ? km.group(1) : null;
+            boolean drop = (src != null && garaged.contains(src)) || (snk != null && garaged.contains(snk));
+            if (!drop) out.append(tag);
+        }
+        out.append(pristine, last, pristine.length());
+        Files.writeString(odMatrixXml, out.toString(), StandardCharsets.UTF_8);
     }
 
     /** route-generator/nextsim 공용 크래시 표식 — doctest FAILURE 시그니처 감지 후 즉시 종료했을 때 던짐 */

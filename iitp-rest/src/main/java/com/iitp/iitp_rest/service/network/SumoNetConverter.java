@@ -355,8 +355,17 @@ public class SumoNetConverter {
             double[] from = lastPoint(fromEdge, c.fromLane(), loc, baseLat, baseLon);
             double[] to   = firstPoint(toEdge,  c.toLane(),   loc, baseLat, baseLon);
             double dx = to[0] - from[0], dy = to[1] - from[1];
-            double len = Math.max(1.0, Math.sqrt(dx * dx + dy * dy));
-            String shape = fmt5(from[0]) + "," + fmt5(from[1]) + " " + fmt5(to[0]) + "," + fmt5(to[1]);
+            double rawLen = Math.sqrt(dx * dx + dy * dy);
+            double len = Math.max(1.0, rawLen);
+            // 두 차선 끝점이 사실상 같은 지점(단일 차선 직결 등)이면 shape가 길이 0으로
+            // 뭉개져 length=1.0과 불일치하는 축퇴 지오메트리가 된다 — KtdbNetworkConverter와
+            // 동일 문제, 동일 방식(out-edge 진행 방향으로 len만큼 밀어냄)으로 보정.
+            double[] shapeTo = to;
+            if (rawLen < 1e-6) {
+                double[] dir = departureUnit(toEdge, c.toLane(), loc, baseLat, baseLon);
+                shapeTo = new double[]{from[0] + dir[0] * len, from[1] + dir[1] * len};
+            }
+            String shape = fmt5(from[0]) + "," + fmt5(from[1]) + " " + fmt5(shapeTo[0]) + "," + fmt5(shapeTo[1]);
             double connW = toEdge != null ? roadDefs(extractHighwayType(toEdge.edgeType()))[5] : 3.5;
 
             ConnectionXml conn = new ConnectionXml();
@@ -572,6 +581,22 @@ public class SumoNetConverter {
         String[] xy = lane.shape().trim().split("\\s+")[0].split(",");
         if (xy.length < 2) return new double[]{0, 0};
         return sumoToLocal(Double.parseDouble(xy[0]), Double.parseDouble(xy[1]), loc, baseLat, baseLon);
+    }
+
+    /** out-edge 차선 첫 구간의 진행 방향 단위벡터(로컬 좌표계) — 축퇴(0길이) 커넥션 shape 보정용 */
+    private double[] departureUnit(EdgeInfo edge, int laneIdx, LocationInfo loc, double baseLat, double baseLon) {
+        if (edge == null) return new double[]{1.0, 0.0};
+        LaneInfo lane = laneIdx < edge.lanes().size() ? edge.lanes().get(laneIdx) : null;
+        if (lane == null || lane.shape().isBlank()) return new double[]{1.0, 0.0};
+        String[] pts = lane.shape().trim().split("\\s+");
+        if (pts.length < 2) return new double[]{1.0, 0.0};
+        String[] xy0 = pts[0].split(","), xy1 = pts[1].split(",");
+        if (xy0.length < 2 || xy1.length < 2) return new double[]{1.0, 0.0};
+        double[] p0 = sumoToLocal(Double.parseDouble(xy0[0]), Double.parseDouble(xy0[1]), loc, baseLat, baseLon);
+        double[] p1 = sumoToLocal(Double.parseDouble(xy1[0]), Double.parseDouble(xy1[1]), loc, baseLat, baseLon);
+        double dx = p1[0] - p0[0], dy = p1[1] - p0[1];
+        double len = Math.hypot(dx, dy);
+        return len < 1e-9 ? new double[]{1.0, 0.0} : new double[]{dx / len, dy / len};
     }
 
     // ─────────────────────────────────────────────────────────────────────────
