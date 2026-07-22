@@ -205,63 +205,64 @@ export const SIGNAL_TILING = {
 } as const;
 
 /**
- * 차량 줌 티어(개별 3D / flow / 히트맵 / OD흐름) 경계값 — pixelSizeM(m/px, computeViewportMetrics
- * 기준) 단일 단위로 통일한 단일 소스. 이전엔 개별 차량은 bbox "도" 단위(MAX_BBOX_DEG), flow/
- * 히트맵은 pixelSizeM 단위로 서로 달라서 경계를 맞추려면 감으로 환산해야 했고, 그 결과 flow
- * 활성 구간이 개별 차량 범위 한참 안쪽에 파묻혀 줌아웃해도 전혀 안 바뀌는 것처럼 보이는 실측
- * 버그가 있었다. VEHICLE_STREAMING(개별 차량)/TRAFFIC_FLOW/VEHICLE_AGGREGATION(히트맵)/
- * OD_FLOW 전부 아래 값만 참조하므로 네 시스템이 어긋날 수 없다 — 임계값 조정은 여기 한 곳에서만.
+ * 차량 줌 티어(개별 3D / 집계 기반 heatmap+trip / OD흐름) 경계값 — pixelSizeM(m/px,
+ * computeViewportMetrics 기준) 단일 단위로 통일한 단일 소스. 이전엔 개별 차량은 bbox "도"
+ * 단위(MAX_BBOX_DEG), 집계 쪽은 pixelSizeM 단위로 서로 달라서 경계를 맞추려면 감으로 환산해야
+ * 했고, 그 결과 활성 구간이 개별 차량 범위 한참 안쪽에 파묻혀 줌아웃해도 전혀 안 바뀌는 것처럼
+ * 보이는 실측 버그가 있었다. VEHICLE_STREAMING(개별 차량)/VEHICLE_AGG_FEED(heatmap+trip)/
+ * OD_FLOW 전부 아래 값만 참조 — 임계값 조정은 여기 한 곳에서만.
  *
- * 단계: 개별(<INDIVIDUAL_MAX) → flow([INDIVIDUAL_MAX,FLOW_MAX)) → 히트맵([FLOW_MAX,HEATMAP_MAX))
- * → OD 흐름(≥HEATMAP_MAX, 가장 축소된 overview).
+ * ⚠️ 이 티어는 **데이터 소스/세밀도 전환 기준이지 레이어 표시 전환 기준이 아니다** — 레이어
+ * 표시 여부는 분석 메뉴 온오프(사용자)가 전적으로 소유한다("줌에 따른 레이어 전환보다 사용자
+ * 온오프 + 줌은 세밀도만 자동 조절" 방침). 즉:
+ * - heatmap/trip: <INDIVIDUAL_MAX에선 실차량 worker feed, ≥INDIVIDUAL_MAX에선
+ *   VehicleAggregationFeeder의 집계 기반 합성 위치가 데이터를 공급(상한 없음).
+ * - od: <HEATMAP_MAX에선 기존 "od" 레이어(개별 차량 기반, 상세), ≥HEATMAP_MAX에선
+ *   "odFlow"(백엔드 집계, 개괄)가 데이터를 가짐 — 둘 다 사용자가 od를 켰을 때만 보임.
+ *
+ * ⚠️ 한때 "traffic"(TrafficHeatmapCesiumLayer/TrafficHeatmapFeatureLayer, 링크를 선으로
+ * 칠하는 렌더러)이 이 구간 + denseViewport(뷰포트 차량 수 초과)에서 별도로 자체 표시되었으나,
+ * 이는 사용자가 명시적으로 거부한 "링크 기반" 시각화였다(TrafficTailCesiumLayer와 함께 반려됨).
+ * heatmap/trip 구간과 겹쳐 동시에 뜨면서 "히트맵이 링크에 생긴다"는 증상 + 두 show 제어 로직이
+ * 서로 경쟁하며 깜빡이는 버그로 이어져 완전히 삭제했다 — VEHICLE_AGG_FEED(아래)가 dense도
+ * 함께 흡수해 heatmap/trip 하나로 통일한다.
  */
 export const VEHICLE_ZOOM_TIER_PX_M = {
     /** 미만: 개별 차량 3D 모델. (실측 후 30→10 하향 — 체감상 전환이 너무 늦었음) */
     INDIVIDUAL_MAX: 10,
-    /** 이상 ~ HEATMAP_MAX 미만: 히트맵(집계). flow는 [INDIVIDUAL_MAX, FLOW_MAX) 구간만 담당. (200→60) */
-    FLOW_MAX: 60,
-    /** 이상: OD 흐름(가장 축소된 overview) — 히트맵은 [FLOW_MAX, HEATMAP_MAX) 구간만 담당. (800→250) */
+    /** 이상: OD 흐름(가장 축소된 overview) — 그 아래는 heatmap+trip 집계 구간. (800→250) */
     HEATMAP_MAX: 250,
 } as const;
 
 /**
- * 차량 교통량 백엔드 집계 (멀리서 전체 교통량 — 개별 차량 대신 링크별 통계).
- * ON 이면 TrafficHeatmapFeatureLayer/TrafficHeatmapCesiumLayer가 개별 차량 대신
- * `/analytics/link-traffic` 집계를 호출해 히트맵을 칠한다 (개별 차량 위치 무시).
+ * 개별 차량(3D)이 감당 안 되는 원거리에서, 이미 있는 "heatmap"(HeatBarLayer/HeatmapFeatureLayer,
+ * 그리드 밀도)과 "trip"(TailPrimitive, 개별 꼬리 흔적) 분석 레이어를 새 렌더러 없이 계속 살려두는
+ * 데이터 공급기(VehicleAggregationFeeder) 설정. `/analytics/link-traffic` 집계(volume/avgSpeed)
+ * 로 링크 위를 흐르는 합성 차량 위치를 만들어 두 레이어의 기존 setLatestPositions()에 그대로 먹인다.
+ *
+ * MIN/MAX_RESOLUTION 구간 밖이어도 useVehicleStore().denseViewport(뷰포트 차량 수가 상한을
+ * 초과해 개별 차량 표시를 끈 상태)면 활성 유지 — 예전 "traffic" 레이어가 담당하던 dense 대체
+ * 표시를 여기로 흡수(VehicleAggregationFeeder 참고).
  */
-export const VEHICLE_AGGREGATION = {
+export const VEHICLE_AGG_FEED = {
     ENABLED: true,
-    /** 이 resolution 이상(멀리)에서 집계 모드 활성 — 미만(near)은 개별 차량/flow.
-     *  VEHICLE_ZOOM_TIER_PX_M.FLOW_MAX 공유 — flow→히트맵 경계가 끊기지 않는다. */
-    MIN_RESOLUTION: VEHICLE_ZOOM_TIER_PX_M.FLOW_MAX,
-    /** 이 resolution 이상이면 비활성 — OD 흐름(OD_FLOW)으로 전환. */
+    /** 이 resolution 미만(더 확대)에서는 비활성 — 실차량 worker feed가 heatmap/trip 데이터를 담당 */
+    MIN_RESOLUTION: VEHICLE_ZOOM_TIER_PX_M.INDIVIDUAL_MAX,
+    /** (표시용 참고값 — 피더는 상한 없이 계속 활성. ViewportDebugPanel 표시에만 사용) */
     MAX_RESOLUTION: VEHICLE_ZOOM_TIER_PX_M.HEATMAP_MAX,
     /** 재생 현재 시각 기준 ± 집계 시간창 (초) */
     TIME_WINDOW_SEC: 60,
     /** moveend/재생 집계 호출 최소 간격 (ms, throttle) */
     THROTTLE_MS: 1000,
+    /** 합성 차량 전체 상한 (렌더/계산 비용 억제) — TailPrimitive의 고정 trail 슬롯 수와
+     *  useSimulation.ts의 초기 addTripLayer() 더미 배열 크기가 반드시 이 값을 공유해야 한다:
+     *  TailPrimitive는 생성자에 넘긴 배열 길이만큼만 trail GPU 자원을 미리 할당해서, 그보다
+     *  많은 합성 차량 위치를 setLatestPositions()로 먹여도 넘치는 부분은 갈 곳이 없어 버려진다. */
+    MAX_SYNTHETIC_VEHICLES: 400,
 } as const;
 
 /**
- * 교통 흐름(flow) tail — 개별 차량(3D 모델)과 히트맵 사이의 중간 줌 티어.
- * 새 백엔드 없이 VEHICLE_AGGREGATION과 동일한 `/analytics/link-traffic` 집계(volume/avgSpeed)를
- * 재사용하고, 렌더링만 링크를 따라 흐르는 애니메이션 점선으로 다르게 표현한다(TrafficTailCesiumLayer).
- * 개별 차량 3D 렌더 비용을 감당하기엔 차량이 많지만, 정적 히트맵으로 뭉개기엔 아직 확대된 구간을 담당.
- */
-export const TRAFFIC_FLOW = {
-    ENABLED: true,
-    /** 이 resolution 미만(더 확대)에서는 비활성 — 개별 차량 3D 모델 구간 */
-    MIN_RESOLUTION: VEHICLE_ZOOM_TIER_PX_M.INDIVIDUAL_MAX,
-    /** 이 resolution 이상(더 축소)이면 비활성 — 히트맵(VEHICLE_AGGREGATION)으로 전환 */
-    MAX_RESOLUTION: VEHICLE_ZOOM_TIER_PX_M.FLOW_MAX,
-    /** 재생 현재 시각 기준 ± 집계 시간창 (초) — VEHICLE_AGGREGATION과 동일 */
-    TIME_WINDOW_SEC: 60,
-    /** moveend/재생 집계 호출 최소 간격 (ms, throttle) */
-    THROTTLE_MS: 1000,
-} as const;
-
-/**
- * OD(origin-destination) 흐름 — 가장 축소된 overview 티어(히트맵보다도 더 멀리서).
+ * OD(origin-destination) 흐름 — 가장 축소된 overview 티어(heatmap+trip 집계보다도 더 멀리서).
  * 새 백엔드 `/analytics/od-flow` 집계(차량별 시간창 내 첫/끝 위치를 격자 스냅해 집계, volume)를
  * 사용 — 개별 차량 데이터가 전혀 필요 없어 아무리 축소해도 비용이 늘지 않는다. 기존 "od"
  * 레이어(개별 차량의 현재위치→목적지를 매초 재계산하는 ParabolicArrowPrimitive, 근거리용)와는
@@ -270,7 +271,7 @@ export const TRAFFIC_FLOW = {
  */
 export const OD_FLOW = {
     ENABLED: true,
-    /** 이 resolution 이상에서만 활성 — 히트맵(VEHICLE_AGGREGATION)과 경계 공유 */
+    /** 이 resolution 이상에서만 활성 — VEHICLE_AGG_FEED와 경계 공유 */
     MIN_RESOLUTION: VEHICLE_ZOOM_TIER_PX_M.HEATMAP_MAX,
     /** 재생 현재 시각 기준 ± 집계 시간창 (초) */
     TIME_WINDOW_SEC: 60,

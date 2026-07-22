@@ -26,8 +26,20 @@ import { useSignalTodStore } from "@stores/useSignalTodStore";
 import { computeTodPeriods, mergeSignalTimelines } from "@utils/tod";
 import { useBackgroundTaskStore } from "@stores/useBackgroundTaskStore";
 import { useNetworkTileStore } from "@stores/useNetworkTileStore";
-import { VEHICLE_STREAMING, NETWORK_TILING } from "@utils/lodConstants";
+import { VEHICLE_STREAMING, NETWORK_TILING, VEHICLE_AGG_FEED } from "@utils/lodConstants";
 import { computeViewportMetrics } from "@utils/viewportMetrics";
+import VehicleAggregationFeeder from "@managers/VehicleAggregationFeeder";
+
+/**
+ * layerManager.getLayer()는 없으면 빈 배열 []을, 1개면 단일 객체를, 2개 이상이면 배열을 반환한다.
+ * ⚠️ `![]`은 JS에서 false(빈 배열도 truthy)라서 `if (!getLayer(...))`로 존재 확인을 하면 "없음"을
+ * 절대 감지하지 못해 addXxxLayer()가 영원히 호출되지 않는다(레이어가 아예 안 생기는 버그였음).
+ * 반드시 이 헬퍼로 배열 길이까지 확인할 것.
+ */
+function layerExists(layerManager: any, groupName: string, layerName: string): boolean {
+    const found = layerManager?.getLayer(groupName, layerName);
+    return Array.isArray(found) ? found.length > 0 : !!found;
+}
 
 /**
  * vehicleRoute 내 모든 ECEF 웨이포인트에 지형 고도를 적용합니다.
@@ -184,6 +196,12 @@ const useSimulation = () => {
     // 멈추는 것처럼 보인 근본 원인. viewer.clock.startTime(=baseEpoch+simMin, 문서 clock)
     // 기준 경과초 + simMin = 절대 timestep이 되도록 맞춰야 한다.
     const simMinRef = useRef(0);
+    // 뷰포트 창 전환 중(새 응답 도착 ~ worker init 완료) tick 전송 차단 플래그.
+    // 이 구간엔 simMinRef(새 창)와 clock.startTime/worker 경로(옛 창)가 서로 다른 창을 가리켜
+    // computeElapsedSec가 창 오프셋 차이만큼 틀린 값을 내고, 그 값으로 옛 경로를 보간하면 모든
+    // 차량이 수백 m~수 km를 일제히 점프해 trail이 그물 무늬를 그린다. tick을 잠깐(수백 ms~수 초)
+    // 멈추면 trail은 마지막 위치에 정지해 있다가 새 창 init의 정합 위치부터 다시 이어진다.
+    const streamTransitionRef = useRef(false);
     const computeElapsedSec = (v: Cesium.Viewer, clockTime: Cesium.JulianDate): number => {
         try { return simMinRef.current + JulianDate.secondsDifference(clockTime, v.clock.startTime); }
         catch { return 0; }
@@ -204,6 +222,20 @@ const useSimulation = () => {
             makeOdDataWorkerRef.current = null;
         };
     }, []);
+
+    // 원거리 줌에서 heatmap/trip 분석 레이어에 합성 차량 데이터를 공급 — viewer/layerManager가
+    // 갖춰지면 한 번만 생성되어 setSimulation() 재호출과 무관하게 계속 산다(자체 카메라/재생시각 구독).
+    const vehicleAggFeederRef = useRef<VehicleAggregationFeeder | null>(null);
+    useEffect(() => {
+        if (!viewer || !layerManager) return;
+        if (!vehicleAggFeederRef.current) {
+            vehicleAggFeederRef.current = new VehicleAggregationFeeder(viewer, layerManager);
+        }
+        return () => {
+            vehicleAggFeederRef.current?.destroy();
+            vehicleAggFeederRef.current = null;
+        };
+    }, [viewer, layerManager]);
 
     useEffect(() => {
         speedRef.current = speed;
@@ -538,7 +570,16 @@ const useSimulation = () => {
                         if (!data) { console.warn('[진단] viewport 응답 없음(!data) — bbox=', bboxKey); return; }
                         simMin = Array.isArray(data.simRange) ? (data.simRange[0] ?? 0) : 0;
                         simMax = Array.isArray(data.simRange) ? (data.simRange[1] ?? Infinity) : Infinity;
-                        simMinRef.current = simMin; // worker 절대경과초 계산용 (컴포넌트 전역에서 공유)
+                        // ⚠️ simMinRef는 여기서 갱신하지 않는다! computeElapsedSec = simMinRef +
+                        // (clock.currentTime - clock.startTime)인데, clock/worker 경로 데이터는 이
+                        // 응답이 setSimulation을 완전히 통과한 뒤(czml 로드 등 수 초 뒤)에나 새 창으로
+                        // 교체된다. 여기서 먼저 simMinRef만 새 창 값으로 바꾸면 그 사이 매 프레임
+                        // tick이 "새 simMin + 옛 clock 경과"라는 불일치 값을 옛 경로에 적용해 — 창이
+                        // 예컨대 500→590초로 바뀌는 순간 모든 차량이 90초치(속도×90s≈0.5~2km)를
+                        // 일제히 점프한다. null도 아니고 세대도 같고 10km 미만이라 어떤 리셋 가드에도
+                        // 안 걸려, trail이 점프 전후를 직선으로 이어 그리는 그물 무늬가 창 롤오버/
+                        // 카메라 재로드마다 재발했다. simMinRef 갱신은 applyRouteData 직전(전환 tick
+                        // 차단과 함께) — 아래 streamTransitionRef 참고.
                         windowFrom = from; windowTo = to;
                         lastBboxKey = bboxKey;
 
@@ -567,23 +608,30 @@ const useSimulation = () => {
                         if (dense) {
                             if (!wasDense) {
                                 useLogStore.getState().addLog('info',
-                                    `[차량] viewport 차량 ${total.toLocaleString()}대 — 상한 초과, 교통량 히트맵으로 전환`);
+                                    `[차량] viewport 차량 ${total.toLocaleString()}대 — 상한 초과, 개별 차량 대신 히트맵/trip 집계로 전환`);
                                 layerManager?.hideLayer('analyze', 'vehicle');
-                                layerManager?.showLayer('analyze', 'traffic');
+                                // heatmap/trip 표시 전환은 VehicleAggregationFeeder가 denseViewport
+                                // 구독으로 자체 처리 — 여기서 별도 show/hide 불필요.
                             }
                             if (firstLoad) {
                                 // 재생 clock 초기화는 필요 (document packet만 적용, 차량은 비움)
+                                streamTransitionRef.current = true;
+                                simMinRef.current = simMin;
                                 applyRouteData({ ...data, czml: [data.czml[0]], positions: [], features: [] });
                             }
-                            // 개별 차량 데이터는 적용하지 않음 (worker 재빌드 비용 절약, 히트맵이 대체)
+                            // 개별 차량 데이터는 적용하지 않음 (worker 재빌드 비용 절약, 히트맵/trip이 대체)
                             firstLoad = false;
                             return;
                         }
                         if (wasDense) {
                             // 밀집 해제 (줌인 등) → 개별 차량 복귀
                             layerManager?.showLayer('analyze', 'vehicle');
-                            layerManager?.hideLayer('analyze', 'traffic');
                         }
+                        // 전환 시작: 새 창 데이터가 worker/clock까지 완전히 교체될 때까지 tick 중단
+                        // (simMinRef와 clock.startTime이 서로 다른 창을 가리키는 불일치 구간 차단 —
+                        // 위 simRange 주석 참고). setSimulation의 worker init 직후 해제된다.
+                        streamTransitionRef.current = true;
+                        simMinRef.current = simMin;
                         applyRouteData(data, { preserveClock: !firstLoad });
                         firstLoad = false;
                     })
@@ -674,21 +722,45 @@ const useSimulation = () => {
         if (!Array.isArray(vehicleRoute)) return;
         if (vehicleRoute.length === 0) {
             // 스트리밍 viewport 0대 응답(차량 없는 지역 팬/밀집 전환): 조기 반환만 하면
-            // 이전 viewport 차량들이 마지막 위치에 그려진 채 남는다 → 차량 계열 레이어 제거.
-            // ('analyze/traffic' 집계 히트맵은 removeSimulationLayers 대상이 아니라 밀집 모드 안전)
-            console.warn('[진단] vehicleRoute 0대 — removeSimulationLayers 실행');
+            // 이전 viewport 차량들이 마지막 위치에 그려진 채 남는다 → 차량(개별) 계열 레이어만 제거.
+            //
+            // ⚠️ 예전엔 여기서 removeSimulationLayers()를 썼는데, 그건 heatmap/trip/odFlow까지
+            // 전부 destroy한다 — 이 effect는 vehicleRoute가 (내용은 같아도) 새 배열 참조로 바뀔
+            // 때마다 매번 재실행되므로("초기화됐다가 다시 생긴다"는 게 바로 이거), 원거리에서
+            // 계속 켜져 있어야 할 heatmap/trip이 몇 초~수십 초마다 파괴→재생성을 반복해 깜빡였다.
+            // heatmap/trip/odFlow는 개별 차량과 무관하게 자체(VehicleAggregationFeeder)의 zoom/dense
+            // 감지로 표시 여부를 결정하는 독립 레이어이므로, 여기서는 건드리지 않고 "없을 때만" 만든다.
+            console.warn('[진단] vehicleRoute 0대 — 개별 차량 레이어만 제거');
             vehicleRouteStartEndRef.current = [];
             lastPositionsRef.current = [];
             czmlPositionWorkerRef.current?.postMessage({ type: 'init', czmlPackets: [], currentTime: 0 });
-            layerManager?.removeSimulationLayers();
-            // traffic/flow는 개별 차량과 무관하게 자체 zoom 감지로 표시 여부를 결정하는
-            // 독립 레이어라, removeSimulationLayers()에 딸려 destroy된 뒤 여기서 다시 안 만들면
-            // setSimulation()이 재실행될 때까지(다음 번 0대가 아닌 응답이 올 때까지) 통째로
-            // 사라진 채로 남는다 — 개별 차량이 0대인 뷰포트(팬/밀집 전환 등)에서 정확히 이 순간에
-            // 나타나야 할 flow 레이어가 안 보이던 버그였다. 즉시 다시 생성한다.
-            layerManager?.addTrafficLayer();
-            layerManager?.addFlowLayer();
-            layerManager?.addOdFlowLayer();
+            streamTransitionRef.current = false; // 빈 창도 전환 종료 (tick은 빈 목록이라 무해)
+            // ⚠️ 이전 실차량 setSimulation()에서 등록된 worker onmessage 핸들러가 이 지점까지 살아있으면
+            // (여기선 isStop처럼 명시적으로 해제한 적이 없었음) — 재생 중(clock 진행 중)에는 매
+            // tick 응답마다 "analyze" 그룹의 모든 레이어(heatmap 포함, 필터 없이 전부)에
+            // setLatestPositions(worker 결과)를 그대로 먹인다. czmlPackets를 방금 []로 리셋했으니
+            // worker 결과는 사실상 빈/무효 데이터인데, 이게 VehicleAggregationFeeder가 heatmap에
+            // 공급 중인 정상 데이터를 주기적으로 덮어써 "재생할 때만 깜빡"이는 원인이었다(정지 중엔
+            // clock이 안 도니 worker tick 자체가 안 옴 → 간섭 없음). 여기서도 명시적으로 해제한다.
+            if (czmlPositionWorkerRef.current) czmlPositionWorkerRef.current.onmessage = null;
+            layerManager?.removeVehicleLayer();
+            layerManager?.removeODArrows();
+            if (!layerExists(layerManager, "analyze", "odFlow")) {
+                layerManager?.addOdFlowLayer();
+            }
+            if (!layerExists(layerManager, "analyze", "heatmap")) {
+                layerManager?.addHeatmapLayer([], new VectorSource(), speedFactor, isRunningRef.current, heatmapSetting);
+            }
+            if (!layerExists(layerManager, "analyze", "trip")) {
+                // TailPrimitive는 생성자에 넘긴 배열 길이만큼만 trail GPU 자원을 고정 할당한다 — []를
+                // 넘기면 trail이 0개라 VehicleAggregationFeeder가 이후 아무리 setLatestPositions()로
+                // 합성 차량 위치를 먹여도 담을 슬롯이 없어 전부 버려진다("trip이 절대 안 보임" 원인).
+                // MAX_SYNTHETIC_VEHICLES 만큼 더미 슬롯을 미리 만들어둔다(위치는 즉시 덮어써지므로 무의미).
+                layerManager?.addTripLayer(
+                    Array.from({ length: VEHICLE_AGG_FEED.MAX_SYNTHETIC_VEHICLES }, (_, i) => [i, 0, 0, 0]),
+                    speedFactor, isRunningRef.current,
+                );
+            }
             return;
         }
 
@@ -724,8 +796,13 @@ const useSimulation = () => {
         }
         if (currentTime - lastUpdateTime.current >= 50 && isRunningRef.current) {
             lastUpdateTime.current = currentTime;
-            // currentTime: 절대 경과초(vehicle_sim.db timestep 기준) — computeElapsedSec 주석 참고
-            czmlPositionWorkerRef.current.postMessage({ type: 'tick', currentTime: computeElapsedSec(viewer, viewer.clock.currentTime) });
+            // 창 전환 중엔 tick 전송만 중단(시각 store 갱신 등은 유지) — simMinRef(새 창)와
+            // clock/worker 경로(옛 창)의 불일치 경과초로 옛 경로를 보간하면 전 차량이 일제히
+            // 점프해 trail 그물이 생긴다(streamTransitionRef 선언부 주석 참고). worker init 직후 재개.
+            if (!streamTransitionRef.current) {
+                // currentTime: 절대 경과초(vehicle_sim.db timestep 기준) — computeElapsedSec 주석 참고
+                czmlPositionWorkerRef.current.postMessage({ type: 'tick', currentTime: computeElapsedSec(viewer, viewer.clock.currentTime) });
+            }
             useSimulationStore.getState().setCurrentTime(JulianDate.clone(viewer.clock.currentTime));
 
             // requestRenderMode(+ maximumRenderTimeChange:Infinity)에서는 카메라가 안 움직이면
@@ -779,6 +856,9 @@ const useSimulation = () => {
         loadCzmlDataSource(czml, myGen).then((czmlSource) => {
             if (!czmlSource || myGen !== simGenRef.current) {
                 console.warn('[진단] setSimulation gen=', myGen, '— stale로 중단 (czmlSource=', !!czmlSource, ', current gen=', simGenRef.current, ')');
+                // stale이면 더 새 세대가 전환을 이어받아 해제하지만, czml 로드 실패(현재 세대)면
+                // 여기서 해제하지 않을 시 tick이 영구 정지된다 — 실패 시에도 반드시 해제.
+                if (myGen === simGenRef.current) streamTransitionRef.current = false;
                 return;
             }
             console.log('[진단] setSimulation gen=', myGen, '— 레이어 재구성 진행');
@@ -877,11 +957,15 @@ const useSimulation = () => {
             // 이번 refresh에 없는 차종(예: 이전 viewport엔 있었던 BUS가 새 viewport엔 없음)의
             // VehiclePrimitive는 addVehicleLayer가 호출되지 않으므로 여기서 별도로 정리한다.
             layerManager.pruneVehicleTypes(typeGroups.size > 0 ? Array.from(typeGroups.keys()) : ['default']);
-            layerManager.addHeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, heatmapSetting);
+            // heatmap은 grid 기반이라 매 refresh마다 재생성할 이유가 없다(trip과 달리 차량 수/타입에
+            // 묶인 슬롯이 없음) — 존재하면 그대로 두고 계속 setLatestPositions()로만 갱신한다.
+            // 재생성 자체가 (a) 그 사이 잠깐 사라졌다 다시 생기는 깜빡임, (b) 아래 vehicleRoute===0
+            // 분기의 존재-확인 가드와 타이밍이 어긋나 인스턴스가 2개 동시에 살아남는 문제의 원인이었다.
+            if (!layerExists(layerManager, "analyze", "heatmap")) {
+                layerManager.addHeatmapLayer(vehicleRoute, vectorSource, speedFactor, isRunningRef.current, heatmapSetting);
+            }
             layerManager.addODArrows(vehicleRoute, speedFactor, isRunningRef.current);
             layerManager.addTripLayer(vehicleRoute, speedFactor, isRunningRef.current, typeGroups, vehicleTypeArray, typeColorMap);
-            layerManager.addTrafficLayer();
-            layerManager.addFlowLayer();
             layerManager.addOdFlowLayer();
 
             const VehicleModelData: { id: string; position: Cesium.Cartesian3; visible: boolean; model?: Cesium.Model }[] = [];
@@ -898,6 +982,14 @@ const useSimulation = () => {
                 // ("레이어 재구성 완료"는 찍히는데 차량만 멈추는 증상의 원인) — 반드시 폐기할 것.
                 if (myGen !== simGenRef.current) return;
                 const result = e.data;
+                // ⚠️ 핸들러 세대(myGen) 검증만으로는 부족하다 — 핸들러가 교체된 직후, worker가
+                // "이전 세대 packets"로 이미 계산해 큐에 올려둔 응답이 도착하면 새 핸들러(myGen==
+                // 현재 세대)가 그대로 통과시킨다. 그 응답의 positions는 옛 차량 집합의 인덱스
+                // 공간이라, 새로 만들어진 trail/primitive에 엉뚱한 차량 위치가 한 번 들어가고 —
+                // 바로 다음 정상 feed와 직선으로 이어져 재로드(카메라 이동)마다 전체 차량에 그물
+                // 무늬가 생겼다. 응답이 어느 세대의 init 데이터로 계산됐는지(result.generation,
+                // init 시 echo)를 함께 검증해 세대 불일치 응답을 폐기한다.
+                if (result && result.generation !== myGen) return;
                 if (result) {
                     // types 배열이 있으면 vehicleType별로 분류하여 각 VehiclePrimitive에 전달
                     const hasTypes = Array.isArray(result.types) && result.types.length > 0;
@@ -923,8 +1015,17 @@ const useSimulation = () => {
                             byTypeCompact.get(t)!.headings.push(result.headings[i]);
                         });
 
+                        // ⚠️ 원거리 줌에서는 VehicleAggregationFeeder가 heatmap/trip을 담당한다 —
+                        // 그런데 줌아웃 시 뷰포트 스트리밍은 fetch만 멈출 뿐(computeBbox()=null 조기
+                        // 리턴), 마지막 뷰포트의 vehicleRoute(수백 대)와 이 onmessage 핸들러는 그대로
+                        // 살아있어 재생 중 매 tick마다 그 옛 차량 위치를 heatmap/trip에 계속 덮어썼다.
+                        // 피더(80ms 합성 위치)와 이 핸들러(매 프레임 실차량 위치)가 완전히 다른 두 위치
+                        // 집합을 같은 레이어에 번갈아 먹이면서 "재생 중에만 심하게 깜빡"이는 원인이었다.
+                        // 피더 활성 중엔 heatmap/trip feed를 이쪽에서 건너뛴다(소유권 단일화).
+                        const aggFeedActive = (layerManager as any).aggFeedActive === true;
                         layerManager.getLayerGroup("analyze").forEach((layer) => {
                             if (layer && typeof layer.setLatestPositions === "function") {
+                                if (aggFeedActive && (layer.layer === "heatmap" || layer.layer === "trip")) return;
                                 const vType = (layer as any).vehicleType;
                                 const isOlLayer = layer.constructor?.name?.includes('FeatureLayer');
                                 // OL FeatureLayer(VehicleFeatureLayer 등): null 포함 인덱스 보존 배열
@@ -943,9 +1044,12 @@ const useSimulation = () => {
                         });
                         lastPositionsRef.current = result; // OD 워커용으로 항상 전체 positions 유지
                     } else {
-                        // 구버전: 모든 레이어에 동일한 positions 전달
+                        // 구버전: 모든 레이어에 동일한 positions 전달 (피더 활성 중 heatmap/trip 제외 —
+                        // 위 hasTypes 분기와 동일한 이유)
+                        const aggFeedActive = (layerManager as any).aggFeedActive === true;
                         layerManager.getLayerGroup("analyze").forEach((layer) => {
                             if (layer && typeof layer.setLatestPositions === "function") {
+                                if (aggFeedActive && (layer.layer === "heatmap" || layer.layer === "trip")) return;
                                 try {
                                     layer.setLatestPositions(result);
                                 } catch (err) {
@@ -986,6 +1090,7 @@ const useSimulation = () => {
             // 이전엔 여기서 에러가 나면 조용히 삼켜져서(catch 없음) preRender 리스너 재등록까지
             // 끊긴 채 "시간은 가는데 차량은 안 보임" 상태로 영원히 멈췄다 — 최소한 콘솔에 남긴다.
             console.error('[진단][setSimulation] gen=', myGen, '차량 레이어 재구성 실패 — 차량이 안 보일 수 있음:', e);
+            if (myGen === simGenRef.current) streamTransitionRef.current = false; // tick 영구 정지 방지
         });
     };
 
@@ -1047,17 +1152,24 @@ const useSimulation = () => {
                 // 확보를 보장하고, 지형 보정은 완료되는 대로(같은 세대일 때만) 높이만 다시 적용한다.
                 // currentTime: 절대 경과초(vehicle_sim.db timestep 기준) — computeElapsedSec 주석 참고.
                 // 이전엔 epoch-ms를 그대로 보내 worker가 init 호출 시점을 0초로 잘못 재설정했다.
+                // generation: 이 packets가 어느 세대 것인지 worker가 응답에 echo → onmessage에서
+                // 세대 불일치 응답(핸들러 교체 직전에 큐잉된 이전 세대 계산 결과) 폐기에 사용.
                 czmlPositionWorkerRef.current?.postMessage({
                     type: 'init',
                     czmlPackets: vehicleRoute,
-                    currentTime: computeElapsedSec(viewer, viewer.clock.currentTime)
+                    currentTime: computeElapsedSec(viewer, viewer.clock.currentTime),
+                    generation: myGen,
                 });
+                // 창 전환 종료 — 이 시점부터 simMinRef/clock/worker 경로가 전부 새 창으로 정합
+                // (init이 방금 정확한 경과초로 위치를 즉시 계산해 보냈으므로 tick 재개 안전).
+                streamTransitionRef.current = false;
                 applyTerrainHeightsToRoute(vehicleRoute, viewer.terrainProvider).then(adjustedRoute => {
                     if (myGen !== simGenRef.current) return; // stale — 더 새 호출의 워커 상태를 덮어쓰지 않음
                     czmlPositionWorkerRef.current?.postMessage({
                         type: 'init',
                         czmlPackets: adjustedRoute,
-                        currentTime: computeElapsedSec(viewer, viewer.clock.currentTime)
+                        currentTime: computeElapsedSec(viewer, viewer.clock.currentTime),
+                        generation: myGen,
                     });
                 });
 

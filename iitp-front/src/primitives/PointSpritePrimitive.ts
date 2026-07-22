@@ -99,13 +99,13 @@ export default class PointSpritePrimitive {
         this._stopped = true;
         this.latestPositions = null;
         this._capacity = 0;
-        if (this.drawCommand) this.drawCommand.vertexCount = 0;
+        if (this.drawCommand) this.drawCommand.count = 0;
     }
     drain(): void {
         this._stopped = true;
         this.latestPositions = null;
         this._capacity = 0;
-        if (this.drawCommand) this.drawCommand.vertexCount = 0;
+        if (this.drawCommand) this.drawCommand.count = 0;
     }
 
     setSpeed(_speed: number): void   {}
@@ -153,7 +153,8 @@ export default class PointSpritePrimitive {
             this.drawCommand = new (Cesium as any).DrawCommand({
                 vertexArray:   this.vertexArray,
                 shaderProgram: this.shaderProgram,
-                vertexCount:   n,
+                // 정점 수 속성명은 `count` — vertexCount는 Cesium이 무시(TailPrimitive 주석 참고)
+                count:         n,
                 uniformMap: {
                     u_mvp:       () => self.context.uniformState.modelViewProjection,
                     u_color:     () => new Cesium.Cartesian3(self.color[0], self.color[1], self.color[2]),
@@ -171,7 +172,7 @@ export default class PointSpritePrimitive {
         } else {
             // 용량 충분 → copyFromArrayView 로 GPU 업데이트 (재할당 없음)
             this.vertexBuffer.copyFromArrayView(flat);
-            this.drawCommand.vertexCount = n;
+            this.drawCommand.count = n;
         }
 
         frameState.commandList.push(this.drawCommand);
