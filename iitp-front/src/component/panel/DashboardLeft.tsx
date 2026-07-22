@@ -19,38 +19,11 @@ import { useLayerStore } from '@stores/useLayerStore';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
+import { LAYER_LABELS, ChartTooltip } from './dashboardShared';
 
 interface Props {
     onClose: () => void;
 }
-
-const LAYER_LABELS: Record<string, string> = {
-    heatmap: '히트맵',
-    trip: '차량 경로',
-    od: 'OD 매트릭스',
-    vehicle: '차량',
-    signal: '신호',
-    network: '네트워크',
-    busStation: '버스 정류장',
-    railStation: '철도 역',
-    pavementMarking: '노면마킹',
-};
-
-const ChartTooltip = ({ active, payload, label }: any) => {
-    if (!active || !payload?.length) return null;
-    return (
-        <div className={styles.chartTooltip}>
-            <div className={styles.chartTooltipLabel}>{label}</div>
-            {payload.map((p: any, i: number) => (
-                <div key={i} className={styles.chartTooltipRow}>
-                    <span className={styles.chartTooltipDot} style={{ background: p.color }}/>
-                    <span className={styles.chartTooltipName}>{p.name}</span>
-                    <span className={styles.chartTooltipValue}>{p.value?.toLocaleString()}</span>
-                </div>
-            ))}
-        </div>
-    );
-};
 
 // ─── Component ────────────────────────────────────────────────
 const DashboardLeft: React.FC<Props> = ({ onClose }) => {
