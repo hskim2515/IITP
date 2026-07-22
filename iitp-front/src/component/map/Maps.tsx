@@ -87,11 +87,14 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     useSimulation();
     useMapSync();
     useNaverBaseMap(naverMapRef, naverEnabled);
+    const roadviewEnabledInEdit = useMapStore((s) => s.roadviewEnabledInEdit);
+    const setRoadviewEnabledInEdit = useMapStore((s) => s.setRoadviewEnabledInEdit);
     // 거리뷰 활성 조건:
-    //   - 편집모드: 3D 영역은 항상 로드뷰(배경지도 무관, 키만 있으면). 2D 는 편집 대상.
+    //   - 편집모드: 3D 영역은 기본적으로 로드뷰(배경지도 무관, 키만 있으면), 단 사용자가
+    //     roadviewEnabledInEdit 를 꺼두면 로드뷰가 없는/무의미한 구간 편집 시 3D 지도를 그대로 볼 수 있음.
     //   - 보기모드: 네이버 배경 선택 시에만 로드뷰.
     //   공통: 3D 화면이 보일 때(mapViewMode !== '2D')만.
-    const panoActive = naverKeyEnv && mapViewMode !== '2D' && (appMode === 'edit' || naverKeyed);
+    const panoActive = naverKeyEnv && mapViewMode !== '2D' && ((appMode === 'edit' && roadviewEnabledInEdit) || naverKeyed);
     useNaverPanorama(naverPanoRef, panoActive);
     useLayer();
     useDefaultSelect();
@@ -312,6 +315,19 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
                         3D
                     </button>
                 </div>
+            )}
+
+            {/* 편집모드 로드뷰 강제 표시 on/off — 로드뷰가 없는/무의미한 구간 편집 시
+                꺼서 3D 지도(전체 조망)를 그대로 볼 수 있게. */}
+            {!ONLY_3D && naverKeyEnv && appMode === 'edit' && mapViewMode !== '2D' && (
+                <button
+                    className={roadviewEnabledInEdit ? styles.mapModeBtnActive : styles.mapModeBtn}
+                    onClick={() => setRoadviewEnabledInEdit(!roadviewEnabledInEdit)}
+                    title={roadviewEnabledInEdit ? '로드뷰 끄기 (3D 지도로 전환)' : '로드뷰 켜기'}
+                    style={{ position: 'absolute', top: 8, right: 8, zIndex: 6 }}
+                >
+                    로드뷰 {roadviewEnabledInEdit ? 'ON' : 'OFF'}
+                </button>
             )}
 
             {/* 네이버 배경 지도 (읽기 전용): OL 영역에 정확히 겹쳐 깔림(절대위치). OL 배경타일을 끄면 비쳐 보인다.

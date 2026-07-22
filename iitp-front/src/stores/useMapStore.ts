@@ -12,12 +12,15 @@ interface State {
     coordPickCallback: ((lat: number, lng: number) => void) | null;
     /** 네이버 파노라마(로드뷰) 표시 중 — Cesium 캔버스를 덮으므로 Cesium→OL 동기화 차단용 */
     panoramaActive: boolean;
+    /** 편집모드에서 로드뷰를 강제 표시할지 — 로드뷰가 없는/무의미한 구간 편집 시 끄고 3D 지도를 보기 위함 */
+    roadviewEnabledInEdit: boolean;
 }
 
 interface Actions {
     setCesiumSyncing: (syncing: boolean) => void;
     setOLSyncing: (syncing: boolean) => void;
     setPanoramaActive: (active: boolean) => void;
+    setRoadviewEnabledInEdit: (enabled: boolean) => void;
     setCurrentBaseMap: (baseMap: BaseMapType) => void;
     setMapViewMode: (mode: MapViewMode) => void;
     startCoordPick: (cb: (lat: number, lng: number) => void) => void;
@@ -31,6 +34,7 @@ const initialState: State = {
     mapViewMode: 'split',
     coordPickCallback: null,
     panoramaActive: false,
+    roadviewEnabledInEdit: true,
 }
 
 export const useMapStore = createSelectors(
@@ -43,6 +47,7 @@ export const useMapStore = createSelectors(
             }),
             setOLSyncing: (syncing: boolean) => set({isCesiumSyncingState: !syncing, isOLSyncingState: syncing}),
             setPanoramaActive: (active: boolean) => set({ panoramaActive: active }),
+            setRoadviewEnabledInEdit: (enabled: boolean) => set({ roadviewEnabledInEdit: enabled }),
             setCurrentBaseMap: (baseMap: BaseMapType) => set({currentBaseMap: baseMap}),
             setMapViewMode: (mode: MapViewMode) => set({mapViewMode: mode}),
             startCoordPick: (cb) => set({ coordPickCallback: cb }),
