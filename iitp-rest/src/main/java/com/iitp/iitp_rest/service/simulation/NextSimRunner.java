@@ -934,7 +934,14 @@ public class NextSimRunner {
         Files.writeString(odMatrixXml, out.toString(), StandardCharsets.UTF_8);
     }
 
-    /** route-generator/nextsim 공용 크래시 표식 — doctest FAILURE 시그니처 감지 후 즉시 종료했을 때 던짐 */
+    /**
+     * route-generator/nextsim 공용 "이 조합은 안전하다고 증명 못 함" 표식 — 이분탐색이
+     * 크래시와 동일하게 취급해 더 작은 부분집합으로 재귀한다. 두 경우에 던짐:
+     * 1) doctest FAILURE 시그니처 감지 후 행 방지를 위해 즉시 종료(실제 크래시)
+     * 2) 개별 실행이 timeoutSeconds 를 초과(실측: 대규모 네트워크에서 이분탐색 도중
+     *    "성공하는" 부분집합 하나의 전체 시뮬레이션 자체가 타임아웃보다 오래 걸릴 수 있음 —
+     *    이걸 일반 예외로 던지면 이분탐색 전체가 죽어버려 그때까지의 탐색 진행이 버려짐)
+     */
     private static class TerminalNodeCrashException extends RuntimeException {
         TerminalNodeCrashException(String output) { super(output); }
     }
@@ -1093,7 +1100,14 @@ public class NextSimRunner {
                 try { new ProcessBuilder("docker", "rm", "-f", container).start(); } catch (Exception ignored) {}
             }
             reader.join(5000);
-            throw new RuntimeException("NextSim 실행 타임아웃 (" + timeoutSeconds + "초) — " +
+            // TerminalNodeCrashException 으로 던진다(일반 RuntimeException 아님) — 실측: 대규모
+            // 네트워크(87터미널)에서 이분탐색 도중 "성공하는" 부분집합 하나의 전체 시뮬레이션
+            // 자체가 timeoutSeconds 를 넘길 수 있는데, 이걸 크래시와 구분되는 일반 예외로 던지면
+            // tryActivate/runStageWithCrashRecovery 가 못 잡아서(TerminalNodeCrashException 만
+            // catch) 이분탐색 전체가 그대로 죽어버리며 그때까지의 탐색 진행이 통째로 버려진다.
+            // 타임아웃도 "이 조합이 예산 안에서 안전하다고 증명 못 함"으로 취급해 크래시와 동일하게
+            // 재귀 탐색을 계속하는 게 맞다 — 더 작은 부분집합은 예산 안에 끝날 수 있다.
+            throw new TerminalNodeCrashException("NextSim 실행 타임아웃 (" + timeoutSeconds + "초) — " +
                     "대규모 네트워크는 nextsim.timeout-seconds 상향 또는 Linux 서버 네이티브 실행을 고려하세요");
         }
         reader.join(5000); // 잔여 출력 수집
