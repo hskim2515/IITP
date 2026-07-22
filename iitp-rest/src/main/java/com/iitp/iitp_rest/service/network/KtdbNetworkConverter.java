@@ -712,6 +712,14 @@ public class KtdbNetworkConverter {
                 if (dist(pts.get(pts.size() - 1), to) >= 1e-6) pts.add(to);
 
                 double connLen = Math.max(1.0, calcLength(pts));
+                if (pts.size() < 2) {
+                    // from/via/to 가 전부 사실상 같은 지점 — shape 가 점 1개로 뭉개지면 length=1.0
+                    // 과 불일치하는 축퇴 지오메트리가 된다(위 buildPassthroughConnections 와 동일 문제).
+                    // out-link 진행 방향으로 connLen 만큼 밀어낸 두 번째 점을 추가해 실제 길이를 갖는 shape 로 만든다.
+                    double[] base = pts.get(0);
+                    double[] dir = departureUnit(toCoords);
+                    pts.add(new double[]{base[0] + dir[0] * connLen, base[1] + dir[1] * connLen});
+                }
                 StringBuilder shape = new StringBuilder();
                 for (double[] p : pts) {
                     if (shape.length() > 0) shape.append(' ');
@@ -805,7 +813,18 @@ public class KtdbNetworkConverter {
                     double[] from = laneEndpoint(inCoords,  true,  pair[0], inLanes,  inDefs[2]);
                     double[] to   = laneEndpoint(outCoords, false, pair[1], outLanes, defs[2]);
                     double dx = to[0] - from[0], dy = to[1] - from[1];
-                    double connLen = Math.max(1.0, Math.sqrt(dx * dx + dy * dy));
+                    double rawLen = Math.sqrt(dx * dx + dy * dy);
+                    double connLen = Math.max(1.0, rawLen);
+                    // 오프셋 없는 단일 차선끼리는 두 끝점이 사실상 같은 지점이 되어 shape가
+                    // 길이 0(시작=끝점)으로 뭉개진다 — length 는 위에서 최소 1.0 로 보정하지만
+                    // shape 좌표는 그대로 두면 "length=1.0인데 shape는 0m"인 불일치 데이터가 됨.
+                    // NextSim 이 이런 축퇴 지오메트리 근처에서 불안정하게 동작하는 경향이 관측되어
+                    // (out-link 진행 방향으로 connLen 만큼 밀어낸) 실제 길이를 가진 shape 로 대체.
+                    double[] shapeTo = to;
+                    if (rawLen < 1e-6) {
+                        double[] dir = departureUnit(outCoords);
+                        shapeTo = new double[]{from[0] + dir[0] * connLen, from[1] + dir[1] * connLen};
+                    }
 
                     ConnectionXml conn = new ConnectionXml();
                     conn.setId(connId++);
@@ -817,8 +836,8 @@ public class KtdbNetworkConverter {
                     conn.setLength(round2(connLen));
                     conn.setWidth(defs[2]);
                     conn.setFfSpd(round2(connFf));
-                    conn.setShape(fmt5(from[0]) + "," + fmt5(from[1]) + " " +
-                                  fmt5(to[0])   + "," + fmt5(to[1]));
+                    conn.setShape(fmt5(from[0])    + "," + fmt5(from[1]) + " " +
+                                  fmt5(shapeTo[0]) + "," + fmt5(shapeTo[1]));
                     result.add(conn);
                 }
             }
@@ -978,6 +997,15 @@ public class KtdbNetworkConverter {
     private double departureBearing(List<double[]> coords) {
         if (coords == null || coords.size() < 2) return 0;
         return bearing(coords.get(0), coords.get(1));
+    }
+
+    /** out-link 첫 구간의 진행 방향 단위벡터 — 축퇴(0길이) 커넥션 shape 보정용 */
+    private double[] departureUnit(List<double[]> coords) {
+        if (coords == null || coords.size() < 2) return new double[]{1.0, 0.0};
+        double[] p1 = coords.get(0), p2 = coords.get(1);
+        double dx = p2[0] - p1[0], dy = p2[1] - p1[1];
+        double len = Math.hypot(dx, dy);
+        return len < 1e-9 ? new double[]{1.0, 0.0} : new double[]{dx / len, dy / len};
     }
 
     private double bearing(double[] from, double[] to) {

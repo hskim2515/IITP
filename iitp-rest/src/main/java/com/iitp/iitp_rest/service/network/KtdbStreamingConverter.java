@@ -596,8 +596,18 @@ public class KtdbStreamingConverter {
                             cLen += Math.hypot(to[0] - px, to[1] - py);
                             sb.append(' ').append(fmt5(to[0])).append(',').append(fmt5(to[1]));
                         }
+                        double connLenFinal = Math.max(1.0, cLen);
+                        if (cLen < 1e-6) {
+                            // from/via/to 가 전부 사실상 같은 지점 — shape 가 점 1개로 뭉개지면
+                            // length=1.0 과 불일치하는 축퇴 지오메트리가 된다(일반 변환기의
+                            // buildConnectionsFromInternalLinks 와 동일 문제). out-link 진행 방향으로
+                            // connLenFinal 만큼 밀어낸 두 번째 점을 추가해 실제 길이를 갖는 shape 로 만든다.
+                            double[] dir = departureUnit(outLk.localCoords());
+                            sb.append(' ').append(fmt5(from[0] + dir[0] * connLenFinal))
+                              .append(',').append(fmt5(from[1] + dir[1] * connLenFinal));
+                        }
                         conns.add(new ConnTuple(inLk.id(), pair[0], outLk.id(), pair[1],
-                                turning, round2(Math.max(1.0, cLen)), sb.toString()));
+                                turning, round2(connLenFinal), sb.toString()));
                     }
                 }
             }
@@ -942,6 +952,14 @@ public class KtdbStreamingConverter {
 
     private double bearing(double x1, double y1, double x2, double y2) {
         return Math.toDegrees(Math.atan2(x2 - x1, y2 - y1));
+    }
+
+    /** out-link 첫 구간의 진행 방향 단위벡터 — 축퇴(0길이) 커넥션 shape 보정용 */
+    private double[] departureUnit(double[] c) {
+        if (c.length < 4) return new double[]{1.0, 0.0};
+        double dx = c[2] - c[0], dy = c[3] - c[1];
+        double len = Math.hypot(dx, dy);
+        return len < 1e-9 ? new double[]{1.0, 0.0} : new double[]{dx / len, dy / len};
     }
 
     /**
