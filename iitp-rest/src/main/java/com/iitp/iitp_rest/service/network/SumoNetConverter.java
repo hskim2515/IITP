@@ -100,7 +100,7 @@ public class SumoNetConverter {
         // Link/Node ID 재부여 (Network ID naming 스펙) — Link=2, Node(교차로)=1,
         // Terminal(출입구)=11 로 시작하는 8자리 숫자. Link와 일반 Node는 생성 순서(=엣지
         // 원본 순서로 스캔)에 따라 하나의 인덱스를 공유하고, Terminal은 연결된 단 하나의
-        // Link와 뒷자리 6자리가 동일해야 한다 — 엣지를 스캔하며 그 자리에서 endpoint
+        // Link와 뒷자리 3자리가 동일해야 한다 — 엣지를 스캔하며 그 자리에서 endpoint
         // junction을 처음 만나면 바로 배정하면 두 규칙을 한 번에 만족한다.
         Map<String, Long> nodeIdMap = new LinkedHashMap<>();
         Map<String, Long> linkIdMap = new LinkedHashMap<>();
@@ -120,7 +120,7 @@ public class SumoNetConverter {
                 if (!terminal) {
                     nodeIdMap.put(juncId, idAssigner.nextNormalNodeId());
                 } else if (!derivedTerminalUsed) {
-                    nodeIdMap.put(juncId, NetworkIdAssigner.terminalIdFor(linkId));
+                    nodeIdMap.put(juncId, idAssigner.terminalIdFor(linkId));
                     derivedTerminalUsed = true;
                 } else {
                     nodeIdMap.put(juncId, idAssigner.nextIsolatedTerminalId());

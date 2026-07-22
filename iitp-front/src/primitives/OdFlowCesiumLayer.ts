@@ -1,6 +1,7 @@
 import * as Cesium from "cesium";
 import { getActiveVersionId } from "@utils/versionId";
 import { useSimulationStore } from "@stores/useSimulationStore";
+import { useLayerStore } from "@stores/useLayerStore";
 import { OD_FLOW } from "@utils/lodConstants";
 import { computeViewportMetrics } from "@utils/viewportMetrics";
 import axiosInstance from "@api/axiosInstance";
@@ -16,9 +17,12 @@ import ParabolicArrowPrimitive from "./ParabolicArrowPrimitive";
  * 재사용하는 대신, 데이터 소스는 기존 "od" 레이어(개별 차량의 현재위치→목적지를 매초 재계산,
  * `LayerManager.addODArrows`)와 완전히 분리한다 — 그래서 레이어 이름도 "odFlow"로 별도.
  *
- * 카메라 zoom(pixelSizeM)을 자체 추적해 OD_FLOW.MIN_RESOLUTION 이상에서만 스스로 활성화된다
- * (TrafficTailCesiumLayer/TrafficHeatmapCesiumLayer와 동일 패턴 — bbox+시간창 계산도 공용
- * computeViewportMetrics 재사용).
+ * 표시 여부는 분석 메뉴의 "od" 체크(activeLayerName)가 소유한다 — 줌 티어에 따라 스스로
+ * 나타나는 게 아니라("레이어 전환보다 사용자 온오프 + 줌은 세밀도만" 방침), 사용자가 od를
+ * 켜두면 근거리에선 기존 "od" 레이어(개별 차량 기반, 상세)가, 이 원거리 구간에선 이 레이어
+ * (백엔드 집계, 개괄)가 데이터를 담당하는 식으로 줌은 세밀도/데이터 소스만 바꾼다.
+ * 카메라 zoom(pixelSizeM)은 그래서 fetch 여부에만 쓴다(OD_FLOW.MIN_RESOLUTION 이상에서만
+ * 집계 호출 — bbox+시간창 계산은 공용 computeViewportMetrics 재사용).
  */
 export default class OdFlowCesiumLayer {
     layer      = "";
@@ -33,6 +37,7 @@ export default class OdFlowCesiumLayer {
     private _lastAggregateAt = 0;
     private _camUnsub: (() => void) | null = null;
     private _simUnsub: (() => void) | null = null;
+    private _layerUnsub: (() => void) | null = null;
     private _scheduleTimer: ReturnType<typeof setTimeout> | null = null;
 
     get show() { return this._show; }
@@ -57,6 +62,9 @@ export default class OdFlowCesiumLayer {
             (s: any) => s.currentTime,
             () => this._schedule(),
         );
+        // 분석 메뉴에서 od를 켜고 끌 때 즉시 반응 (카메라/재생이 멈춰 있어도) — useLayerStore는
+        // subscribeWithSelector 미들웨어가 없어 selector 오버로드가 안 되므로 전체 구독 + debounce.
+        this._layerUnsub = useLayerStore.subscribe(() => this._schedule());
         this._schedule();
     }
 
@@ -77,9 +85,12 @@ export default class OdFlowCesiumLayer {
         if (!metrics) { this._setActive(false); return; }
         const { normalizedPixelSizeM, bbox } = metrics;
 
-        // 히트맵보다 더 축소된 구간에서만 활성 — 그 미만은 히트맵(VEHICLE_AGGREGATION)이 담당.
-        // normalizedPixelSizeM 사용 — 네트워크 실제 크기 대비 상대적 줌 단계로 판정.
-        const active = normalizedPixelSizeM >= OD_FLOW.MIN_RESOLUTION;
+        // 줌은 데이터 소스만 결정: 이 구간 미만(근거리)은 기존 "od" 레이어(개별 차량 기반)가 OD
+        // 화살표를 담당하므로 여기선 fetch하지 않는다. 표시 여부는 사용자의 분석 메뉴 od 체크가
+        // 소유 — 체크 안 되어 있으면 줌과 무관하게 숨김(자동 레이어 전환 없음).
+        const zoomActive = normalizedPixelSizeM >= OD_FLOW.MIN_RESOLUTION;
+        const userOn = (useLayerStore.getState().activeLayerName ?? []).includes("od");
+        const active = zoomActive && userOn;
         this._setActive(active);
         if (!active) return;
 
@@ -148,6 +159,7 @@ export default class OdFlowCesiumLayer {
         this.destroyed = true;
         this._camUnsub?.();
         this._simUnsub?.();
+        this._layerUnsub?.();
         if (this._scheduleTimer) { clearTimeout(this._scheduleTimer); this._scheduleTimer = null; }
         this._arrow.destroy();
     }

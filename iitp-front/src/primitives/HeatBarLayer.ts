@@ -10,6 +10,8 @@ const BOX_HEIGHT_MAX        = 300.0;
 const NOISE_DECAY           = 0.95;
 const NOISE_NORMALIZE_SCALE = 10.0;
 const MIN_NOISE_THRESHOLD   = 0.01;   // 이 미만 셀은 DrawCommand push 생략
+/** 정규화 기준(max)을 순간값 대신 이 비율로 완만히 따라가게(EMA) 함 — 아래 _maxEma 참고 */
+const MAX_EMA_DECAY         = 0.9;
 
 // ──────────────────────────────────────────────
 // 내부 타입
@@ -122,6 +124,11 @@ export default class HeatBarLayer {
 
     private _frameCount = 0;
     private static readonly NOISE_UPDATE_INTERVAL = 3;
+
+    /** 정규화 기준(max)의 EMA — updateNoiseValues 참고 */
+    private _maxEma = 0;
+    /** setLatestPositions() 이후 아직 반영 안 한 새 데이터가 있는지 — updateNoiseValues 참고 */
+    private _hasNewPositions = false;
 
     private latestPositions: (number[] | undefined)[] | null = null;
 
@@ -266,16 +273,14 @@ export default class HeatBarLayer {
                 float noise = texture(noiseTexture, texCoord).r;
                 float baseH = noise * ${BOX_HEIGHT_MAX.toFixed(1)} * exaggeration;
 
-                float height = baseH;
-
-                v_height  = height;
+                v_height  = baseH;
                 v_density = noise;
                 v_topFace = posZ;
                 v_cellUv  = u_noiseOffset;
 
                 vec3 pos = position;
                 if (position.z > 0.0) {
-                    pos.z += height;
+                    pos.z += baseH;
                 }
                 gl_Position = u_modelViewProjectionMatrix * vec4(pos, 1.0);
             }
@@ -402,39 +407,55 @@ export default class HeatBarLayer {
     // ──────────────────────────────────────────
     // noise 업데이트
     // ──────────────────────────────────────────
-    private updateNoiseValues(positions: (number[] | undefined)[]): void {
+    /**
+     * @param addNew 새로 도착한 위치 데이터를 이번에 반영할지 여부. false면 decay/재정규화만
+     *  수행하고 falloff 추가는 건너뛴다.
+     *
+     * ⚠️ 왜 분리했는가: update()는 실제 렌더 프레임 주기로 호출되는데(시뮬레이션 재생 중엔
+     * requestRenderMode와 무관하게 clock 애니메이션 때문에 사실상 매 프레임=60fps에 가깝게
+     * 호출됨), setLatestPositions()로 데이터가 들어오는 주기(VehicleAggregationFeeder는 80ms
+     * 간격 setInterval)와 맞지 않는다. 예전엔 이 함수가 항상 "decay + 현재 latestPositions로
+     * falloff 추가"를 다 했기 때문에, 같은(아직 안 바뀐) 합성 차량 위치에 대해 falloff가 프레임마다
+     * 반복해서 더해졌다 — 80ms 동안 여러 번(20Hz 갱신 기준 4~5회) 같은 자리에 열을 계속 쌓았다가
+     * 위치가 실제로 바뀌는 순간 확 빠지는 펌핑이 "실행하면 깜빡"의 정체였다(근거리 실차량은 매
+     * 프레임 실제로 위치가 갱신되니 이 문제가 없었다). 이제 falloff 추가는 setLatestPositions()가
+     * 호출된 뒤 딱 한 번만 반영하고(_hasNewPositions), decay/재정규화만 프레임마다 계속한다.
+     */
+    private updateNoiseValues(positions: (number[] | undefined)[], addNew: boolean): void {
         for (let i = 0; i < this.noiseValues.length; i++) {
             this.noiseValues[i]! *= NOISE_DECAY;
         }
 
-        // ④ 중심 고정 → adjRot 1회만 계산
-        if (!this._adjRotReady) {
-            Cesium.Transforms.eastNorthUpToFixedFrame(this._center, undefined, HeatBarLayer._scratchENU);
-            Cesium.Matrix4.getMatrix3(HeatBarLayer._scratchENU, HeatBarLayer._scratchRotation);
-            Cesium.Matrix3.transpose(HeatBarLayer._scratchRotation, HeatBarLayer._scratchInvRot);
-            Cesium.Matrix3.multiply(HeatBarLayer._scratchFlipY, HeatBarLayer._scratchInvRot, HeatBarLayer._scratchAdjRot);
-            Cesium.Matrix3.clone(HeatBarLayer._scratchAdjRot, this._adjRot);
-            this._adjRotReady = true;
-        }
+        if (addNew) {
+            // ④ 중심 고정 → adjRot 1회만 계산
+            if (!this._adjRotReady) {
+                Cesium.Transforms.eastNorthUpToFixedFrame(this._center, undefined, HeatBarLayer._scratchENU);
+                Cesium.Matrix4.getMatrix3(HeatBarLayer._scratchENU, HeatBarLayer._scratchRotation);
+                Cesium.Matrix3.transpose(HeatBarLayer._scratchRotation, HeatBarLayer._scratchInvRot);
+                Cesium.Matrix3.multiply(HeatBarLayer._scratchFlipY, HeatBarLayer._scratchInvRot, HeatBarLayer._scratchAdjRot);
+                Cesium.Matrix3.clone(HeatBarLayer._scratchAdjRot, this._adjRot);
+                this._adjRotReady = true;
+            }
 
-        for (const position of positions) {
-            if (!position) continue;
-            const worldPos = new Cartesian3(position[0]!, position[1]!, position[2]!);
-            Cesium.Cartesian3.subtract(worldPos, this._center, HeatBarLayer._scratchOffsetFC);
-            Cesium.Matrix3.multiplyByVector(this._adjRot, HeatBarLayer._scratchOffsetFC, HeatBarLayer._scratchLocalENU);
+            for (const position of positions) {
+                if (!position) continue;
+                const worldPos = new Cartesian3(position[0]!, position[1]!, position[2]!);
+                Cesium.Cartesian3.subtract(worldPos, this._center, HeatBarLayer._scratchOffsetFC);
+                Cesium.Matrix3.multiplyByVector(this._adjRot, HeatBarLayer._scratchOffsetFC, HeatBarLayer._scratchLocalENU);
 
-            const gridX  = Math.floor(HeatBarLayer._scratchLocalENU.x / GRID_CELL_SIZE_M + this.gridWidth  / 2);
-            const gridY  = Math.floor(HeatBarLayer._scratchLocalENU.y / GRID_CELL_SIZE_M + this.gridHeight / 2);
-            const radius = Math.floor(1.0 / (this.exaggeration || 0.1));
+                const gridX  = Math.floor(HeatBarLayer._scratchLocalENU.x / GRID_CELL_SIZE_M + this.gridWidth  / 2);
+                const gridY  = Math.floor(HeatBarLayer._scratchLocalENU.y / GRID_CELL_SIZE_M + this.gridHeight / 2);
+                const radius = Math.floor(1.0 / (this.exaggeration || 0.1));
 
-            for (let dy = -radius; dy <= radius; dy++) {
-                for (let dx = -radius; dx <= radius; dx++) {
-                    const gx = gridX + dx;
-                    const gy = gridY + dy;
-                    if (gx < 0 || gx >= this.gridWidth || gy < 0 || gy >= this.gridHeight) continue;
-                    const dist    = Math.sqrt(dx * dx + dy * dy);
-                    const falloff = Math.pow(Math.max(1.0 - dist / (radius + 0.1), 0.0), this.exaggeration);
-                    this.noiseValues[gy * this.gridWidth + gx]! += falloff;
+                for (let dy = -radius; dy <= radius; dy++) {
+                    for (let dx = -radius; dx <= radius; dx++) {
+                        const gx = gridX + dx;
+                        const gy = gridY + dy;
+                        if (gx < 0 || gx >= this.gridWidth || gy < 0 || gy >= this.gridHeight) continue;
+                        const dist    = Math.sqrt(dx * dx + dy * dy);
+                        const falloff = Math.pow(Math.max(1.0 - dist / (radius + 0.1), 0.0), this.exaggeration);
+                        this.noiseValues[gy * this.gridWidth + gx]! += falloff;
+                    }
                 }
             }
         }
@@ -443,9 +464,17 @@ export default class HeatBarLayer {
         for (let i = 0; i < this.noiseValues.length; i++) {
             if (this.noiseValues[i]! > max) max = this.noiseValues[i]!;
         }
-        if (max > 0) {
+        // ⚠️ 순간 max로 즉시 정규화하면, 소수의 차량(특히 합성 차량처럼 적은 수가 결정론적으로
+        // 이동하는 소스)이 셀을 옮겨다닐 때마다 "현재 최대값" 자체가 바뀌어 그리드 전체 밝기가
+        // 그 비율만큼 통째로 출렁인다 — 이게 매 갱신(3프레임≈20Hz)마다 반복되며 "거의 프레임마다
+        // 깜빡"으로 보이는 원인이었다. 정규화 기준을 EMA로 완만히 따라가게 해 순간적인 max 변화가
+        // 스케일을 급변시키지 않도록 한다(실제 개별 차량처럼 소스가 많아 max가 원래도 안정적인
+        // 경우엔 EMA가 즉시 실제값에 수렴하므로 체감 차이가 없음).
+        this._maxEma = this._maxEma > 0 ? this._maxEma * MAX_EMA_DECAY + max * (1 - MAX_EMA_DECAY) : max;
+        const norm = this._maxEma > 0.001 ? this._maxEma : max;
+        if (norm > 0) {
             for (let i = 0; i < this.noiseValues.length; i++) {
-                this.noiseValues[i] = (this.noiseValues[i]! / max) * NOISE_NORMALIZE_SCALE;
+                this.noiseValues[i] = (this.noiseValues[i]! / norm) * NOISE_NORMALIZE_SCALE;
             }
         }
 
@@ -483,9 +512,20 @@ export default class HeatBarLayer {
             if (this.drawCommands.length === 0) return;
         }
 
-        this._frameCount++;
-        if (this._frameCount % HeatBarLayer.NOISE_UPDATE_INTERVAL === 0) {
-            this.updateNoiseValues(this.latestPositions);
+        // ⚠️ _frameCount는 새 데이터가 실제로 도착했을 때만 증가시킨다. 예전엔 렌더 프레임마다
+        // 무조건 증가시켰는데, update()의 실제 호출 주기(렌더 프레임, 애니메이션 중엔 최대 60fps)
+        // 와 데이터 공급 주기(VehicleAggregationFeeder.tick()의 80ms setInterval)가 어긋나서, 가끔
+        // "새 데이터 없이" 이 게이트에 걸리는 프레임이 생겼다 — 그 프레임엔 decay만 일어나고 falloff
+        // 재추가가 없어(addNew=false), falloff 반경 가장자리처럼 MIN_NOISE_THRESHOLD 근처의 셀은
+        // 그 한 번의 decay만으로 임계값 아래로 떨어졌다가 다음 정상 사이클에 다시 넘어오는 식으로
+        // 개별 셀이 깜빡였다. 새 데이터 도착 시에만 게이트를 진행시키면 decay+재추가가 항상 짝을
+        // 맞춰 실행되어 매번 같은 안정된 값으로 수렴한다(중간에 decay만 있는 프레임이 없음).
+        if (this._hasNewPositions) {
+            this._frameCount++;
+        }
+        if (this._hasNewPositions && this._frameCount % HeatBarLayer.NOISE_UPDATE_INTERVAL === 0) {
+            this.updateNoiseValues(this.latestPositions, true);
+            this._hasNewPositions = false;
         }
 
         // ③ 빈 셀 skip: noise < threshold인 셀은 push 안 함
@@ -506,6 +546,7 @@ export default class HeatBarLayer {
 
     setLatestPositions(latestPositions: { positions: (number[] | undefined)[] }): void {
         this.latestPositions = latestPositions.positions;
+        this._hasNewPositions = true;
     }
 
     // ──────────────────────────────────────────

@@ -14,6 +14,7 @@ import { generateDummySignals } from '@utils/signal';
 import { createEventHandlers } from '@handler/createEventHandlers';
 import { useEditGuideStore } from '@stores/useEditGuideStore';
 import { useMapStore } from '@stores/useMapStore';
+import { useBackgroundTaskStore } from '@stores/useBackgroundTaskStore';
 import NetworkSelectPanel from './NetworkSelectPanel';
 import styles from '@css/ToolsPanel.module.css';
 
@@ -106,43 +107,84 @@ const NetworkDrawPanel: React.FC = () => {
         return () => document.removeEventListener('keydown', handleKeyDown);
     }, [placementMode]);
 
+    // ⚠️ 아래 3개 핸들러(교차로 재생성/교차 감지/더미 신호 생성)는 전부 currentJsonData만
+    //   대상으로 한다 — 상시 타일 모드에서 이는 "현재 화면에 로드된 도로"일 뿐, 부천시 같은
+    //   대도시 전역이 아니다. 화면을 나눠 그린 뒤 마지막에 한 번만 누르면 화면 밖 지역은
+    //   처리되지 않으므로, 결과 메시지에 항상 "화면에 로드된 범위만" 임을 명시한다.
+    //
+    //   화면에 로드된 도로가 많으면(대도시 뷰포트) 이 계산 자체가 눈에 띄게 걸릴 수 있는데,
+    //   이 3개 버튼 다 처리 중임을 표시하는 상태가 없어 진행 중에도 다시 누를 수 있었다
+    //   (중복 실행 → 결과 중복/경쟁). 하나의 busy 플래그로 셋 다 처리 중엔 비활성화한다.
+    const [busyAction, setBusyAction] = useState<null | 'intersections' | 'split' | 'signals'>(null);
+    // KTDB 가져오기 백그라운드 스캐폴딩(백엔드가 signal.xml/OD를 직접 재생성 중)과 겹치면
+    // 프론트/백엔드가 같은 신호 데이터를 서로 다른 경로로 동시에 써서 덮어쓸 수 있다.
+    const ktdbScaffolding = useBackgroundTaskStore((s) => !!s.tasks['ktdb-scaffold']);
+
     const handleAutoAllIntersections = () => {
-        const count = autoGenerateAllIntersections();
-        useMessageStore.getState().setMessage({
-            type: 'info',
-            text: `전체 교차로 재생성 완료 (${count}개 노드)`,
-        });
+        if (busyAction) return;
+        setBusyAction('intersections');
+        try {
+            const { count, signalsCleared } = autoGenerateAllIntersections();
+            useMessageStore.getState().setMessage({
+                type: 'info',
+                text: `화면에 로드된 교차로 재생성 완료 (${count}개 노드) — 화면 밖 지역은 해당 지역을 보면서 다시 실행하세요`
+                    + (signalsCleared > 0 ? ` · 신호 ${signalsCleared}개의 커넥션 참조 초기화` : ''),
+            });
+        } finally {
+            setBusyAction(null);
+        }
     };
 
     const handleDetectSplit = () => {
-        const count = detectAndSplitIntersections();
-        useMessageStore.getState().setMessage({
-            type: 'info',
-            text: count > 0 ? `교차 감지 → ${count}개 교차로 자동 생성됨` : '교차 지점 없음',
-        });
+        if (busyAction) return;
+        setBusyAction('split');
+        try {
+            const { created, signalsCleared } = detectAndSplitIntersections();
+            useMessageStore.getState().setMessage({
+                type: 'info',
+                text: created > 0
+                    ? `화면에 로드된 범위에서 교차 감지 → ${created}개 교차로 자동 생성됨${signalsCleared > 0 ? ` · 신호 ${signalsCleared}개의 커넥션 참조 초기화` : ''}`
+                    : '화면에 로드된 범위에는 교차 지점 없음',
+            });
+        } finally {
+            setBusyAction(null);
+        }
     };
 
     const handleGenerateDummySignals = async () => {
-        const network = useNetworkStore.getState().currentJsonData;
-        if (!network?.nodes?.length) {
-            useMessageStore.getState().setMessage({ type: 'warn', text: '네트워크 데이터가 없습니다.' });
+        if (busyAction) return;
+        if (ktdbScaffolding) {
+            useMessageStore.getState().setMessage({
+                type: 'warn',
+                text: '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다 — 완료 후 다시 시도하세요.',
+            });
             return;
         }
+        setBusyAction('signals');
+        try {
+            const network = useNetworkStore.getState().currentJsonData;
+            if (!network?.nodes?.length) {
+                useMessageStore.getState().setMessage({ type: 'warn', text: '네트워크 데이터가 없습니다.' });
+                return;
+            }
 
-        const signals = generateDummySignals(network);
-        const signalData = { signals };
-        assignPropertyToResponseData(signalData);
-        useSignalStore.getState().setCurrentJsonData(signalData);
-        useSignalStore.getState().setChange(true);
+            const signals = generateDummySignals(network);
+            const signalData = { signals };
+            assignPropertyToResponseData(signalData);
+            useSignalStore.getState().setCurrentJsonData(signalData);
+            useSignalStore.getState().setChange(true);
 
-        // 자동 저장
-        const versionKey = getActiveVersionId();
-        if (versionKey) await autoSaveChangedLayers(versionKey);
+            // 자동 저장
+            const versionKey = getActiveVersionId();
+            if (versionKey) await autoSaveChangedLayers(versionKey);
 
-        useMessageStore.getState().setMessage({
-            type: 'info',
-            text: `더미 신호 생성 완료 (${signals.length}개)`,
-        });
+            useMessageStore.getState().setMessage({
+                type: 'info',
+                text: `화면에 로드된 범위의 더미 신호 생성 완료 (${signals.length}개) — 화면 밖 지역은 해당 지역을 보면서 다시 실행하세요`,
+            });
+        } finally {
+            setBusyAction(null);
+        }
     };
 
     return (
@@ -316,22 +358,28 @@ const NetworkDrawPanel: React.FC = () => {
 
                 {/* ── 교차로 일괄 처리 ───────────────────────── */}
                 <div style={{ fontSize: 10, color: '#555', marginBottom: 4, padding: '0 2px' }}>교차로 자동 처리</div>
+                <div style={{ fontSize: 9, color: '#777', marginBottom: 6, padding: '0 2px' }}>
+                    ⓘ 아래 3개 버튼은 현재 화면에 로드된 도로만 처리합니다 (전체 도시 대상 아님)
+                </div>
 
-                <button style={utilBtnStyle} onClick={handleAutoAllIntersections}
-                    title="in/out 포트가 모두 있는 노드의 connection을 자동 재생성">
-                    ⬡ 전체 교차로 재생성
+                <button style={{ ...utilBtnStyle, opacity: busyAction ? 0.6 : 1 }}
+                    onClick={handleAutoAllIntersections} disabled={!!busyAction}
+                    title="현재 화면에 로드된, in/out 포트가 모두 있는 노드의 connection을 자동 재생성 (화면 밖은 제외)">
+                    {busyAction === 'intersections' ? '처리 중...' : '⬡ 화면 내 교차로 재생성'}
                 </button>
 
-                <button style={{ ...utilBtnStyle, marginTop: 4, color: '#ffb347', borderColor: 'rgba(255,180,70,0.3)', background: 'rgba(255,180,70,0.06)' }}
-                    onClick={handleDetectSplit}
-                    title="겹치는 도로 선분을 감지하여 교차로를 자동으로 분할·생성">
-                    ✂ 교차 감지 → 교차로 분할
+                <button style={{ ...utilBtnStyle, marginTop: 4, color: '#ffb347', borderColor: 'rgba(255,180,70,0.3)', background: 'rgba(255,180,70,0.06)', opacity: busyAction ? 0.6 : 1 }}
+                    onClick={handleDetectSplit} disabled={!!busyAction}
+                    title="현재 화면에 로드된 범위에서 겹치는 도로 선분을 감지하여 교차로를 자동으로 분할·생성 (화면 밖은 제외)">
+                    {busyAction === 'split' ? '처리 중...' : '✂ 화면 내 교차 감지 → 분할'}
                 </button>
 
-                <button style={{ ...utilBtnStyle, marginTop: 4, color: '#a0d8a0', borderColor: 'rgba(100,200,100,0.3)', background: 'rgba(100,200,100,0.06)' }}
-                    onClick={handleGenerateDummySignals}
-                    title="intersection 노드의 connection 기반으로 더미 신호 데이터 생성">
-                    🚦 더미 신호 자동 생성
+                <button style={{ ...utilBtnStyle, marginTop: 4, color: '#a0d8a0', borderColor: 'rgba(100,200,100,0.3)', background: 'rgba(100,200,100,0.06)', opacity: (busyAction || ktdbScaffolding) ? 0.6 : 1 }}
+                    onClick={handleGenerateDummySignals} disabled={!!busyAction || ktdbScaffolding}
+                    title={ktdbScaffolding
+                        ? '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다'
+                        : '현재 화면에 로드된 intersection 노드의 connection 기반으로 더미 신호 데이터 생성 (화면 밖은 제외)'}>
+                    {busyAction === 'signals' ? '생성 중...' : ktdbScaffolding ? '서버 생성 중...' : '🚦 화면 내 더미 신호 생성'}
                 </button>
 
                 <div className={styles.sectionDivider} />

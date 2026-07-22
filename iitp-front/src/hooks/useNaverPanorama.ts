@@ -10,6 +10,7 @@ import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import { useCesiumStore } from "@stores/useCesiumStore";
 import { useMapStore } from "@stores/useMapStore";
 import { useModeStore } from "@stores/useModeStore";
+import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import { useMessageStore } from "@stores/useMessageStore";
 import { networkPrimitivePropertiesMap } from "@datasource/NetworkDataSourceLayer";
 import { loadNaverMaps } from "@utils/naverMapLoader";
@@ -92,6 +93,7 @@ export function useNaverPanorama(
         let onOlCenter: (() => void) | null = null;
         let removeKeyListener: (() => void) | null = null;
         let cleanupResize: (() => void) | null = null;
+        let unsubDrawPoint: (() => void) | null = null;
 
         loadNaverMaps().then((naver) => {
             if (disposed || !naver?.maps?.Panorama || !containerRef.current) {
@@ -290,6 +292,21 @@ export function useNaverPanorama(
             };
             olView.on("change:center", onOlCenter);
 
+            // ── 도로 그리기 중 확정한 점으로 즉시 이동 ──
+            //   위 pan 동기화는 "지도 중심"을 따라가는데, 실제 편집 지점은 화면 중심이 아니라
+            //   방금 클릭한 점일 수 있다(특히 축소해서 넓게 보다 구석을 클릭하는 경우). 도로 그리기가
+            //   점을 확정할 때마다(useNetworkDraw → lastDrawnPoint) 20m 임계값 없이 바로 그 지점으로 이동.
+            let lastSeenDrawPoint: { lng: number; lat: number } | null = null;
+            unsubDrawPoint = useNetworkDrawStore.subscribe((state) => {
+                const pt = state.lastDrawnPoint;
+                if (!pt || pt === lastSeenDrawPoint || disposed || syncing || !panoRef.current) return;
+                lastSeenDrawPoint = pt;
+                lastLng = pt.lng; lastLat = pt.lat;
+                syncing = true;
+                try { panoRef.current.setPosition(new naver.maps.LatLng(pt.lat, pt.lng)); } catch (_) {}
+                setTimeout(() => { syncing = false; }, 80);
+            });
+
             // ── 거리뷰 → 2D (거리뷰에서 걸으면 2D center 이동) ──
             //   ⚠️ 거리 임계 없이 매 pano_changed 마다 setCenter 하면 2D↔로드뷰 가 미세 진동(churn)해
             //     OL 이 계속 재중심화 → singleclick 이 안 뜬다(2D 클릭 죽음). 15m 이상일 때만 반영.
@@ -392,6 +409,7 @@ export function useNaverPanorama(
             disposed = true;
             useMapStore.getState().setPanoramaActive(false);
             if (debounceTimer) clearTimeout(debounceTimer);
+            if (unsubDrawPoint) unsubDrawPoint();
             if (removeKeyListener) removeKeyListener();
             if (cleanupResize) cleanupResize();
             if (onOlCenter && olView) olView.un("change:center", onOlCenter);

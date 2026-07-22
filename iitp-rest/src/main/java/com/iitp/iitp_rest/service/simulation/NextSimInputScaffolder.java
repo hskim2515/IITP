@@ -96,14 +96,29 @@ public class NextSimInputScaffolder {
     /**
      * @param networkForSignal 신호 자동생성(더미 신호 생성기, {@link DummySignalGenerator})에 쓸
      *                          파싱된 네트워크. null 이면 signal.xml 은 기존처럼 빈 템플릿으로
-     *                          생성된다(대형 bbox 스트리밍 임포트 경로는 아직 JAXB NetworkXml 을
-     *                          구성하지 않으므로 null 을 넘김 — 노드 수가 커 더미 신호 계산
-     *                          비용도 함께 커지는 경로라 우선 범위에서 제외).
+     *                          생성된다. 대형 bbox 스트리밍 임포트 경로는 이 파라미터 대신
+     *                          {@link #scaffoldForImport(String, Set, List, List, java.util.Map,
+     *                          NetworkXml, String)}의 precomputedSignalXml(스트리밍 방식으로
+     *                          미리 계산된 신호 텍스트)을 쓴다 — 전체를 메모리에 올리지 않기 위함.
      */
     public void scaffoldForImport(String versionId, Set<String> allNodeIds,
                                    List<Long> sourceTerminalIds, List<Long> sinkTerminalIds,
                                    java.util.Map<Long, double[]> terminalLocalCoords,
                                    NetworkXml networkForSignal) {
+        scaffoldForImport(versionId, allNodeIds, sourceTerminalIds, sinkTerminalIds,
+                terminalLocalCoords, networkForSignal, null);
+    }
+
+    /**
+     * @param precomputedSignalXml 호출부가 이미 계산해둔 signal.xml 텍스트(예: 대형 bbox
+     *                             스트리밍 임포트가 {@link DummySignalGenerator#generateSignalXmlStreaming}
+     *                             으로 network.xml을 통째로 객체화하지 않고 만든 결과). null이
+     *                             아니면 networkForSignal보다 우선한다. 둘 다 null이면 빈 템플릿.
+     */
+    public void scaffoldForImport(String versionId, Set<String> allNodeIds,
+                                   List<Long> sourceTerminalIds, List<Long> sinkTerminalIds,
+                                   java.util.Map<Long, double[]> terminalLocalCoords,
+                                   NetworkXml networkForSignal, String precomputedSignalXml) {
         if (versionId == null || versionId.isBlank()) return;
         List<String> lookupDirs;
         try {
@@ -128,12 +143,26 @@ public class NextSimInputScaffolder {
             // signalTOD 검증에 signal.xml 의 "실제 플랜 보유 노드" 집합이 필요 — 재생성 전에
             // 미리 읽어둔다(재생성되면 아래에서 무조건 signalTOD 도 같이 재생성하므로 무관해짐).
             String signalContentBefore = readFirstExisting(lookupDirs, "signal.xml");
-            String signalFreshContent = networkForSignal != null
-                    ? dummySignalGenerator.generateSignalXml(networkForSignal)
+            boolean hasFreshSignalSource = precomputedSignalXml != null || networkForSignal != null;
+            String signalFreshContent = precomputedSignalXml != null ? precomputedSignalXml
+                    : networkForSignal != null ? dummySignalGenerator.generateSignalXml(networkForSignal)
                     : SIGNAL_TEMPLATE;
-            boolean signalRegenerated = ensureValidOrRegenerate(lookupDirs, versionId, "signal.xml",
-                    content -> signalValid(content, allNodeIds),
-                    signalFreshContent, null);
+            Set<String> freshSignalPlanNodePreview = extractSignalPlanNodeIds(signalFreshContent);
+            // KTDB 재임포트 = network.xml이 곧 새로 확정된 것 → 신선한 신호 소스가 있으면(대부분의
+            // 경우) signal.xml을 무조건 새로 쓴다. 예전엔 "참조 노드가 새 네트워크에 다 존재하면
+            // 유효"로 판정해 유지했는데, 같은 bbox를 재임포트하면 노드 id가 그대로(결정적으로)
+            // 재부여돼 이 검사가 항상 통과해버려 실제로는 재생성이 한 번도 안 일어나는 경우가
+            // 있었다 — 실측: 노드 90개 중 13개가 몇 달 전 로직(단일 plan, cycle=30 고정)으로 만든
+            // 데이터 그대로 남아 최근에 개선된 형식(평시/혼잡 2-plan)과 섞여 있었고, 이 13개가
+            // 나중에 signalTOD 재생성 시점과 어긋나 "플랜은 있는데 TOD가 없는 노드"로 나타났다.
+            // 신선한 신호 소스가 없는 경우(대형망 스트리밍 생성 실패 등 예외적 폴백)에는 빈
+            // 템플릿으로 기존 데이터를 함부로 지우면 안 되므로 그때만 안전장치로 검증-후-유지를 쓴다.
+            boolean signalRegenerated = hasFreshSignalSource
+                    ? ensureValidOrRegenerate(lookupDirs, versionId, "signal.xml", content -> false, signalFreshContent, null)
+                    : ensureValidOrRegenerate(lookupDirs, versionId, "signal.xml",
+                        content -> signalValid(content, allNodeIds)
+                                && !(extractSignalPlanNodeIds(content).isEmpty() && !freshSignalPlanNodePreview.isEmpty()),
+                        signalFreshContent, null);
 
             // signalTOD 는 signal 플랜을 참조 — signal 이 재생성됐으면 기존 TOD 도 무조건 낡은 것.
             // 그렇지 않더라도(signal.xml 자체는 유효해도) **TOD 가 signal 의 플랜 보유 노드를
@@ -165,6 +194,39 @@ public class NextSimInputScaffolder {
         } catch (Exception e) {
             log.warn("[NextSimScaffold] 입력 정비 실패 (무시): {}", e.getMessage());
         }
+    }
+
+    /**
+     * scaffoldForImport의 signalTOD 정합 로직(위 else 분기)만 KTDB 재임포트 없이 즉시 실행한다.
+     *
+     * <p>이 정합은 원래 매 KTDB 재임포트마다 자동으로 도는데, 그 이전(이 검증 로직이 생기기
+     * 전)에 이미 임포트돼 있던 버전은 재임포트를 다시 하지 않는 한 낡은 signalTOD.xml이
+     * 영원히 방치된다 — signal.xml에 플랜을 가진 노드가 있는데 signalTOD.xml에 해당 노드의
+     * 시간대 일정이 없으면 NextSim이 std::out_of_range로 크래시한다(실측). signal.xml 자체는
+     * 절대 건드리지 않고(사용자가 신호 메뉴에서 편집한 실데이터일 수 있음), 그 데이터에 맞는
+     * 기본 TOD로 부족한 부분만 채운다.
+     *
+     * @return 실제로 재생성했으면 true, 이미 정상이라 손대지 않았으면 false
+     */
+    public boolean repairSignalTod(String versionId) {
+        if (versionId == null || versionId.isBlank()) return false;
+        List<String> lookupDirs;
+        try {
+            String scenarioKey = scenarioVersionRepository.findByKeyWithScenario(versionId)
+                    .map(v -> v.getScenario().getKey())
+                    .orElse(versionId);
+            lookupDirs = scenarioKey.equals(versionId)
+                    ? List.of(versionId) : List.of(versionId, scenarioKey);
+        } catch (Exception e) {
+            log.warn("[NextSimScaffold] scenario key 조회 실패 — versionId 폴더만 확인: {}", e.getMessage());
+            lookupDirs = List.of(versionId);
+        }
+
+        String signalContent = readFirstExisting(lookupDirs, "signal.xml");
+        Set<String> signalPlanNodeIds = extractSignalPlanNodeIds(signalContent);
+        return ensureValidOrRegenerate(lookupDirs, versionId, "signalTOD.xml",
+                content -> signalTodValid(content, signalPlanNodeIds),
+                buildDefaultSignalTod(signalContent, signalPlanNodeIds), "signal_tod");
     }
 
     // ── 파일 단위 처리 ───────────────────────────────────────────────────────
@@ -325,9 +387,15 @@ public class NextSimInputScaffolder {
     private static final Pattern PLAN_ID = Pattern.compile("<plan id=\"(\\d+)\"");
 
     /**
-     * signal.xml 의 플랜 보유 노드마다 **그 노드의 최소 plan id** 로 하루 종일(00:00~24:00)
-     * 커버하는 기본 TOD 를 생성 — signal.xml(더미 신호 생성 등으로 만들어진 실데이터일 수 있음)
-     * 을 비우지 않고 세트만 맞춘다. 신호 UI 에서 이후 시간대별로 세밀 조정 가능한 시작점.
+     * signal.xml 의 플랜 보유 노드마다 기본 TOD 를 생성 — signal.xml(더미 신호 생성 등으로
+     * 만들어진 실데이터일 수 있음)을 비우지 않고 세트만 맞춘다. 신호 UI 에서 이후 시간대별로
+     * 세밀 조정 가능한 시작점.
+     *
+     * <p>노드가 plan 0(평시)과 plan 1(혼잡, {@link DummySignalGenerator#generateSignalXml}이
+     * 만드는 두 플랜 규약)을 둘 다 가지면, 하루 종일 같은 플랜이 아니라 **출퇴근 러시아워엔
+     * 혼잡 플랜, 그 외엔 평시 플랜**을 쓰는 현실적인 시간대 스케줄을 만든다(오전 7~9시,
+     * 오후 17~19시 — 통상적인 출퇴근 피크 시간대). plan 1이 없는 노드(과거 데이터·수동
+     * 편집 등)는 그 노드의 최소 plan id로 하루 종일 커버하는 기존 방식으로 폴백한다.
      */
     public static String buildDefaultSignalTod(String signalContent, Set<String> signalPlanNodeIds) {
         StringBuilder body = new StringBuilder();
@@ -336,14 +404,24 @@ public class NextSimInputScaffolder {
             while (nodeM.find()) {
                 String nodeId = nodeM.group(1);
                 if (!signalPlanNodeIds.contains(nodeId)) continue;
+                java.util.TreeSet<Integer> planIds = new java.util.TreeSet<>();
                 Matcher planM = PLAN_ID.matcher(nodeM.group(2));
-                int minPlan = Integer.MAX_VALUE;
-                while (planM.find()) minPlan = Math.min(minPlan, Integer.parseInt(planM.group(1)));
-                if (minPlan == Integer.MAX_VALUE) continue;
-                body.append("  <node id=\"").append(nodeId).append("\">\n")
-                    .append("    <plan id=\"").append(minPlan)
-                    .append("\" startTime=\"00:00:00\" endTime=\"24:00:00\"/>\n")
-                    .append("  </node>\n");
+                while (planM.find()) planIds.add(Integer.parseInt(planM.group(1)));
+                if (planIds.isEmpty()) continue;
+
+                body.append("  <node id=\"").append(nodeId).append("\">\n");
+                if (planIds.contains(0) && planIds.contains(1)) {
+                    body.append("    <plan id=\"0\" startTime=\"00:00:00\" endTime=\"07:00:00\"/>\n")
+                        .append("    <plan id=\"1\" startTime=\"07:00:00\" endTime=\"09:00:00\"/>\n")
+                        .append("    <plan id=\"0\" startTime=\"09:00:00\" endTime=\"17:00:00\"/>\n")
+                        .append("    <plan id=\"1\" startTime=\"17:00:00\" endTime=\"19:00:00\"/>\n")
+                        .append("    <plan id=\"0\" startTime=\"19:00:00\" endTime=\"24:00:00\"/>\n");
+                } else {
+                    int minPlan = planIds.first();
+                    body.append("    <plan id=\"").append(minPlan)
+                        .append("\" startTime=\"00:00:00\" endTime=\"24:00:00\"/>\n");
+                }
+                body.append("  </node>\n");
             }
         }
         return xml("<TOD id=\"0\">\n" + body + "</TOD>");

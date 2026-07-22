@@ -11,6 +11,8 @@ import { layerNameToHistoryStoreMap } from "@hooks/useHistoryInit";
 import { generateGuidWithParentGuid } from "@utils/guid";
 import { generateTemplate } from "@utils/schema";
 import { createEventHandlers } from "@handler/createEventHandlers";
+import { useNetworkStore } from "@stores/useNetworkStore";
+import { updateLinkInNetwork, reconcileSignalConnectionIds, applyNetworkUpdate } from "@hooks/useNetworkSelect";
 import { GridToolbar } from "./GridToolbar";
 import { GridTable } from "./GridTable";
 
@@ -125,14 +127,56 @@ const DrilldownGrid = ({
         return () => clear();
     }, [layerName, clear]);
 
+    // network 레이어의 링크 행에서 numLane/width를 편집하면 차선 배열 재생성 → 사라진
+    // 차선을 참조하던 커넥션 정리 → 그 커넥션을 참조하던 신호까지 연쇄로 정리해야 한다
+    // (도로 편집 모드의 NetworkSelectPanel과 동일한 규칙 — useNetworkSelect.updateLinkInNetwork/
+    // reconcileSignalConnectionIds). 그리드 편집은 지금까지 이 연쇄 없이 필드만 그대로
+    // 덮어써서, 차선 수를 줄이면 존재하지 않는 차선을 참조하는 커넥션이 그대로 남고
+    // (렌더/시뮬 인덱스 오류), 그 커넥션을 쓰던 신호도 죽은 참조를 계속 들고 있었다.
     const handleCellUpdate = useCallback(
         (record: any, partial: Partial<Record<string, any>>) => {
+            const isNetworkLink = layerName === "network" && record?.featureType === "links";
+            const touchesLaneLayout = "numLane" in partial || "width" in partial;
+
+            if (isNetworkLink && touchesLaneLayout) {
+                const cur = useNetworkStore.getState().currentJsonData;
+                const linkId = record.id;
+                const curLink = cur?.links?.find((l: any) => String(l.id) === String(linkId));
+                if (cur && curLink) {
+                    let droppedConnCount = 0;
+                    const newNumLane = partial.numLane;
+                    if (newNumLane !== undefined && newNumLane < curLink.numLane) {
+                        droppedConnCount = cur.nodes
+                            .filter((n: any) => String(n.id) === String(curLink.fromNode) || String(n.id) === String(curLink.toNode))
+                            .reduce((sum: number, n: any) => sum + n.connections.filter((c: any) =>
+                                (String(c.fromLink) === String(linkId) && c.fromLane >= newNumLane) ||
+                                (String(c.toLink) === String(linkId) && c.toLane >= newNumLane)
+                            ).length, 0);
+                    }
+                    const updated = updateLinkInNetwork(cur, linkId, partial);
+                    applyNetworkUpdate(updated);
+                    const clearedCount = reconcileSignalConnectionIds(updated, [curLink.fromNode, curLink.toNode]);
+                    if (droppedConnCount > 0 || clearedCount > 0) {
+                        setMessage({
+                            type: "info",
+                            text: `차선 수 감소로 커넥션 ${droppedConnCount}개 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ""}`,
+                        });
+                    }
+                    return;
+                }
+            }
+
             const merged = { ...record, ...partial };
             dataStore.getState().updateCurrentJsonData(merged, historyStore);
         },
-        [dataStore, historyStore]
+        [dataStore, historyStore, layerName, setMessage]
     );
 
+    // handleDelete(레인/커넥션/포트 삭제 → numLane/numConnection/numPort 감소 동기화)와
+    // 대칭 — 추가 쪽도 부모 링크/노드의 파생 카운트 필드를 실제 배열 길이로 동기화해야
+    // numLane 필드 편집 캐스케이드(handleCellUpdate)와 동일한 결과를 "행 추가" 경로에서도
+    // 보장한다. 레인 id는 fromLane/toLane이 배열 인덱스처럼 참조하는 값이라 Date.now() 같은
+    // 임의의 큰 수를 쓰면 커넥션 연동이 깨지므로, 부모 레인 배열의 다음 순번으로 맞춘다.
     const handleAdd = useCallback(() => {
         const currentFrame = useNavigationStore.getState().stack.at(-1);
         if (!currentFrame) return;
@@ -147,20 +191,138 @@ const DrilldownGrid = ({
             __guid: undefined,
             parentGuid: currentFrame.parentGuid ?? null,
         };
+
+        const isNetworkLayer = layerName === "network";
+        const levelName = currentFrame.levelName;
+        const parentRecord = currentFrame.parentRecord;
+        if (isNetworkLayer && levelName === "lanes" && parentRecord) {
+            tempRecord.id = parentRecord.lanes?.length ?? 0;
+            tempRecord.linkRef = parentRecord.id;
+        }
+
         generateGuidWithParentGuid(currentFrame.parentGuid, tempRecord, currentFrame.rows);
         createEventHandlers(tempRecord);
-    }, [layerName, getSchemaDefinitionByNames, setMessage]);
 
+        if (isNetworkLayer && parentRecord?.id != null) {
+            const cur = useNetworkStore.getState().currentJsonData;
+            if (levelName === "lanes") {
+                const curLink = cur?.links?.find((l: any) => String(l.id) === String(parentRecord.id));
+                const actualNumLane = curLink?.lanes?.length ?? 0;
+                if (curLink && actualNumLane !== curLink.numLane) {
+                    useNetworkStore.getState().updateCurrentJsonData(
+                        { __guid: curLink.__guid, numLane: actualNumLane } as any, historyStore,
+                    );
+                }
+            } else if (levelName === "connections") {
+                const curNode = cur?.nodes?.find((n: any) => String(n.id) === String(parentRecord.id));
+                const actualNumConnection = curNode?.connections?.length ?? 0;
+                if (curNode && actualNumConnection !== curNode.numConnection) {
+                    useNetworkStore.getState().updateCurrentJsonData(
+                        { __guid: curNode.__guid, numConnection: actualNumConnection } as any, historyStore,
+                    );
+                }
+            } else if (levelName === "ports") {
+                const curNode = cur?.nodes?.find((n: any) => String(n.id) === String(parentRecord.id));
+                const actualNumPort = curNode?.ports?.length ?? 0;
+                if (curNode && actualNumPort !== curNode.numPort) {
+                    useNetworkStore.getState().updateCurrentJsonData(
+                        { __guid: curNode.__guid, numPort: actualNumPort } as any, historyStore,
+                    );
+                }
+                setMessage({ type: "info", text: "포트가 추가되었습니다. ⚠ linkId를 실제 존재하는 링크로 지정해야 유효합니다." });
+            }
+        }
+    }, [layerName, getSchemaDefinitionByNames, setMessage, historyStore]);
+
+    // network 레이어에서 링크의 lanes/노드의 connections·ports 행을 그리드로 직접 삭제하면
+    // (numLane/width 필드 편집과 달리) 부모 링크/노드의 numLane·numConnection·numPort 같은
+    // 파생 카운트 필드가 실제 배열 길이와 어긋난 채로 남는다 — 레인을 지워도 numLane 이
+    // 그대로면 사라진 차선을 여전히 참조하는 커넥션(과 그 커넥션을 쓰는 신호)도 정리가 안
+    // 된다. handleCellUpdate의 numLane 필드 편집 캐스케이드와 동일한 결과를 "행 삭제"
+    // 경로에서도 보장하기 위해, 삭제 직후 부모 레코드(useNavigationStore의 parentRecord —
+    // 지금 드릴다운한 프레임의 실제 부모 객체)를 기준으로 카운트를 재동기화한다.
     const handleDelete = useCallback(() => {
         const currentSelectedGuid = useSelectionStore.getState().selectedGuid;
         if (!currentSelectedGuid || currentSelectedGuid.length === 0) {
             setMessage({ type: "warn", text: "삭제할 항목을 선택해주세요." });
             return;
         }
+
+        const currentFrame = useNavigationStore.getState().stack.at(-1);
+        const levelName = currentFrame?.levelName;
+        const parentRecord = currentFrame?.parentRecord;
+        const isNetworkLayer = layerName === "network";
+
         dataStore.getState().removeRecordsByGuid(currentSelectedGuid, historyStore);
-        setMessage({ type: "info", text: `${currentSelectedGuid.length}개 항목이 삭제되었습니다.` });
+
+        let extra = "";
+        if (isNetworkLayer && levelName === "lanes" && parentRecord?.id != null) {
+            const cur = useNetworkStore.getState().currentJsonData;
+            const curLink = cur?.links?.find((l: any) => String(l.id) === String(parentRecord.id));
+            if (cur && curLink) {
+                const actualNumLane = curLink.lanes?.length ?? 0;
+                const remainingLaneIds = new Set((curLink.lanes ?? []).map((l: any) => l.id));
+                if (actualNumLane !== curLink.numLane) {
+                    useNetworkStore.getState().updateCurrentJsonData(
+                        { __guid: curLink.__guid, numLane: actualNumLane } as any, historyStore,
+                    );
+                }
+                // 사라진 차선을 참조하던 커넥션 정리 (fromLink/toLink 양쪽 다 확인)
+                const affectedNodes = cur.nodes.filter((n: any) =>
+                    String(n.id) === String(curLink.fromNode) || String(n.id) === String(curLink.toNode));
+                const danglingConnGuids: string[] = [];
+                for (const n of affectedNodes) {
+                    for (const c of n.connections ?? []) {
+                        const refsGoneLane =
+                            (String(c.fromLink) === String(parentRecord.id) && !remainingLaneIds.has(c.fromLane)) ||
+                            (String(c.toLink) === String(parentRecord.id) && !remainingLaneIds.has(c.toLane));
+                        if (refsGoneLane && c.__guid) danglingConnGuids.push(c.__guid);
+                    }
+                }
+                if (danglingConnGuids.length > 0) {
+                    useNetworkStore.getState().removeRecordsByGuid(danglingConnGuids, historyStore);
+                }
+                const afterNet = useNetworkStore.getState().currentJsonData;
+                const clearedCount = afterNet
+                    ? reconcileSignalConnectionIds(afterNet, [curLink.fromNode, curLink.toNode]) : 0;
+                extra = `${danglingConnGuids.length > 0 ? `, 커넥션 ${danglingConnGuids.length}개 삭제` : ""}`
+                    + `${clearedCount > 0 ? `, 신호 ${clearedCount}개의 커넥션 참조 초기화` : ""}`;
+            }
+        } else if (isNetworkLayer && levelName === "connections" && parentRecord?.id != null) {
+            const cur = useNetworkStore.getState().currentJsonData;
+            const curNode = cur?.nodes?.find((n: any) => String(n.id) === String(parentRecord.id));
+            if (cur && curNode) {
+                const actualNumConnection = curNode.connections?.length ?? 0;
+                if (actualNumConnection !== curNode.numConnection) {
+                    useNetworkStore.getState().updateCurrentJsonData(
+                        { __guid: curNode.__guid, numConnection: actualNumConnection } as any, historyStore,
+                    );
+                }
+                // 삭제된 커넥션 id를 여전히 참조하던 신호 정리
+                const afterNet = useNetworkStore.getState().currentJsonData;
+                const clearedCount = afterNet ? reconcileSignalConnectionIds(afterNet, [curNode.id]) : 0;
+                extra = clearedCount > 0 ? `, 신호 ${clearedCount}개의 커넥션 참조 초기화` : "";
+            }
+        } else if (isNetworkLayer && levelName === "ports" && parentRecord?.id != null) {
+            // 포트는 링크와 1:1로 대응 — 포트만 지우고 링크는 안 지우면 그 링크가 이
+            // 노드를 여전히 가리키는 구조적으로 잘못된 상태가 된다. 여기서 자동으로
+            // 링크까지 지우는 건 과한 개입이라 카운트만 맞추고 사용자에게 알린다.
+            const cur = useNetworkStore.getState().currentJsonData;
+            const curNode = cur?.nodes?.find((n: any) => String(n.id) === String(parentRecord.id));
+            if (cur && curNode) {
+                const actualNumPort = curNode.ports?.length ?? 0;
+                if (actualNumPort !== curNode.numPort) {
+                    useNetworkStore.getState().updateCurrentJsonData(
+                        { __guid: curNode.__guid, numPort: actualNumPort } as any, historyStore,
+                    );
+                }
+                extra = " ⚠ 포트만 삭제되었습니다 — 해당 링크는 이 노드를 계속 참조하니 링크도 함께 정리하세요.";
+            }
+        }
+
+        setMessage({ type: "info", text: `${currentSelectedGuid.length}개 항목이 삭제되었습니다.${extra}` });
         clearSelected();
-    }, [dataStore, historyStore, clearSelected, setMessage]);
+    }, [dataStore, historyStore, clearSelected, setMessage, layerName]);
 
     const handleSave = useCallback(() => {
         dataStore.getState().save?.();

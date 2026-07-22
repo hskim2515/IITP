@@ -23,7 +23,10 @@ import org.springframework.web.bind.annotation.*;
 
 import java.io.ByteArrayInputStream;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * KTDB 표준노드링크 → NetworkXml 직접 변환 (netconvert 없음)
@@ -51,6 +54,52 @@ public class KtdbImportController {
     private final NetworkTileService    networkTileService;
     private final com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService xmlLayerVersionService;
     private final NextSimInputScaffolder nextSimScaffolder;
+    private final com.iitp.iitp_rest.service.vehicle.DummySignalGenerator dummySignalGenerator;
+
+    // ── 백그라운드 스캐폴딩(더미 신호/OD/TOD 생성 + 타일 빌드) 진행 상태 ────────────
+    // KTDB 저장 응답은 이 백그라운드 작업(CompletableFuture.runAsync)을 기다리지 않고 먼저
+    // 돌아간다 — 대형망은 이 작업만 수십 초~수 분 걸릴 수 있는데, 프론트가 이를 알 방법이
+    // 없어 "가져오기 완료"로 보이는 시점과 실제 더미 데이터가 준비되는 시점이 어긋났다
+    // (사용자 실측: "아무리 기다려도 안 생기네"). 버전별로 진행 중 여부만 추적해 폴링용
+    // 상태 엔드포인트로 노출한다 — try/finally 로 예외가 나도 반드시 해제되어 영구 stuck 방지.
+    private static final Set<String> scaffoldInProgress = ConcurrentHashMap.newKeySet();
+    // versionId → 완료 후 남긴 경고(버스/철도 노선이 새 네트워크와 안 맞음 등). 다음 상태
+    // 조회 시 한 번 소비되고 지워진다(같은 경고가 폴링마다 반복 표시되지 않도록).
+    private static final java.util.Map<String, String> scaffoldWarnings = new ConcurrentHashMap<>();
+
+    @Operation(summary = "KTDB 가져오기 백그라운드 스캐폴딩(더미 신호/OD/TOD 생성 + 타일 빌드) 진행 여부",
+               description = "가져오기 응답은 이 작업을 기다리지 않으므로, 완료 여부를 프론트가 폴링으로 확인한다.")
+    @GetMapping("/ktdb/status")
+    public ResponseEntity<Map<String, Object>> getScaffoldStatus(
+            @Parameter(description = "시나리오 버전 키") @RequestParam String versionId) {
+        boolean inProgress = scaffoldInProgress.contains(versionId);
+        String warning = inProgress ? null : scaffoldWarnings.remove(versionId);
+        java.util.Map<String, Object> body = new java.util.HashMap<>();
+        body.put("inProgress", inProgress);
+        if (warning != null) body.put("warning", warning);
+        return ResponseEntity.ok(body);
+    }
+
+    /** roadPTline*.xml/railPTLine.xml이 새 네트워크(링크/노드 id)와 안 맞으면 경고 메시지를,
+     *  전부 유효하거나 노선 자체가 없으면 null을 반환. 읽기 실패는 무시(파일 없음 등 정상 케이스 포함). */
+    private String checkStaleRoutes(String versionId, java.util.Set<String> allLinkIds, java.util.Set<String> allNodeIds) {
+        java.util.List<String> staleFiles = new java.util.ArrayList<>();
+        for (String fileName : java.util.List.of("roadPTline.xml", "roadPTline-weekday.xml", "roadPTline-weekend.xml")) {
+            try {
+                String key = versionId + "/" + fileName;
+                if (!fileStorage.exists(key)) continue;
+                String content = new String(fileStorage.readFile(key), java.nio.charset.StandardCharsets.UTF_8);
+                if (!com.iitp.iitp_rest.service.publicTransit.line.PtLineValidation.busRouteValid(content, allLinkIds, allNodeIds)) {
+                    staleFiles.add(fileName);
+                }
+            } catch (Exception e) {
+                log.warn("[KTDB] {} 노선 검증 실패(무시): {}", fileName, e.getMessage());
+            }
+        }
+        if (staleFiles.isEmpty()) return null;
+        return "버스 노선(" + String.join(", ", staleFiles) + ")이 재임포트로 바뀐 링크/노드 id를 참조하고 있습니다 — "
+                + "대중교통 메뉴에서 확인·재작성이 필요할 수 있습니다.";
+    }
 
     // ── 공통 변환 로직 ────────────────────────────────────────────────────────
 
@@ -199,11 +248,24 @@ public class KtdbImportController {
                 final List<Long> finalSourceIds = sourceIds, finalSinkIds = sinkIds;
                 final java.util.Map<Long, double[]> finalTerminalCoords = terminalCoords;
                 final NetworkXml finalNetworkXml = networkXml;
+                final java.util.Set<String> allLinkIds = networkXml.getLinks() == null ? java.util.Set.of()
+                        : networkXml.getLinks().stream()
+                            .map(com.iitp.iitp_rest.model.network.link.LinkXml::getId)
+                            .filter(java.util.Objects::nonNull)
+                            .map(String::valueOf)
+                            .collect(java.util.stream.Collectors.toSet());
+                scaffoldInProgress.add(vid);
                 CompletableFuture.runAsync(() -> {
-                    nextSimScaffolder.scaffoldForImport(vid, allNodeIds, finalSourceIds, finalSinkIds,
-                            finalTerminalCoords, finalNetworkXml);
-                    try { networkTileService.ingest(vid, resp); }
-                    catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
+                    try {
+                        nextSimScaffolder.scaffoldForImport(vid, allNodeIds, finalSourceIds, finalSinkIds,
+                                finalTerminalCoords, finalNetworkXml);
+                        try { networkTileService.ingest(vid, resp); }
+                        catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
+                        String warning = checkStaleRoutes(vid, allLinkIds, allNodeIds);
+                        if (warning != null) scaffoldWarnings.put(vid, warning);
+                    } finally {
+                        scaffoldInProgress.remove(vid);
+                    }
                 });
             }
 
@@ -267,6 +329,9 @@ public class KtdbImportController {
                 final java.util.Set<String> allNodeIds = sr.nodes().stream()
                         .map(n -> String.valueOf(n.getId()))
                         .collect(java.util.stream.Collectors.toSet());
+                final java.util.Set<String> allLinkIds = sr.links().stream()
+                        .map(l -> String.valueOf(l.getId()))
+                        .collect(java.util.stream.Collectors.toSet());
                 // 터미널 로컬좌표 — 스트리밍 응답은 WGS84(lat/lng)만 가지므로 KtdbStreamingConverter
                 // 와 동일한 SCALE_X/SCALE_Y 로 origin 기준 로컬 미터 근사 변환(상대 거리 비교용이라
                 // 근사로 충분 — OD 샘플 수요를 근접 sink 우선으로 생성하는 데 사용)
@@ -281,13 +346,33 @@ public class KtdbImportController {
                             (lat - odScaleOriginLat) * 111000.0,
                     });
                 }
+                scaffoldInProgress.add(vid);
                 CompletableFuture.runAsync(() -> {
-                    // NextSim 필수 입력 정비 — 없으면 생성, 재임포트로 id 변경 시 재생성 (타일 빌드보다 먼저)
-                    nextSimScaffolder.scaffoldForImport(vid, allNodeIds, sourceIds, sinkIds, terminalCoords);
-                    try { networkTileService.ingest(vid, resp); }   // 1차: simplified 빠른 빌드
-                    catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
-                    // 2차: SFTP XML 기반 완전 재빌드 — 1차 실패와 무관하게 항상 시도 (내부 예외 처리)
-                    networkTileService.rebuildFromXml(vid);
+                    try {
+                        // 대형 bbox는 전체 NetworkXml을 메모리에 안 올리므로(streamConvert 가 애초에
+                        // 이걸 피하려고 스트리밍하는 것), 더미 신호도 같은 원칙으로 생성한다 — 이미
+                        // SFTP에 저장된 network.xml을 <node> 블록 단위로만 스트림 통과하며 처리
+                        // (DummySignalGenerator.generateSignalXmlStreaming, lanes/cells 포함한 전체
+                        // 객체 그래프를 절대 메모리에 올리지 않음). 실패해도 빈 템플릿으로 안전 폴백.
+                        String precomputedSignalXml = null;
+                        try {
+                            byte[] xmlBytes = fileStorage.readFile(vid + "/network.xml");
+                            precomputedSignalXml = dummySignalGenerator.generateSignalXmlStreaming(xmlBytes);
+                        } catch (Exception e) {
+                            log.warn("[KTDB] 대형망 스트리밍 신호 생성 실패 (빈 템플릿으로 폴백): {}", e.getMessage());
+                        }
+                        // NextSim 필수 입력 정비 — 없으면 생성, 재임포트로 id 변경 시 재생성 (타일 빌드보다 먼저)
+                        nextSimScaffolder.scaffoldForImport(vid, allNodeIds, sourceIds, sinkIds, terminalCoords,
+                                null, precomputedSignalXml);
+                        try { networkTileService.ingest(vid, resp); }   // 1차: simplified 빠른 빌드
+                        catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
+                        // 2차: SFTP XML 기반 완전 재빌드 — 1차 실패와 무관하게 항상 시도 (내부 예외 처리)
+                        networkTileService.rebuildFromXml(vid);
+                        String warning = checkStaleRoutes(vid, allLinkIds, allNodeIds);
+                        if (warning != null) scaffoldWarnings.put(vid, warning);
+                    } finally {
+                        scaffoldInProgress.remove(vid);
+                    }
                 });
             }
 

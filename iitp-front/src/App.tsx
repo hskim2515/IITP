@@ -8,8 +8,6 @@ import PropertyPanel from "@component/panel/PropertyPanel";
 import { isDescendantOf, useMenuStore } from "@stores/useMenuStore";
 import { usePropertyStore } from "@stores/usePropertyStore";
 import { MessagePopup } from "@component/message/MessagePopup";
-import PerformancePanel from "@component/util/PerformancePanel";
-import ViewportDebugPanel from "@component/util/ViewportDebugPanel";
 import { getActiveVersionId } from "@utils/versionId";
 import { useSchemaStore } from "@stores/useSchemaStore";
 import SchemaSetting from "@component/schema/SchemaSetting";
@@ -46,6 +44,9 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const missingVehicle = useOnboardingStore((s) => s.missingVehicle);
     const scenarioKey = getActiveVersionId() ?? '';
     const [generatingVehicle, setGeneratingVehicle] = useState(false);
+    // KTDB 가져오기 백그라운드 스캐폴딩(백엔드가 signal.xml/OD를 직접 재생성 중)과 겹치면
+    // 안 됨 — 이 온보딩 배너는 가져오기 직후 바로 뜨는 화면이라 특히 이 레이스에 취약하다.
+    const ktdbScaffolding = useBackgroundTaskStore((s) => !!s.tasks['ktdb-scaffold']);
     const [signalDone, setSignalDone] = useState(false);
     const [vehicleDone, setVehicleDone] = useState(false);
     // NextSim 실행 상태 — 전역 스토어(utils/nextsim): 모달이 닫혔다 열려도/재접속해도 유지
@@ -87,6 +88,10 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     };
 
     const handleGenerateDummy = async () => {
+        if (ktdbScaffolding) {
+            useLogStore.getState().addLog('warn', '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다 — 완료 후 다시 시도하세요.');
+            return;
+        }
         setGeneratingVehicle(true);
         await handleGenerateSignal();
         await handleGeneratePavementMarking();
@@ -94,6 +99,10 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     };
 
     const handleGenerateVehicle = () => {
+        if (ktdbScaffolding) {
+            useLogStore.getState().addLog('warn', '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다 — 완료 후 다시 시도하세요.');
+            return;
+        }
         const signalData = useSignalStore.getState().currentJsonData as any;
         const hasSignal = Array.isArray(signalData?.signals) && signalData.signals.length > 0;
         setGeneratingVehicle(true);
@@ -164,6 +173,10 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const handleCancelNextSim = () => { void cancelNextSimRun(scenarioKey); };
 
     const handleGenerateSignal = async () => {
+        if (ktdbScaffolding) {
+            useLogStore.getState().addLog('warn', '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다 — 완료 후 다시 시도하세요.');
+            return;
+        }
         const network = await getNetworkForDummyGeneration();
         if (!network?.nodes?.length) {
             useLogStore.getState().addLog('warn', '네트워크 데이터가 없어 신호 더미를 생성할 수 없습니다.');
@@ -229,11 +242,12 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                         <div style={obFooterStyle}>
                             <button style={obDismissBtn} onClick={handleDismiss} disabled={generatingVehicle}>건너뛰기</button>
                             <button
-                                style={generatingVehicle ? { ...obPrimaryBtn, opacity: 0.6 } : obPrimaryBtn}
+                                style={(generatingVehicle || ktdbScaffolding) ? { ...obPrimaryBtn, opacity: 0.6 } : obPrimaryBtn}
                                 onClick={handleGenerateDummy}
-                                disabled={generatingVehicle}
+                                disabled={generatingVehicle || ktdbScaffolding}
+                                title={ktdbScaffolding ? '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다' : undefined}
                             >
-                                {generatingVehicle ? '생성 중...' : '더미 데이터 생성'}
+                                {generatingVehicle ? '생성 중...' : ktdbScaffolding ? '서버 생성 중...' : '더미 데이터 생성'}
                             </button>
                         </div>
                     </>
@@ -256,11 +270,14 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: 6 }}>
                                     <span style={{ fontSize: 12, color: '#ccc' }}>🚦 신호 데이터</span>
                                     <button
-                                        style={signalDone ? { ...obPrimaryBtn, fontSize: 11, background: 'rgba(78,203,141,0.15)', borderColor: 'rgba(78,203,141,0.4)', color: '#4ecb8d' } : { ...obPrimaryBtn, fontSize: 11 }}
+                                        style={signalDone
+                                            ? { ...obPrimaryBtn, fontSize: 11, background: 'rgba(78,203,141,0.15)', borderColor: 'rgba(78,203,141,0.4)', color: '#4ecb8d' }
+                                            : { ...obPrimaryBtn, fontSize: 11, opacity: ktdbScaffolding ? 0.6 : 1 }}
                                         onClick={handleGenerateSignal}
-                                        disabled={signalDone}
+                                        disabled={signalDone || ktdbScaffolding}
+                                        title={ktdbScaffolding ? '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다' : undefined}
                                     >
-                                        {signalDone ? '생성 완료 ✓' : '더미 생성'}
+                                        {signalDone ? '생성 완료 ✓' : ktdbScaffolding ? '서버 생성 중...' : '더미 생성'}
                                     </button>
                                 </div>
                             )}
@@ -296,13 +313,14 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                                         <button
                                             style={vehicleDone
                                                 ? { ...obPrimaryBtn, fontSize: 11, background: 'rgba(78,203,141,0.15)', borderColor: 'rgba(78,203,141,0.4)', color: '#4ecb8d' }
-                                                : generatingVehicle
+                                                : (generatingVehicle || ktdbScaffolding)
                                                 ? { ...obPrimaryBtn, opacity: 0.6, fontSize: 11 }
                                                 : { ...obPrimaryBtn, fontSize: 11 }}
                                             onClick={handleGenerateVehicle}
-                                            disabled={vehicleDone || generatingVehicle}
+                                            disabled={vehicleDone || generatingVehicle || ktdbScaffolding}
+                                            title={ktdbScaffolding ? '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다' : undefined}
                                         >
-                                            {vehicleDone ? '생성 완료 ✓' : generatingVehicle ? '생성 중...' : '더미 생성'}
+                                            {vehicleDone ? '생성 완료 ✓' : generatingVehicle ? '생성 중...' : ktdbScaffolding ? '서버 생성 중...' : '더미 생성'}
                                         </button>
                                         </div>
                                     </div>
@@ -440,8 +458,6 @@ function App() {
                 {showFileImport && <FileImportModal onClose={() => setShowFileImport(false)} />}
                 <Header onDashboard={() => setShowDashboard(prev => !prev)} isDashboardOpen={showDashboard} dashboardMode={showDashboard}/>
                 <MessagePopup/>
-                <PerformancePanel/>
-                <ViewportDebugPanel/>
                 <PropertyModal/>
                 <main
                     style={{

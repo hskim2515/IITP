@@ -818,6 +818,23 @@ const featureTypeHandlersInternal = {
     plans: (record: Record<string, any>) => {
         addTabularRecord(record);
     },
+
+    /** 링크에 레인 추가: 테이블에 직접 추가 후 값 편집 (linkRef/id, 부모 numLane 동기화는
+     *  DrilldownGrid.handleAdd가 parentRecord 기준으로 처리) */
+    lanes: (record: Record<string, any>) => {
+        addTabularRecord(record);
+    },
+
+    /** 노드에 커넥션 추가: 테이블에 직접 추가 후 fromLink/toLink 등 값 편집 */
+    connections: (record: Record<string, any>) => {
+        addTabularRecord(record);
+    },
+
+    /** 노드에 포트 추가: 테이블에 직접 추가 — 실제로는 링크 추가 시 자동 생성되는 게
+     *  정상이라, 단독 추가는 linkId를 반드시 기존 링크로 직접 채워야 의미가 있다. */
+    ports: (record: Record<string, any>) => {
+        addTabularRecord(record);
+    },
 };
 
 export const createEventHandlers = (record: Record<string, any>) => {

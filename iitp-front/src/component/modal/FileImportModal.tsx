@@ -22,6 +22,7 @@ import { showConfirm } from '@utils/dialog';
 import { NETWORK_TILING } from '@utils/lodConstants';
 import { useOnboardingStore } from '@stores/useOnboardingStore';
 import { generateDummySignals } from '@utils/signal';
+import { pollKtdbScaffoldStatus } from '@utils/ktdbScaffold';
 import { useVehicleStore } from '@stores/useVehicleStore';
 import { useSimulationStore } from '@stores/useSimulationStore';
 import { useSignalTimelineStore } from '@stores/useSignalTimelineStore';
@@ -1043,7 +1044,8 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
             refreshNetworkTiles(); // MVT/타일 캐시 무효화 — 이전 네트워크 타일 잔존 방지
             injectAll(pendingFacilities);
 
-            // KTDB: intersection 노드 기반 더미 신호 자동 생성
+            // KTDB: intersection 노드 기반 더미 신호 자동 생성 (프론트에서 즉시 가능한 경우만 —
+            // 대형망은 pendingData 가 간소화 응답이라 connections 가 없어 여기서는 0건 생성됨)
             if (type === 'ktdb') {
                 const signals = generateDummySignals(pendingData);
                 if (signals.length > 0) {
@@ -1052,6 +1054,11 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
                     useSignalStore.getState().setCurrentJsonData(signalData);
                     useSignalStore.getState().setChange(true);
                 }
+                // 백엔드는 이 가져오기 응답과 별개로 더미 신호/OD/TOD 생성 + 타일 재빌드를
+                // 백그라운드에서 계속 진행 중이다(대형망은 수십 초~수 분) — 완료 여부를 폴링해
+                // 지도 상단 스피너로 노출한다. 안 그러면 "가져오기 완료"로 보이는 이 시점과
+                // 실제 더미 데이터가 준비되는 시점이 어긋나 "아무리 기다려도 안 생기네"가 된다.
+                if (versionId) pollKtdbScaffoldStatus(versionId);
             }
 
             if (versionId) {

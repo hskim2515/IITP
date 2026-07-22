@@ -3,8 +3,6 @@ import ParabolicArrowPrimitive from "@primitives/ParabolicArrowPrimitive";
 import TailPrimitive from "@primitives/TailPrimitive";
 import VehiclePrimitive from "@primitives/VehiclePrimitive";
 import SpeedHeatmapLayer from "@primitives/SpeedHeatmapLayer";
-import TrafficHeatmapCesiumLayer from "@primitives/TrafficHeatmapCesiumLayer";
-import TrafficTailCesiumLayer from "@primitives/TrafficTailCesiumLayer";
 import OdFlowCesiumLayer from "@primitives/OdFlowCesiumLayer";
 import SpeedHeatmapOlLayer from "@features/SpeedHeatmapOlLayer";
 import PrimitiveLayerManager from "./PrimitiveLayerManager";
@@ -18,7 +16,6 @@ import BaseLayer from "ol/layer/Base";
 import ODMatrixFeatureLayer from "@features/ODMatrixFeatureLayer";
 import VehicleFeatureLayer from "@features/VehicleFeatureLayer";
 import TrailFeatureLayer from "@features/TrailFeatureLayer";
-import TrafficHeatmapFeatureLayer from "@features/TrafficHeatmapFeatureLayer";
 import DataSourceLayerManager from "@managers/DataSourceLayerManager";
 import VehicleDataSourceLayer from "../datasource/VehicleDataSourceLayer";
 import VectorSource from "ol/source/Vector";
@@ -176,47 +173,13 @@ export class LayerManager {
     }
 
     removeTripLayer(): void {
-        // trip + speed + traffic + flow + odFlow + default
-        this._removeLayers("analyze", "trip", "speed", "traffic", "flow", "odFlow", "default");
-    }
-
-    addTrafficLayer() {
-        const groupName = "analyze";
-        const layerName = "traffic";
-        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
-        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
-
-        if (this.vectorLayerManager) {
-            const trafficOl = new TrafficHeatmapFeatureLayer();
-            const olLayers = this.vectorLayerManager.add(trafficOl, groupName, layerName, false);
-            const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
-            olLayers.forEach((layer: BaseLayer) => { if (!vectorLayers.includes(layer)) vectorLayers.push(layer); });
-        }
-
-        // Cesium 3D (viewer 전달 → WallGeometry 빌드에 scene 필요)
-        const trafficCesium = new TrafficHeatmapCesiumLayer(this.cesiumViewer);
-        this.primitiveLayerManager.add(trafficCesium, groupName, layerName, false);
-    }
-
-    /**
-     * 교통 흐름(flow) tail 레이어 — 개별 차량(3D)과 히트맵(traffic) 사이의 중간 줌 티어.
-     * TrafficTailCesiumLayer가 카메라 zoom(pixelSize)을 자체 추적해 TRAFFIC_FLOW 임계값
-     * 구간에서만 스스로 활성화/표시하므로, 여기서는 traffic과 동일하게 매 refresh마다
-     * 생성만 하면 된다(별도 show/hide 로직 불필요).
-     */
-    addFlowLayer() {
-        const groupName = "analyze";
-        const layerName = "flow";
-        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
-        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
-
-        const flowCesium = new TrafficTailCesiumLayer(this.cesiumViewer);
-        this.primitiveLayerManager.add(flowCesium, groupName, layerName, false);
+        // trip + speed + odFlow + default
+        this._removeLayers("analyze", "trip", "speed", "odFlow", "default");
     }
 
     /**
      * OD 흐름 레이어 — 히트맵보다도 더 축소된 가장 바깥 줌 티어. OdFlowCesiumLayer가 자체적으로
-     * 줌을 추적해 OD_FLOW 임계값 이상에서만 활성화되므로 addTrafficLayer/addFlowLayer와 동일하게
+     * 줌을 추적해 OD_FLOW 임계값 이상에서만 활성화되므로 addHeatmapLayer/addTripLayer와 동일하게
      * 매 refresh마다 생성만 하면 된다. 기존 "od"(개별 차량 기반 ParabolicArrowPrimitive, addODArrows)
      * 레이어와는 별개 — 데이터 소스가 백엔드 집계라 이름도 "odFlow"로 분리.
      */
@@ -566,9 +529,17 @@ export class LayerManager {
      * 뷰포트 스트리밍의 매 데이터 refresh(setSimulation)에서 사용 — 차량은 addVehicleLayer()가
      * 같은 차종이면 updateInstances()로 갱신하고, 더 이상 없는 차종은 pruneVehicleTypes()가
      * 정리한다. 시나리오 전환 등 완전 초기화가 필요한 경우엔 removeSimulationLayers()를 쓸 것.
+     *
+     * ⚠️ heatmap은 여기서 더 이상 제거하지 않는다 — grid 기반이라 차량 수/타입이 바뀌어도 재생성할
+     * 이유가 없는데(trip의 TailPrimitive와 달리 per-vehicle 슬롯이 없음), 매 refresh(뷰포트
+     * 스트리밍은 몇 초~수십 초 간격으로 잦음)마다 destroy+재생성하면 그 사이 잠깐 사라졌다 다시
+     * 생기는 게 반복돼 깜빡임으로 보였다. 게다가 이 remove(비동기 setSimulation 콜백 안)와
+     * useSimulation.ts의 vehicleRoute===0 분기(동기, 즉시 실행)의 존재 확인 가드가 타이밍에 따라
+     * 서로 어긋나면 heatmap 인스턴스가 2개 동시에 살아남는 경우까지 있었다(각각 다른 상태로
+     * decay/정규화를 계산해 서로 다른 밝기로 겹쳐 그려지며 깜빡이는 것처럼 보임). heatmap은
+     * addHeatmapLayer() 쪽에서 "없을 때만 생성"으로 관리한다.
      */
     removeSimulationLayersExceptVehicle() {
-        this.removeHeatmapLayer();
         this.removeTripLayer();
         this.removeODArrows();
         this.olMap?.render();

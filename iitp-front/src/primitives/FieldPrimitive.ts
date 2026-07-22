@@ -135,7 +135,7 @@ export default class FieldPrimitive {
                 this.vertexBuffer.copyFromArrayView(flatResult);
             }
 
-            this.drawCommand.vertexCount = this.latestPositions.length;
+            this.drawCommand.count = this.latestPositions.length;
             frameState.commandList.push(this.drawCommand);
         }
     }

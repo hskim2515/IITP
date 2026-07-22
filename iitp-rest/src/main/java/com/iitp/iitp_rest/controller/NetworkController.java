@@ -253,6 +253,7 @@ public class NetworkController {
             networkTileService.invalidate(versionId);
 
             Map<String, String> odBandRemap = Map.of();
+            int prunedOdDemandCount = 0;
             try {
                 NetworkXml networkXml = networkMapper.fromResponse(merged);
 
@@ -262,16 +263,21 @@ public class NetworkController {
                 // 함이 확인돼 있고(OdTerminalIdBandService 참고), prune-unused-terminals 설계상
                 // 크래시 유발 경로는 OD 참조 노드로 좁혀지므로 그 외 노드는 건드리지 않는다.
                 odBandRemap = odTerminalIdBandService.reconcileAfterNetworkEdit(versionId, networkXml);
-                if (!odBandRemap.isEmpty()) {
-                    try {
-                        OdMatrixXml currentOd = odMatrixService.getByVersionId(versionId);
-                        odTerminalIdBandService.applyRemapToOdMatrix(currentOd, odBandRemap);
+
+                // 1d) 이번 편집으로 노드가 아예 삭제됐다면(대역 재배정과 달리 대상 노드 자체가
+                // 없어 재배정이 불가능) OD가 그 노드를 참조하던 demand 항목 자체를 제거한다 —
+                // 안 하면 존재하지 않는 노드를 가리키는 무효 참조가 odmatrix.xml에 그대로 남는다.
+                try {
+                    OdMatrixXml currentOd = odMatrixService.getByVersionId(versionId);
+                    if (!odBandRemap.isEmpty()) odTerminalIdBandService.applyRemapToOdMatrix(currentOd, odBandRemap);
+                    prunedOdDemandCount = odTerminalIdBandService.pruneDanglingReferences(networkXml, currentOd);
+                    if (!odBandRemap.isEmpty() || prunedOdDemandCount > 0) {
                         odMatrixService.saveByVersionId(versionId, currentOd);
                         xmlLayerVersionService.save("od_matrix", versionId,
                                 XmlLayerConverter.toMap(currentOd), new com.iitp.iitp_rest.model.LogsData());
-                    } catch (Exception odErr) {
-                        log.warn("[NetworkController] OD 참조 id 대역 보정 반영 실패(무시): {}", odErr.getMessage());
                     }
+                } catch (Exception odErr) {
+                    log.warn("[NetworkController] OD 참조 정합성 반영 실패(무시): {}", odErr.getMessage());
                 }
 
                 byte[] xmlBytes = networkJaxbParser.marshal(networkXml);
@@ -282,7 +288,8 @@ public class NetworkController {
             return ResponseEntity.ok(Map.of(
                     "linkIdRemap", normalized.linkIdRemap(),
                     "nodeIdRemap", normalized.nodeIdRemap(),
-                    "odNodeIdRemap", odBandRemap));
+                    "odNodeIdRemap", odBandRemap,
+                    "odPrunedDemandCount", prunedOdDemandCount));
         } catch (java.io.FileNotFoundException e) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (Exception e) {

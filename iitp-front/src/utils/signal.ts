@@ -208,16 +208,148 @@ export const getSignalGuid = (layerManager: LayerManager, connectionGuid: string
     return signalFeature?.get("__guid") ?? null;
 }
 
-// 신호 phase 1개당 부여되는 길이(초)
+// 신호 phase(그룹) 1개당 부여되는 길이(초)
 const DUMMY_PHASE_DURATION = 30;
+// 두 접근로 방위각差가 180±이 값(도) 이내면 "마주보는 방향"으로 보고 동시 녹색 페어로 묶는다.
+// (iitp-rest DummySignalGenerator.buildNodeSignalBlockOrNull 과 동일 기준 — 백엔드 KTDB
+// 대형망 임포트가 만드는 더미 신호와 프론트에서 수동으로 다시 생성하는 더미 신호가 같은
+// 품질(마주보는 접근로끼리만 동시 녹색)을 갖도록 일치시킨다.)
+const OPPOSITE_BEARING_TOLERANCE_DEG = 30;
+
+const parseCenter = (center?: string): [number, number] | null => {
+    if (!center) return null;
+    const parts = center.trim().split(/\s+/);
+    if (parts.length < 2) return null;
+    const x = Number(parts[0]), y = Number(parts[1]);
+    return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null;
+};
+
+const angularDiffDeg = (a: number, b: number): number => {
+    const diff = Math.abs(a - b) % 360;
+    return diff > 180 ? 360 - diff : diff;
+};
+
+/** WGS84 방위각(도, 0~360, 북=0/동=90) — useNetworkDraw.ts의 computeBearing과 동일 공식. */
+const computeBearingLatLng = (from: { lat: number; lng: number }, to: { lat: number; lng: number }): number => {
+    const toRad = Math.PI / 180;
+    const lat1 = from.lat * toRad, lat2 = to.lat * toRad;
+    const dLng = (to.lng - from.lng) * toRad;
+    const y = Math.sin(dLng) * Math.cos(lat2);
+    const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLng);
+    return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+};
+
+/**
+ * 접근로(fromLink)가 intersectionNodeId로 들어오는 방위각(도, 0~360). 좌표 없으면 null.
+ * KTDB 등 임포트된 네트워크는 로컬 평면좌표(center)를 우선 쓰고, 수동으로 그린 네트워크는
+ * center가 비어 있는 대신 WGS84 좌표(coordinates)가 있으므로 그걸로 폴백한다(그래야
+ * NetworkDrawPanel "화면 내 더미 신호 생성"도 방위각 기반 페어링 혜택을 받는다).
+ */
+const approachBearingDeg = (
+    fromLinkId: string,
+    intersectionNodeId: string,
+    linkEndpoints: Map<string, { from: string; to: string }>,
+    nodeCoords: Map<string, [number, number]>,
+    nodeLatLng: Map<string, { lat: number; lng: number }>,
+): number | null => {
+    const link = linkEndpoints.get(fromLinkId);
+    if (!link) return null;
+    const upstreamNodeId = link.to === intersectionNodeId ? link.from : link.to;
+
+    const upstream = nodeCoords.get(upstreamNodeId);
+    const here = nodeCoords.get(intersectionNodeId);
+    if (upstream && here) {
+        const dx = here[0] - upstream[0];
+        const dy = here[1] - upstream[1];
+        if (dx !== 0 || dy !== 0) {
+            const deg = (Math.atan2(dy, dx) * 180) / Math.PI;
+            return deg < 0 ? deg + 360 : deg;
+        }
+    }
+
+    const upstreamLL = nodeLatLng.get(upstreamNodeId);
+    const hereLL = nodeLatLng.get(intersectionNodeId);
+    if (upstreamLL && hereLL && (upstreamLL.lat !== hereLL.lat || upstreamLL.lng !== hereLL.lng)) {
+        return computeBearingLatLng(upstreamLL, hereLL);
+    }
+    return null;
+};
+
+/**
+ * 접근로(fromLink id 목록, turnId 부여 순서)를 마주보는(≈180도) 쌍으로 묶는다 — 실제
+ * 2페이즈 신호와 동일 원리(반대편끼리 동시 녹색). 방위각을 계산 못 하거나(좌표 데이터 없음)
+ * 마주보는 짝을 못 찾은 접근로는 단독 그룹으로 남긴다 — 잘못 페어링해 직교하는 접근로가
+ * 동시 녹색이 되는 것보다 항상 안전하다.
+ */
+const groupApproachesByOppositeBearing = (
+    approachOrder: string[],
+    intersectionNodeId: string,
+    linkEndpoints: Map<string, { from: string; to: string }>,
+    nodeCoords: Map<string, [number, number]>,
+    nodeLatLng: Map<string, { lat: number; lng: number }>,
+): string[][] => {
+    const bearings = new Map<string, number>();
+    for (const fromLink of approachOrder) {
+        const b = approachBearingDeg(fromLink, intersectionNodeId, linkEndpoints, nodeCoords, nodeLatLng);
+        if (b !== null) bearings.set(fromLink, b);
+    }
+
+    const groups: string[][] = [];
+    const paired = new Set<string>();
+    for (const a of approachOrder) {
+        if (paired.has(a)) continue;
+        const ba = bearings.get(a);
+        let bestPartner: string | null = null;
+        let bestDist = Infinity;
+        if (ba !== undefined) {
+            for (const b of approachOrder) {
+                if (b === a || paired.has(b)) continue;
+                const bb = bearings.get(b);
+                if (bb === undefined) continue;
+                const dist = Math.abs(angularDiffDeg(ba, bb) - 180);
+                if (dist <= OPPOSITE_BEARING_TOLERANCE_DEG && dist < bestDist) {
+                    bestDist = dist;
+                    bestPartner = b;
+                }
+            }
+        }
+        paired.add(a);
+        if (bestPartner) {
+            paired.add(bestPartner);
+            groups.push([a, bestPartner]);
+        } else {
+            groups.push([a]);
+        }
+    }
+    return groups;
+};
 
 /**
  * intersection 노드의 connection을 fromLink(진입로) 기준으로 그룹핑하여
  * 더미 turnList(진입로별 turn 그룹) + planList(진입로 순환 신호 계획)를 생성한다.
- * 각 노드의 plan은 진입로 수만큼의 phase를 30초씩 라운드로빈으로 순환한다.
+ * 노드/링크 좌표(center, fromNode/toNode)가 있으면 마주보는 접근로끼리 페어링해 동시
+ * 녹색을 주는 표준 2페이즈로 운영하고(iitp-rest DummySignalGenerator와 동일 기준),
+ * 좌표가 없거나 짝을 못 찾은 접근로는 30초씩 단독으로 도는 라운드로빈으로 안전하게 폴백한다.
  */
 export const generateDummySignals = (network: any): Omit<SignalData, "__guid" | "featureType" | "id">[] => {
     const signals: Omit<SignalData, "__guid" | "featureType" | "id">[] = [];
+
+    const nodeCoords = new Map<string, [number, number]>();
+    const nodeLatLng = new Map<string, { lat: number; lng: number }>();
+    for (const n of network?.nodes ?? []) {
+        if (n?.id == null) continue;
+        const xy = parseCenter(n?.center);
+        if (xy) nodeCoords.set(String(n.id), xy);
+        // center가 비어있는 수동 그리기 네트워크 폴백용 — WGS84 좌표
+        const lat = n?.coordinates?.lat, lng = n?.coordinates?.lng;
+        if (typeof lat === 'number' && typeof lng === 'number') nodeLatLng.set(String(n.id), { lat, lng });
+    }
+    const linkEndpoints = new Map<string, { from: string; to: string }>();
+    for (const l of network?.links ?? []) {
+        if (l?.id != null && l?.fromNode != null && l?.toNode != null) {
+            linkEndpoints.set(String(l.id), { from: String(l.fromNode), to: String(l.toNode) });
+        }
+    }
 
     for (const node of network?.nodes ?? []) {
         if (node.type?.toLowerCase() !== 'intersection') continue;
@@ -232,6 +364,11 @@ export const generateDummySignals = (network: any): Omit<SignalData, "__guid" | 
             groups.get(key)!.push(conn);
         }
         const groupKeys = Array.from(groups.keys());
+        const turnIdOf = new Map(groupKeys.map((key, idx) => [key, String(idx)]));
+
+        const phaseGroups = groupApproachesByOppositeBearing(
+            groupKeys, String(node.id), linkEndpoints, nodeCoords, nodeLatLng,
+        );
 
         groupKeys.forEach((key, groupIdx) => {
             const turnId = String(groupIdx);
@@ -247,12 +384,12 @@ export const generateDummySignals = (network: any): Omit<SignalData, "__guid" | 
                 if (groupIdx === 0 && i === 0) {
                     entry.plans = [{
                         id: '0',
-                        cycle: String(groupKeys.length * DUMMY_PHASE_DURATION),
+                        cycle: String(phaseGroups.length * DUMMY_PHASE_DURATION),
                         offset: '0',
-                        phases: groupKeys.map((_, idx) => ({
+                        phases: phaseGroups.map((group, idx) => ({
                             id: String(idx),
                             duration: String(DUMMY_PHASE_DURATION),
-                            turnList: String(idx),
+                            turnList: group.map(fromLink => turnIdOf.get(fromLink)).join(' '),
                         })),
                     }];
                 }

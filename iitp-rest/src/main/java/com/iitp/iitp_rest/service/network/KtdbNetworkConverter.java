@@ -247,7 +247,7 @@ public class KtdbNetworkConverter {
         // ── 6+7. Link/클러스터(=교차로 노드) ID 부여 (Network ID naming 스펙) ──
         // Link=2, Node(교차로)=1, Terminal(차량 출입점)=11 로 시작하는 8자리 숫자.
         // Link와 일반 Node는 생성 순서(=외부 링크 원본 순서로 스캔)에 따라 하나의 인덱스를
-        // 공유하고, Terminal은 연결된 단 하나의 Link와 뒷자리 6자리가 동일해야 한다(스펙
+        // 공유하고, Terminal은 연결된 단 하나의 Link와 뒷자리 3자리가 동일해야 한다(스펙
         // 예시: Link 20000326 ↔ Terminal 11000326) — 링크를 스캔하며 그 자리에서 endpoint
         // 클러스터를 처음 만나면 바로 배정하면 두 규칙을 한 번에 만족한다.
         // Terminal/Node 대역 분리(11xxxxxx/10xxxxxx) 자체는 NextSim route-generator 실측
@@ -269,7 +269,7 @@ public class KtdbNetworkConverter {
                 if (clusterDegree > 1) {
                     clusterIdMap.put(rep, idAssigner.nextNormalNodeId());
                 } else if (!derivedTerminalUsed) {
-                    clusterIdMap.put(rep, NetworkIdAssigner.terminalIdFor(linkId));
+                    clusterIdMap.put(rep, idAssigner.terminalIdFor(linkId));
                     derivedTerminalUsed = true;
                 } else {
                     clusterIdMap.put(rep, idAssigner.nextIsolatedTerminalId());

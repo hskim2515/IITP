@@ -6,10 +6,13 @@ import {
     deleteLinkFromNetwork, deleteNodeFromNetwork,
     updateLinkInNetwork, reverseLinkDirection,
     mergeNodesInNetwork, moveNode,
-    batchDeleteLinksFromNetwork, batchDeleteNodesFromNetwork,
+    batchDeleteLinksFromNetwork,
     batchUpdateLinksInNetwork,
     applyNetworkUpdate,
     markRemovedForTileMask,
+    countSignalsForNodes, deleteSignalsForNodes,
+    isPassThroughNode, mergeLinksAtNode, batchDeleteOrMergeNodes,
+    reconcileSignalConnectionIds, farNodeIdsForCascadeDelete,
 } from '@hooks/useNetworkSelect';
 import { createIntersectionAtNode, regenerateNodeConnections } from '@hooks/useNetworkDraw';
 import { useMessageStore } from '@stores/useMessageStore';
@@ -130,8 +133,27 @@ const NetworkSelectPanel: React.FC = () => {
         applyTimerRef.current = setTimeout(() => {
             const cur = useNetworkStore.getState().currentJsonData;
             if (!cur || selectedLinkId === null) { setSaving(false); return; }
-            applyNetworkUpdate(updateLinkInNetwork(cur, selectedLinkId, next));
+            // 차선 수 감소 시 사라지는 차선을 참조하던 커넥션이 함께 삭제됨(updateLinkInNetwork) → 사용자에게 안내
+            const curLink = cur.links.find(l => String(l.id) === String(selectedLinkId));
+            let droppedConnCount = 0;
+            if (curLink && next.numLane < curLink.numLane) {
+                droppedConnCount = cur.nodes
+                    .filter(n => String(n.id) === String(curLink.fromNode) || String(n.id) === String(curLink.toNode))
+                    .reduce((sum, n) => sum + n.connections.filter((c: any) =>
+                        (String(c.fromLink) === String(selectedLinkId) && c.fromLane >= next.numLane) ||
+                        (String(c.toLink) === String(selectedLinkId) && c.toLane >= next.numLane)
+                    ).length, 0);
+            }
+            const updated = updateLinkInNetwork(cur, selectedLinkId, next);
+            applyNetworkUpdate(updated);
+            const clearedCount = curLink ? reconcileSignalConnectionIds(updated, [curLink.fromNode, curLink.toNode]) : 0;
             setSaving(false);
+            if (droppedConnCount > 0 || clearedCount > 0) {
+                useMessageStore.getState().setMessage({
+                    type: 'info',
+                    text: `차선 수 감소로 커넥션 ${droppedConnCount}개 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}`,
+                });
+            }
         }, 400);
     };
 
@@ -148,15 +170,26 @@ const NetworkSelectPanel: React.FC = () => {
             const cur = useNetworkStore.getState().currentJsonData;
             if (!cur) return;
             if (isMultiLink) {
+                const affectedNodeIds = new Set(
+                    cur.links
+                        .filter(l => selectedLinkIds.includes(String(l.id)))
+                        .flatMap(l => [String(l.fromNode), String(l.toNode)])
+                );
                 const next = batchDeleteLinksFromNetwork(cur, selectedLinkIds);
                 applyNetworkUpdate(next);
+                const clearedCount = reconcileSignalConnectionIds(next, [...affectedNodeIds]);
                 markRemovedForTileMask(cur, next);
-                useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkIds.length}개 삭제됨` });
+                useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkIds.length}개 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}` });
             } else {
-                const next = batchDeleteNodesFromNetwork(cur, selectedNodeIds);
+                const mergeCount = selectedNodeIds.filter(id => isPassThroughNode(cur, id)).length;
+                const signalCount = countSignalsForNodes(selectedNodeIds);
+                const farIds = farNodeIdsForCascadeDelete(cur, selectedNodeIds);
+                const next = batchDeleteOrMergeNodes(cur, selectedNodeIds);
                 applyNetworkUpdate(next);
+                const clearedCount = reconcileSignalConnectionIds(next, farIds);
+                deleteSignalsForNodes(selectedNodeIds);
                 markRemovedForTileMask(cur, next);
-                useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${selectedNodeIds.length}개 삭제됨` });
+                useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${selectedNodeIds.length}개 삭제됨${mergeCount > 0 ? ` (통과 노드 ${mergeCount}개는 링크 자동 병합)` : ''}${signalCount > 0 ? `, 신호 ${signalCount}개 삭제` : ''}${clearedCount > 0 ? `, 인접 신호 ${clearedCount}개 커넥션 참조 초기화` : ''}` });
             }
             useNetworkDrawStore.getState().clearSelection();
         };
@@ -204,10 +237,21 @@ const NetworkSelectPanel: React.FC = () => {
         const handleDelete = () => {
             const cur = useNetworkStore.getState().currentJsonData;
             if (!cur) return;
+            // 이 링크를 참조하던 양끝 노드의 커넥션도 함께 삭제됨(deleteLinkFromNetwork) → 사용자에게 안내
+            const connCount = cur.nodes
+                .filter(n => String(n.id) === String(link.fromNode) || String(n.id) === String(link.toNode))
+                .reduce((sum, n) => sum + n.connections.filter((c: any) =>
+                    String(c.fromLink) === String(selectedLinkId) || String(c.toLink) === String(selectedLinkId)
+                ).length, 0);
             const next = deleteLinkFromNetwork(cur, selectedLinkId);
             applyNetworkUpdate(next);
+            const clearedCount = reconcileSignalConnectionIds(next, [link.fromNode, link.toNode]);
             markRemovedForTileMask(cur, next);
             useNetworkDrawStore.getState().clearSelection();
+            useMessageStore.getState().setMessage({
+                type: 'info',
+                text: `링크 ${selectedLinkId} 삭제됨${connCount > 0 ? ` (커넥션 ${connCount}개 함께 삭제)` : ''}${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}`,
+            });
         };
 
         const handleReverse = () => {
@@ -218,7 +262,11 @@ const NetworkSelectPanel: React.FC = () => {
             net = regenerateNodeConnections(net, link.fromNode);
             net = regenerateNodeConnections(net, link.toNode);
             applyNetworkUpdate(net);
-            useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkId} 방향 반전 + 양끝 교차로 커넥션 재생성됨` });
+            const clearedCount = reconcileSignalConnectionIds(net, [link.fromNode, link.toNode]);
+            useMessageStore.getState().setMessage({
+                type: 'info',
+                text: `링크 ${selectedLinkId} 방향 반전 + 양끝 교차로 커넥션 재생성됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}`,
+            });
         };
 
         return (
@@ -308,6 +356,8 @@ const NetworkSelectPanel: React.FC = () => {
         const inCount  = node.ports.filter(p => p.type === 'in').length;
         const outCount = node.ports.filter(p => p.type === 'out').length;
         const linkedLinkIds = [...new Set(node.ports.map(p => p.linkId))];
+        const nodeSignalCount = countSignalsForNodes([selectedNodeId]);
+        const nodePassThrough = isPassThroughNode(network, selectedNodeId);
 
         // 가장 가까운 노드 (병합 후보)
         let nearestNode: typeof network.nodes[0] | null = null;
@@ -326,25 +376,42 @@ const NetworkSelectPanel: React.FC = () => {
         const handleDelete = () => {
             const cur = useNetworkStore.getState().currentJsonData;
             if (!cur) return;
-            const next = deleteNodeFromNetwork(cur, selectedNodeId);
+            const merged = mergeLinksAtNode(cur, selectedNodeId);
+            const farIds = merged ? [] : farNodeIdsForCascadeDelete(cur, [selectedNodeId]);
+            const next = merged ?? deleteNodeFromNetwork(cur, selectedNodeId);
             applyNetworkUpdate(next);
+            const clearedCount = reconcileSignalConnectionIds(next, farIds);
+            deleteSignalsForNodes([selectedNodeId]);
             markRemovedForTileMask(cur, next);
             useNetworkDrawStore.getState().clearSelection();
+            useMessageStore.getState().setMessage({
+                type: 'info',
+                text: (merged
+                    ? `노드 ${selectedNodeId} 삭제 및 인접 링크 자동 병합됨${nodeSignalCount > 0 ? ` (신호 ${nodeSignalCount}개 삭제)` : ''}`
+                    : `노드 ${selectedNodeId}${nodeSignalCount > 0 ? ` (신호 ${nodeSignalCount}개 포함)` : ''} 삭제됨`)
+                    + (clearedCount > 0 ? `, 인접 신호 ${clearedCount}개 커넥션 참조 초기화` : ''),
+            });
         };
 
         const handleMerge = () => {
             if (!nearestNode) return;
             const cur = useNetworkStore.getState().currentJsonData;
             if (!cur) return;
+            // 흡수되어 사라지는 노드(nearestNode)에 신호가 있으면 존재하지 않는 nodeId를 참조하게 되므로 함께 삭제
+            const absorbedSignalCount = countSignalsForNodes([nearestNode.id]);
             // 병합으로 노드의 in/out 조합이 바뀌므로 커넥션을 함께 재생성 (정합성 자동 유지)
             let net = mergeNodesInNetwork(cur, selectedNodeId, nearestNode.id);
             net = regenerateNodeConnections(net, selectedNodeId);
             applyNetworkUpdate(net);
+            const clearedCount = reconcileSignalConnectionIds(net, [selectedNodeId]);
+            deleteSignalsForNodes([nearestNode.id]);
             markRemovedForTileMask(cur, net); // 흡수된 노드 — 타일 동기화 되살림 방지
             useNetworkDrawStore.getState().clearSelection();
             useMessageStore.getState().setMessage({
                 type: 'info',
-                text: `노드 ${selectedNodeId}에 ${nearestNode.id} 병합 + 교차로 커넥션 재생성됨`,
+                text: `노드 ${selectedNodeId}에 ${nearestNode.id} 병합 + 교차로 커넥션 재생성됨`
+                    + (absorbedSignalCount > 0 ? `, 흡수된 노드의 신호 ${absorbedSignalCount}개 삭제` : '')
+                    + (clearedCount > 0 ? `, 신호 ${clearedCount}개 커넥션 참조 초기화` : ''),
             });
         };
 
@@ -428,9 +495,11 @@ const NetworkSelectPanel: React.FC = () => {
                     )}
                 </div>
 
-                {linkedLinkIds.length > 0 && (
+                {(linkedLinkIds.length > 0 || nodeSignalCount > 0) && (
                     <div style={{ padding: '0 10px 4px', fontSize: 10, color: '#555' }}>
-                        삭제 시 연결 링크 {linkedLinkIds.length}개도 함께 삭제
+                        {nodePassThrough
+                            ? `삭제 시 인접 링크(레인 포함)가 자동 병합됩니다${nodeSignalCount > 0 ? ` · 신호 ${nodeSignalCount}개는 삭제` : ''}`
+                            : `삭제 시 연결 링크 ${linkedLinkIds.length}개, 커넥션${nodeSignalCount > 0 ? `, 신호 ${nodeSignalCount}개` : ''}도 함께 삭제`}
                     </div>
                 )}
 
@@ -440,10 +509,11 @@ const NetworkSelectPanel: React.FC = () => {
                         <button
                             style={actionBtnStyle}
                             onClick={() => {
-                                createIntersectionAtNode(selectedNodeId);
+                                const clearedCount = createIntersectionAtNode(selectedNodeId);
                                 useMessageStore.getState().setMessage({
                                     type: 'info',
-                                    text: `노드 ${String(selectedNodeId)} 교차로 재생성 완료`,
+                                    text: `노드 ${String(selectedNodeId)} 교차로 재생성 완료`
+                                        + (clearedCount > 0 ? ` — 신호 ${clearedCount}개의 커넥션 참조 초기화` : ''),
                                 });
                             }}
                         >
@@ -490,10 +560,17 @@ const BatchLinkEditor: React.FC<BatchLinkEditorProps> = ({ linkIds, network }) =
     const handleApply = () => {
         const cur = useNetworkStore.getState().currentJsonData;
         if (!cur) return;
-        applyNetworkUpdate(batchUpdateLinksInNetwork(cur, linkIds, { numLane, maxSpd }));
+        const affectedNodeIds = new Set(
+            cur.links
+                .filter(l => linkIds.includes(String(l.id)))
+                .flatMap(l => [String(l.fromNode), String(l.toNode)])
+        );
+        const next = batchUpdateLinksInNetwork(cur, linkIds, { numLane, maxSpd });
+        applyNetworkUpdate(next);
+        const clearedCount = reconcileSignalConnectionIds(next, [...affectedNodeIds]);
         useMessageStore.getState().setMessage({
             type: 'info',
-            text: `링크 ${linkIds.length}개 일괄 수정 (${numLane}차선, ${maxSpd}km/h)`,
+            text: `링크 ${linkIds.length}개 일괄 수정 (${numLane}차선, ${maxSpd}km/h)${clearedCount > 0 ? ` — 신호 ${clearedCount}개의 커넥션 참조 초기화` : ''}`,
         });
     };
 

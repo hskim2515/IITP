@@ -140,7 +140,7 @@ export default class DomePrimitive {
                 this.vertexBuffer.copyFromArrayView(flatResult.buffer);
             }
 
-            this.drawCommand.vertexCount = this.latestPositions.length;
+            this.drawCommand.count = this.latestPositions.length;
 
             frameState.commandList.push(this.drawCommand);
         }

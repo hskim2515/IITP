@@ -1,16 +1,28 @@
 package com.iitp.iitp_rest;
 
+import com.iitp.iitp_rest.model.network.NetworkXml;
+import com.iitp.iitp_rest.model.network.connection.ConnectionXml;
+import com.iitp.iitp_rest.model.network.connection.Turning;
+import com.iitp.iitp_rest.model.network.node.NodeXml;
 import com.iitp.iitp_rest.model.odmatrix.OdMatrixXml;
+import com.iitp.iitp_rest.repository.ScenarioVersionRepository;
 import com.iitp.iitp_rest.service.simulation.NextSimInputScaffolder;
+import com.iitp.iitp_rest.service.vehicle.DummySignalGenerator;
+import com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService;
+import com.iitp.iitp_rest.util.FileStorageService;
 import jakarta.xml.bind.JAXBContext;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 /**
  * NextSim 입력 스캐폴딩 검증 — 자동 생성 odmatrix.xml 이
@@ -230,5 +242,138 @@ class NextSimScaffoldTest {
         assertTrue(noPlans.isEmpty());
         assertTrue(NextSimInputScaffolder.signalTodValid("<TOD id=\"0\">\n</TOD>", noPlans));
         assertTrue(NextSimInputScaffolder.signalTodValid(null, noPlans), "검증 대상 자체가 없으면 항상 유효");
+    }
+
+    /* ── 실사용 버그 재현: 더미 신호 생성 기능 이전에 만들어진 빈 signal.xml이 있으면
+     * "재임포트해도 더미 신호가 영원히 안 생긴다" ── */
+
+    private static NodeXml intersectionNode(long nodeId) {
+        NodeXml n = new NodeXml();
+        n.setId(nodeId);
+        ConnectionXml c1 = new ConnectionXml();
+        c1.setId(1L); c1.setFromLink(100L); c1.setToLink(200L); c1.setTurning(Turning.Straight);
+        ConnectionXml c2 = new ConnectionXml();
+        c2.setId(2L); c2.setFromLink(200L); c2.setToLink(100L); c2.setTurning(Turning.Straight);
+        n.setConnections(List.of(c1, c2));
+        return n;
+    }
+
+    @Test
+    void reimport_regenerates_signal_when_existing_file_is_stale_blank_template() throws Exception {
+        FileStorageService storage = mock(FileStorageService.class);
+        ScenarioVersionRepository scenarioVersionRepository = mock(ScenarioVersionRepository.class);
+        XmlLayerVersionService xmlLayerVersionService = mock(XmlLayerVersionService.class);
+        DummySignalGenerator dummySignalGenerator = new DummySignalGenerator();
+
+        when(scenarioVersionRepository.findByKeyWithScenario("v1")).thenReturn(java.util.Optional.empty());
+        when(storage.exists("v1/odmatrix.xml")).thenReturn(false);
+        when(storage.exists("v1/scenario.xml")).thenReturn(false);
+        // 더미 신호 생성 기능이 없던 시절 만들어진, 참조가 하나도 없어 "유효"로 보이는 빈 신호 —
+        // 실제로는 이 네트워크에 교차로가 있는데 채워지지 않은 상태
+        when(storage.exists("v1/signal.xml")).thenReturn(true);
+        when(storage.readFile("v1/signal.xml"))
+                .thenReturn("<?xml version='1.0' encoding='UTF-8'?>\n<Signal id=\"0\">\n</Signal>\n"
+                        .getBytes(StandardCharsets.UTF_8));
+        when(storage.exists("v1/signalTOD.xml")).thenReturn(false);
+
+        NetworkXml network = new NetworkXml();
+        network.setNodes(List.of(intersectionNode(10000001L)));
+
+        NextSimInputScaffolder scaffolder = new NextSimInputScaffolder(
+                storage, scenarioVersionRepository, xmlLayerVersionService, dummySignalGenerator);
+
+        scaffolder.scaffoldForImport("v1", Set.of("10000001"), List.of(), List.of(), null, network, null);
+
+        ArgumentCaptor<InputStream> bodyCaptor = ArgumentCaptor.forClass(InputStream.class);
+        verify(storage, atLeastOnce()).uploadFile(bodyCaptor.capture(), eq("v1"), eq("signal.xml"));
+        String written = new String(bodyCaptor.getValue().readAllBytes(), StandardCharsets.UTF_8);
+        assertTrue(written.contains("<node id=\"10000001\">") && written.contains("<plan "),
+                "빈 legacy signal.xml이 있어도, 이 재임포트는 실제 교차로용 더미 신호로 덮어써야 함: " + written);
+    }
+
+    /* ── repairSignalTod: 재임포트 없이 즉시 TOD만 정합(실사용 발견 — signal.xml에 플랜을
+     * 가진 노드가 있는데 signalTOD.xml에 일정이 없는 버전이, 이 정합 로직이 생기기 전에
+     * 이미 임포트돼 재임포트 없이는 영원히 낡은 채로 방치됨) ── */
+
+    private static final String SIGNAL_WITH_TWO_PLAN_NODES =
+            "<?xml version='1.0' encoding='UTF-8'?>\n<Signal id=\"0\">\n" +
+            "  <node id=\"10000255\">\n" +
+            "    <turnList><turn id=\"0\" turning=\"R\" type=\"RTOR\" connList=\"1\"/></turnList>\n" +
+            "    <planList><plan id=\"0\" cycle=\"46\" offset=\"0\"><phase id=\"0\" duration=\"20\" turnList=\"0\"/></plan>" +
+            "<plan id=\"1\" cycle=\"66\" offset=\"0\"><phase id=\"0\" duration=\"30\" turnList=\"0\"/></plan></planList>\n" +
+            "  </node>\n" +
+            "  <node id=\"10000058\">\n" +
+            "    <turnList><turn id=\"0\" turning=\"R\" type=\"RTOR\" connList=\"1\"/></turnList>\n" +
+            "    <planList><plan id=\"0\" cycle=\"46\" offset=\"0\"><phase id=\"0\" duration=\"20\" turnList=\"0\"/></plan></planList>\n" +
+            "  </node>\n" +
+            "</Signal>\n";
+
+    @Test
+    void repairSignalTod_fills_missing_schedule_for_nodes_with_plans_without_touching_signal() throws Exception {
+        FileStorageService storage = mock(FileStorageService.class);
+        ScenarioVersionRepository scenarioVersionRepository = mock(ScenarioVersionRepository.class);
+        XmlLayerVersionService xmlLayerVersionService = mock(XmlLayerVersionService.class);
+        DummySignalGenerator dummySignalGenerator = new DummySignalGenerator();
+
+        when(scenarioVersionRepository.findByKeyWithScenario("v1")).thenReturn(java.util.Optional.empty());
+        when(storage.exists("v1/signal.xml")).thenReturn(true);
+        when(storage.readFile("v1/signal.xml"))
+                .thenReturn(SIGNAL_WITH_TWO_PLAN_NODES.getBytes(StandardCharsets.UTF_8));
+        // 실측 재현: TOD는 완전히 없거나(false) 일부만 있음 — 여기선 아예 없는 경우
+        when(storage.exists("v1/signalTOD.xml")).thenReturn(false);
+
+        NextSimInputScaffolder scaffolder = new NextSimInputScaffolder(
+                storage, scenarioVersionRepository, xmlLayerVersionService, dummySignalGenerator);
+
+        boolean repaired = scaffolder.repairSignalTod("v1");
+        assertTrue(repaired, "플랜은 있는데 TOD가 없으면 복구를 수행해야 함");
+
+        // signal.xml은 절대 다시 쓰지 않아야 함(사용자가 편집했을 수 있는 실데이터)
+        verify(storage, never()).uploadFile(any(), eq("v1"), eq("signal.xml"));
+
+        ArgumentCaptor<InputStream> bodyCaptor = ArgumentCaptor.forClass(InputStream.class);
+        verify(storage).uploadFile(bodyCaptor.capture(), eq("v1"), eq("signalTOD.xml"));
+        String tod = new String(bodyCaptor.getValue().readAllBytes(), StandardCharsets.UTF_8);
+        Set<String> planNodes = NextSimInputScaffolder.extractSignalPlanNodeIds(SIGNAL_WITH_TWO_PLAN_NODES);
+        assertEquals(Set.of("10000255", "10000058"), planNodes);
+        assertTrue(NextSimInputScaffolder.signalTodValid(tod, planNodes),
+                "복구된 TOD는 signal.xml의 플랜 보유 노드를 전부 커버해야 함");
+    }
+
+    @Test
+    void repairSignalTod_does_nothing_when_already_valid() throws Exception {
+        FileStorageService storage = mock(FileStorageService.class);
+        ScenarioVersionRepository scenarioVersionRepository = mock(ScenarioVersionRepository.class);
+        XmlLayerVersionService xmlLayerVersionService = mock(XmlLayerVersionService.class);
+        DummySignalGenerator dummySignalGenerator = new DummySignalGenerator();
+
+        when(scenarioVersionRepository.findByKeyWithScenario("v1")).thenReturn(java.util.Optional.empty());
+        when(storage.exists("v1/signal.xml")).thenReturn(true);
+        when(storage.readFile("v1/signal.xml"))
+                .thenReturn(SIGNAL_WITH_TWO_PLAN_NODES.getBytes(StandardCharsets.UTF_8));
+        Set<String> planNodes = NextSimInputScaffolder.extractSignalPlanNodeIds(SIGNAL_WITH_TWO_PLAN_NODES);
+        String validTod = NextSimInputScaffolder.buildDefaultSignalTod(SIGNAL_WITH_TWO_PLAN_NODES, planNodes);
+        when(storage.exists("v1/signalTOD.xml")).thenReturn(true);
+        when(storage.readFile("v1/signalTOD.xml")).thenReturn(validTod.getBytes(StandardCharsets.UTF_8));
+
+        NextSimInputScaffolder scaffolder = new NextSimInputScaffolder(
+                storage, scenarioVersionRepository, xmlLayerVersionService, dummySignalGenerator);
+
+        boolean repaired = scaffolder.repairSignalTod("v1");
+        assertFalse(repaired, "이미 유효하면 손대지 않아야 함");
+        verify(storage, never()).uploadFile(any(), eq("v1"), eq("signalTOD.xml"));
+    }
+
+    @Test
+    void repairSignalTod_ignores_blank_versionId() {
+        FileStorageService storage = mock(FileStorageService.class);
+        ScenarioVersionRepository scenarioVersionRepository = mock(ScenarioVersionRepository.class);
+        XmlLayerVersionService xmlLayerVersionService = mock(XmlLayerVersionService.class);
+        NextSimInputScaffolder scaffolder = new NextSimInputScaffolder(
+                storage, scenarioVersionRepository, xmlLayerVersionService, new DummySignalGenerator());
+
+        assertFalse(scaffolder.repairSignalTod(""));
+        assertFalse(scaffolder.repairSignalTod(null));
+        verifyNoInteractions(storage);
     }
 }

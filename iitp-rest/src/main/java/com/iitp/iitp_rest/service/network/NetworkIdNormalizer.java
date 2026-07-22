@@ -72,6 +72,9 @@ public class NetworkIdNormalizer {
         boolean[] linkNeedsNew = new boolean[links.size()];
         boolean[] nodeNeedsNew = new boolean[nodes.size()];
         long maxUsedIndex = 0;
+        // 이미 규칙에 맞는 기존 터미널 id — idAssigner에 미리 등록해, 이번에 새로 파생되는
+        // 터미널 id(뒷자리 3자리 매칭)가 이들과 우연히 충돌하는 것을 방지한다.
+        List<Long> existingTerminalIds = new ArrayList<>();
 
         for (int i = 0; i < links.size(); i++) {
             Long id = links.get(i).getId();
@@ -95,6 +98,7 @@ public class NetworkIdNormalizer {
             // 파생되는 값이라 카운터를 안 쓰고, Garage는 이 정규화가 채번을 담당하지 않는 완전히
             // 별도의 대역이라 절대 여기 섞이면 안 된다.
             if (inNormalBand) maxUsedIndex = Math.max(maxUsedIndex, id - NORMAL_MIN);
+            if (inTerminalBand) existingTerminalIds.add(id);
         }
 
         boolean anyChange = false;
@@ -106,6 +110,7 @@ public class NetworkIdNormalizer {
 
         // 3) 링크 재채번 (원본 순서 스캔, 공유 카운터는 기존 최대 인덱스 다음부터 이어서 시작)
         NetworkIdAssigner idAssigner = new NetworkIdAssigner(maxUsedIndex + 1);
+        for (Long id : existingTerminalIds) idAssigner.registerExistingTerminalId(id);
         Map<Long, Long> linkIdRemap = new HashMap<>();
         for (int i = 0; i < links.size(); i++) {
             if (!linkNeedsNew[i]) continue;
@@ -142,7 +147,7 @@ public class NetworkIdNormalizer {
             if (actualTerminal) {
                 Long pairedLink = linkIds.isEmpty() ? null : linkIds.get(0);
                 if (pairedLink != null && linkClaimedForTerminal.add(pairedLink)) {
-                    newId = NetworkIdAssigner.terminalIdFor(pairedLink);
+                    newId = idAssigner.terminalIdFor(pairedLink);
                 } else {
                     newId = idAssigner.nextIsolatedTerminalId();
                 }
