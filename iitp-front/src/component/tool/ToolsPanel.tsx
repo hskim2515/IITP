@@ -4,7 +4,7 @@ import { faRuler, faLayerGroup, faCog, faRoad, faFileArrowDown } from '@fortawes
 import LayerPopup from "../popup/LayerPopup";
 import MeasurePopup from "../popup/MeasurePopup";
 import SettingPopup from "../popup/SettingPopup";
-import NetworkDrawPanel from "./NetworkDrawPanel";
+import NetworkMaintenancePanel from "./NetworkMaintenancePanel";
 import DataIOPanel from "./DataIOPanel";
 import styles from "@css/ToolsPanel.module.css";
 import { useMapStore } from "@stores/useMapStore";
@@ -15,7 +15,7 @@ import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 const tools = [
     { icon: faLayerGroup,    label: '레이어',     popup: <LayerPopup isOpen={true} />, editOnly: false },
     { icon: faRuler,         label: '측정',       popup: <MeasurePopup isOpen={true} />, editOnly: false },
-    { icon: faRoad,          label: '도로 그리기', popup: <NetworkDrawPanel />, editOnly: true },
+    { icon: faRoad,          label: '네트워크 도구', popup: <NetworkMaintenancePanel />, editOnly: true },
     { icon: faFileArrowDown, label: '데이터 입출력', popup: <DataIOPanel />, editOnly: false },
     { icon: faCog,           label: '설정',       popup: <SettingPopup isOpen={true} />, editOnly: false },
 ];

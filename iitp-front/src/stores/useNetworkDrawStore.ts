@@ -28,6 +28,12 @@ interface NetworkDrawState {
     drawResetKey: number;
     // 교차로 지정 후 draw effect가 시작점을 자동 설정할 노드 ID
     pendingStartNodeId: string | null;
+    // 빈 지형 클릭으로 그리기를 시작할 때 draw effect가 시작점으로 쓸 좌표(스냅 노드 없음).
+    // pendingStartNodeId와 동일한 소비 패턴 — effect 마운트 시 한 번 읽고 비운다.
+    pendingStartCoord: Coordinates | null;
+    // 노드 선택 맥락 툴바의 "커넥션 편집" 버튼으로 진입할 때, connection effect가 마운트 시
+    // 바로 이 노드의 phase='edit'로 점프하기 위해 읽는 값 — 소비 후 비운다.
+    pendingConnNodeId: number | string | null;
     // 마지막으로 그린 구간의 끝점(체인 끝) — "그리기 중지" 후 화면 밖으로 팬했다가 다시
     // "그리기 시작"을 누르면 이 지점에서 자동으로 이어 그리기를 재개한다(타일 그리기 모드는
     // isActive 중 팬이 동결되므로, 넓은 지역을 이어 그릴 땐 중지→팬→재시작이 불가피한데
@@ -38,6 +44,7 @@ interface NetworkDrawState {
     selectedLinkId: number | string | null;
     selectedNodeId: number | string | null;
     selectedLaneId: string | null;  // `${linkId}_${laneIdx}` — 개별 레인 선택
+    selectedSegmentId: string | null;  // `${linkId}_${laneIdx}_${segIdx}` — 개별 세그먼트 선택(모두 배열 인덱스 기준)
     // 멀티셀렉트 (Shift+클릭, 박스 드래그)
     selectedLinkIds: string[];
     selectedNodeIds: string[];
@@ -58,7 +65,16 @@ interface NetworkDrawState {
     addIntersectionNode: (id: number | string, coord: Coordinates) => void;
     removeIntersectionNode: (id: number | string) => void;
     activateAndReset: (startNodeId?: string) => void;
+    /** 빈 지형 클릭 좌표에서 그리기 시작(재클릭 불필요) — activateAndReset의 좌표 버전. */
+    beginDrawAt: (coord: Coordinates) => void;
+    /** 노드 선택 툴바의 "커넥션 편집" 버튼 — 그 노드로 바로 진입한 채 커넥션 편집 모드 시작. */
+    activateConnectionAndReset: (nodeId: number | string) => void;
     clearPendingStart: () => void;
+    clearPendingConnNode: () => void;
+    /** 그리기/커넥션 편집을 끝내고 선택 모드로 되돌아간다 — setActive(false)/setConnectionActive(false)
+     *  단독 호출은 아무 모드로도 안 돌아가 사용자가 다시 손 갈 데를 잃으므로, "이 조작을 끝냈다"는
+     *  모든 종료 지점(ESC, 우클릭 취소 등)은 항상 이 함수를 대신 써야 한다. */
+    exitToSelect: () => void;
     setChainEndpoint: (nodeId: string | number, coord: Coordinates) => void;
     clearChainEndpoint: () => void;
     /** diff 저장 후 서버가 재채번한 id(nodeIdRemap/odNodeIdRemap/linkIdRemap)를 이 스토어가
@@ -69,6 +85,7 @@ interface NetworkDrawState {
     setSelectedLink: (id: number | string | null) => void;
     setSelectedNode: (id: number | string | null) => void;
     setSelectedLane: (id: string | null) => void;
+    setSelectedSegment: (id: string | null) => void;
     clearSelection: () => void;
     toggleSelectedLinkId: (id: string) => void;
     toggleSelectedNodeId: (id: string) => void;
@@ -94,17 +111,20 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
     intersectionNodes: {},
     drawResetKey: 0,
     pendingStartNodeId: null,
+    pendingStartCoord: null,
+    pendingConnNodeId: null,
     chainEndpoint: null,
     selectedLinkId: null,
     selectedNodeId: null,
     selectedLaneId: null,
+    selectedSegmentId: null,
     selectedLinkIds: [],
     selectedNodeIds: [],
     lastDrawnPoint: null,
 
     setActive: (active) => set({ isActive: active, isConnectionActive: false, isSelectActive: false, placementMode: 'none' }),
     setConnectionActive: (active) => set({ isConnectionActive: active, isActive: false, isSelectActive: false, connSelectedNodeId: null, placementMode: 'none' }),
-    setSelectActive: (active) => set({ isSelectActive: active, isActive: false, isConnectionActive: false, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, placementMode: 'none' }),
+    setSelectActive: (active) => set({ isSelectActive: active, isActive: false, isConnectionActive: false, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedSegmentId: null, placementMode: 'none' }),
     setPlacementMode: (mode) => set({ placementMode: mode, isActive: false, isConnectionActive: false, isSelectActive: false }),
     setLaneCount: (count) => set({ laneCount: count }),
     setLinkWidth: (width) => set({ linkWidth: width }),
@@ -127,8 +147,31 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
         placementMode: 'none',
         drawResetKey: s.drawResetKey + 1,
         pendingStartNodeId: startNodeId ?? null,
+        pendingStartCoord: null,
     })),
-    clearPendingStart: () => set({ pendingStartNodeId: null }),
+    beginDrawAt: (coord) => set((s) => ({
+        isActive: true,
+        isConnectionActive: false,
+        isSelectActive: false,
+        placementMode: 'none',
+        drawResetKey: s.drawResetKey + 1,
+        pendingStartNodeId: null,
+        pendingStartCoord: coord,
+    })),
+    activateConnectionAndReset: (nodeId) => set({
+        isConnectionActive: true,
+        isActive: false,
+        isSelectActive: false,
+        placementMode: 'none',
+        connSelectedNodeId: null,
+        pendingConnNodeId: nodeId,
+    }),
+    exitToSelect: () => set({
+        isActive: false, isConnectionActive: false, placementMode: 'none', isSelectActive: true,
+        pendingStartNodeId: null, pendingStartCoord: null, pendingConnNodeId: null,
+    }),
+    clearPendingStart: () => set({ pendingStartNodeId: null, pendingStartCoord: null }),
+    clearPendingConnNode: () => set({ pendingConnNodeId: null }),
     setChainEndpoint: (nodeId, coord) => set({ chainEndpoint: { nodeId: String(nodeId), coord } }),
     clearChainEndpoint: () => set({ chainEndpoint: null }),
     remapStaleIds: (nodeRemap, linkRemap) => set((s) => {
@@ -151,12 +194,17 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
             selectedNodeIds: s.selectedNodeIds.map(rmNode),
             selectedLinkId: rmLinkOrNull(s.selectedLinkId),
             selectedLinkIds: s.selectedLinkIds.map(id => linkRemap[id] ?? id),
+            // 세그먼트 선택 키(linkId_laneIdx_segIdx)는 laneIdx/segIdx까지 재매핑할 방법이
+            // 없어(서버가 레인/세그먼트 순서를 보존한다는 보장이 없음) 안전하게 선택 해제.
+            selectedSegmentId: null,
+            pendingConnNodeId: rmNodeOrNull(s.pendingConnNodeId),
         };
     }),
-    setSelectedLink: (id) => set({ selectedLinkId: id, selectedNodeId: null, selectedLaneId: null, selectedLinkIds: [], selectedNodeIds: [] }),
-    setSelectedNode: (id) => set({ selectedNodeId: id, selectedLinkId: null, selectedLaneId: null, selectedLinkIds: [], selectedNodeIds: [] }),
-    setSelectedLane: (id) => set({ selectedLaneId: id, selectedLinkId: null, selectedNodeId: null, selectedLinkIds: [], selectedNodeIds: [] }),
-    clearSelection: () => set({ selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedLinkIds: [], selectedNodeIds: [] }),
+    setSelectedLink: (id) => set({ selectedLinkId: id, selectedNodeId: null, selectedLaneId: null, selectedSegmentId: null, selectedLinkIds: [], selectedNodeIds: [] }),
+    setSelectedNode: (id) => set({ selectedNodeId: id, selectedLinkId: null, selectedLaneId: null, selectedSegmentId: null, selectedLinkIds: [], selectedNodeIds: [] }),
+    setSelectedLane: (id) => set({ selectedLaneId: id, selectedLinkId: null, selectedNodeId: null, selectedSegmentId: null, selectedLinkIds: [], selectedNodeIds: [] }),
+    setSelectedSegment: (id) => set({ selectedSegmentId: id, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedLinkIds: [], selectedNodeIds: [] }),
+    clearSelection: () => set({ selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedSegmentId: null, selectedLinkIds: [], selectedNodeIds: [] }),
     toggleSelectedLinkId: (id) => set(s => ({
         selectedLinkId: null, selectedNodeId: null,
         selectedLinkIds: s.selectedLinkIds.includes(id)
@@ -175,5 +223,5 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
     setSelectedNodeIds: (ids) => set({ selectedNodeIds: ids, selectedLinkIds: [], selectedLinkId: null, selectedNodeId: null }),
     clearMultiSelection: () => set({ selectedLinkIds: [], selectedNodeIds: [] }),
     setLastDrawnPoint: (point) => set({ lastDrawnPoint: point }),
-    reset: () => set({ isActive: false, isConnectionActive: false, isSelectActive: false, placementMode: 'none', startNodeId: null, startNodeCoord: null, connSelectedNodeId: null, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedLinkIds: [], selectedNodeIds: [], chainEndpoint: null }),
+    reset: () => set({ isActive: false, isConnectionActive: false, isSelectActive: false, placementMode: 'none', startNodeId: null, startNodeCoord: null, connSelectedNodeId: null, pendingStartCoord: null, pendingConnNodeId: null, pendingStartNodeId: null, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedSegmentId: null, selectedLinkIds: [], selectedNodeIds: [], chainEndpoint: null }),
 }));

@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useLinkContextMenuStore } from '@stores/useLinkContextMenuStore';
 import { useNetworkStore } from '@stores/useNetworkStore';
 import { useNetworkDrawStore } from '@stores/useNetworkDrawStore';
+import { useNetworkToolbarStore } from '@stores/useNetworkToolbarStore';
 import { useNetworkEditStore } from '@stores/useNetworkEditStore';
 import { useMessageStore } from '@stores/useMessageStore';
 import { splitLinkInNetwork, regenerateNodeConnections } from '@hooks/useNetworkDraw';
@@ -10,6 +11,8 @@ import {
     deleteLinkFromNetwork,
     reverseLinkDirection,
     reconcileSignalConnectionIds,
+    countStationsForLinks,
+    deleteStationsForLinks,
 } from '@hooks/useNetworkSelect';
 
 const menuBtnStyle: React.CSSProperties = {
@@ -52,6 +55,10 @@ const LinkContextMenu: React.FC = () => {
         // 원본 링크는 사라짐 → MVT 마스킹 (타일 모드에서 옛 도로 잔존 방지)
         useNetworkEditStore.getState().addDeleted([String(linkId)]);
         useNetworkDrawStore.getState().setSelectedNode(newNodeId);
+        // 우클릭 분할은 좌클릭 선택과 별개 경로라 맥락 툴바(NetworkEditToolbar)가 자동으로
+        // 안 따라온다 — 방금 생긴 새 노드를 가리키도록 직접 갱신(없으면 옛 링크의 삭제/반전
+        // 버튼이 지도 위에 그대로 남아있는 유령 툴바가 된다).
+        useNetworkToolbarStore.getState().show({ x: screenX, y: screenY }, 'node', { nodeId: String(newNodeId) });
         useMessageStore.getState().setMessage({
             type: 'info',
             text: `링크를 분할했습니다 — 새 노드 ${String(newNodeId)} (통과 커넥션 자동 생성)`,
@@ -74,12 +81,38 @@ const LinkContextMenu: React.FC = () => {
     };
 
     const handleDelete = () => {
-        const next = deleteLinkFromNetwork(network, linkId);
-        applyNetworkUpdate(next);
-        const clearedCount = reconcileSignalConnectionIds(next, [link.fromNode, link.toNode]);
-        useNetworkEditStore.getState().addDeleted([String(linkId)]);
-        useNetworkDrawStore.getState().clearSelection();
-        useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${String(linkId)} 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}` });
+        const proceedDelete = () => {
+            const net = useNetworkStore.getState().currentJsonData;
+            if (!net) return;
+            const beforeLinkIds = new Set(net.links.map(l => String(l.id)));
+            const next = deleteLinkFromNetwork(net, linkId);
+            applyNetworkUpdate(next);
+            const clearedCount = reconcileSignalConnectionIds(next, [link.fromNode, link.toNode]);
+            const removedLinks = [...beforeLinkIds].filter(id => !next.links.some(l => String(l.id) === id));
+            const removedStationCount = deleteStationsForLinks(removedLinks);
+            useNetworkEditStore.getState().addDeleted([String(linkId)]);
+            useNetworkDrawStore.getState().clearSelection();
+            // 우클릭 삭제 대상이 마침 맥락 툴바가 가리키던 그 링크라면(좌클릭으로 먼저 선택한
+            // 뒤 우클릭한 경우) 툴바도 같이 닫는다 — 아니면 방금 삭제된 링크의 버튼이 지도
+            // 위에 유령처럼 남는다. 다른 링크를 가리키고 있었다면 그대로 둔다.
+            if (String(useNetworkToolbarStore.getState().linkId) === String(linkId)) {
+                useNetworkToolbarStore.getState().hide();
+            }
+            useMessageStore.getState().setMessage({
+                type: 'info',
+                text: `링크 ${String(linkId)} 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}`,
+            });
+        };
+        const stationCount = countStationsForLinks([linkId]);
+        if (stationCount > 0) {
+            useMessageStore.getState().setMessage({
+                type: 'confirm',
+                text: `링크 ${String(linkId)}을(를) 삭제합니다. 이 링크 위 정류장 ${stationCount}개도 함께 삭제됩니다. 계속할까요?`,
+                onConfirm: proceedDelete,
+            });
+        } else {
+            proceedDelete();
+        }
         hide();
     };
 

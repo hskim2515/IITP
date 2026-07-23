@@ -1,29 +1,32 @@
 /**
- * 네트워크 선택 드릴다운: 같은 지점을 반복 클릭하면 링크 → 레인 → 셀(세그먼트)로 깊이 증가.
- * 다른 지점 클릭 시 깊이 리셋. 2D(useNetworkSelect·handleOLSelect)와 3D(handleCesiumSelect)가
- * 공유하는 모듈 레벨 상태.
+ * 레인 종방향 위치(frac 0~1) → 세그먼트/셀 인덱스 산출 헬퍼.
+ *
+ * <p>과거엔 같은 지점을 반복 클릭해 링크→레인→세그먼트→셀로 깊이를 늘려가는 방식이었으나,
+ * 클릭할 때마다 결과가 화면 반대편 고정 패널에 나타나고 몇 번째 클릭인지 기억해야 해서
+ * 불편하다는 피드백으로 폐기했다 — 지금은 클릭 지점에 뜨는 맥락 툴바(NetworkEditToolbar,
+ * useNetworkToolbarStore)의 "차선보기"/"구간보기"/"셀보기" 버튼이 이 함수들로 다음 단계
+ * 대상을 계산해 지도 재클릭 없이 바로 전환한다.
+ *
+ * <p>세그먼트(구간, block 여부로 레인 드롭/합류 차로를 표현)와 셀(CTM 시뮬레이션 단위)은
+ * 서로 다른 축의 분할이라 별개 단계로 둔다 — 실측(2_toy network/network.xml): cell은 링크
+ * 전체 길이로 1개뿐인데 그 안에 block=True/False 세그먼트 2개가 걸쳐 있는 경우가 흔하다.
  */
 
-export type DrillDepth = 'link' | 'lane' | 'cell';
-
-let lastKey = "";       // 직전 클릭이 얹힌 대상 키(linkId 또는 linkId_laneIdx)
-let lastDepth: DrillDepth = 'link';
-
-/** 클릭 대상 키가 직전과 같으면 깊이 증가(link→lane→cell), 다르면 리셋(link). 새 깊이 반환. */
-export function nextDrillDepth(targetKey: string): DrillDepth {
-    if (targetKey === lastKey) {
-        lastDepth = lastDepth === 'link' ? 'lane' : lastDepth === 'lane' ? 'cell' : 'cell';
-    } else {
-        lastKey = targetKey;
-        lastDepth = 'link';
+/**
+ * 레인 종방향 비율(frac 0~1)에서 세그먼트 인덱스 산출 — initPoint~endPoint(m) 경계 기준.
+ * segments는 항상 initPoint 오름차순으로 유지된다는 전제(splitSegmentInNetwork/
+ * mergeSegmentInNetwork가 이 불변식을 지킴).
+ */
+export function segmentIndexAtFrac(lane: any, link: any, frac: number): number {
+    const segments = lane?.segments ?? [];
+    if (segments.length === 0) return 0;
+    const length = link?.length ?? 0;
+    const d = Math.max(0, Math.min(1, frac)) * length;
+    for (let i = 0; i < segments.length; i++) {
+        const s = segments[i];
+        if (d >= (s?.initPoint ?? 0) && d < (s?.endPoint ?? length)) return i;
     }
-    return lastDepth;
-}
-
-/** 드릴다운 상태 초기화(선택 해제·모드 전환 시). */
-export function resetDrill(): void {
-    lastKey = "";
-    lastDepth = 'link';
+    return segments.length - 1;
 }
 
 /**

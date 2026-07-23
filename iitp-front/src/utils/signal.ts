@@ -243,7 +243,7 @@ const computeBearingLatLng = (from: { lat: number; lng: number }, to: { lat: num
  * 접근로(fromLink)가 intersectionNodeId로 들어오는 방위각(도, 0~360). 좌표 없으면 null.
  * KTDB 등 임포트된 네트워크는 로컬 평면좌표(center)를 우선 쓰고, 수동으로 그린 네트워크는
  * center가 비어 있는 대신 WGS84 좌표(coordinates)가 있으므로 그걸로 폴백한다(그래야
- * NetworkDrawPanel "화면 내 더미 신호 생성"도 방위각 기반 페어링 혜택을 받는다).
+ * NetworkMaintenancePanel "화면 내 더미 신호 생성"도 방위각 기반 페어링 혜택을 받는다).
  */
 const approachBearingDeg = (
     fromLinkId: string,

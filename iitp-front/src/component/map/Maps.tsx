@@ -26,6 +26,8 @@ import useNetworkStationModify from "@hooks/useNetworkStationModify";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import NodeContextMenu from "@component/tool/NodeContextMenu";
 import LinkContextMenu from "@component/tool/LinkContextMenu";
+import NetworkEditToolbar from "@component/tool/NetworkEditToolbar";
+import NetworkDrawSettingsBar from "@component/tool/NetworkDrawSettingsBar";
 import { useCoordPick } from "@hooks/useCoordPick";
 import { useOsmBboxStore } from "@stores/useOsmBboxStore";
 import { useNetworkTileStore } from "@stores/useNetworkTileStore";
@@ -285,6 +287,8 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
             <ToolsPanel/>
             <NodeContextMenu/>
             <LinkContextMenu/>
+            <NetworkEditToolbar/>
+            <NetworkDrawSettingsBar/>
 
             {!ONLY_3D && (
                 <div className={styles.mapModeToggle} title={isNetworkEditActive ? '편집 모드 중 전환 불가' : undefined}>

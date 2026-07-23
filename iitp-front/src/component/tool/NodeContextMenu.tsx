@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useNodeContextMenuStore } from '@stores/useNodeContextMenuStore';
 import { useNetworkStore } from '@stores/useNetworkStore';
 import { useNetworkDrawStore } from '@stores/useNetworkDrawStore';
+import { useNetworkToolbarStore } from '@stores/useNetworkToolbarStore';
 import { createIntersectionAtNode } from '@hooks/useNetworkDraw';
 import { useMessageStore } from '@stores/useMessageStore';
 
@@ -62,6 +63,10 @@ const NodeContextMenu: React.FC = () => {
     const handleSelectNode = () => {
         useNetworkDrawStore.getState().setSelectActive(true);
         useNetworkDrawStore.getState().setSelectedNode(nodeId);
+        // 좌클릭 없이 우클릭 메뉴로 바로 선택하는 경로라, 맥락 툴바(NetworkEditToolbar)가 이
+        // 호출 없이는 안 뜬다 — show()를 직접 안 해주면 지도 위 하이라이트만 생기고 정작
+        // 조작(삭제/병합/커넥션편집 등) 버튼은 하나도 안 보이는 상태가 된다.
+        useNetworkToolbarStore.getState().show({ x: screenX, y: screenY }, 'node', { nodeId: String(nodeId) });
         hide();
     };
 
@@ -181,7 +186,7 @@ const NodeContextMenu: React.FC = () => {
                     <span style={{ fontSize: 15 }}>↖</span>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                         <span>노드 선택</span>
-                        <span style={{ fontSize: 10, color: '#555' }}>선택 패널에서 이동/삭제</span>
+                        <span style={{ fontSize: 10, color: '#555' }}>맥락 툴바에서 이동/삭제</span>
                     </div>
                 </button>
             </div>

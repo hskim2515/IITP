@@ -1,17 +1,20 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getActiveVersionId } from "@utils/versionId";
 import { useLayerStore } from '@stores/useLayerStore';
 import { LayerField } from "@stores/useLayerSchemaStore";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { useScenarioStore } from '@stores/useScenarioStore';
 import { useNetworkStore } from '@stores/useNetworkStore';
+import { useNetworkDrawStore, PlacementMode } from '@stores/useNetworkDrawStore';
 import { useVehicleStore } from '@stores/useVehicleStore';
 import { useSimulationStore } from '@stores/useSimulationStore';
 import { useSignalStore } from '@stores/useSignalStore';
+import { useBusStationStore } from '@stores/useBusStationStore';
+import { useRailStationStore } from '@stores/useRailStationStore';
 import { useLogStore } from '@stores/useLogStore';
 import { useNetworkTileStore } from '@stores/useNetworkTileStore';
 import { NETWORK_TILING } from '@utils/lodConstants';
-import { assignPropertyToResponseData } from '@utils/guid';
+import { assignPropertyToResponseData, generateGUIDWithType } from '@utils/guid';
 import { generateDummySignals } from '@utils/signal';
 import { generateDummyPavementMarkings } from '@utils/pavementMarking';
 import { getNetworkForDummyGeneration } from '@utils/generationNetwork';
@@ -20,11 +23,22 @@ import { showAlert, showConfirm } from '@utils/dialog';
 import { NEXTSIM_REQUIRED_KEYS } from '@utils/nextSimValidation';
 import { useNextSimReadinessStore } from '@stores/useNextSimReadinessStore';
 import { useBackgroundTaskStore } from '@stores/useBackgroundTaskStore';
+import { useEditGuideStore } from '@stores/useEditGuideStore';
+import { createEventHandlers } from '@handler/createEventHandlers';
 import styles from "@css/ToolsPanel.module.css";
 
 export interface FacilityProps {
     fields: LayerField[];
 }
+
+// 지도를 직접 클릭해 배치하는 시설물 — 이전엔 도킹된 NetworkDrawPanel(삭제됨)에 있던 3개
+// 배치 버튼을 여기로 옮겼다. 이 컴포넌트가 이미 같은 레이어들의 "더미 생성" 진입점이라
+// 자리가 자연스럽다.
+const PLACEMENT_LABELS: Partial<Record<string, PlacementMode>> = {
+    busStation: 'busStation',
+    railStation: 'railStation',
+    signal: 'signal',
+};
 
 // 더미 생성을 지원하는 레이어 키 → 생성 함수
 // 타일 모드에서는 네트워크 store 가 viewport 분(차선 stripped 가능)뿐이라 전체 네트워크를 임시 fetch
@@ -68,6 +82,83 @@ const Facility = ({ fields }: FacilityProps) => {
     // KTDB 가져오기 백그라운드 스캐폴딩(백엔드가 signal.xml/OD 를 직접 재생성 중)과 겹치면
     // 안 됨 — 같은 신호 데이터를 프론트/백엔드가 동시에 다른 경로로 써서 서로 덮어쓸 수 있다.
     const ktdbScaffolding = useBackgroundTaskStore((s) => !!s.tasks['ktdb-scaffold']);
+    const placementMode = useNetworkDrawStore((s) => s.placementMode);
+
+    // ── 시설물 배치 모드(버스정류장/지하철역/신호): createEventHandlers 등록 + 완료 시 자동 해제 ──
+    const placementCleanupRef = useRef<(() => void) | null>(null);
+    useEffect(() => {
+        if (placementMode === 'none') {
+            placementCleanupRef.current?.();
+            placementCleanupRef.current = null;
+            return;
+        }
+
+        const featureTypeMap = {
+            busStation: 'busStations',
+            railStation: 'railStations',
+            signal: 'signals',
+        } as const;
+        const featureType = featureTypeMap[placementMode];
+        const guid = generateGUIDWithType(featureType);
+
+        const placementLabel = { busStation: '버스 정류장', railStation: '철도역', signal: '신호등' }[placementMode];
+        useEditGuideStore.getState().setGuide({
+            title: `시설물 배치 — ${placementLabel}`,
+            steps: [
+                { keys: ['클릭'], text: `지도에서 ${placementLabel}을(를) 놓을 위치를 클릭하세요`, em: true },
+                { keys: ['ESC'], text: '배치 종료 → 선택 모드로 복귀' },
+            ],
+            tip: '배치 후 속성 창에서 상세 정보를 수정할 수 있어요.',
+        });
+
+        const record: Record<string, any> = { featureType, __guid: guid, id: Date.now() };
+        if (placementMode === 'signal') {
+            record.turning = 'Straight';
+            record.type = 'TrafficLight';
+        }
+
+        const handlerCleanup = createEventHandlers(record);
+
+        // 대상 스토어 구독: 새 항목이 추가되면 배치 모드 종료 → 선택 모드로 복귀(모드 버튼이
+        // 없으므로 배치가 끝났는데도 아무 모드로도 안 돌아가면 그다음 클릭이 아무 반응이 없다).
+        const targetStore = { busStation: useBusStationStore, railStation: useRailStationStore, signal: useSignalStore }[placementMode];
+        const getCount = (data: any) => Object.values(data ?? {}).flat().length;
+        const prevCount = getCount(targetStore.getState().currentJsonData);
+        const unsubscribe = (targetStore as any).subscribe(
+            (state: any) => state.currentJsonData,
+            (data: any) => {
+                if (getCount(data) > prevCount) useNetworkDrawStore.getState().exitToSelect();
+            },
+            { equalityFn: (a: any, b: any) => a === b }
+        );
+
+        placementCleanupRef.current = () => {
+            handlerCleanup?.();
+            unsubscribe();
+            useEditGuideStore.getState().clear();
+        };
+
+        return () => {
+            placementCleanupRef.current?.();
+            placementCleanupRef.current = null;
+        };
+    }, [placementMode]);
+
+    // ESC 키로 배치 모드 취소 → 선택 모드로 복귀
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && placementMode !== 'none') useNetworkDrawStore.getState().exitToSelect();
+        };
+        document.addEventListener('keydown', handleKeyDown);
+        return () => document.removeEventListener('keydown', handleKeyDown);
+    }, [placementMode]);
+
+    const handleTogglePlacement = (key: string) => {
+        const mode = PLACEMENT_LABELS[key];
+        if (!mode) return;
+        if (placementMode === mode) useNetworkDrawStore.getState().exitToSelect();
+        else useNetworkDrawStore.getState().setPlacementMode(mode);
+    };
 
     // store의 currentJsonData 변화를 감지해 visibleFields 재계산
     const [, setDataTick] = useState(0);
@@ -119,10 +210,10 @@ const Facility = ({ fields }: FacilityProps) => {
         });
     }, [fields, layerManager]);
 
-    // 데이터 없고 더미 생성 가능한 레이어
+    // 데이터 없고 더미 생성 또는 직접 배치가 가능한 레이어
     const emptyDummyFields = useMemo(() => {
         const visibleKeys = new Set(visibleFields.map(f => f.key));
-        return fields.filter(f => !visibleKeys.has(f.key) && !!DUMMY_GENERATORS[f.key]);
+        return fields.filter(f => !visibleKeys.has(f.key) && (!!DUMMY_GENERATORS[f.key] || !!PLACEMENT_LABELS[f.key]));
     }, [fields, visibleFields]);
 
     const toggleExpand = (parentKey: string) => {
@@ -343,6 +434,15 @@ const Facility = ({ fields }: FacilityProps) => {
                                     <span title={requiredDotTitle(parentKey)} style={{ color: requiredDotColor(parentKey), marginLeft: 5, fontSize: 10 }}>●</span>
                                 )}
                             </span>
+                            {PLACEMENT_LABELS[parentKey] && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); handleTogglePlacement(parentKey); }}
+                                    title={placementMode === PLACEMENT_LABELS[parentKey] ? '배치 종료 (ESC)' : `지도를 클릭해 ${field.label} 추가 배치`}
+                                    style={placementMode === PLACEMENT_LABELS[parentKey] ? placeBtnActiveStyle : placeBtnStyle}
+                                >
+                                    {placementMode === PLACEMENT_LABELS[parentKey] ? '■ 배치 중' : '📍 배치'}
+                                </button>
+                            )}
                             <button
                                 onClick={(e) => { e.stopPropagation(); handleDelete(field); }}
                                 title={`${field.label} 데이터 삭제`}
@@ -373,15 +473,25 @@ const Facility = ({ fields }: FacilityProps) => {
                 );
             })}
 
-            {/* 데이터 없고 더미 생성 가능한 레이어 */}
+            {/* 데이터 없고 더미 생성 또는 직접 배치가 가능한 레이어 */}
             {emptyDummyFields.map((field) => (
-                <div key={field.key} className={styles.sectionLabel} style={{ opacity: 0.5, cursor: 'default' }}>
+                <div key={field.key} className={styles.sectionLabel} style={{ opacity: placementMode === PLACEMENT_LABELS[field.key] ? 1 : 0.5, cursor: 'default' }}>
                     <span style={{ flex: 1 }}>
                         {field.label}
                         {NEXTSIM_REQUIRED_KEYS.has(field.key) && (
                             <span title={requiredDotTitle(field.key)} style={{ color: requiredDotColor(field.key), marginLeft: 5, fontSize: 10 }}>●</span>
                         )}
                     </span>
+                    {PLACEMENT_LABELS[field.key] && (
+                        <button
+                            onClick={(e) => { e.stopPropagation(); handleTogglePlacement(field.key); }}
+                            title={placementMode === PLACEMENT_LABELS[field.key] ? '배치 종료 (ESC)' : `지도를 클릭해 ${field.label} 배치`}
+                            style={placementMode === PLACEMENT_LABELS[field.key] ? placeBtnActiveStyle : placeBtnStyle}
+                        >
+                            {placementMode === PLACEMENT_LABELS[field.key] ? '■ 배치 중' : '📍 배치'}
+                        </button>
+                    )}
+                    {DUMMY_GENERATORS[field.key] && (
                     <button
                         onClick={(e) => { e.stopPropagation(); handleGenerate(field); }}
                         disabled={generatingKey === field.key || ktdbScaffolding}
@@ -392,6 +502,7 @@ const Facility = ({ fields }: FacilityProps) => {
                     >
                         {generatingKey === field.key ? '생성 중...' : ktdbScaffolding ? '서버 생성 중...' : '더미 생성'}
                     </button>
+                    )}
                 </div>
             ))}
 
@@ -446,6 +557,25 @@ const generateBtnStyle: React.CSSProperties = {
     padding: '2px 6px',
     borderRadius: 4,
     flexShrink: 0,
+};
+
+const placeBtnStyle: React.CSSProperties = {
+    background: 'rgba(255,180,70,0.12)',
+    border: '1px solid rgba(255,180,70,0.3)',
+    color: '#ffb347',
+    cursor: 'pointer',
+    fontSize: 9,
+    padding: '2px 6px',
+    borderRadius: 4,
+    flexShrink: 0,
+    marginRight: 4,
+};
+
+const placeBtnActiveStyle: React.CSSProperties = {
+    ...placeBtnStyle,
+    background: 'rgba(255,80,80,0.15)',
+    border: '1px solid rgba(255,80,80,0.35)',
+    color: '#ff6b6b',
 };
 
 export default Facility;

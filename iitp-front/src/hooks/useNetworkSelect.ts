@@ -30,8 +30,8 @@ import { assignPropertyToResponseData } from '@utils/guid';
 import { getNetworkLodTierByResolution } from '@utils/lodConstants';
 import { useModeStore } from '@stores/useModeStore';
 import { usePropertyStore } from '@stores/usePropertyStore';
-import { nextDrillDepth, resetDrill, cellIndexAtFrac } from '@utils/networkDrilldown';
-import { Network, Link, Node, Lane, Coordinates } from '@type/Network';
+import { useNetworkToolbarStore } from '@stores/useNetworkToolbarStore';
+import { Network, Link, Node, Lane, Segment, Coordinates } from '@type/Network';
 import { containsCoordinate } from 'ol/extent';
 import type { Extent } from 'ol/extent';
 import type OLMap from 'ol/Map';
@@ -556,6 +556,82 @@ function rebuildLanes(link: Link, numLane: number): Lane[] {
     }));
 }
 
+// ── 세그먼트(구간) 편집: block 토글 / 분할 / 병합 ────────────────────
+// 세그먼트는 레인을 종방향으로 나눈 구간(초/종점 m 단위 + block 플래그) — 실측 KTDB 데이터에서
+// 레인 드롭/합류 차로(우회전 전용차로 등, 링크 뒷부분만 block=True) 표현에 쓰인다.
+// linkId/laneIdx/segIdx 는 항상 배열 인덱스 기준(lane.id 값이 아님) — 클릭 드릴다운
+// (segmentIndexAtFrac) 및 다른 레인/셀 선택 코드(laneRef: lane.laneIdx)와 동일한 규약.
+
+// 실측 KTDB 데이터는 레인 드롭이 있는 레인에만 <segment>를 두고 나머지 레인은 segments가
+// 아예 빈 배열이다(예: 3차선 링크 중 최우측 레인만 segment 2개, 나머지는 0개). 빈 배열이면
+// "전체 길이가 통행 가능한 세그먼트 1개"인 것과 의미상 동일하므로, 편집·표시 양쪽 모두
+// 이 합성 세그먼트를 fallback으로 써야 한다 — 안 그러면 segIdx=0으로도 segments[0]이
+// undefined라 "구간보기"가 아무것도 못 그리고, toggle/split도 조용히 no-op 된다.
+export function getEffectiveSegments(lane: { segments?: Segment[] } | undefined, link: { length: number } | undefined): Segment[] {
+    if (lane?.segments && lane.segments.length > 0) return lane.segments;
+    return [{ id: 0, block: false, initPoint: 0, endPoint: link?.length ?? 0 }];
+}
+
+function updateLaneSegments(
+    network: Network, linkId: number | string, laneIdx: number,
+    updater: (segs: Segment[]) => Segment[],
+): Network {
+    return {
+        ...network,
+        links: network.links.map(l => {
+            if (String(l.id) !== String(linkId)) return l;
+            return {
+                ...l,
+                lanes: l.lanes.map((lane, i) => {
+                    if (i !== laneIdx) return lane;
+                    return { ...lane, segments: updater(getEffectiveSegments(lane, l)) };
+                }),
+            };
+        }),
+    };
+}
+
+export function toggleSegmentBlock(network: Network, linkId: number | string, laneIdx: number, segIdx: number): Network {
+    return updateLaneSegments(network, linkId, laneIdx, (segs) =>
+        segs.map((s, i) => i === segIdx ? { ...s, block: !s.block } : s)
+    );
+}
+
+// 세그먼트를 중간 지점(또는 splitPoint 지정 시 그 지점)에서 둘로 나눈다. 분할 후 id는
+// initPoint 순서대로 0..n-1 로 재부여(XML export 규약 — id가 배열 순서와 일치해야 함).
+export function splitSegmentInNetwork(
+    network: Network, linkId: number | string, laneIdx: number, segIdx: number, splitPoint?: number,
+): Network {
+    return updateLaneSegments(network, linkId, laneIdx, (segs) => {
+        const seg = segs[segIdx];
+        if (!seg) return segs;
+        const mid = splitPoint ?? (seg.initPoint + seg.endPoint) / 2;
+        if (!(mid > seg.initPoint && mid < seg.endPoint)) return segs; // 구간 밖 지점이면 분할 무시
+        const result = [...segs];
+        result.splice(segIdx, 1,
+            { ...seg, endPoint: mid },
+            { ...seg, initPoint: mid, endPoint: seg.endPoint },
+        );
+        return result.map((s, i) => ({ ...s, id: i }));
+    });
+}
+
+// segIdx 세그먼트를 인접 구간과 하나로 합친다 — 다음 구간이 있으면 다음과, 없으면(마지막
+// 구간) 이전 구간과. 병합 결과의 block 값은 두 구간 중 initPoint가 더 앞선(=먼저인) 쪽을 따른다.
+export function mergeSegmentInNetwork(network: Network, linkId: number | string, laneIdx: number, segIdx: number): Network {
+    return updateLaneSegments(network, linkId, laneIdx, (segs) => {
+        if (segs.length <= 1) return segs;
+        const withIdx = segIdx < segs.length - 1 ? segIdx + 1 : segIdx - 1;
+        if (withIdx < 0 || withIdx >= segs.length) return segs;
+        const lo = Math.min(segIdx, withIdx), hi = Math.max(segIdx, withIdx);
+        const first = segs[lo]!, second = segs[hi]!;
+        const merged: Segment = { ...first, initPoint: first.initPoint, endPoint: second.endPoint };
+        const result = segs.filter((_, i) => i !== lo && i !== hi);
+        result.splice(lo, 0, merged);
+        return result.map((s, i) => ({ ...s, id: i }));
+    });
+}
+
 export function updateLinkInNetwork(
     network: Network, linkId: number | string,
     patch: Partial<Pick<Link, 'numLane' | 'width' | 'maxSpd' | 'minSpd'>>,
@@ -1014,14 +1090,14 @@ export const useNetworkSelect = () => {
     // ── 상시 가이드: 선택 전/후 단계에 맞춰 안내 (토스트는 2초 후 사라져 조작법 안내 부적합) ──
     useEffect(() => {
         if (!isSelectActive) return;
-        const hasSingle = selectedLinkId !== null || selectedNodeId !== null || selectedLaneId !== null;
+        const hasSingle = selectedLinkId !== null || selectedNodeId !== null;
         const multiCount = selectedLinkIds.length + selectedNodeIds.length;
         if (selectedLinkId !== null) {
             useEditGuideStore.getState().setGuide({
                 title: '선택·편집 — 링크 선택됨',
                 steps: [
                     { keys: ['드래그'], text: '꼭짓점을 끌면 형상 변경 · 선 위를 끌면 그 자리에 정점 추가', em: true },
-                    { keys: ['우클릭'], text: '정점 위 = 정점 삭제 · 선 위 = 분할/방향 반전/삭제 메뉴' },
+                    { keys: ['맥락 툴바'], text: '반전/분할/속성/삭제 · 레인 위 클릭 시 "차선보기"로 세부 단계 진입' },
                     { keys: ['Delete'], text: '링크 삭제' },
                     { keys: ['Ctrl+Z'], text: '실행 취소' },
                 ],
@@ -1032,11 +1108,11 @@ export const useNetworkSelect = () => {
                 title: '선택·편집 — 노드 선택됨',
                 steps: [
                     { keys: ['드래그'], text: '파란 핸들을 잡고 끌면 이동합니다 (연결 도로가 따라옵니다)', em: true },
-                    { keys: ['우클릭'], text: '교차로 생성/재생성 메뉴' },
+                    { keys: ['맥락 툴바'], text: '교차로 생성/좌표편집/병합/삭제' },
                     { keys: ['Delete'], text: '노드 삭제 (연결 링크도 함께 — 확인 후 진행)' },
                     { keys: ['Ctrl+Z'], text: '실행 취소' },
                 ],
-                tip: '패널에서 좌표 직접 입력·가까운 노드와 병합도 할 수 있어요.',
+                tip: '클릭 지점에 뜨는 툴바에서 좌표 직접 입력·가까운 노드와 병합도 할 수 있어요.',
             });
         } else if (multiCount > 0) {
             useEditGuideStore.getState().setGuide({
@@ -1059,7 +1135,7 @@ export const useNetworkSelect = () => {
             });
         }
         return () => { useEditGuideStore.getState().clear(); };
-    }, [isSelectActive, selectedLinkId, selectedNodeId, selectedLaneId, selectedLinkIds, selectedNodeIds]);
+    }, [isSelectActive, selectedLinkId, selectedNodeId, selectedLinkIds, selectedNodeIds]);
 
     const selSrcRef   = useRef<VectorSource | null>(null);
     const hoverSrcRef = useRef<VectorSource | null>(null);
@@ -1117,6 +1193,7 @@ export const useNetworkSelect = () => {
 
         return () => {
             useNetworkDrawStore.getState().clearSelection();
+            useNetworkToolbarStore.getState().hide();
             dragStateRef.current   = null;
             linkEditRef.current    = null;
             nodeEditRef.current    = null;
@@ -1182,10 +1259,10 @@ export const useNetworkSelect = () => {
         return unsub;
     }, [selectedLinkId, selectedNodeId, selectedLaneId, isSelectActive]);
 
-    // 모드 전환(보기↔편집) 시 선택 초기화 (확정 요구사항) + 드릴다운 깊이 리셋
+    // 모드 전환(보기↔편집) 시 선택 초기화 (확정 요구사항) — 맥락 툴바도 함께 닫음
     useEffect(() => {
         useNetworkDrawStore.getState().clearSelection();
-        resetDrill();
+        useNetworkToolbarStore.getState().hide();
     }, [appMode]);
 
     // ── OL 포인터 이벤트 (선택 + Ctrl+드래그 편집) ──────────────
@@ -1509,9 +1586,11 @@ export const useNetworkSelect = () => {
                         }
                         if (hitNodeIds.length > 0) {
                             useNetworkDrawStore.getState().setSelectedNodeIds(hitNodeIds);
+                            useNetworkToolbarStore.getState().show({ x: e.clientX, y: e.clientY }, 'node', {});
                             useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${hitNodeIds.length}개 선택됨` });
                         } else if (hitLinkIds.length > 0) {
                             useNetworkDrawStore.getState().setSelectedLinkIds(hitLinkIds);
+                            useNetworkToolbarStore.getState().show({ x: e.clientX, y: e.clientY }, 'link', {});
                             useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${hitLinkIds.length}개 선택됨` });
                         }
                     }
@@ -1620,48 +1699,71 @@ export const useNetworkSelect = () => {
 
             if (e.shiftKey) {
                 // Shift+클릭: 멀티셀렉트 토글 (레인은 멀티셀렉트 미지원 → 링크로)
-                if (node) { useNetworkDrawStore.getState().toggleSelectedNodeId(String(node.id)); return; }
-                if (link) { useNetworkDrawStore.getState().toggleSelectedLinkId(String(link.id)); return; }
+                // 맥락 툴바는 selectedLinkIds/selectedNodeIds 개수를 직접 보고 멀티선택 바를
+                // 그리므로, 여기선 위치만 갱신해두면(level은 무시됨) 계속 같은 지점에 뜬다.
+                if (node) {
+                    useNetworkDrawStore.getState().toggleSelectedNodeId(String(node.id));
+                    const { selectedNodeIds } = useNetworkDrawStore.getState();
+                    if (selectedNodeIds.length > 0) useNetworkToolbarStore.getState().show({ x: e.clientX, y: e.clientY }, 'node', {});
+                    else useNetworkToolbarStore.getState().hide();
+                    return;
+                }
+                if (link) {
+                    useNetworkDrawStore.getState().toggleSelectedLinkId(String(link.id));
+                    const { selectedLinkIds } = useNetworkDrawStore.getState();
+                    if (selectedLinkIds.length > 0) useNetworkToolbarStore.getState().show({ x: e.clientX, y: e.clientY }, 'link', {});
+                    else useNetworkToolbarStore.getState().hide();
+                    return;
+                }
                 return;
             }
 
-            // 선택 시 drawStore(하이라이트/편집핸들) + usePropertyStore(속성창 PropertyModal) 동시 세팅.
+            // 선택 시 drawStore(하이라이트/편집핸들) + usePropertyStore(속성창 PropertyModal) +
+            // 맥락 툴바(클릭 지점에 뜨는 작은 버튼바) 동시 세팅.
             //   MVT 라 링크/레인은 OL 피처 히트(handleOLSelect)로 못 잡혀 여기서 데이터 기반으로 세팅.
             const setProps = usePropertyStore.getState().setSelectedProps;
+            const clickPos = { x: e.clientX, y: e.clientY };
             if (node) {
-                resetDrill();
                 useNetworkDrawStore.getState().setSelectedNode(node.id);
-                setProps({ ...node, featureType: 'nodes' } as any); return;
+                setProps({ ...node, featureType: 'nodes' } as any);
+                useNetworkToolbarStore.getState().show(clickPos, 'node', { nodeId: String(node.id) });
+                return;
             }
-            // 도로 위(레인 히트) → 드릴다운: 같은 링크 반복 클릭 시 링크→레인→셀 깊이 증가.
+            // 도로 위(레인 히트) → 항상 링크 레벨 툴바를 띄우되, 클릭한 레인/위치를 세션에 담아둔다.
+            // 툴바의 "차선보기" 버튼이 재클릭 없이 이 정보로 바로 레인 단계까지 들어간다.
             if (lane) {
                 const link0 = network.links.find(l => String(l.id) === lane.linkId);
-                const laneObj = link0?.lanes?.[lane.laneIdx];
-                const depth = nextDrillDepth(lane.linkId);
-                console.log("[drill] depth=", depth, "linkId=", lane.linkId, "laneIdx=", lane.laneIdx, "cells수=", laneObj?.cells?.length, "numCell=", laneObj?.numCell, "segments수=", laneObj?.segments?.length);
-                if (depth === 'link' && link0) {
+                if (link0) {
+                    const ll = toLonLat(coord);
                     useNetworkDrawStore.getState().setSelectedLink(link0.id);
-                    setProps({ ...link0, featureType: 'links' } as any); return;
-                }
-                if (depth === 'lane' && laneObj) {
-                    useNetworkDrawStore.getState().setSelectedLane(`${lane.linkId}_${lane.laneIdx}`);
-                    setProps({ ...laneObj, featureType: 'lanes', linkRef: lane.linkId, laneRef: lane.laneIdx } as any); return;
-                }
-                if (depth === 'cell' && laneObj && link0) {
-                    const ci = cellIndexAtFrac(laneObj, link0, lane.frac);
-                    const cellObj = laneObj.cells?.[ci];
-                    setProps({ ...(cellObj ?? {}), featureType: 'cells', linkRef: lane.linkId, laneRef: lane.laneIdx, cellIdx: ci, __guid: cellObj?.__guid ?? `${lane.linkId}_lane${lane.laneIdx}_cell${ci}` } as any);
-                    useNetworkDrawStore.getState().setSelectedLane(`${lane.linkId}_${lane.laneIdx}`); return;
+                    setProps({ ...link0, featureType: 'links' } as any);
+                    useNetworkToolbarStore.getState().show(
+                        clickPos, 'link',
+                        { linkId: String(link0.id), laneIdx: lane.laneIdx },
+                        { hitFrac: lane.frac, clickCoord: { lng: ll[0]!, lat: ll[1]! } },
+                    );
+                    return;
                 }
             }
             if (link) {
-                resetDrill();
+                const ll = toLonLat(coord);
                 useNetworkDrawStore.getState().setSelectedLink(link.id);
-                setProps({ ...link, featureType: 'links' } as any); return;
+                setProps({ ...link, featureType: 'links' } as any);
+                useNetworkToolbarStore.getState().show(
+                    clickPos, 'link',
+                    { linkId: String(link.id) },
+                    { clickCoord: { lng: ll[0]!, lat: ll[1]! } },
+                );
+                return;
             }
-            resetDrill();
             useNetworkDrawStore.getState().clearSelection();
             usePropertyStore.getState().setSelectedProps(null);
+            useNetworkToolbarStore.getState().hide();
+            // 선택 모드에서 도로/노드가 하나도 없는 빈 지형을 클릭 — 보통 "여기서부터 새 도로를
+            // 그리고 싶다"는 의도라 실사용 요청으로 그리기 모드로 자동 전환한다. beginDrawAt이
+            // 이 클릭 좌표를 draw effect의 시작점으로 직접 주입하므로 재클릭 없이 바로 그려진다.
+            const ll = toLonLat(coord);
+            useNetworkDrawStore.getState().beginDrawAt({ lng: ll[0]!, lat: ll[1]! });
         };
         vp.addEventListener('click', onClick, true);
 
@@ -1671,6 +1773,7 @@ export const useNetworkSelect = () => {
                     selectedLinkIds, selectedNodeIds } = useNetworkDrawStore.getState();
             if (e.key === 'Escape') {
                 useNetworkDrawStore.getState().clearSelection();
+                useNetworkToolbarStore.getState().hide();
             } else if (e.key === 'Delete' || e.key === 'Backspace') {
                 // 삭제는 편집 조작 → 선택 모드 전용(보기모드는 선택만).
                 if (!useNetworkDrawStore.getState().isSelectActive) return;

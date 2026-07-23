@@ -1108,6 +1108,7 @@ export const useNetworkDraw = () => {
 
         // 교차로 지정 후 자동 시작점 설정 (outPort 없는 노드에서 draw 시작)
         const pendingId = useNetworkDrawStore.getState().pendingStartNodeId;
+        const pendingCoord = useNetworkDrawStore.getState().pendingStartCoord;
         if (pendingId !== null) {
             useNetworkDrawStore.getState().clearPendingStart();
             const data = useNetworkStore.getState().currentJsonData;
@@ -1125,6 +1126,15 @@ export const useNetworkDraw = () => {
             } else {
                 setDrawGuide('start');
             }
+        } else if (pendingCoord !== null) {
+            // 빈 지형 클릭으로 그리기 시작(useNetworkSelect.ts의 beginDrawAt) — 스냅 노드 없이
+            // 그 좌표를 그대로 시작점으로 삼는다. 재클릭 불필요.
+            useNetworkDrawStore.getState().clearPendingStart();
+            const olCoord = fromLonLat([pendingCoord.lng, pendingCoord.lat]);
+            startOlCoordRef.current = olCoord;
+            startNodeIdRef.current  = null;
+            startWgs84Ref.current   = pendingCoord;
+            setDrawGuide('segment');
         } else {
             // 이전 이어 그리기 체인의 끝점이 남아있으면(그리기 중지 → 팬 → 재시작) 자동 재개.
             // 타일 모드는 그리기 활성 중 팬이 동결되므로, 화면 밖으로 이어지는 도로는 이
@@ -1782,7 +1792,9 @@ export const useNetworkDraw = () => {
                 useMessageStore.getState().setMessage({ type: 'info', text: '구간을 취소했습니다.' });
                 setDrawGuide('start');
             } else {
-                useNetworkDrawStore.getState().setActive(false);
+                // 시작점 없는 상태에서 우클릭 취소 = "그리기 자체를 그만두겠다" → 선택 모드로 복귀
+                // (모드 버튼이 없으므로 여기서 안 돌려보내면 사용자가 다시 손 댈 방법이 없어짐).
+                useNetworkDrawStore.getState().exitToSelect();
             }
         };
 
@@ -1796,7 +1808,8 @@ export const useNetworkDraw = () => {
                 altRef.current = true;
                 if (lastOlCursorRef.current) renderOlPreview(lastOlCursorRef.current);
             }
-            if (e.key === 'Escape') useNetworkDrawStore.getState().setActive(false);
+            // ESC = 그리기 완전 종료 → 선택 모드로 복귀(모드 버튼이 없으므로 필수).
+            if (e.key === 'Escape') useNetworkDrawStore.getState().exitToSelect();
         };
         const onKeyUp = (e: KeyboardEvent) => {
             if (e.key === 'Shift') {
@@ -2426,6 +2439,32 @@ export const useNetworkDraw = () => {
 
         renderNodePhase();
 
+        // 노드 선택 맥락 툴바의 "커넥션 편집" 버튼으로 진입한 경우 — 지도에서 노드를 다시
+        // 클릭할 필요 없이 그 노드로 곧장 phase='edit' 점프(클릭 핸들러의 node phase 진입
+        // 로직, L2467-2482과 동일한 처리를 재현).
+        {
+            const pendingConnNodeId = useNetworkDrawStore.getState().pendingConnNodeId;
+            if (pendingConnNodeId != null) {
+                useNetworkDrawStore.getState().clearPendingConnNode();
+                const network = useNetworkStore.getState().currentJsonData;
+                const targetNode = network?.nodes.find((n: any) => String(n.id) === String(pendingConnNodeId));
+                if (targetNode) {
+                    selectedNodeId = targetNode.id;
+                    phase = 'edit';
+                    fromSel = null;
+                    const view = olMap.getView();
+                    const curRes = view.getResolution() ?? 1;
+                    const EDIT_RES = 0.28; // renderNodePhase 클릭 핸들러와 동일 임계값
+                    const center = fromLonLat([targetNode.coordinates.lng, targetNode.coordinates.lat]);
+                    if (curRes > EDIT_RES + 0.02) {
+                        view.animate({ center, resolution: EDIT_RES, duration: 350 }, () => renderEditPhase());
+                    } else {
+                        renderEditPhase();
+                    }
+                }
+            }
+        }
+
         // ── 클릭 이벤트 ──────────────────────────────────────
         const CLICK_TOL = 14;
         const onClick = (e: MouseEvent) => {
@@ -2515,7 +2554,9 @@ export const useNetworkDraw = () => {
             if (e.key === 'Escape') {
                 if (phase === 'lane') { fromSel = null; phase = 'edit'; renderEditPhase(); }
                 else if (phase === 'edit') { phase = 'node'; selectedNodeId = null; renderNodePhase(); }
-                else { useNetworkDrawStore.getState().setConnectionActive(false); }
+                // node phase에서 한 번 더 ESC = 커넥션 편집 완전 종료 → 선택 모드로 복귀
+                // (모드 버튼이 없으므로 필수 — setConnectionActive(false) 단독으론 갈 곳이 없음).
+                else { useNetworkDrawStore.getState().exitToSelect(); }
             }
             if ((e.key === 'a' || e.key === 'A') && phase === 'edit') autoGenConnections();
             if ((e.key === 'Delete' || e.key === 'Backspace') && phase === 'edit' && selectedNodeId) {
