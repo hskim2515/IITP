@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { getActiveVersionId } from "@utils/versionId";
 import { useLayerStore } from '@stores/useLayerStore';
 import { LayerField } from "@stores/useLayerSchemaStore";
@@ -9,12 +9,10 @@ import { useNetworkDrawStore, PlacementMode } from '@stores/useNetworkDrawStore'
 import { useVehicleStore } from '@stores/useVehicleStore';
 import { useSimulationStore } from '@stores/useSimulationStore';
 import { useSignalStore } from '@stores/useSignalStore';
-import { useBusStationStore } from '@stores/useBusStationStore';
-import { useRailStationStore } from '@stores/useRailStationStore';
 import { useLogStore } from '@stores/useLogStore';
 import { useNetworkTileStore } from '@stores/useNetworkTileStore';
 import { NETWORK_TILING } from '@utils/lodConstants';
-import { assignPropertyToResponseData, generateGUIDWithType } from '@utils/guid';
+import { assignPropertyToResponseData } from '@utils/guid';
 import { generateDummySignals } from '@utils/signal';
 import { generateDummyPavementMarkings } from '@utils/pavementMarking';
 import { getNetworkForDummyGeneration } from '@utils/generationNetwork';
@@ -23,8 +21,6 @@ import { showAlert, showConfirm } from '@utils/dialog';
 import { NEXTSIM_REQUIRED_KEYS } from '@utils/nextSimValidation';
 import { useNextSimReadinessStore } from '@stores/useNextSimReadinessStore';
 import { useBackgroundTaskStore } from '@stores/useBackgroundTaskStore';
-import { useEditGuideStore } from '@stores/useEditGuideStore';
-import { createEventHandlers } from '@handler/createEventHandlers';
 import styles from "@css/ToolsPanel.module.css";
 
 export interface FacilityProps {
@@ -83,75 +79,10 @@ const Facility = ({ fields }: FacilityProps) => {
     // 안 됨 — 같은 신호 데이터를 프론트/백엔드가 동시에 다른 경로로 써서 서로 덮어쓸 수 있다.
     const ktdbScaffolding = useBackgroundTaskStore((s) => !!s.tasks['ktdb-scaffold']);
     const placementMode = useNetworkDrawStore((s) => s.placementMode);
-
-    // ── 시설물 배치 모드(버스정류장/지하철역/신호): createEventHandlers 등록 + 완료 시 자동 해제 ──
-    const placementCleanupRef = useRef<(() => void) | null>(null);
-    useEffect(() => {
-        if (placementMode === 'none') {
-            placementCleanupRef.current?.();
-            placementCleanupRef.current = null;
-            return;
-        }
-
-        const featureTypeMap = {
-            busStation: 'busStations',
-            railStation: 'railStations',
-            signal: 'signals',
-        } as const;
-        const featureType = featureTypeMap[placementMode];
-        const guid = generateGUIDWithType(featureType);
-
-        const placementLabel = { busStation: '버스 정류장', railStation: '철도역', signal: '신호등' }[placementMode];
-        useEditGuideStore.getState().setGuide({
-            title: `시설물 배치 — ${placementLabel}`,
-            steps: [
-                { keys: ['클릭'], text: `지도에서 ${placementLabel}을(를) 놓을 위치를 클릭하세요`, em: true },
-                { keys: ['ESC'], text: '배치 종료 → 선택 모드로 복귀' },
-            ],
-            tip: '배치 후 속성 창에서 상세 정보를 수정할 수 있어요.',
-        });
-
-        const record: Record<string, any> = { featureType, __guid: guid, id: Date.now() };
-        if (placementMode === 'signal') {
-            record.turning = 'Straight';
-            record.type = 'TrafficLight';
-        }
-
-        const handlerCleanup = createEventHandlers(record);
-
-        // 대상 스토어 구독: 새 항목이 추가되면 배치 모드 종료 → 선택 모드로 복귀(모드 버튼이
-        // 없으므로 배치가 끝났는데도 아무 모드로도 안 돌아가면 그다음 클릭이 아무 반응이 없다).
-        const targetStore = { busStation: useBusStationStore, railStation: useRailStationStore, signal: useSignalStore }[placementMode];
-        const getCount = (data: any) => Object.values(data ?? {}).flat().length;
-        const prevCount = getCount(targetStore.getState().currentJsonData);
-        const unsubscribe = (targetStore as any).subscribe(
-            (state: any) => state.currentJsonData,
-            (data: any) => {
-                if (getCount(data) > prevCount) useNetworkDrawStore.getState().exitToSelect();
-            },
-            { equalityFn: (a: any, b: any) => a === b }
-        );
-
-        placementCleanupRef.current = () => {
-            handlerCleanup?.();
-            unsubscribe();
-            useEditGuideStore.getState().clear();
-        };
-
-        return () => {
-            placementCleanupRef.current?.();
-            placementCleanupRef.current = null;
-        };
-    }, [placementMode]);
-
-    // ESC 키로 배치 모드 취소 → 선택 모드로 복귀
-    useEffect(() => {
-        const handleKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape' && placementMode !== 'none') useNetworkDrawStore.getState().exitToSelect();
-        };
-        document.addEventListener('keydown', handleKeyDown);
-        return () => document.removeEventListener('keydown', handleKeyDown);
-    }, [placementMode]);
+    // 배치 모드의 클릭 리스너/ESC 취소는 usePlacementMode(Maps.tsx, 항상 마운트)가 담당한다 —
+    // 이 컴포넌트(레이어 팝업의 "시설물" 탭)는 팝업을 닫거나 다른 탭으로 넘어가면 언마운트되므로,
+    // 여기 두면 배치 모드를 켠 채로 팝업을 닫는 순간 클릭이 먹통이 되는 문제가 있었다. 여기서는
+    // 버튼(상태 토글)만 담당한다.
 
     const handleTogglePlacement = (key: string) => {
         const mode = PLACEMENT_LABELS[key];

@@ -21,6 +21,7 @@ import Divider from "@component/map/Divider";
 import ToolsPanel from "@component/tool/ToolsPanel";
 import { useNetworkDraw } from "@hooks/useNetworkDraw";
 import { useNetworkSelect } from "@hooks/useNetworkSelect";
+import { usePlacementMode } from "@hooks/usePlacementMode";
 import { useOsmBboxDraw } from "@hooks/useOsmBboxDraw";
 import useNetworkStationModify from "@hooks/useNetworkStationModify";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
@@ -103,6 +104,7 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     useDefaultMoveMouse();
     useNetworkDraw();
     useNetworkSelect();
+    usePlacementMode();
     useNetworkStationModify();
     useOsmBboxDraw();
     useCoordPick();
