@@ -313,3 +313,13 @@ UPDATE menu SET parents_id = 2, depth = 1, root_id = 2, sort_order = 7 WHERE men
 UPDATE menu SET parents_id = 2, depth = 1, root_id = 2, sort_order = 8, available = 'N' WHERE menu_id = 34;  -- SIMULATION_LEVEL
 DELETE FROM menu WHERE menu_id = 11;  -- SIMULATION_CONFIG (자식 없는 사문화 노드)
 DELETE FROM menu WHERE menu_id = 3;   -- SIMULATION 최상위 메뉴
+
+-- ── 2026-07-21 (추가): 편집 메뉴에서 SIMULATION_SCENARIO 제거 ────────────────
+-- 바로 위에서 "유일한 실동작 항목"이라 EDIT 하위로 남겨뒀던 SIMULATION_SCENARIO
+-- (시작/종료시간·warm-up·OD Matrix ID 등 시뮬레이션 시나리오 테이블 편집기)를
+-- 다시 제거한다 — 사용자 확인 결과 이 데이터 자체는 여전히 쓰이지만, 편집
+-- 메뉴의 독립 화면이 아니라 메인 페이지의 시나리오 생성/편집 흐름에서
+-- 관리되어야 할 성격이라 판단됨(그 UI는 별도 작업으로 남음). 자식 노드 없음
+-- 확인 후 삭제. DataIOPanel의 export/import(LAYER_CONFIG 'simulationScenario')
+-- 등 이 메뉴와 무관한 경로는 영향 없음.
+DELETE FROM menu WHERE menu_code = 'SIMULATION_SCENARIO';

@@ -23,6 +23,7 @@ import { useNetworkDraw } from "@hooks/useNetworkDraw";
 import { useNetworkSelect } from "@hooks/useNetworkSelect";
 import { usePlacementMode } from "@hooks/usePlacementMode";
 import { useOsmBboxDraw } from "@hooks/useOsmBboxDraw";
+import { useKtdbPolygonDraw } from "@hooks/useKtdbPolygonDraw";
 import useNetworkStationModify from "@hooks/useNetworkStationModify";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import NodeContextMenu from "@component/tool/NodeContextMenu";
@@ -93,8 +94,8 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     const roadviewEnabledInEdit = useMapStore((s) => s.roadviewEnabledInEdit);
     const setRoadviewEnabledInEdit = useMapStore((s) => s.setRoadviewEnabledInEdit);
     // 거리뷰 활성 조건:
-    //   - 편집모드: 3D 영역은 기본적으로 로드뷰(배경지도 무관, 키만 있으면), 단 사용자가
-    //     roadviewEnabledInEdit 를 꺼두면 로드뷰가 없는/무의미한 구간 편집 시 3D 지도를 그대로 볼 수 있음.
+    //   - 편집모드: 기본 꺼짐 — 사용자가 roadviewEnabledInEdit 를 직접 켜야 나타난다(편집 중
+    //     2D 지도를 옮길 때마다 자동으로 따라다니는 게 거슬린다는 피드백으로 자동 노출을 없앰).
     //   - 보기모드: 네이버 배경 선택 시에만 로드뷰.
     //   공통: 3D 화면이 보일 때(mapViewMode !== '2D')만.
     const panoActive = naverKeyEnv && mapViewMode !== '2D' && ((appMode === 'edit' && roadviewEnabledInEdit) || naverKeyed);
@@ -107,6 +108,7 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     usePlacementMode();
     useNetworkStationModify();
     useOsmBboxDraw();
+    useKtdbPolygonDraw();
     useCoordPick();
 
     const getContainerWidth = useCallback(() => {
@@ -173,12 +175,19 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     const leftWidth = `${dividerX}px`;
     const rightWidth = `${Math.max(containerWidth - (dividerX ?? 0), 0)}px`;
 
+    // 편집모드 + 분할 화면에서 로드뷰를 꺼면(로드뷰가 없는/무의미한 구간) 3D 패널은
+    // 그냥 평범한 3D 지도로 남는데, 편집은 2D에서 하므로 그 3D 패널이 화면 절반을
+    // 차지할 이유가 없다 — 이때는 2D를 단일 모드처럼 전체 폭으로 확장한다.
+    // (3D 단일 모드는 사용자가 명시적으로 3D를 보려고 고른 것이므로 대상에서 제외)
+    const editRoadviewOffExpand2D =
+        appMode === 'edit' && mapViewMode === 'split' && naverKeyEnv && !roadviewEnabledInEdit;
+
     // 두 지도를 absolute로 겹쳐두고 visibility로 전환.
     // width:0 으로 숨기면 WebGL 컨텍스트가 중단되어 preRender 이벤트가 멈추고
     // 시뮬레이션 업데이트 루프가 끊기기 때문에 이 방식을 사용.
-    const useStackedLayout = singleMapMode || mapViewMode !== 'split';
+    const useStackedLayout = singleMapMode || mapViewMode !== 'split' || editRoadviewOffExpand2D;
     const olVisible = mapViewMode !== '3D';
-    const cesiumVisible = mapViewMode !== '2D';
+    const cesiumVisible = mapViewMode !== '2D' && !editRoadviewOffExpand2D;
 
     const olStyle = useStackedLayout
         ? {
@@ -323,13 +332,13 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
                 </div>
             )}
 
-            {/* 편집모드 로드뷰 강제 표시 on/off — 로드뷰가 없는/무의미한 구간 편집 시
-                꺼서 3D 지도(전체 조망)를 그대로 볼 수 있게. */}
+            {/* 편집모드 로드뷰 on/off — 기본 꺼짐, 사용자가 명시적으로 켜야 표시된다.
+                위치는 2D 지도 위 마커를 드래그해 옮길 수 있다(useNaverPanorama 참고). */}
             {!ONLY_3D && naverKeyEnv && appMode === 'edit' && mapViewMode !== '2D' && (
                 <button
                     className={roadviewEnabledInEdit ? styles.mapModeBtnActive : styles.mapModeBtn}
                     onClick={() => setRoadviewEnabledInEdit(!roadviewEnabledInEdit)}
-                    title={roadviewEnabledInEdit ? '로드뷰 끄기 (3D 지도로 전환)' : '로드뷰 켜기'}
+                    title={roadviewEnabledInEdit ? '로드뷰 끄기 (3D 지도로 전환)' : '로드뷰 켜기 (켠 뒤 2D 마커를 드래그해 위치 이동 가능)'}
                     style={{ position: 'absolute', top: 8, right: 8, zIndex: 6 }}
                 >
                     로드뷰 {roadviewEnabledInEdit ? 'ON' : 'OFF'}
@@ -359,7 +368,7 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
                 />
             )}
 
-            {!singleMapMode && mapViewMode === 'split' && !ONLY_3D && <Divider onMouseDown={handleMouseDown}/>}
+            {!singleMapMode && mapViewMode === 'split' && !ONLY_3D && !editRoadviewOffExpand2D && <Divider onMouseDown={handleMouseDown}/>}
 
             {/* 네이버 파노라마 전용 모드: 네이버 배경+3D면 Cesium 위 전경으로 풀표시. 사용자가 파노라마
                 자체를 조작(거리뷰 둘러보기·이동). pointerEvents:auto 로 입력 받음. */}

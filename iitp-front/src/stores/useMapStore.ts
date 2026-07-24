@@ -12,7 +12,7 @@ interface State {
     coordPickCallback: ((lat: number, lng: number) => void) | null;
     /** 네이버 파노라마(로드뷰) 표시 중 — Cesium 캔버스를 덮으므로 Cesium→OL 동기화 차단용 */
     panoramaActive: boolean;
-    /** 편집모드에서 로드뷰를 강제 표시할지 — 로드뷰가 없는/무의미한 구간 편집 시 끄고 3D 지도를 보기 위함 */
+    /** 편집모드에서 로드뷰를 표시할지 — 기본 꺼짐(사용자가 명시적으로 켜야 나타남). */
     roadviewEnabledInEdit: boolean;
 }
 
@@ -34,7 +34,7 @@ const initialState: State = {
     mapViewMode: 'split',
     coordPickCallback: null,
     panoramaActive: false,
-    roadviewEnabledInEdit: true,
+    roadviewEnabledInEdit: false,
 }
 
 export const useMapStore = createSelectors(

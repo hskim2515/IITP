@@ -25,6 +25,7 @@ import { extractFeatureTypeFromGuid } from "@utils/guid";
 import { saveNetworkDiffTileAware } from "@utils/networkDiff";
 import { reconcileNetworkHistoryTileState } from "@utils/networkHistory";
 import { NETWORK_TILING } from "@utils/lodConstants";
+import { useNetworkTileStore } from "@stores/useNetworkTileStore";
 import { MenuTreeResponse } from "@type/openapi.gen";
 import styles from "@css/PropertyPanel.module.css";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
@@ -50,6 +51,11 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     const historyStore = menuCodeToHistoryStoreMap[activeSubmenu.menuCode];
 
     const currentJsonData = store(useShallow((state: { currentJsonData: unknown }) => state.currentJsonData));
+    // 네트워크 타일 모드: 줌아웃(overview/mid)에서는 편집 그리드가 "마지막으로 불러온 화면 범위"
+    // 데이터를 그대로 유지한다(NetworkFeatureLayer.updateTiles 참고) — 실시간이 아님을 배너로 안내.
+    const isNetworkMenu = activeSubmenu.menuCode === "NETWORK";
+    const gridDataFrozen = useNetworkTileStore((s) => s.gridDataFrozen);
+    const gridDataOutOfRange = useNetworkTileStore((s) => s.gridDataOutOfRange);
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const selectedScenario = useScenarioStore.getState().selectedScenario;
     const selectedScenarioVersion = useScenarioStore.getState().selectedScenarioVersion;
@@ -283,6 +289,13 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                     )}
                     {submenu.item?.layer && (
                         <div className={styles.gridWrap}>
+                            {isNetworkMenu && gridDataFrozen && (
+                                <div className={`${styles.gridStaleBanner} ${gridDataOutOfRange ? styles.outOfRange : ""}`}>
+                                    {gridDataOutOfRange
+                                        ? "⚠ 목록이 현재 지도 화면 범위와 다릅니다 — 이전에 불러온 위치의 도로 데이터입니다. 최신 목록을 보려면 해당 위치로 줌인하세요."
+                                        : "ℹ 줌아웃 상태입니다 — 목록은 마지막으로 불러온 화면 범위(줌인 상태)의 도로 데이터입니다. 실시간으로 갱신되지 않습니다."}
+                                </div>
+                            )}
                             {activeSubmenu.menuCode === "SIGNAL_TOD" ? (
                                 <SignalTodTimelineEditor containerHeight={height} />
                             ) : activeSubmenu.menuCode === "SIGNAL" ? (

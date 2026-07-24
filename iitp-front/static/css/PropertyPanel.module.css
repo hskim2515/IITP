@@ -250,3 +250,18 @@
     width: 99%;
     padding: 6px 10px;
 }
+
+.gridStaleBanner {
+    font-size: 12px;
+    padding: 6px 10px;
+    margin-bottom: 6px;
+    border-radius: 4px;
+    background: rgba(255, 193, 7, 0.15);
+    border: 1px solid rgba(255, 193, 7, 0.4);
+    color: #7a5b00;
+}
+.gridStaleBanner.outOfRange {
+    background: rgba(220, 53, 69, 0.12);
+    border-color: rgba(220, 53, 69, 0.4);
+    color: #a1202f;
+}

@@ -1071,25 +1071,6 @@ export const useNetworkDraw = () => {
         return () => window.removeEventListener('beforeunload', onBeforeUnload);
     }, []);
 
-    // ── 항상 활성: 그리기/커넥션/배치 모드 중 주기적 자동저장 ─────────────
-    // 넓은 지역을 오래 그릴 때 수동 저장을 잊기 쉬우므로, 편집 모드가 켜져있는 동안
-    // 60초마다 변경사항이 있으면 autoSaveChangedLayers 로 체크포인트를 남긴다
-    // (diff 저장이라 부담 적음 — saveNetworkDiffTileAware 가 뷰포트분만 전송).
-    useEffect(() => {
-        const AUTOSAVE_INTERVAL_MS = 60_000;
-        const timer = setInterval(async () => {
-            const draw = useNetworkDrawStore.getState();
-            if (!draw.isActive && !draw.isConnectionActive && draw.placementMode === 'none') return;
-            if (!useNetworkStore.getState().isChanged) return;
-            const { getActiveVersionId } = await import('@utils/versionId');
-            const versionKey = getActiveVersionId();
-            if (!versionKey) return;
-            const { autoSaveChangedLayers } = await import('@utils/autoSave');
-            await autoSaveChangedLayers(versionKey);
-        }, AUTOSAVE_INTERVAL_MS);
-        return () => clearInterval(timer);
-    }, []);
-
     // ── OL 이벤트 & 프리뷰 ──────────────────────────────────────
     useEffect(() => {
         if (!olMap || !isActive) return;
@@ -1655,8 +1636,21 @@ export const useNetworkDraw = () => {
 
         // ── OL 이벤트 핸들러 (capture phase → 다른 핸들러 차단) ──
         let olMoveRafId: number | null = null;
+
+        // 팬 드래그와 점 찍기를 구분하기 위한 기준점. 네이티브 click 이벤트는 mousedown~up
+        // 사이 이동거리와 무관하게 발생하므로(브라우저가 드래그라고 자체적으로 click을
+        // 걸러주지 않음), pointerdown 위치를 기록해뒀다가 click 시점에 이동거리를 직접
+        // 검사한다 — 그렇지 않으면 지도를 드래그로 팬하려는 클릭마다 그 자리에 점이 찍힌다.
+        let pointerDownPos: { x: number; y: number } | null = null;
+        const DRAG_CLICK_THRESHOLD_SQ = 36; // 6px
+        const onPointerDown = (e: PointerEvent) => {
+            pointerDownPos = { x: e.clientX, y: e.clientY };
+        };
+
         const onPointerMove = (e: PointerEvent) => {
-            e.stopPropagation();
+            // stopPropagation 하지 않음 — 막으면 드래그 팬 중 OL DragPan이 move를 못 받아
+            // pointerdown은 되는데 실제로 지도가 안 움직이는 문제가 생긴다. 프리뷰 렌더링은
+            // 전파를 막을 필요가 없는 순수 부가 동작이라 그냥 흘려보내도 무방하다.
             const coord = olMap.getEventCoordinate(e);
             lastOlCursorRef.current = coord;
             // RAF 스로틀: 프레임당 1회만 snap 계산 + 렌더링
@@ -1671,6 +1665,14 @@ export const useNetworkDraw = () => {
 
         const onClick = (e: MouseEvent) => {
             e.stopPropagation();   // 다른 OL 핸들러로 전달 차단
+
+            // 지도를 패닝하려던 드래그였다면(mousedown~click 사이 이동거리가 큼) 점을
+            // 찍지 않고 무시 — 이동거리 검사는 위 pointerDownPos 주석 참고.
+            if (pointerDownPos) {
+                const dx = e.clientX - pointerDownPos.x;
+                const dy = e.clientY - pointerDownPos.y;
+                if (dx * dx + dy * dy > DRAG_CLICK_THRESHOLD_SQ) return;
+            }
 
             // 더블클릭의 2번째 click: 이어 그리기 체인 종료 (draw 모드 유지)
             if (e.detail >= 2) {
@@ -1822,13 +1824,15 @@ export const useNetworkDraw = () => {
             }
         };
 
-        // capture: true → 이벤트가 다른 OL 핸들러에 도달하기 전에 가로챔
-        // pointerdown/pointerup도 막아야 OL 내부 interaction이 차단됨
+        // capture: true → 이벤트가 다른 OL 핸들러에 도달하기 전에 가로챔.
+        // pointerdown/pointerup 자체는 stopPropagation 하지 않는다 — 막으면 OL DragPan이
+        // pointerdown을 아예 못 봐서 그리기 중엔 지도 자체를 못 움직이게 된다. pointerdown은
+        // 위치 기록용으로만 사용(팬 드래그 판별, onClick 참고). dblclick은 여전히 막아야
+        // 이어그리기 종료용 더블클릭이 지도 확대로 새는 것을 방지할 수 있다.
         const blockPointerDown = (e: Event) => e.stopPropagation();
         const vp = olMap.getViewport();
+        vp.addEventListener('pointerdown', onPointerDown, true);
         vp.addEventListener('pointermove', onPointerMove, true);
-        vp.addEventListener('pointerdown', blockPointerDown, true);
-        vp.addEventListener('pointerup',   blockPointerDown, true);
         vp.addEventListener('click', onClick, true);
         vp.addEventListener('dblclick', blockPointerDown, true);
         vp.addEventListener('contextmenu', onContextMenu, true);
@@ -1840,9 +1844,8 @@ export const useNetworkDraw = () => {
             clearInterval(dashAnimInterval);
             shiftRef.current = false;
             altRef.current = false;
+            vp.removeEventListener('pointerdown', onPointerDown, true);
             vp.removeEventListener('pointermove', onPointerMove, true);
-            vp.removeEventListener('pointerdown', blockPointerDown, true);
-            vp.removeEventListener('pointerup',   blockPointerDown, true);
             vp.removeEventListener('click', onClick, true);
             vp.removeEventListener('dblclick', blockPointerDown, true);
             vp.removeEventListener('contextmenu', onContextMenu, true);

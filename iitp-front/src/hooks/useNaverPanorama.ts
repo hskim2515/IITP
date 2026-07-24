@@ -4,13 +4,13 @@ import { Feature } from "ol";
 import { Point } from "ol/geom";
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
+import Translate from "ol/interaction/Translate";
 import { Style, Icon } from "ol/style";
 import * as Cesium from "cesium";
 import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import { useCesiumStore } from "@stores/useCesiumStore";
 import { useMapStore } from "@stores/useMapStore";
 import { useModeStore } from "@stores/useModeStore";
-import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import { useMessageStore } from "@stores/useMessageStore";
 import { networkPrimitivePropertiesMap } from "@datasource/NetworkDataSourceLayer";
 import { loadNaverMaps } from "@utils/naverMapLoader";
@@ -60,11 +60,15 @@ const ICON_GREEN_DOT  = makeMarkerIcon(null,       "#22c55e");
 const ICON_GRAY_DOT   = makeMarkerIcon(null,       "#8a8a90");
 
 /**
- * 네이버 파노라마(거리뷰)를 3D 자리에 전경 표시하고, 2D(OpenLayers) 지도와 **위치 양방향 동기화**한다.
+ * 네이버 파노라마(거리뷰)를 3D 자리에 전경 표시. 기본 꺼짐 — useMapStore.roadviewEnabledInEdit
+ * 를 사용자가 켜야(`enabled`) 나타난다.
  *
- * - 2D center 는 "위에서 본 지점" = 거리뷰 위치와 개념이 일치(조감 3D 와 달리 안정적).
- * - 2D → 거리뷰: olView 'change:center' (팬/줌) → panorama.setPosition (디바운스 + 거리 임계).
- * - 거리뷰 → 2D: 'pano_changed' (거리뷰 걷기) → olView.setCenter.
+ * - 켤 때 위치: 그 순간의 2D center 로 1회만 초기화(부드러운 시작점, 이후 자동 추종 없음).
+ * - 위치 재지정: 2D 지도 위의 마커를 드래그(ol/interaction/Translate)해 놓으면(translateend)
+ *   그 지점으로 로드뷰가 이동한다 — 팬/줌마다 자동으로 따라오면 편집 중 거슬린다는 피드백으로,
+ *   2D↔거리뷰 위치는 더 이상 지속적으로 동기화하지 않고 마커 드래그로만 명시적으로 옮긴다.
+ * - 거리뷰 → 2D: 'pano_changed' (거리뷰 걷기) → olView.setCenter (사용자가 거리뷰 안에서
+ *   직접 걸을 때만 발생 — 이건 사용자 의도가 분명하므로 유지).
  * - guard flag 로 무한 루프 차단 (useMapSync 패턴).
  * - 방향(pan/tilt)은 사용자가 거리뷰에서 직접 조작(읽기전용 아님). 위치만 동기화.
  */
@@ -88,12 +92,10 @@ export function useNaverPanorama(
         useMapStore.getState().setPanoramaActive(true);
         let disposed = false;
         let syncing = false;               // 루프 차단 guard
-        let debounceTimer: ReturnType<typeof setTimeout> | null = null;
         let lastLng = 0, lastLat = 0;
-        let onOlCenter: (() => void) | null = null;
         let removeKeyListener: (() => void) | null = null;
         let cleanupResize: (() => void) | null = null;
-        let unsubDrawPoint: (() => void) | null = null;
+        let translateInteractionRef: Translate | null = null;
 
         loadNaverMaps().then((naver) => {
             if (disposed || !naver?.maps?.Panorama || !containerRef.current) {
@@ -181,6 +183,24 @@ export function useNaverPanorama(
             markerLayer.set("excludeFromHit", true);
             markerLayerRef.current = markerLayer;
             if (olMap) olMap.addLayer(markerLayer);
+
+            // 마커를 드래그해 로드뷰 위치 재지정 — 드래그 도중엔 마커만 마우스를 따라가고(OL 기본
+            // 동작), 놓는 순간(translateend)에만 실제 로드뷰를 그 위치로 이동시킨다(드래그 중 매
+            // 프레임마다 파노라마 이미지를 새로 불러오면 낭비+ 끊김). 이동 후 pano_changed →
+            // updateMarker 가 자동으로 실행돼 마커를 가까운 링크 위로 스냅(SNAP_MAX_METERS 이내)한다.
+            const translateInteraction = new Translate({ layers: [markerLayer] });
+            translateInteraction.on("translateend", (evt: any) => {
+                const feat = evt.features?.item ? evt.features.item(0) : evt.features?.getArray?.()[0];
+                const coord = feat?.getGeometry?.()?.getCoordinates?.();
+                if (!coord) return;
+                const [lng, lat] = toLonLat(coord) as [number, number];
+                lastLng = lng; lastLat = lat;
+                syncing = true;
+                try { panoRef.current?.setPosition(new naver.maps.LatLng(lat, lng)); } catch (_) {}
+                setTimeout(() => { syncing = false; }, 80);
+            });
+            if (olMap) olMap.addInteraction(translateInteraction);
+            translateInteractionRef = translateInteraction;
 
             // 스냅 소스: 3D(Cesium) 네트워크가 그린 링크 지오메트리(networkPrimitivePropertiesMap).
             //   로드뷰는 3D 모드 기능이라, 3D 에 렌더된 링크가 정확한 소스(2D store 는 3D 에선 빈 채).
@@ -271,41 +291,11 @@ export function useNaverPanorama(
             } catch (_) {}
             updateMarker();
 
-            // ── 2D → 거리뷰 (팬/줌 정착 후 디바운스, 거리 임계) ──
-            const syncPanoFromOl = () => {
-                if (disposed || syncing || !panoRef.current) return;
-                const c = olView.getCenter();
-                if (!c) return;
-                const ll2 = toLonLat(c);
-                const lng = ll2[0] ?? 0, lat = ll2[1] ?? 0;
-                // 이동 거리(대략 m): 20m 미만이면 스킵(미세 이동 무시)
-                const dx = (lng - lastLng) * 88000, dy = (lat - lastLat) * 111000;
-                if (dx * dx + dy * dy < 20 * 20) return;
-                lastLng = lng; lastLat = lat;
-                syncing = true;
-                try { panoRef.current.setPosition(new naver.maps.LatLng(lat, lng)); } catch (_) {}
-                setTimeout(() => { syncing = false; }, 50); // pano_changed 반향 흡수
-            };
-            onOlCenter = () => {
-                if (debounceTimer) clearTimeout(debounceTimer);
-                debounceTimer = setTimeout(syncPanoFromOl, 300); // 연속 팬/줌 정착 후 1회
-            };
-            olView.on("change:center", onOlCenter);
-
-            // ── 도로 그리기 중 확정한 점으로 즉시 이동 ──
-            //   위 pan 동기화는 "지도 중심"을 따라가는데, 실제 편집 지점은 화면 중심이 아니라
-            //   방금 클릭한 점일 수 있다(특히 축소해서 넓게 보다 구석을 클릭하는 경우). 도로 그리기가
-            //   점을 확정할 때마다(useNetworkDraw → lastDrawnPoint) 20m 임계값 없이 바로 그 지점으로 이동.
-            let lastSeenDrawPoint: { lng: number; lat: number } | null = null;
-            unsubDrawPoint = useNetworkDrawStore.subscribe((state) => {
-                const pt = state.lastDrawnPoint;
-                if (!pt || pt === lastSeenDrawPoint || disposed || syncing || !panoRef.current) return;
-                lastSeenDrawPoint = pt;
-                lastLng = pt.lng; lastLat = pt.lat;
-                syncing = true;
-                try { panoRef.current.setPosition(new naver.maps.LatLng(pt.lat, pt.lng)); } catch (_) {}
-                setTimeout(() => { syncing = false; }, 80);
-            });
+            // ⚠️ 예전엔 여기서 2D 팬/줌(change:center)마다, 그리고 도로 그리기 점을 확정할 때마다
+            // 로드뷰 위치를 자동으로 따라 움직였는데, 편집 중 2D 지도를 이리저리 옮길 때마다 로드뷰가
+            // 계속 텔레포트해 거슬린다는 피드백으로 제거했다(사용자 보고). 이제 로드뷰 위치는
+            // (1) 켤 때 2D 중심으로 1회만 초기화되고, (2) 그 뒤로는 위 마커 드래그(Translate)로만
+            // 사용자가 명시적으로 옮긴다.
 
             // ── 거리뷰 → 2D (거리뷰에서 걸으면 2D center 이동) ──
             //   ⚠️ 거리 임계 없이 매 pano_changed 마다 setCenter 하면 2D↔로드뷰 가 미세 진동(churn)해
@@ -408,11 +398,9 @@ export function useNaverPanorama(
         return () => {
             disposed = true;
             useMapStore.getState().setPanoramaActive(false);
-            if (debounceTimer) clearTimeout(debounceTimer);
-            if (unsubDrawPoint) unsubDrawPoint();
+            if (translateInteractionRef && olMap) { try { olMap.removeInteraction(translateInteractionRef); } catch (_) {} translateInteractionRef = null; }
             if (removeKeyListener) removeKeyListener();
             if (cleanupResize) cleanupResize();
-            if (onOlCenter && olView) olView.un("change:center", onOlCenter);
             if (markerLayerRef.current && olMap) { try { olMap.removeLayer(markerLayerRef.current); } catch (_) {} markerLayerRef.current = null; }
             if (panoRef.current) {
                 try { panoRef.current.destroy?.(); } catch (_) {}

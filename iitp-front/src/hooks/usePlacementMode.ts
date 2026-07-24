@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useNetworkDrawStore } from '@stores/useNetworkDrawStore';
+import { useModeStore } from '@stores/useModeStore';
 import { useBusStationStore } from '@stores/useBusStationStore';
 import { useRailStationStore } from '@stores/useRailStationStore';
 import { useSignalStore } from '@stores/useSignalStore';
@@ -18,10 +19,21 @@ import { generateGUIDWithType } from '@utils/guid';
  */
 export function usePlacementMode(): void {
     const placementMode = useNetworkDrawStore((s) => s.placementMode);
+    const isEditMode = useModeStore((s) => s.appMode === 'edit');
     const cleanupRef = useRef<(() => void) | null>(null);
 
+    // 보기 모드에선 배치를 절대 허용하지 않는다 — 배치 버튼은 편집 모드에서만 보이지만(Facility.tsx),
+    // 편집 중 placementMode를 켜둔 채로 모드를 전환(예: "저장 안 하고 나가기")하면 스토어 값이
+    // 그대로 남아있을 수 있어, 여기서도 한 번 더 게이트한다 — 안 그러면 view 모드에서 지도 클릭이
+    // 조용히 시설물을 생성해버린다.
     useEffect(() => {
-        if (placementMode === 'none') {
+        if (!isEditMode && placementMode !== 'none') {
+            useNetworkDrawStore.getState().setPlacementMode('none');
+        }
+    }, [isEditMode, placementMode]);
+
+    useEffect(() => {
+        if (!isEditMode || placementMode === 'none') {
             cleanupRef.current?.();
             cleanupRef.current = null;
             return;
@@ -76,7 +88,7 @@ export function usePlacementMode(): void {
             cleanupRef.current?.();
             cleanupRef.current = null;
         };
-    }, [placementMode]);
+    }, [placementMode, isEditMode]);
 
     // ESC 키로 배치 모드 취소 → 선택 모드로 복귀
     useEffect(() => {

@@ -5,6 +5,7 @@ import {SignalTimelineResponse} from "@stores/useSignalTimelineStore";
 import {LayerManager} from "@deck.gl/core";
 import {Feature} from "ol";
 import {SignalData} from "@type/Signal";
+import {normalizeTurning} from "@utils/turning";
 
 export type SignalState = "green" | "yellow" | "red" | "default";
 
@@ -352,7 +353,14 @@ export const generateDummySignals = (network: any): Omit<SignalData, "__guid" | 
     }
 
     for (const node of network?.nodes ?? []) {
-        if (node.type?.toLowerCase() !== 'intersection') continue;
+        // node.type === 'intersection'은 KTDB/SUMO 임포트 컨버터만 붙이는 값이라, 직접 그리기
+        // 도구로 만든 노드는 실제 교차로가 돼도 영원히 'normal'로 남는다 — 그 결과 직접
+        // 그린/편집한 교차로엔 더미 신호가 하나도 안 생기는 버그가 있었다(pavementMarking.ts와
+        // 동일 버그). useNetworkDraw.ts의 autoGenerateAllIntersections와 동일한 포트 기반
+        // 판정으로 교체(진입/진출 포트가 모두 있으면 실제 교차로).
+        const inCount = node.ports?.filter((p: any) => p.type === 'in').length ?? 0;
+        const outCount = node.ports?.filter((p: any) => p.type === 'out').length ?? 0;
+        if (inCount < 1 || outCount < 1) continue;
         const conns = node.connections ?? [];
         if (conns.length === 0) continue;
 
@@ -373,11 +381,19 @@ export const generateDummySignals = (network: any): Omit<SignalData, "__guid" | 
         groupKeys.forEach((key, groupIdx) => {
             const turnId = String(groupIdx);
             groups.get(key)!.forEach((conn, i) => {
+                // conn.turning은 KTDB(짧은 코드 "S"/"L"/"R"/"U")와 직접 그리기 도구(전체 단어
+                // "Straight"/"Left_Turn"/...)가 섞여 들어온다 — 정규화 없이 그대로 저장/비교하면
+                // (1) SignalData.turning이 짧은 코드로 저장된 신호는 SignalGroupedEditor의 방향
+                // select(DIR, 전체 단어 기준)와 형식이 안 맞고, (2) RTOR(적신호 우회전) 판정도
+                // conn.turning === 'R' 비교라 직접 그린 우회전 커넥션은 항상 놓친다.
+                // SignalData.turning의 canonical 형식은 전체 단어(SignalGroupedEditor의 DIR/select
+                // 값 참고)이므로 그쪽으로 정규화.
+                const normalized = normalizeTurning(conn.turning);
                 const entry: Omit<SignalData, "__guid" | "featureType" | "id"> = {
                     nodeId: String(node.id),
                     turnId,
-                    turning: conn.turning ?? 'S',
-                    type: conn.turning === 'R' ? 'RTOR' : 'None',
+                    turning: normalized,
+                    type: normalized === 'Right_Turn' ? 'RTOR' : 'None',
                     connectionId: String(conn.id),
                 };
                 // 노드의 첫 번째 레코드에만 planList 부착

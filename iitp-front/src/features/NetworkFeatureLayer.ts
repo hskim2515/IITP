@@ -29,6 +29,7 @@ import { assignTileGuids } from "@utils/tileGuid";
 import { smoothSharpPolyline } from "@utils/polylineSmooth";
 import { normalizeTurning } from "@utils/turning";
 import NetworkMvtLayer from "@features/NetworkMvtLayer";
+import { useNetworkTileStore } from "@stores/useNetworkTileStore";
 
 export default class NetworkFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -80,6 +81,9 @@ export default class NetworkFeatureLayer extends VectorLayer {
     private mvtLayer: NetworkMvtLayer | null = null;
     // 타일 모드 store 동기화 debounce 타이머
     private storeSyncTimer: ReturnType<typeof setTimeout> | null = null;
+    // overview/mid(JSON fetch 동결) 진입 전 마지막으로 실제 fetch 했던 화면 범위 — 편집 그리드
+    // "이 데이터는 이전 화면 범위 것" 안내 배너가 현재 뷰와 겹치는지 판정하는 데 쓰인다.
+    private lastLoadedExtent: Extent | null = null;
 
     private readonly LAYER_NAME = "network";
 
@@ -87,6 +91,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
     private static readonly SEGMENT_WIDTH_RATIO = 0.4;
 
     private static readonly EPS = 1e-9;
+    /** 진행방향 화살표 배치 간격(m, OL 투영 단위 ≈ m) — 3D(NetworkDataSourceLayer)와 동일 값 */
+    private static readonly ARROW_INTERVAL_M = 25;
 
     private static readonly PORT_ICON_SCALE = 2.0;
     private static readonly NODE_RADIUS_SCALE = 0.8;
@@ -213,7 +219,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
             this.editOverlaySource = new VectorSource();
             this.editOverlayLayer = new VectorLayer({
                 source: this.editOverlaySource,
-                style: (f) => this.editOverlayStyle(f as Feature),
+                style: (f, resolution) => this.editOverlayStyle(f as Feature, resolution),
                 zIndex: 120, // MVT/도로 위, 편집 요소(노드 등)와 비슷한 층
             });
             this.editOverlayLayer.setVisible(this.getVisible());
@@ -283,6 +289,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const size = map.getSize();
         const resolution = view.getResolution();
         if (!size || resolution == null) return;
+        const extent = view.calculateExtent(size);
 
         // [PoC] MVT 모드: 편집요소 데이터(노드/커넥션/포트) 확보용 viewport 타일 fetch 게이트.
         //   보기 모드: detail(완전 근접)에서만 — 도로/차선은 MVT 전담이라 그 외 불필요(메모리 절약).
@@ -294,10 +301,18 @@ export default class NetworkFeatureLayer extends VectorLayer {
             const editMode = useModeStore.getState().appMode === 'edit';
             const fetchOk = tier === 'detail' || (editMode && tier === 'near');
             if (!fetchOk) {
-                this.tileManager?.clear();
+                // ⚠️ 예전엔 여기서 tileManager.clear()로 cachedLinkMap/cachedNodeMap을 비웠는데,
+                // 이 캐시가 그대로 편집 그리드(PropertyPanel→DrilldownGrid)의 rowData 원천이라
+                // 줌아웃하면 그리드가 텅 비어버리는 부작용이 있었다(사용자 보고). MVT가 지도
+                // 렌더링은 계속 담당하므로 여기서는 fetch만 건너뛰고 캐시는 그대로 둔다 — 그리드는
+                // "마지막으로 불러온 화면 범위" 데이터를 계속 보여준다. 대신 그 사실과, 현재 화면이
+                // 그 범위를 벗어났는지를 store로 알려 UI(그리드 상단 배너)가 안내하게 한다.
+                const outOfRange = this.lastLoadedExtent ? !intersects(extent, this.lastLoadedExtent) : true;
+                useNetworkTileStore.getState().setGridDataStatus(true, outOfRange);
                 return;
             }
         }
+        useNetworkTileStore.getState().setGridDataStatus(false, false);
 
         // 활성 그리기/커넥션/배치 중에만 타일 갱신 동결 — 진행 중 편집 대상이 evict/덮어써지는 것 방지.
         //   ⚠️ 선택 모드(isSelectActive)는 동결하지 않는다. 동결하면 팬/줌 시 새 지역 타일이 안 와
@@ -313,6 +328,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
             this.tileManager.clear();
             this.tileManager = null;
             try { this.mvtLayer?.refreshTiles(); } catch (_) {}
+            this.lastLoadedExtent = null; // 버전이 바뀌었으니 이전 범위 비교는 무의미
         }
         this.tileVersionId = String(versionId);
         if (!this.tileManager) {
@@ -321,7 +337,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 onTileEvicted: (_k, payload) => this.removeTilePayload(payload),
             });
         }
-        this.tileManager.update(view.calculateExtent(size), resolution);
+        this.lastLoadedExtent = extent;
+        this.tileManager.update(extent, resolution);
     }
 
     /** 타일 페이로드 → cached 맵 병합 + refcount + 신규 id만 피처 빌드 후 source 추가 */
@@ -554,9 +571,13 @@ export default class NetworkFeatureLayer extends VectorLayer {
         return `${coord}|${ports}|${conns}`;
     }
 
-    /** 편집 오버레이 스타일: 편집된 도로를 눈에 띄게(도로 몸체 + 강조 외곽). */
-    private editOverlayStyle(f: Feature): Style[] {
+    /** 편집 오버레이 스타일: 편집된 도로를 눈에 띄게(도로 몸체 + 강조 외곽).
+     *  진행방향 화살표는 확대(near/detail)했을 때만 — 타일 기반 기존 도로망(MVT)에는
+     *  안 붙이고, 지금 편집으로 새로 그리거나 수정한 도로에만 표시한다. */
+    private editOverlayStyle(f: Feature, resolution: number): Style[] {
         const ft = f.get("featureType");
+        const tier = getNetworkLodTierByResolution(resolution);
+        const zoomedIn = tier === 'near' || tier === 'detail';
         if (ft === "links") {
             return [new Style({
                 fill: new Fill({ color: "rgba(72,74,80,0.95)" }),               // 도로 몸체
@@ -565,7 +586,16 @@ export default class NetworkFeatureLayer extends VectorLayer {
             })];
         }
         if (ft === "link-edit") {
-            return [new Style({ stroke: new Stroke({ color: "rgba(90,200,255,0.9)", width: 1.5 }), zIndex: 121 })];
+            const styles: Style[] = [new Style({ stroke: new Stroke({ color: "rgba(90,200,255,0.9)", width: 1.5 }), zIndex: 121 })];
+            if (zoomedIn) {
+                const geom = f.getGeometry();
+                if (geom instanceof LineString) {
+                    styles.push(...NetworkFeatureLayer.buildDirectionArrowStyles(
+                        geom.getCoordinates() as [number, number][], 121
+                    ));
+                }
+            }
+            return styles;
         }
         return [];
     }
@@ -863,6 +893,68 @@ export default class NetworkFeatureLayer extends VectorLayer {
         this.nodeCoordMap.clear();
         for (const [linkId, features] of this.linkFeaturesMap) this.indexLink(linkId, features);
         for (const [nodeId, features] of this.nodeFeaturesMap) this.indexNode(nodeId, features);
+    }
+
+    /** 링크 중심선 좌표(OL 투영 단위 ≈ m)를 따라 ARROW_INTERVAL_M 간격으로 진행방향 화살표
+     *  삼각형 Style을 생성한다. connections 화살표(끝점 1개)와 달리 링크 전체 길이에 걸쳐
+     *  여러 개 배치 — 3D(NetworkDataSourceLayer.buildArrowInstances)와 동일한 사고방식·간격.
+     *  링크가 간격보다 짧으면 중앙에 1개만. */
+    private static buildDirectionArrowStyles(coords: [number, number][], zIndex: number): Style[] {
+        if (coords.length < 2) return [];
+        const segLens: number[] = [];
+        let total = 0;
+        for (let i = 1; i < coords.length; i++) {
+            const d = Math.hypot(coords[i]![0] - coords[i - 1]![0], coords[i]![1] - coords[i - 1]![1]);
+            segLens.push(d);
+            total += d;
+        }
+        if (total < 1) return [];
+
+        const interval = NetworkFeatureLayer.ARROW_INTERVAL_M;
+        const arrowLen = 3;
+        const halfWidth = 0.9;
+        const marks: number[] = total < interval
+            ? [total / 2]
+            : (() => {
+                const out: number[] = [];
+                for (let d = interval / 2; d < total; d += interval) out.push(d);
+                return out;
+            })();
+
+        const styles: Style[] = [];
+        for (const mark of marks) {
+            let acc = 0;
+            let segIdx = 0;
+            while (segIdx < segLens.length - 1 && acc + segLens[segIdx]! < mark) {
+                acc += segLens[segIdx]!;
+                segIdx++;
+            }
+            const segLen = segLens[segIdx] ?? 0;
+            if (segLen < 1e-6) continue;
+            const p0 = coords[segIdx]!;
+            const p1 = coords[segIdx + 1]!;
+            const frac = Math.min(1, Math.max(0, (mark - acc) / segLen));
+            const cx = p0[0] + (p1[0] - p0[0]) * frac;
+            const cy = p0[1] + (p1[1] - p0[1]) * frac;
+
+            const dx = p1[0] - p0[0], dy = p1[1] - p0[1];
+            const dlen = Math.hypot(dx, dy);
+            if (dlen < 1e-6) continue;
+            const ux = dx / dlen, uy = dy / dlen;
+            const nx = -uy, ny = ux;
+
+            const tip: [number, number]      = [cx + ux * arrowLen / 2, cy + uy * arrowLen / 2];
+            const backCx = cx - ux * arrowLen / 2, backCy = cy - uy * arrowLen / 2;
+            const backLeft: [number, number]  = [backCx + nx * halfWidth, backCy + ny * halfWidth];
+            const backRight: [number, number] = [backCx - nx * halfWidth, backCy - ny * halfWidth];
+
+            styles.push(new Style({
+                geometry: new Polygon([[tip, backLeft, backRight, tip]]),
+                fill: new Fill({ color: "rgba(255,255,255,0.75)" }),
+                zIndex,
+            }));
+        }
+        return styles;
     }
 
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
@@ -1709,6 +1801,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
         if (this.visChangeKey) { unByKey(this.visChangeKey); this.visChangeKey = null; }
         this.tileManager?.clear();
         this.tileManager = null;
+        this.lastLoadedExtent = null;
+        useNetworkTileStore.getState().setGridDataStatus(false, false);
         if (this.storeSyncTimer) { clearTimeout(this.storeSyncTimer); this.storeSyncTimer = null; }
         if (this.mvtLayer) { try { this.mvtLayer.setMap(null); } catch (_) {} this.mvtLayer = null; }
         if (this.editOverlayLayer) { try { this.editOverlayLayer.setMap(null); } catch (_) {} this.editOverlayLayer = null; this.editOverlaySource = null; }

@@ -14,6 +14,13 @@ interface NetworkTileState {
     loadingCount: number;
     incLoading: () => void;
     decLoading: () => void;
+    /** true: 현재 줌 티어(overview/mid, 또는 보기모드 near)에서는 JSON fetch가 동결돼 있어
+     *  편집 그리드가 "마지막으로 불러온 화면 범위" 데이터를 보여주고 있음(실시간 아님).
+     *  outOfRange: frozen 상태에서 현재 화면이 그 마지막 범위와 안 겹치는 곳으로 이동함
+     *  (표시 중인 목록이 지금 보이는 지도 영역과 무관할 가능성이 큼). 영속화하지 않음. */
+    gridDataFrozen: boolean;
+    gridDataOutOfRange: boolean;
+    setGridDataStatus: (frozen: boolean, outOfRange: boolean) => void;
 }
 
 export const useNetworkTileStore = create<NetworkTileState>()(
@@ -29,6 +36,13 @@ export const useNetworkTileStore = create<NetworkTileState>()(
             loadingCount: 0,
             incLoading: () => set((s) => ({ loadingCount: s.loadingCount + 1 })),
             decLoading: () => set((s) => ({ loadingCount: Math.max(0, s.loadingCount - 1) })),
+            gridDataFrozen: false,
+            gridDataOutOfRange: false,
+            setGridDataStatus: (frozen, outOfRange) => set((s) => (
+                s.gridDataFrozen === frozen && s.gridDataOutOfRange === outOfRange
+                    ? s // 참조 동일성 유지 — moveend마다 매번 새 객체로 리렌더 유발 방지
+                    : { gridDataFrozen: frozen, gridDataOutOfRange: outOfRange }
+            )),
         }),
         {
             name: 'network-tile-mode',

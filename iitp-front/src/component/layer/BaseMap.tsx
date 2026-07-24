@@ -3,6 +3,7 @@ import { BaseMapType, useMapStore } from '@stores/useMapStore';
 import { LayerField } from "@stores/useLayerSchemaStore";
 import { useLayerStore } from "@stores/useLayerStore";
 import { useCesiumStore } from "@stores/useCesiumStore";
+import { useAppSettingsStore } from "@stores/useAppSettingsStore";
 import styles from "@css/ToolsPanel.module.css";
 
 export interface Props {
@@ -18,9 +19,16 @@ const BaseMap = ({ fields }: Props) => {
 
     useEffect(() => {
         if (currentBaseMap) return;
-        const initialBaseMap = fields.find(field => field.basic)?.key || undefined;
+        // 사용자가 설정(⚙)에서 지정한 기본 배경지도가 있으면 우선 — 단, 그 값이 지금 스키마의
+        // 실제 옵션 중 하나일 때만(예전에 고른 키가 스키마 변경으로 사라졌을 수 있음). 없으면
+        // 서버 스키마의 basic 필드로 폴백(예전 동작 그대로).
+        const preferred = useAppSettingsStore.getState().defaultBaseMap;
+        const preferredValid = preferred && fields.some(f => f.key === preferred);
+        const initialBaseMap = (preferredValid ? preferred : undefined)
+            ?? fields.find(field => field.basic)?.key
+            ?? undefined;
         if (initialBaseMap) setCurrentBaseMap(initialBaseMap);
-    }, [setCurrentBaseMap]);
+    }, [setCurrentBaseMap, fields]);
 
     const handleSelect = (layerName: BaseMapType) => {
         // 'naver'는 OL 레이어가 아니라 별도 지도(useNaverBaseMap이 currentBaseMap==='naver'로 활성).

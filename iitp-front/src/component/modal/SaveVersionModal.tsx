@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import axiosInstance from '@api/axiosInstance';
+import { isAxiosError } from 'axios';
 import { useScenarioStore } from '@stores/useScenarioStore';
 import { ScenarioVersions } from '@type/Scenario';
 
@@ -9,13 +10,18 @@ interface SaveVersionModalProps {
     onCancel: () => void;
 }
 
-function suggestNextVersionKey(currentKey: string | undefined | null, scenarioKey: string): string {
-    if (!currentKey) return `${scenarioKey}_V1`;
-    const match = currentKey.match(/^(.+?)_V(\d+)$/);
-    if (match) {
-        return `${match[1]!}_V${parseInt(match[2]!, 10) + 1}`;
+// 현재 편집 중인 버전(currentKey) 기준으로만 "다음 번호"를 매기면, 사용자가 최신 버전이
+// 아닌 예전 버전(예: V1)에서 "새 버전으로"를 누를 때 이미 존재하는 V2와 키가 충돌한다.
+// 시나리오에 실제로 존재하는 모든 형제 버전 키를 훑어 그중 최댓값+1을 제안해야 안전하다.
+function suggestNextVersionKey(scenarioKey: string, existingKeys: string[]): { key: string; num: number } {
+    const prefix = `${scenarioKey}_V`;
+    let maxN = 0;
+    for (const k of existingKeys) {
+        if (!k.startsWith(prefix)) continue;
+        const n = parseInt(k.slice(prefix.length), 10);
+        if (!isNaN(n) && n > maxN) maxN = n;
     }
-    return `${currentKey}_V2`;
+    return { key: `${prefix}${maxN + 1}`, num: maxN + 1 };
 }
 
 const SaveVersionModal: React.FC<SaveVersionModalProps> = ({ open, onConfirm, onCancel }) => {
@@ -32,17 +38,25 @@ const SaveVersionModal: React.FC<SaveVersionModalProps> = ({ open, onConfirm, on
     const setVersion = useScenarioStore.getState().setVersion;
 
     useEffect(() => {
-        if (open && selectedScenario) {
-            const suggestedKey = suggestNextVersionKey(selectedScenarioVersion?.key, selectedScenario.key);
-            const versionCount = selectedScenarioVersion?.label?.match(/\d+/)?.[0];
-            const nextNum = versionCount ? parseInt(versionCount, 10) + 1 : 2;
-            setKeyVal(suggestedKey);
-            setLabelVal(`버전 ${nextNum}`);
-            setError(null);
-            setKeyError(null);
-            setLabelError(null);
-            setTimeout(() => keyRef.current?.focus(), 50);
-        }
+        if (!open || !selectedScenario) return;
+        setError(null);
+        setKeyError(null);
+        setLabelError(null);
+        // 형제 버전 전체를 조회해 키를 제안 — 현재 편집 중인 버전만 보고 제안하면
+        // (예: V1을 보다가 "새 버전으로") 이미 존재하는 V2와 충돌한다.
+        axiosInstance.get(`/scenario/${selectedScenario.id}/versions`)
+            .then((res) => {
+                const existingKeys = (res.data as ScenarioVersions[]).map(v => v.key);
+                const { key, num } = suggestNextVersionKey(selectedScenario.key, existingKeys);
+                setKeyVal(key);
+                setLabelVal(`버전 ${num}`);
+            })
+            .catch(() => {
+                // 형제 목록 조회 실패 시에도 입력은 가능해야 하므로 최소한의 제안으로 폴백
+                setKeyVal(suggestNextVersionKey(selectedScenario.key, selectedScenarioVersion?.key ? [selectedScenarioVersion.key] : []).key);
+                setLabelVal('버전 2');
+            });
+        setTimeout(() => keyRef.current?.focus(), 50);
     }, [open]);
 
     if (!open) return null;
@@ -75,6 +89,13 @@ const SaveVersionModal: React.FC<SaveVersionModalProps> = ({ open, onConfirm, on
             } catch (createErr) {
                 // 멱등 처리: 이전 저장 시도가 버전 레코드만 만들고 실패하면(유령 버전)
                 // 재시도가 중복 키 400 에 영구 차단됨 → 같은 키의 기존 버전을 찾아 재사용.
+                // 단, 서버가 명확히 400(키 중복)으로 거절한 경우는 재사용하지 않는다 —
+                // 이제 키 제안 자체가 형제 버전을 다 훑으므로, 그런데도 400이 났다면
+                // "내 이전 시도의 유령"이 아니라 "이미 다른 버전이 그 키를 쓰고 있다"는
+                // 뜻일 가능성이 높다. 그런데도 조용히 그 버전으로 갈아타면 사용자는
+                // 아무 새 버전도 생기지 않았는데 "저장은 됐다"고 착각하게 된다
+                // (버전 목록에 새 항목이 안 보이는데 에러도 없어 보이는 원인).
+                if (isAxiosError(createErr) && createErr.response?.status === 400) throw createErr;
                 const listResp = await axiosInstance.get(`/scenario/${selectedScenario.id}/versions`);
                 const existing = (listResp.data as ScenarioVersions[]).find(v => v.key === keyVal);
                 if (!existing) throw createErr;
@@ -93,7 +114,11 @@ const SaveVersionModal: React.FC<SaveVersionModalProps> = ({ open, onConfirm, on
                     await axiosInstance.delete(`/scenario/${selectedScenario.id}/versions/${rollback.id}`);
                 } catch (_) { /* 롤백 실패 시 멱등 재사용 경로가 처리 */ }
             }
-            const message = err instanceof Error ? err.message : '버전 생성 실패';
+            // 백엔드가 400에 본문을 안 실어 보내므로(ResponseEntity.badRequest().build()),
+            // axios의 일반 메시지("Request failed with status code 400") 대신 실제 원인을 안내.
+            const message = isAxiosError(err) && err.response?.status === 400
+                ? `버전 키 "${keyVal}"이(가) 이미 사용 중입니다. 다른 키를 입력해주세요.`
+                : err instanceof Error ? err.message : '버전 생성 실패';
             setError(message);
         } finally {
             setSaving(false);

@@ -148,6 +148,12 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
         drawResetKey: s.drawResetKey + 1,
         pendingStartNodeId: startNodeId ?? null,
         pendingStartCoord: null,
+        // 매번 새로 그리기를 시작할 때 단방향으로 리셋 — 실제 도로 대부분은 단방향이라
+        // 기본값이어야 하고, 체크박스는 세션 내내 상태가 남아있어(zustand, 새로고침 전까지
+        // 유지) 이전에 양방향으로 그렸으면 그다음 새 도로도 계속 양방향으로 그려지는
+        // 문제가 있었다. 이어 그리기(체인 continue)는 activateAndReset을 다시 호출하지
+        // 않으므로 영향받지 않는다.
+        isBidirectional: false,
     })),
     beginDrawAt: (coord) => set((s) => ({
         isActive: true,
@@ -157,6 +163,7 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
         drawResetKey: s.drawResetKey + 1,
         pendingStartNodeId: null,
         pendingStartCoord: coord,
+        isBidirectional: false,
     })),
     activateConnectionAndReset: (nodeId) => set({
         isConnectionActive: true,
