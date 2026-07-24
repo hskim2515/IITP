@@ -280,7 +280,8 @@ class NextSimScaffoldTest {
         network.setNodes(List.of(intersectionNode(10000001L)));
 
         NextSimInputScaffolder scaffolder = new NextSimInputScaffolder(
-                storage, scenarioVersionRepository, xmlLayerVersionService, dummySignalGenerator);
+                storage, scenarioVersionRepository, xmlLayerVersionService, dummySignalGenerator,
+                new com.iitp.iitp_rest.service.network.NetworkReachabilityService());
 
         scaffolder.scaffoldForImport("v1", Set.of("10000001"), List.of(), List.of(), null, network, null);
 
@@ -323,7 +324,8 @@ class NextSimScaffoldTest {
         when(storage.exists("v1/signalTOD.xml")).thenReturn(false);
 
         NextSimInputScaffolder scaffolder = new NextSimInputScaffolder(
-                storage, scenarioVersionRepository, xmlLayerVersionService, dummySignalGenerator);
+                storage, scenarioVersionRepository, xmlLayerVersionService, dummySignalGenerator,
+                new com.iitp.iitp_rest.service.network.NetworkReachabilityService());
 
         boolean repaired = scaffolder.repairSignalTod("v1");
         assertTrue(repaired, "플랜은 있는데 TOD가 없으면 복구를 수행해야 함");
@@ -357,7 +359,8 @@ class NextSimScaffoldTest {
         when(storage.readFile("v1/signalTOD.xml")).thenReturn(validTod.getBytes(StandardCharsets.UTF_8));
 
         NextSimInputScaffolder scaffolder = new NextSimInputScaffolder(
-                storage, scenarioVersionRepository, xmlLayerVersionService, dummySignalGenerator);
+                storage, scenarioVersionRepository, xmlLayerVersionService, dummySignalGenerator,
+                new com.iitp.iitp_rest.service.network.NetworkReachabilityService());
 
         boolean repaired = scaffolder.repairSignalTod("v1");
         assertFalse(repaired, "이미 유효하면 손대지 않아야 함");
@@ -370,7 +373,8 @@ class NextSimScaffoldTest {
         ScenarioVersionRepository scenarioVersionRepository = mock(ScenarioVersionRepository.class);
         XmlLayerVersionService xmlLayerVersionService = mock(XmlLayerVersionService.class);
         NextSimInputScaffolder scaffolder = new NextSimInputScaffolder(
-                storage, scenarioVersionRepository, xmlLayerVersionService, new DummySignalGenerator());
+                storage, scenarioVersionRepository, xmlLayerVersionService, new DummySignalGenerator(),
+                new com.iitp.iitp_rest.service.network.NetworkReachabilityService());
 
         assertFalse(scaffolder.repairSignalTod(""));
         assertFalse(scaffolder.repairSignalTod(null));

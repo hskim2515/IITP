@@ -1,9 +1,12 @@
 package com.iitp.iitp_rest.controller;
 
 import com.iitp.iitp_rest.model.LogsData;
+import com.iitp.iitp_rest.model.network.NetworkXml;
 import com.iitp.iitp_rest.model.odmatrix.OdMatrixXml;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerLog;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerSaveRequest;
+import com.iitp.iitp_rest.service.network.NetworkReachabilityService;
+import com.iitp.iitp_rest.service.network.NetworkService;
 import com.iitp.iitp_rest.service.odmatrix.OdMatrixService;
 import com.iitp.iitp_rest.service.odmatrix.OdTerminalIdBandService;
 import com.iitp.iitp_rest.service.xmllayer.XmlLayerConverter;
@@ -29,6 +32,8 @@ public class OdMatrixController {
     private final OdMatrixService odMatrixService;
     private final XmlLayerVersionService xmlLayerVersionService;
     private final OdTerminalIdBandService odTerminalIdBandService;
+    private final NetworkService networkService;
+    private final NetworkReachabilityService networkReachabilityService;
 
     @GetMapping("/{versionId}")
     public ResponseEntity<Map<String, Object>> getOdMatrix(@PathVariable String versionId) {
@@ -70,7 +75,7 @@ public class OdMatrixController {
     }
 
     @PostMapping("/{versionId}")
-    public ResponseEntity<Void> saveOdMatrix(
+    public ResponseEntity<Map<String, Object>> saveOdMatrix(
             @PathVariable String versionId,
             @RequestBody XmlLayerSaveRequest request) {
         log.info("[OdMatrixController] POST versionId={}", versionId);
@@ -96,6 +101,23 @@ public class OdMatrixController {
                 log.warn("[OdMatrixController] 터미널 id 대역 보정 실패(무시하고 저장 계속): {}", idErr.getMessage());
             }
 
+            // 방향성(일방통행) 기준 도달 불가능한 수요 제거 (실측 확정 근본원인 — gdb):
+            // route-generator 는 도달 불가능한 (source,sink) 쌍도 에러 없이 빈 경로로 처리해
+            // "SUCCESS" 보고하고, nextsim 이 그 수요를 조회하려다 std::out_of_range 로
+            // 크래시한다. OD 저장 시점(1차 방어)에 걸러낸다 — NextSimRunner 스테이징
+            // 시점(2차 방어, filterUnreachableDemands)과 중복 적용.
+            int unreachableRemoved = 0;
+            try {
+                NetworkXml network = networkService.getNetworkXmlByVersionId(versionId);
+                unreachableRemoved = networkReachabilityService.filterUnreachableDemands(newOd, network);
+                if (unreachableRemoved > 0) {
+                    log.warn("[OdMatrixController] 방향성 기준 도달 불가능한 수요 {}건 제거 (versionId={})",
+                            unreachableRemoved, versionId);
+                }
+            } catch (Exception reachErr) {
+                log.warn("[OdMatrixController] 도달 가능성 검증 실패(무시하고 저장 계속): {}", reachErr.getMessage());
+            }
+
             Map<String, Object> cleanData = XmlLayerConverter.toMap(newOd);
             xmlLayerVersionService.save(LAYER_KEY, versionId, cleanData, request.getLogs());
             // 파일 소비자(NextSim 시뮬 입력, XML export) 동기화 — DB 레이어만 쓰면
@@ -105,7 +127,7 @@ public class OdMatrixController {
             } catch (Exception fileErr) {
                 log.warn("[OdMatrixController] odmatrix.xml 파일 동기화 실패(DB 저장은 완료): {}", fileErr.getMessage());
             }
-            return ResponseEntity.ok().build();
+            return ResponseEntity.ok(Map.of("unreachableDemandsRemoved", unreachableRemoved));
         } catch (Exception e) {
             log.error("[OdMatrixController] 저장 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();

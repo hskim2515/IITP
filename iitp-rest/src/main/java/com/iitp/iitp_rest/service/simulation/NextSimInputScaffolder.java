@@ -2,6 +2,7 @@ package com.iitp.iitp_rest.service.simulation;
 
 import com.iitp.iitp_rest.model.network.NetworkXml;
 import com.iitp.iitp_rest.repository.ScenarioVersionRepository;
+import com.iitp.iitp_rest.service.network.NetworkReachabilityService;
 import com.iitp.iitp_rest.service.vehicle.DummySignalGenerator;
 import com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService;
 import com.iitp.iitp_rest.util.FileStorageService;
@@ -53,6 +54,7 @@ public class NextSimInputScaffolder {
     private final ScenarioVersionRepository scenarioVersionRepository;
     private final XmlLayerVersionService xmlLayerVersionService;
     private final DummySignalGenerator dummySignalGenerator;
+    private final NetworkReachabilityService networkReachabilityService;
 
     /** 러너 폴백과 동일한 기본 시나리오 (06시 시작 60분, OD 0번, TOD 0번) */
     private static final String SCENARIO_TEMPLATE = xml(
@@ -134,11 +136,34 @@ public class NextSimInputScaffolder {
 
         Set<String> sourceIdSet = toStringSet(sourceTerminalIds);
         Set<String> sinkIdSet = toStringSet(sinkTerminalIds);
+        // networkForSignal 이 있으면(소형 bbox — 파싱된 네트워크 보유) 실제 회전 허용(커넥션)
+        // 그래프 기준 도달 가능성 판정자를 만들어 샘플 OD 생성 시 도달 불가능한 source→sink
+        // 쌍을 애초에 제외한다 — 실측(gdb): 링크 인접만으론 부족, 경로상 교차로에 그 회전을
+        // 허용하는 connection 이 없으면 링크가 이어져 있어도 실제로는 통행 불가. 대형 bbox
+        // 스트리밍 경로는 이 판정자가 null 이라 필터링 없이(기존 동작) 생성되지만, NextSimRunner
+        // 스테이징 시점의 filterUnreachableDemands 가 실행 직전에 한 번 더 걸러낸다(2차 방어).
+        java.util.function.BiPredicate<Long, Long> isReachable = null;
+        if (networkForSignal != null) {
+            java.util.Map<String, List<String>> linkGraph = networkReachabilityService.buildLinkConnectionGraph(networkForSignal);
+            java.util.Map<String, List<String>> nodeOutLinks = networkReachabilityService.buildNodeOutLinks(networkForSignal);
+            java.util.Map<String, List<String>> nodeInLinks = networkReachabilityService.buildNodeInLinks(networkForSignal);
+            java.util.Map<String, java.util.Set<String>> reachedCache = new java.util.HashMap<>();
+            isReachable = (src, snk) -> {
+                String s = String.valueOf(src);
+                java.util.Set<String> reached = reachedCache.computeIfAbsent(s,
+                        k -> networkReachabilityService.reachableLinksFrom(linkGraph, nodeOutLinks.getOrDefault(k, List.of())));
+                for (String inLink : nodeInLinks.getOrDefault(String.valueOf(snk), List.of())) {
+                    if (reached.contains(inLink)) return true;
+                }
+                return false;
+            };
+        }
 
         try {
             ensureValidOrRegenerate(lookupDirs, versionId, "odmatrix.xml",
                     content -> odMatrixValid(content, sourceIdSet, sinkIdSet),
-                    buildSampleOdMatrix(sourceTerminalIds, sinkTerminalIds, terminalLocalCoords), "od_matrix");
+                    buildSampleOdMatrix(sourceTerminalIds, sinkTerminalIds, terminalLocalCoords, isReachable),
+                    "od_matrix");
 
             // signalTOD 검증에 signal.xml 의 "실제 플랜 보유 노드" 집합이 필요 — 재생성 전에
             // 미리 읽어둔다(재생성되면 아래에서 무조건 signalTOD 도 같이 재생성하므로 무관해짐).
@@ -463,6 +488,21 @@ public class NextSimInputScaffolder {
      */
     public static String buildSampleOdMatrix(List<Long> sourceTerminalIds, List<Long> sinkTerminalIds,
                                               java.util.Map<Long, double[]> terminalLocalCoords) {
+        return buildSampleOdMatrix(sourceTerminalIds, sinkTerminalIds, terminalLocalCoords, null);
+    }
+
+    /**
+     * @param isReachable source→sink 실제 회전 허용(커넥션) 그래프 기준 도달 가능성 판정자
+     *                    (null 이면 필터링 없이(기존 동작) 생성 — 호출부가 네트워크 그래프를
+     *                    못 구했을 때의 안전한 폴백). 있으면 도달 불가능한 source→sink 쌍은
+     *                    애초에 후보에서 제외한다(실측 확정 근본원인 — 링크가 인접해도 경로상
+     *                    교차로에 그 회전을 허용하는 connection 이 없으면 route-generator 가
+     *                    경로를 못 찾고 에러 없이 빈 경로로 처리, nextsim 이 std::out_of_range 로
+     *                    크래시하던 문제의 1차 방어).
+     */
+    public static String buildSampleOdMatrix(List<Long> sourceTerminalIds, List<Long> sinkTerminalIds,
+                                              java.util.Map<Long, double[]> terminalLocalCoords,
+                                              java.util.function.BiPredicate<Long, Long> isReachable) {
         StringBuilder demands = new StringBuilder();
         if (sourceTerminalIds != null && !sourceTerminalIds.isEmpty()
                 && sinkTerminalIds != null && !sinkTerminalIds.isEmpty()) {
@@ -475,14 +515,16 @@ public class NextSimInputScaffolder {
                 double[] srcXy = terminalLocalCoords == null ? null : terminalLocalCoords.get(src);
 
                 List<Integer> sinkOrder = srcXy == null ? List.of()
-                        : nearestSinkIndices(srcXy, sinkTerminalIds, terminalLocalCoords, perSource);
+                        : nearestSinkIndices(srcXy, sinkTerminalIds, terminalLocalCoords, perSource, src, isReachable);
                 boolean distanceAware = !sinkOrder.isEmpty();
                 if (!distanceAware) {
                     List<Integer> fallback = new java.util.ArrayList<>();
                     java.util.Set<Integer> used = new java.util.LinkedHashSet<>();
-                    for (int k = 0; k < perSource; k++) {
+                    for (int k = 0; k < sinkCount && fallback.size() < perSource; k++) {
                         int idx = (i * 7 + k * 13) % sinkCount; // 결정적 회전 — 거리 정보 없을 때 폴백
-                        if (used.add(idx)) fallback.add(idx);
+                        if (!used.add(idx)) continue;
+                        if (isReachable != null && !isReachable.test(src, sinkTerminalIds.get(idx))) continue;
+                        fallback.add(idx);
                     }
                     sinkOrder = fallback;
                 }
@@ -525,12 +567,18 @@ public class NextSimInputScaffolder {
         return result;
     }
 
-    /** srcXy 에서 가장 가까운 sink 후보 최대 perSource 개의 인덱스(가까운 순) — 좌표 없는 sink 는 제외 */
+    /**
+     * srcXy 에서 가장 가까운 sink 후보 최대 perSource 개의 인덱스(가까운 순) — 좌표 없는 sink 는 제외.
+     * @param isReachable null 이면 필터링 없음. 아니면 src→해당 sink 가 실제 도달 불가능하면 제외
+     *                    (지리적으로 가까워도 일방통행/교차로 회전 제약 때문에 못 갈 수 있음)
+     */
     private static List<Integer> nearestSinkIndices(double[] srcXy, List<Long> sinkTerminalIds,
-                                                     java.util.Map<Long, double[]> coords, int perSource) {
+                                                     java.util.Map<Long, double[]> coords, int perSource,
+                                                     long src, java.util.function.BiPredicate<Long, Long> isReachable) {
         List<int[]> candidates = new java.util.ArrayList<>(); // [index], 거리는 별도 정렬 키로 사용
         List<double[]> dists = new java.util.ArrayList<>();
         for (int idx = 0; idx < sinkTerminalIds.size(); idx++) {
+            if (isReachable != null && !isReachable.test(src, sinkTerminalIds.get(idx))) continue;
             double[] snkXy = coords.get(sinkTerminalIds.get(idx));
             if (snkXy == null) continue;
             double d = Math.hypot(srcXy[0] - snkXy[0], srcXy[1] - snkXy[1]);

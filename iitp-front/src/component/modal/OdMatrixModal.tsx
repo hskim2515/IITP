@@ -222,11 +222,19 @@ const OdMatrixModal: React.FC = () => {
         try {
             // 백엔드는 XmlLayerSaveRequest({data, logs}) 래핑을 기대 — payload 를 그대로 보내면
             // request.getData()=null 로 저장돼 DB 레이어가 비고 파일 동기화도 실패한다
-            await axiosInstance.post(`/od-matrix/${versionId}`, {
+            const res = await axiosInstance.post(`/od-matrix/${versionId}`, {
                 data: payload,
                 logs: { added: [], modified: [], deleted: [] },
             });
-            setSaveMsg({ ok: true, text: '저장 완료' });
+            // 백엔드가 일방통행 기준 도달 불가능한 수요를 걸러냈으면(NextSim 크래시 방지) 알림 —
+            // 없으면 사용자가 왜 저장한 수요 개수와 실제 반영된 개수가 다른지 알 방법이 없다
+            const removed = res.data?.unreachableDemandsRemoved ?? 0;
+            setSaveMsg({
+                ok: true,
+                text: removed > 0
+                    ? `저장 완료 (도달 불가능한 수요 ${removed}건 제외됨)`
+                    : '저장 완료',
+            });
             // OD는 LAYER_CONFIG의 isChanged 추적 대상이 아니라(전용 컴포넌트 로컬 상태) 저장
             // 성공 시점에 직접 무효화해야 한다 — 안 하면 OD를 바꿔도 이전 검증 결과(✓)가
             // 그대로 남아 실제로는 재검증이 필요한 상태를 사용자가 놓칠 수 있다.

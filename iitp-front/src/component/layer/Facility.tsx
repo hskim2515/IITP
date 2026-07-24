@@ -6,10 +6,9 @@ import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { useScenarioStore } from '@stores/useScenarioStore';
 import { useNetworkStore } from '@stores/useNetworkStore';
 import { useNetworkDrawStore, PlacementMode } from '@stores/useNetworkDrawStore';
+import { useModeStore } from '@stores/useModeStore';
 import { useVehicleStore } from '@stores/useVehicleStore';
 import { useSimulationStore } from '@stores/useSimulationStore';
-import { useSignalStore } from '@stores/useSignalStore';
-import { useLogStore } from '@stores/useLogStore';
 import { useNetworkTileStore } from '@stores/useNetworkTileStore';
 import { NETWORK_TILING } from '@utils/lodConstants';
 import { assignPropertyToResponseData } from '@utils/guid';
@@ -20,6 +19,7 @@ import { autoSaveChangedLayers } from '@utils/autoSave';
 import { showAlert, showConfirm } from '@utils/dialog';
 import { NEXTSIM_REQUIRED_KEYS } from '@utils/nextSimValidation';
 import { useNextSimReadinessStore } from '@stores/useNextSimReadinessStore';
+import { useNextSimRunStore, checkNextSimAvailable } from '@utils/nextsim';
 import { useBackgroundTaskStore } from '@stores/useBackgroundTaskStore';
 import styles from "@css/ToolsPanel.module.css";
 
@@ -78,13 +78,21 @@ const Facility = ({ fields }: FacilityProps) => {
     // KTDB 가져오기 백그라운드 스캐폴딩(백엔드가 signal.xml/OD 를 직접 재생성 중)과 겹치면
     // 안 됨 — 같은 신호 데이터를 프론트/백엔드가 동시에 다른 경로로 써서 서로 덮어쓸 수 있다.
     const ktdbScaffolding = useBackgroundTaskStore((s) => !!s.tasks['ktdb-scaffold']);
+    // 차량 시뮬레이션 실행 진입점은 헤더의 NextSim 배지로 통일 — 여기서는 안내만 표시(전역 스토어 공유).
+    const nsAvailable = useNextSimRunStore((s) => s.available);
+    useEffect(() => { void checkNextSimAvailable(); }, []);
     const placementMode = useNetworkDrawStore((s) => s.placementMode);
+    // 보기 모드에선 지도 클릭이 아무 것도 편집하지 않아야 한다 — 배치는 편집 동작이므로
+    // 편집 모드에서만 허용한다(버튼도 숨김). usePlacementMode 훅에도 동일 게이트가 있어
+    // 이중 방어(모드를 전환하는 사이 남아있는 placementMode도 거기서 정리됨).
+    const isEditMode = useModeStore((s) => s.appMode === 'edit');
     // 배치 모드의 클릭 리스너/ESC 취소는 usePlacementMode(Maps.tsx, 항상 마운트)가 담당한다 —
     // 이 컴포넌트(레이어 팝업의 "시설물" 탭)는 팝업을 닫거나 다른 탭으로 넘어가면 언마운트되므로,
     // 여기 두면 배치 모드를 켠 채로 팝업을 닫는 순간 클릭이 먹통이 되는 문제가 있었다. 여기서는
     // 버튼(상태 토글)만 담당한다.
 
     const handleTogglePlacement = (key: string) => {
+        if (!isEditMode) return;
         const mode = PLACEMENT_LABELS[key];
         if (!mode) return;
         if (placementMode === mode) useNetworkDrawStore.getState().exitToSelect();
@@ -274,56 +282,6 @@ const Facility = ({ fields }: FacilityProps) => {
         }
     };
 
-    const handleVehicleGenerate = async () => {
-        const scenarioKey = getActiveVersionId();
-        if (!scenarioKey) return;
-
-        const signalData = useSignalStore.getState().currentJsonData as any;
-        const hasSignal = Array.isArray(signalData?.signals) && signalData.signals.length > 0;
-        if (!hasSignal) {
-            const ok = await showConfirm(
-                '신호 데이터가 없습니다.\n신호 패턴을 자동 추정하여 차량 시뮬레이션을 생성합니다.\n계속하시겠습니까?'
-            );
-            if (!ok) return;
-        }
-
-        setVehicleLoading(true);
-        useLogStore.getState().addLog('info', hasSignal
-            ? '차량 시뮬레이션 더미 생성 시작...'
-            : '차량 시뮬레이션 더미 생성 시작 (신호 패턴 자동 추정)...'
-        );
-
-        const base = import.meta.env.VITE_API_URL;
-        const poll = (retryCount: number) => {
-            fetch(`${base}/vehicle/vehicle-route/${scenarioKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ numVehicle: 0, regenerate: retryCount === 0, generateDummy: true }),
-            })
-                .then(res => {
-                    if (res.status === 202) {
-                        if (retryCount < 120) {
-                            setTimeout(() => poll(retryCount + 1), retryCount < 10 ? 3000 : 5000);
-                        } else {
-                            setVehicleLoading(false);
-                        }
-                    } else if (res.ok) {
-                        setVehicleExists(true);
-                        setVehicleLoading(false);
-                        useVehicleStore.getState().triggerRefetch();
-                    } else {
-                        setVehicleLoading(false);
-                        showAlert('차량 시뮬레이션 더미 생성에 실패했습니다.');
-                    }
-                })
-                .catch(() => {
-                    setVehicleLoading(false);
-                    showAlert('차량 시뮬레이션 더미 생성에 실패했습니다.');
-                });
-        };
-        poll(0);
-    };
-
     const requiredDotColor = (key: string) => {
         const v = validation[key];
         if (v?.loading) return '#888';
@@ -365,7 +323,7 @@ const Facility = ({ fields }: FacilityProps) => {
                                     <span title={requiredDotTitle(parentKey)} style={{ color: requiredDotColor(parentKey), marginLeft: 5, fontSize: 10 }}>●</span>
                                 )}
                             </span>
-                            {PLACEMENT_LABELS[parentKey] && (
+                            {isEditMode && PLACEMENT_LABELS[parentKey] && (
                                 <button
                                     onClick={(e) => { e.stopPropagation(); handleTogglePlacement(parentKey); }}
                                     title={placementMode === PLACEMENT_LABELS[parentKey] ? '배치 종료 (ESC)' : `지도를 클릭해 ${field.label} 추가 배치`}
@@ -413,7 +371,7 @@ const Facility = ({ fields }: FacilityProps) => {
                             <span title={requiredDotTitle(field.key)} style={{ color: requiredDotColor(field.key), marginLeft: 5, fontSize: 10 }}>●</span>
                         )}
                     </span>
-                    {PLACEMENT_LABELS[field.key] && (
+                    {isEditMode && PLACEMENT_LABELS[field.key] && (
                         <button
                             onClick={(e) => { e.stopPropagation(); handleTogglePlacement(field.key); }}
                             title={placementMode === PLACEMENT_LABELS[field.key] ? '배치 종료 (ESC)' : `지도를 클릭해 ${field.label} 배치`}
@@ -437,31 +395,24 @@ const Facility = ({ fields }: FacilityProps) => {
                 </div>
             ))}
 
-            {/* 차량 시뮬레이션 행 */}
-            {vehicleExists !== null && (
-                <div className={styles.sectionLabel} style={vehicleExists ? undefined : { opacity: 0.5, cursor: 'default' }}>
+            {/* 차량 시뮬레이션 행 — 생성(실행) 진입점은 헤더의 NextSim 배지로 통일, 여기선 삭제만 담당 */}
+            {vehicleExists === true && (
+                <div className={styles.sectionLabel}>
                     <span style={{ flex: 1 }}>차량 시뮬레이션</span>
-                    {vehicleExists ? (
-                        <button
-                            onClick={handleVehicleDelete}
-                            disabled={vehicleLoading}
-                            title="차량 시뮬레이션 데이터 삭제"
-                            style={deleteBtnStyle}
-                        >
-                            {vehicleLoading ? '...' : '✕'}
-                        </button>
-                    ) : (
-                        <button
-                            onClick={handleVehicleGenerate}
-                            disabled={vehicleLoading || ktdbScaffolding}
-                            title={ktdbScaffolding
-                                ? '백그라운드에서 서버가 신호/OD 데이터를 생성 중입니다 — 완료 후 다시 시도하세요'
-                                : '차량 시뮬레이션 더미 생성'}
-                            style={{ ...generateBtnStyle, opacity: (vehicleLoading || ktdbScaffolding) ? 0.6 : 1 }}
-                        >
-                            {vehicleLoading ? '생성 중...' : ktdbScaffolding ? '서버 생성 중...' : '더미 생성'}
-                        </button>
-                    )}
+                    <button
+                        onClick={handleVehicleDelete}
+                        disabled={vehicleLoading}
+                        title="차량 시뮬레이션 데이터 삭제"
+                        style={deleteBtnStyle}
+                    >
+                        {vehicleLoading ? '...' : '✕'}
+                    </button>
+                </div>
+            )}
+            {vehicleExists === false && nsAvailable === true && (
+                <div className={styles.sectionLabel} style={{ opacity: 0.5, cursor: 'default' }}>
+                    <span style={{ flex: 1 }}>차량 시뮬레이션</span>
+                    <span style={{ fontSize: 10, color: '#666' }}>헤더의 NextSim 배지에서 실행하세요</span>
                 </div>
             )}
         </div>

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import './App.css'
 import Header from "./component/header/Header";
 import LeftPanel from "./component/panel/LeftPanel";
@@ -24,7 +24,6 @@ import DashboardRight from "@component/panel/DashboardRight";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 import { useOnboardingStore } from "@stores/useOnboardingStore";
 import { useLogStore } from "@stores/useLogStore";
-import { useVehicleStore } from "@stores/useVehicleStore";
 import FileImportModal from "@component/modal/FileImportModal";
 import { useSignalStore } from "@stores/useSignalStore";
 import { useNetworkStore } from "@stores/useNetworkStore";
@@ -43,16 +42,17 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const missingSignal = useOnboardingStore((s) => s.missingSignal);
     const missingVehicle = useOnboardingStore((s) => s.missingVehicle);
     const scenarioKey = getActiveVersionId() ?? '';
-    const [generatingVehicle, setGeneratingVehicle] = useState(false);
+    // 위저드 2단계(신호+노면표시 더미 생성) 진행 중 여부 — 차량 시뮬레이션은 NextSim으로 별도 생성.
+    const [generatingWizardDummy, setGeneratingWizardDummy] = useState(false);
     // KTDB 가져오기 백그라운드 스캐폴딩(백엔드가 signal.xml/OD를 직접 재생성 중)과 겹치면
     // 안 됨 — 이 온보딩 배너는 가져오기 직후 바로 뜨는 화면이라 특히 이 레이스에 취약하다.
     const ktdbScaffolding = useBackgroundTaskStore((s) => !!s.tasks['ktdb-scaffold']);
     const [signalDone, setSignalDone] = useState(false);
-    const [vehicleDone, setVehicleDone] = useState(false);
     // NextSim 실행 상태 — 전역 스토어(utils/nextsim): 모달이 닫혔다 열려도/재접속해도 유지
     const nextsimAvailable = useNextSimRunStore((s) => s.available);
     const nextsimRunningId = useNextSimRunStore((s) => s.runningVersionId);
     const nextsimRunning = nextsimRunningId === scenarioKey;
+    const nextsimChecking = useNextSimRunStore((s) => s.checking);
     const nextsimStage = useNextSimRunStore((s) => s.stage);
     const nextsimElapsed = useNextSimRunStore((s) => s.elapsedSeconds);
     const nextsimBeat = useNextSimRunStore((s) => s.sinceOutputSeconds);
@@ -62,6 +62,19 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     useEffect(() => {
         if (step === 'need-simulation') void checkNextSimAvailable();
     }, [step]);
+
+    // NextSim이 이 배너가 떠 있는 동안 성공적으로 완료되면(러닝→비러닝 하강 엣지, 에러 없음)
+    // 차량 요구사항이 충족된 것 — 신호 요구사항도 충족됐다면 배너를 자동으로 닫는다.
+    // (차량 더미 생성 버튼이 있던 시절엔 그 생성 완료 콜백이 이 역할을 했음 — NextSim 경로로 대체)
+    const prevNextsimRunningRef = useRef(false);
+    useEffect(() => {
+        const justFinished = prevNextsimRunningRef.current && !nextsimRunning;
+        prevNextsimRunningRef.current = nextsimRunning;
+        if (justFinished && !nextsimError && step === 'need-simulation' && (!missingSignal || signalDone)) {
+            setStep('idle');
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [nextsimRunning]);
 
     if (step === 'idle') return null;
 
@@ -92,79 +105,12 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
             useLogStore.getState().addLog('warn', '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다 — 완료 후 다시 시도하세요.');
             return;
         }
-        setGeneratingVehicle(true);
+        setGeneratingWizardDummy(true);
         await handleGenerateSignal();
         await handleGeneratePavementMarking();
-        handleGenerateVehicle();
-    };
-
-    const handleGenerateVehicle = () => {
-        if (ktdbScaffolding) {
-            useLogStore.getState().addLog('warn', '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다 — 완료 후 다시 시도하세요.');
-            return;
-        }
-        const signalData = useSignalStore.getState().currentJsonData as any;
-        const hasSignal = Array.isArray(signalData?.signals) && signalData.signals.length > 0;
-        setGeneratingVehicle(true);
-        useLogStore.getState().addLog('info', hasSignal
-            ? '더미 차량 시뮬레이션 데이터 생성 시작...'
-            : '더미 차량 시뮬레이션 데이터 생성 시작 (신호 데이터 없음 — 신호 패턴 자동 추정)...'
-        );
-
-        const setVehicleTask = (label: string | null) =>
-            useBackgroundTaskStore.getState().setTask('vehicle-route', label);
-
-        const poll = (retryCount: number) => {
-            fetch(
-                `${import.meta.env.VITE_API_URL}/vehicle/vehicle-route/${scenarioKey}`,
-                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ numVehicle: 0, regenerate: retryCount === 0, generateDummy: true }) }
-            )
-            .then((res) => {
-                if (res.status === 202) {
-                    return res.json().then((body: any) => {
-                        const stage = body?.stage ?? '처리 중...';
-                        const elapsed = body?.elapsed ?? 0;
-                        useLogStore.getState().addLog('info', `[차량 경로 생성 중] ${stage} (${elapsed}초 경과)`);
-                        setVehicleTask(`차량 경로 생성 중 — ${stage} (${elapsed}초)`);
-                        if (retryCount < 120) {
-                            const delay = retryCount < 10 ? 3000 : 5000;
-                            setTimeout(() => poll(retryCount + 1), delay);
-                        } else {
-                            useLogStore.getState().addLog('warn', '더미 차량 데이터 생성 대기 시간 초과');
-                            setVehicleTask(null);
-                            setGeneratingVehicle(false);
-                        }
-                    });
-                } else if (res.ok) {
-                    useLogStore.getState().addLog('info', '더미 차량 데이터 생성 완료 — 시뮬레이션 재생을 시작합니다...');
-                    setVehicleTask(null);
-                    setVehicleDone(true);
-                    setGeneratingVehicle(false);
-                    useVehicleStore.getState().triggerRefetch();
-                    // need-dummy: 즉시 닫기 / need-simulation: 필요한 항목 모두 완료 시 닫기
-                    if (step === 'need-dummy') {
-                        setStep('idle');
-                    } else if (step === 'need-simulation') {
-                        const allDone = (!missingSignal || signalDone) && true; // vehicleDone just set
-                        if (allDone) setStep('idle');
-                    }
-                } else {
-                    res.json().catch(() => ({})).then((body: any) => {
-                        const msg = body?.error ?? `서버 오류 (${res.status})`;
-                        useLogStore.getState().addLog('error', `더미 차량 데이터 생성 실패: ${msg}`);
-                        setVehicleTask(null);
-                        setGeneratingVehicle(false);
-                    });
-                }
-            })
-            .catch(() => {
-                useLogStore.getState().addLog('error', '더미 차량 데이터 생성 중 오류 발생');
-                setVehicleTask(null);
-                setGeneratingVehicle(false);
-            });
-        };
-
-        poll(0);
+        setGeneratingWizardDummy(false);
+        // 위저드는 신호+노면표시만 다룬다 — 차량 시뮬레이션은 NextSim으로 별도 생성(need-simulation 배너 참고)
+        if (step === 'need-dummy') setStep('idle');
     };
 
     /** NextSim 시뮬레이터 실행 — 완료되면 vehicle_sim.db 갱신 → 기존 차량 파이프라인이 소비.
@@ -201,6 +147,8 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
             useLogStore.getState().addLog('info', `신호 더미 생성 완료 (${signals.length}개) — 버전 미선택, DataIOPanel에서 저장 필요`);
         }
         setSignalDone(true);
+        // 원래 차량은 이미 있고 신호만 없던 케이스 — 신호 완료로 요구사항이 다 충족됐으면 바로 닫는다.
+        if (step === 'need-simulation' && !missingVehicle) setStep('idle');
     };
 
     const isWizard = step === 'need-network' || step === 'need-dummy';
@@ -233,21 +181,21 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
 
                 {step === 'need-dummy' && (
                     <>
-                        <div style={obTitleStyle}>시뮬레이션 더미 데이터 생성</div>
+                        <div style={obTitleStyle}>신호+노면표시 데이터 생성</div>
                         <p style={obDescStyle}>
                             네트워크 반영이 완료됐습니다.<br />
-                            신호 더미 생성 후 차량 시뮬레이션 데이터를 순서대로 만들어<br />
-                            시뮬레이션 재생을 미리 확인할 수 있습니다.
+                            신호/노면표시 더미를 생성해 지도를 미리 확인할 수 있습니다.<br />
+                            차량 시뮬레이션은 준비되면 NextSim으로 실행하세요.
                         </p>
                         <div style={obFooterStyle}>
-                            <button style={obDismissBtn} onClick={handleDismiss} disabled={generatingVehicle}>건너뛰기</button>
+                            <button style={obDismissBtn} onClick={handleDismiss} disabled={generatingWizardDummy}>건너뛰기</button>
                             <button
-                                style={(generatingVehicle || ktdbScaffolding) ? { ...obPrimaryBtn, opacity: 0.6 } : obPrimaryBtn}
+                                style={(generatingWizardDummy || ktdbScaffolding) ? { ...obPrimaryBtn, opacity: 0.6 } : obPrimaryBtn}
                                 onClick={handleGenerateDummy}
-                                disabled={generatingVehicle || ktdbScaffolding}
+                                disabled={generatingWizardDummy || ktdbScaffolding}
                                 title={ktdbScaffolding ? '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다' : undefined}
                             >
-                                {generatingVehicle ? '생성 중...' : ktdbScaffolding ? '서버 생성 중...' : '더미 데이터 생성'}
+                                {generatingWizardDummy ? '생성 중...' : ktdbScaffolding ? '서버 생성 중...' : '신호+노면표시 데이터 생성'}
                             </button>
                         </div>
                     </>
@@ -263,7 +211,7 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                                 ? <>신호 데이터가 없습니다.</>
                                 : <>차량 시뮬레이션 데이터가 없습니다.</>
                             }<br />
-                            더미 데이터를 생성하거나 <span style={obHighlight}>가져오기</span>로 추가하세요.
+                            필요한 데이터를 아래에서 준비하거나 <span style={obHighlight}>가져오기</span>로 추가하세요.
                         </p>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
                             {missingSignal && (
@@ -281,17 +229,17 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                                     </button>
                                 </div>
                             )}
-                            {missingVehicle && (
+                            {missingVehicle && nextsimAvailable === true && (
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: 6 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                                         <span style={{ fontSize: 12, color: '#ccc' }}>🚗 차량 시뮬레이션</span>
                                         <div style={{ display: 'flex', gap: 6 }}>
-                                        {nextsimAvailable === true && !nextsimRunning && (
+                                        {!nextsimRunning && (
                                             <button
                                                 style={{ ...obPrimaryBtn, fontSize: 11 }}
                                                 onClick={handleRunNextSim}
-                                                disabled={vehicleDone}
-                                                title="NextSim 시뮬레이터로 실제 교통 시뮬레이션을 실행합니다 (OD 매트릭스 필요)"
+                                                disabled={nextsimChecking}
+                                                title={nextsimChecking ? '실행 상태 확인 중...' : 'NextSim 시뮬레이터로 실제 교통 시뮬레이션을 실행합니다 (OD 매트릭스 필요)'}
                                             >
                                                 NextSim 실행
                                             </button>
@@ -310,18 +258,6 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                                                 </button>
                                             </>
                                         )}
-                                        <button
-                                            style={vehicleDone
-                                                ? { ...obPrimaryBtn, fontSize: 11, background: 'rgba(78,203,141,0.15)', borderColor: 'rgba(78,203,141,0.4)', color: '#4ecb8d' }
-                                                : (generatingVehicle || ktdbScaffolding)
-                                                ? { ...obPrimaryBtn, opacity: 0.6, fontSize: 11 }
-                                                : { ...obPrimaryBtn, fontSize: 11 }}
-                                            onClick={handleGenerateVehicle}
-                                            disabled={vehicleDone || generatingVehicle || ktdbScaffolding}
-                                            title={ktdbScaffolding ? '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다' : undefined}
-                                        >
-                                            {vehicleDone ? '생성 완료 ✓' : generatingVehicle ? '생성 중...' : ktdbScaffolding ? '서버 생성 중...' : '더미 생성'}
-                                        </button>
                                         </div>
                                     </div>
                                     {nextsimRunning && (
@@ -338,11 +274,6 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                                         }}>
                                             NextSim {nextsimError}
                                         </div>
-                                    )}
-                                    {missingSignal && !signalDone && !vehicleDone && (
-                                        <span style={{ fontSize: 10, color: '#666' }}>
-                                            신호 데이터 없이 생성 시 신호 패턴이 자동 추정됩니다.
-                                        </span>
                                     )}
                                 </div>
                             )}

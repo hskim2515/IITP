@@ -15,36 +15,60 @@ interface NextSimRunState {
     available: boolean | null;
     /** 현재 폴링 중인 versionId (null=없음) */
     runningVersionId: string | null;
+    /** 서버에 진행 중인 실행이 있는지 확인하는 중(resumeNextSimPollingIfRunning) — 이 확인이
+     *  끝나기 전엔 실제로는 RUNNING인데 runningVersionId가 아직 null일 수 있어, 그 짧은 레이스
+     *  윈도우 동안 "실행" 버튼이 눌리는 걸 막는 데만 쓴다(백엔드 409로도 안전하지만 UI에서도 닫음). */
+    checking: boolean;
     stage: string;
+    /** 체크리스트 표시용 분류된 단계 키 — NEXTSIM_PHASES 의 key 와 대응 (nextsimPhases.ts) */
+    stepKey: string;
     /** 실행 경과 초 (status API elapsedSeconds) */
     elapsedSeconds: number;
     /** 마지막 시뮬레이터 출력 후 경과 초 — 하트비트 (연산 중 여부 판단) */
     sinceOutputSeconds: number;
+    /** 직전 같은 버전 성공 실행 이력 기준 진행률(0~99) — 이력 없으면(첫 실행) null */
+    progressPercent: number | null;
+    /** 위 이력 기준 예상 잔여 초 — progressPercent 와 함께 null 여부가 같이 간다 */
+    etaSeconds: number | null;
     /** 마지막 실행 실패 메시지 — 모달 등 UI 표면화용 (새 실행 시작 시 초기화) */
     lastError: string | null;
     setAvailable: (v: boolean) => void;
     setRunning: (versionId: string | null, stage?: string) => void;
-    setProgress: (stage: string, elapsedSeconds: number, sinceOutputSeconds: number) => void;
+    setProgress: (
+        stage: string, stepKey: string, elapsedSeconds: number, sinceOutputSeconds: number,
+        progressPercent: number | null, etaSeconds: number | null,
+    ) => void;
     setLastError: (msg: string | null) => void;
 }
 
 export const useNextSimRunStore = create<NextSimRunState>((set) => ({
     available: null,
     runningVersionId: null,
+    checking: false,
     stage: "",
+    stepKey: "STAGING",
     elapsedSeconds: 0,
     sinceOutputSeconds: 0,
+    progressPercent: null,
+    etaSeconds: null,
     lastError: null,
     setAvailable: (v) => set({ available: v }),
     setRunning: (versionId, stage) =>
-        set({ runningVersionId: versionId, stage: stage ?? "", elapsedSeconds: 0, sinceOutputSeconds: 0 }),
-    setProgress: (stage, elapsedSeconds, sinceOutputSeconds) =>
-        set({ stage, elapsedSeconds, sinceOutputSeconds }),
+        set({
+            runningVersionId: versionId, stage: stage ?? "", stepKey: "STAGING",
+            elapsedSeconds: 0, sinceOutputSeconds: 0, progressPercent: null, etaSeconds: null,
+        }),
+    setProgress: (stage, stepKey, elapsedSeconds, sinceOutputSeconds, progressPercent, etaSeconds) =>
+        set({ stage, stepKey, elapsedSeconds, sinceOutputSeconds, progressPercent, etaSeconds }),
     setLastError: (msg) => set({ lastError: msg }),
 }));
 
 /** 경과 초 → "N분 M초" 표시 (모달/패널 공용) */
 export const formatElapsed = (sec: number) =>
+    sec >= 60 ? `${Math.floor(sec / 60)}분 ${sec % 60}초` : `${sec}초`;
+
+/** ETA 초 → "약 N분 M초" 표시 (formatElapsed 와 동일 포맷, 문구만 다름) */
+export const formatEta = (sec: number) =>
     sec >= 60 ? `${Math.floor(sec / 60)}분 ${sec % 60}초` : `${sec}초`;
 
 const BASE = () => import.meta.env.VITE_API_URL;
@@ -109,6 +133,7 @@ export async function cancelNextSimRun(versionId: string): Promise<void> {
 export async function resumeNextSimPollingIfRunning(versionId: string): Promise<void> {
     if (!versionId) return;
     if (useNextSimRunStore.getState().runningVersionId === versionId) return; // 이미 폴링 중
+    useNextSimRunStore.setState({ checking: true });
     try {
         const r = await fetch(`${BASE()}/simulation/${versionId}/status`);
         if (!r.ok) return;
@@ -118,6 +143,9 @@ export async function resumeNextSimPollingIfRunning(versionId: string): Promise<
             startPolling(versionId);
         }
     } catch { /* 서버 미가용 등 — 조용히 무시 */ }
+    finally {
+        useNextSimRunStore.setState({ checking: false });
+    }
 }
 
 function startPolling(versionId: string): void {
@@ -135,7 +163,8 @@ function startPolling(versionId: string): void {
                     const beat = s.sinceOutputSeconds > 10 ? ` · 마지막 출력 ${s.sinceOutputSeconds}초 전 (연산 중)` : "";
                     const label = `NextSim 실행 중 — ${s.stage ?? ""} (${s.elapsedSeconds ?? 0}초${beat})`;
                     useNextSimRunStore.getState().setProgress(
-                        s.stage ?? "", s.elapsedSeconds ?? 0, s.sinceOutputSeconds ?? 0);
+                        s.stage ?? "", s.stepKey ?? "STAGING", s.elapsedSeconds ?? 0, s.sinceOutputSeconds ?? 0,
+                        s.progressPercent ?? null, s.etaSeconds ?? null);
                     setTask(label);
                     if (n < 4800) setTimeout(() => poll(n + 1), 3000);
                     else finish("warn", "[NextSim] 상태 폴링 시간 초과 — 상태 조회로 확인하세요");

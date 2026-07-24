@@ -90,6 +90,19 @@ public class NetworkStreamingDiffService {
     public DiffStats applyDiffStreaming(byte[] baseXml, String targetVersionId,
                                         List<LinkResponse> upsertLinks, List<NodeResponse> upsertNodes,
                                         List<Long> deleteLinkIds, List<Long> deleteNodeIds) throws Exception {
+        return applyDiffStreaming(baseXml, targetVersionId, upsertLinks, upsertNodes, deleteLinkIds, deleteNodeIds, null);
+    }
+
+    /**
+     * @param onWritten null 이 아니면, 병합된 network.xml 업로드 직후·임시파일 삭제 전에 그 로컬
+     *                   경로로 콜백한다 — 호출측이 대규모(전체 객체화 불가) network.xml 을 SFTP로
+     *                   재다운로드하지 않고도 로컬 임시파일을 그대로 스캔(OD 도달 가능성 재검증 등)할
+     *                   수 있게 하기 위함. 콜백 안에서 파일을 수정하면 안 된다(읽기 전용으로만 사용).
+     */
+    public DiffStats applyDiffStreaming(byte[] baseXml, String targetVersionId,
+                                        List<LinkResponse> upsertLinks, List<NodeResponse> upsertNodes,
+                                        List<Long> deleteLinkIds, List<Long> deleteNodeIds,
+                                        java.util.function.Consumer<Path> onWritten) throws Exception {
         Map<Long, LinkResponse> upsertLinkById = new LinkedHashMap<>();
         if (upsertLinks != null) {
             for (LinkResponse l : upsertLinks) if (l.getId() != null) upsertLinkById.put(l.getId(), l);
@@ -121,6 +134,7 @@ public class NetworkStreamingDiffService {
                     stats.replacedLinks, stats.replacedNodes,
                     stats.appendedLinks, stats.appendedNodes,
                     stats.deletedLinks, stats.deletedNodes);
+            if (onWritten != null) onWritten.accept(tmp);
             return stats;
         } finally {
             try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}

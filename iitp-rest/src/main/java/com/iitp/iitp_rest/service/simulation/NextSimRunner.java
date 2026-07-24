@@ -159,8 +159,9 @@ public class NextSimRunner {
         activeVersionId = versionId;
         cancelRequested.remove(versionId);
         try {
+            // NOTE: SimulationController.classifyStep()이 이 문구의 접두어로 매칭 — 문구를 바꾸면 그쪽도 같이 고칠 것.
             progress.accept("입력 데이터 스테이징 중...");
-            stageInputs(versionId, inputDir, networkDir);
+            stageInputs(versionId, inputDir, networkDir, progress);
 
             // 경로 캐시: route-generator 는 odmatrix 와 무관하게 **네트워크의 전 터미널 쌍**을
             // 계산한다(실측 — 2-demand OD 와 2021-demand OD 의 Route.json 이 동일). 따라서
@@ -172,6 +173,7 @@ public class NextSimRunner {
             Path cacheDir = routeCacheDir(versionId);
             Path routeJson = networkDir.resolve("Route.json");
             if (isRouteCacheHit(cacheDir, inputsHash)) {
+                // NOTE: SimulationController.classifyStep()이 이 문구의 접두어로 매칭 — 문구를 바꾸면 그쪽도 같이 고칠 것.
                 progress.accept("경로 캐시 재사용 — 경로 생성 생략");
                 Files.copy(cacheDir.resolve("Route.json"), routeJson,
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING);
@@ -182,6 +184,7 @@ public class NextSimRunner {
                 }
                 log.info("[NextSimRunner] 경로 캐시 히트: {} (hash={})", versionId, inputsHash.substring(0, 12));
             } else {
+                // NOTE: SimulationController.classifyStep()이 이 문구의 접두어로 매칭 — 문구를 바꾸면 그쪽도 같이 고칠 것.
                 progress.accept("경로 생성 중 (route-generator)...");
                 String routeLog = runStageWithCrashRecovery(
                         versionId, workDir, networkDir, "route-generator", "RouteGenerator", progress);
@@ -206,6 +209,7 @@ public class NextSimRunner {
                 Files.copy(ptRouteJson, ptRouteJsonSnapshot, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
 
+            // NOTE: SimulationController.classifyStep()이 이 문구의 접두어로 매칭 — 문구를 바꾸면 그쪽도 같이 고칠 것.
             progress.accept("시뮬레이션 실행 중 (nextsim)...");
             // route-generator 와 동일한 std::out_of_range 크래시가 시뮬레이션 엔진 자체에서도
             // 발생함을 실측(원인 불명의 특정 터미널 노드 — route-generator 단계를 통과했어도
@@ -223,6 +227,7 @@ public class NextSimRunner {
                 throw new RuntimeException("시뮬레이션 결과(simulation_output.db)가 생성되지 않았습니다.\n" + tail(simLog, 800));
             }
 
+            // NOTE: SimulationController.classifyStep()이 이 문구의 접두어로 매칭 — 문구를 바꾸면 그쪽도 같이 고칠 것.
             progress.accept("결과 저장 중...");
             // NextSim VehicleEvent 스키마 == VehicleDataReader 신형 스키마 → 그대로 vehicle_sim.db 로
             try (InputStream in = new FileInputStream(resultDb.toFile())) {
@@ -308,7 +313,7 @@ public class NextSimRunner {
 
     // ─────────────────────────── 입력 스테이징 ───────────────────────────
 
-    private void stageInputs(String versionId, Path inputDir, Path networkDir) throws IOException {
+    private void stageInputs(String versionId, Path inputDir, Path networkDir, Consumer<String> progress) throws IOException {
         // 1) config.txt
         Files.writeString(inputDir.resolve("config.txt"),
                 "network_name=" + NETWORK_NAME + "\nbranch=" + BRANCH + "\n", StandardCharsets.UTF_8);
@@ -344,6 +349,8 @@ public class NextSimRunner {
                 "odmatrix.xml 이 없습니다 — OD 매트릭스 메뉴에서 수요를 생성/저장하세요.");
         // 파일은 있는데 수요가 전부 0/없음 → 시뮬은 "성공"하지만 차량 0대 — 혼란만 남으므로 명시 에러
         requirePositiveDemand(networkDir.resolve("odmatrix.xml"));
+        // NOTE: SimulationController.classifyStep()이 이 문구의 접두어로 매칭 — 문구를 바꾸면 그쪽도 같이 고칠 것.
+        progress.accept("네트워크 정합성 보정 중 (고립 노드 격리 · 도달 가능성 검증)...");
         // KTDB 변환 네트워크 호환 보정 + 미사용 터미널 가지치기 (스테이징 사본, 단일 패스):
         // - NextSim 파서가 <port direction>/<node v2x> 를 필수 속성으로 요구(실측) → 빈 값 주입
         // - route-generator 는 odmatrix 무관 **전 터미널 쌍** 최단경로를 계산(실측 — 수도권
@@ -352,6 +359,13 @@ public class NextSimRunner {
         //   노드라 어떤 경로도 통과하지 않음 → 수요가 참조하지 않는 한 시뮬 결과 불변.
         Set<String> odNodeIds = pruneUnusedTerminals ? extractOdNodeIds(networkDir.resolve("odmatrix.xml")) : null;
         injectRequiredNetworkAttrs(networkDir.resolve("network.xml"), odNodeIds);
+        // 방향성(일방통행) 기준 도달 불가능한 OD 수요 제거 (실측 확정 근본원인 — gdb):
+        // route-generator 는 도달 불가능한 (source,sink) 쌍도 에러 없이 빈 경로로 처리해
+        // "SUCCESS" 보고하고, nextsim 이 그 수요의 경로를 조회하려다 std::out_of_range 로
+        // 크래시한다(InitializeVehicleDemand/RouteGenerator::ExtractVehicleRoutesWithMetadata
+        // 양쪽에서 동일 메커니즘 확인). OD 생성/편집 시점에도 걸러내지만(1차 방어),
+        // 어떤 경로로 만들어진 OD든(수동 XML 업로드 등) 최종 실행 직전에 한 번 더 걸러낸다.
+        filterUnreachableDemands(networkDir.resolve("network.xml"), networkDir.resolve("odmatrix.xml"));
 
         if (!copyOptional(versionId, "signal.xml", networkDir)) {
             Files.writeString(networkDir.resolve("signal.xml"),
@@ -588,6 +602,124 @@ public class NextSimRunner {
         log.warn("[NextSimRunner] network.xml 이 {}개 연결요소로 분단됨 (최대 {}개 노드, 나머지 {}개는 격리 대상)",
                 componentCount, largest.size(), allNodeIds.size() - largest.size());
         return largest;
+    }
+
+    /**
+     * 실제 회전 허용(커넥션) 그래프 기준으로 sink 에 도달 불가능하거나, source/sink 가
+     * 최종적으로 type="terminal" 이 아니게 된 OD 수요를 odmatrix.xml 에서 제거한다.
+     *
+     * <p>실측(gdb) 확인된 두 가지 별개 실패 패턴:
+     * <ol>
+     *   <li><b>도달 불가능</b>(scenario1_2 11000174, 대전 오정동 전체 유지 베이스라인, 최신
+     *       재임포트 11000357 모두 확인): route-generator 는 (source,sink) 사이에 실제 통행
+     *       가능한 경로가 없어도 에러 없이 빈 경로로 처리해 "SUCCESS" 를 보고하고, nextsim 이
+     *       그 수요의 경로를 찾으려다 {@code InitializeVehicleDemand()} 에서 std::out_of_range
+     *       로 크래시한다. <b>단순 링크 인접(무방향은 물론 방향성으로도)만으론 부족함이
+     *       gdb로 확정됨</b> — 링크가 서로 이어져 있어도, 경로상의 어떤 교차로에 그 회전을
+     *       허용하는 {@code <connection>} 이 없으면(교차로마다 허용된 회전만 명시적으로 나열)
+     *       실제로는 통행 불가능하다(실측: 11000357 — 방향성 링크 그래프로는 도달 가능해
+     *       보였지만 실제 커넥션 그래프로는 불가능, route-generator가 Route.json 을 빈 채로
+     *       남김을 직접 확인). 그래서 이 메서드는 노드가 아니라 <b>링크</b> 단위로 그래프를
+     *       구성하고(노드의 커넥션 = from_link→to_link 간선), 터미널의 out-link 에서 시작해
+     *       그 반대 터미널의 in-link 에 도달하는지로 판정한다.</li>
+     *   <li><b>source/sink 가 terminal 이 아니게 됨</b>(실측: 격리된 소규모 섬 안에 있는 두
+     *       노드끼리는 서로 커넥션 경로가 있어 위 체크는 통과하지만, 둘 다 메인 컴포넌트 밖이라
+     *       {@code injectRequiredNetworkAttrs} 가 garage 로 전환했다 — route-generator/nextsim
+     *       은 garage 노드를 수요 처리 대상에서 제외하므로 이 수요도 같은 크래시로 이어진다).
+     *       순수 그래프 도달 가능성만으론 못 잡고, 최종 network.xml 에서 실제 노드 타입을
+     *       확인해야만 걸러진다.</li>
+     * </ol>
+     */
+    private static void filterUnreachableDemands(Path networkXml, Path odMatrixXml) throws IOException {
+        Map<String, List<String>> nodeOutLinks = new HashMap<>();
+        Map<String, List<String>> nodeInLinks = new HashMap<>();
+        Map<String, List<String>> linkConnGraph = new HashMap<>();
+        Map<String, String> nodeType = new HashMap<>();
+        Pattern linkPat = Pattern.compile("<link id=\"([^\"]+)\" from_node=\"([^\"]+)\" to_node=\"([^\"]+)\"");
+        Pattern nodePat = Pattern.compile("<node id=\"([^\"]+)\" type=\"([^\"]+)\"");
+        Pattern connPat = Pattern.compile("<connection\\s[^>]*from_link=\"(\\d+)\"[^>]*to_link=\"(\\d+)\"");
+        try (var reader = Files.newBufferedReader(networkXml, StandardCharsets.UTF_8)) {
+            char[] buf = new char[1 << 22];
+            String carry = "";
+            int n;
+            while ((n = reader.read(buf)) > 0) {
+                String chunk = carry + new String(buf, 0, n);
+                Matcher lm = linkPat.matcher(chunk);
+                while (lm.find()) {
+                    String lid = lm.group(1), f = lm.group(2), t = lm.group(3);
+                    nodeOutLinks.computeIfAbsent(f, k -> new ArrayList<>()).add(lid);
+                    nodeInLinks.computeIfAbsent(t, k -> new ArrayList<>()).add(lid);
+                }
+                Matcher nm = nodePat.matcher(chunk);
+                while (nm.find()) {
+                    nodeType.put(nm.group(1), nm.group(2));
+                }
+                Matcher cm = connPat.matcher(chunk);
+                while (cm.find()) {
+                    linkConnGraph.computeIfAbsent(cm.group(1), k -> new ArrayList<>()).add(cm.group(2));
+                }
+                carry = chunk.length() > 512 ? chunk.substring(chunk.length() - 512) : chunk;
+            }
+        }
+
+        String odContent = Files.readString(odMatrixXml, StandardCharsets.UTF_8);
+        Map<String, Set<String>> reachedLinksCache = new HashMap<>();
+        int total = 0, removed = 0, removedNotTerminal = 0;
+        StringBuilder out = new StringBuilder(odContent.length());
+        Matcher dm = Pattern.compile("<demand\\b[^>]*?/>").matcher(odContent);
+        int last = 0;
+        while (dm.find()) {
+            out.append(odContent, last, dm.start());
+            last = dm.end();
+            String tag = dm.group();
+            total++;
+            Matcher sm = Pattern.compile("\\bsource=\"([^\"]+)\"").matcher(tag);
+            Matcher km = Pattern.compile("\\bsink=\"([^\"]+)\"").matcher(tag);
+            String src = sm.find() ? sm.group(1) : null;
+            String snk = km.find() ? km.group(1) : null;
+            boolean bothTerminal = "terminal".equals(nodeType.get(src)) && "terminal".equals(nodeType.get(snk));
+            boolean reachable = bothTerminal && src != null && snk != null
+                    && isReachableViaConnections(nodeOutLinks, nodeInLinks, linkConnGraph, reachedLinksCache, src, snk);
+            if (reachable) {
+                out.append(tag);
+            } else {
+                removed++;
+                if (!bothTerminal) removedNotTerminal++;
+            }
+        }
+        out.append(odContent, last, odContent.length());
+
+        if (removed > 0) {
+            Files.writeString(odMatrixXml, out.toString(), StandardCharsets.UTF_8);
+            log.warn("[NextSimRunner] 도달 불가능/터미널 아님으로 OD 수요 {}/{} 건 제거 " +
+                    "(터미널 아님 {}건 포함) — route-generator가 빈 경로로 조용히 처리해 nextsim " +
+                    "크래시로 이어지던 문제 사전 차단", removed, total, removedNotTerminal);
+        }
+    }
+
+    private static boolean isReachableViaConnections(Map<String, List<String>> nodeOutLinks,
+                                                       Map<String, List<String>> nodeInLinks,
+                                                       Map<String, List<String>> linkConnGraph,
+                                                       Map<String, Set<String>> reachedLinksCache,
+                                                       String sourceNode, String sinkNode) {
+        Set<String> reached = reachedLinksCache.computeIfAbsent(sourceNode,
+                s -> bfsLinks(linkConnGraph, nodeOutLinks.getOrDefault(s, List.of())));
+        for (String inLink : nodeInLinks.getOrDefault(sinkNode, List.of())) {
+            if (reached.contains(inLink)) return true;
+        }
+        return false;
+    }
+
+    private static Set<String> bfsLinks(Map<String, List<String>> linkConnGraph, List<String> startLinks) {
+        Set<String> visited = new HashSet<>(startLinks);
+        Deque<String> stack = new ArrayDeque<>(startLinks);
+        while (!stack.isEmpty()) {
+            String cur = stack.pop();
+            for (String next : linkConnGraph.getOrDefault(cur, List.of())) {
+                if (visited.add(next)) stack.push(next);
+            }
+        }
+        return visited;
     }
 
     /** 여는 태그 이후부터 종료 태그(포함)까지 읽기 — 노드 블록 수집용 */

@@ -22,6 +22,7 @@ import com.iitp.iitp_rest.repository.XmlLayerLogRepository;
 import com.iitp.iitp_rest.repository.XmlLayerVersionRepository;
 import com.iitp.iitp_rest.service.network.NetworkIdNormalizer;
 import com.iitp.iitp_rest.service.network.NetworkJaxbParser;
+import com.iitp.iitp_rest.service.network.NetworkReachabilityService;
 import com.iitp.iitp_rest.service.network.NetworkService;
 import com.iitp.iitp_rest.service.network.NetworkTileService;
 import com.iitp.iitp_rest.service.network.OsmNetworkValidator;
@@ -60,6 +61,7 @@ public class NetworkController {
 
     private final NetworkService networkService;
     private final NetworkTileService networkTileService;
+    private final NetworkReachabilityService networkReachabilityService;
     private final com.iitp.iitp_rest.service.network.NetworkStreamingDiffService networkStreamingDiffService;
     private final NetworkIdNormalizer networkIdNormalizer;
     private final OdTerminalIdBandService odTerminalIdBandService;
@@ -226,12 +228,34 @@ public class NetworkController {
             byte[] baseXml = fileStorage.readFile(loadFrom + "/network.xml");
             if (networkStreamingDiffService.isLarge(baseXml.length)) {
                 log.info("[NetworkController] 대규모 네트워크({}MB) — 스트리밍 diff 적용", baseXml.length / (1024 * 1024));
+                // 대규모 네트워크는 NetworkXml 로 전체 객체화가 불가(힙 초과, 실측)해 1c~1e 의
+                // 소규모 경로(ID 대역 보정·댕글링 참조 삭제)는 여기서 그대로 재사용할 수 없다.
+                // 다만 이 세션에서 확정된 크래시 원인(커넥션 미허용 회전으로 도달 불가능한 OD 수요)만은
+                // network.xml 을 정규식 스트림 스캔해 동일하게 걸러낸다 — NextSimRunner 실행 시점
+                // 재검증(2차 방어)이 이미 규모 무관하게 이 클래스의 크래시를 막고 있으므로, 여기서는
+                // "저장 즉시 피드백"을 그리드/드로우 편집 양쪽에 동일하게 주기 위한 보강이다.
+                int[] unreachableRemovedLarge = {0};
                 networkStreamingDiffService.applyDiffStreaming(baseXml, versionId,
                         request.getUpsertLinks(), request.getUpsertNodes(),
-                        request.getDeleteLinkIds(), request.getDeleteNodeIds());
+                        request.getDeleteLinkIds(), request.getDeleteNodeIds(),
+                        tmpNetworkXmlPath -> {
+                            try {
+                                OdMatrixXml currentOd = odMatrixService.getByVersionId(versionId);
+                                int removed = networkReachabilityService.filterUnreachableDemands(currentOd, tmpNetworkXmlPath);
+                                if (removed > 0) {
+                                    odMatrixService.saveByVersionId(versionId, currentOd);
+                                    xmlLayerVersionService.save("od_matrix", versionId,
+                                            XmlLayerConverter.toMap(currentOd), new com.iitp.iitp_rest.model.LogsData());
+                                    unreachableRemovedLarge[0] = removed;
+                                }
+                            } catch (Exception odErr) {
+                                log.warn("[NetworkController] 대규모 네트워크 OD 도달가능성 재검증 실패(무시): {}", odErr.getMessage());
+                            }
+                        });
                 xmlLayerVersionService.deleteVersion(LAYER_KEY, versionId); // stale jsonb → 파일 폴백
                 networkTileService.invalidate(versionId);
-                return ResponseEntity.ok(Map.of("linkIdRemap", Map.of(), "nodeIdRemap", Map.of(), "odNodeIdRemap", Map.of()));
+                return ResponseEntity.ok(Map.of("linkIdRemap", Map.of(), "nodeIdRemap", Map.of(),
+                        "odNodeIdRemap", Map.of(), "odPrunedDemandCount", unreachableRemovedLarge[0]));
             }
 
             NetworkResponse merged = networkTileService.applyDiff(
@@ -267,10 +291,20 @@ public class NetworkController {
                 // 1d) 이번 편집으로 노드가 아예 삭제됐다면(대역 재배정과 달리 대상 노드 자체가
                 // 없어 재배정이 불가능) OD가 그 노드를 참조하던 demand 항목 자체를 제거한다 —
                 // 안 하면 존재하지 않는 노드를 가리키는 무효 참조가 odmatrix.xml에 그대로 남는다.
+                //
+                // 1e) 노드 자체는 남아있어도 이번 편집(커넥션/링크 삭제 등)으로 기존 OD 수요가
+                // 더 이상 실제로 도달 불가능해질 수 있다 — 실측(gdb, 근본원인 확정): 링크가
+                // 인접해 있어도 경로상 교차로에 그 회전을 허용하는 connection 이 없으면
+                // route-generator 가 경로를 못 찾고 nextsim 이 크래시한다. pruneDanglingReferences
+                // 는 "노드가 없어짐"만 잡고 "노드는 있지만 경로가 끊김"은 못 잡으므로 별도로 걸러야
+                // 한다 — 그리드 편집(커넥션 삭제 등)과 지도 드로우 편집 모두 결국 이 diff 저장
+                // 경로를 타므로, 여기서 걸러야 어느 편집 경로로 만든 변경이든 다 방어된다.
                 try {
                     OdMatrixXml currentOd = odMatrixService.getByVersionId(versionId);
                     if (!odBandRemap.isEmpty()) odTerminalIdBandService.applyRemapToOdMatrix(currentOd, odBandRemap);
                     prunedOdDemandCount = odTerminalIdBandService.pruneDanglingReferences(networkXml, currentOd);
+                    int unreachableRemoved = networkReachabilityService.filterUnreachableDemands(currentOd, networkXml);
+                    prunedOdDemandCount += unreachableRemoved;
                     if (!odBandRemap.isEmpty() || prunedOdDemandCount > 0) {
                         odMatrixService.saveByVersionId(versionId, currentOd);
                         xmlLayerVersionService.save("od_matrix", versionId,
