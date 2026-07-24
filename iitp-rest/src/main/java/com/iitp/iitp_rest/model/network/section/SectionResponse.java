@@ -5,9 +5,9 @@ import lombok.Data;
 @Data
 public class SectionResponse {
     private Long id;
-    private String leftId;
-    private String rightId;
-    private Double slope;
-    private Double length;
-    private Double offset;
+    private String leftId = "";
+    private String rightId = "";
+    private Double slope = 0.0;
+    private Double length = 0.0;
+    private Double offset = 0.0;
 }

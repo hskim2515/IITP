@@ -13,6 +13,7 @@ import com.iitp.iitp_rest.service.network.OsmNetworkValidator;
 import com.iitp.iitp_rest.service.scenario.ScenarioService;
 import com.iitp.iitp_rest.service.simulation.NextSimInputScaffolder;
 import com.iitp.iitp_rest.util.FileStorageService;
+import com.iitp.iitp_rest.util.PolygonBoundaryUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -107,7 +108,7 @@ public class KtdbImportController {
 
     private KtdbContext build(
             double south, double west, double north, double east,
-            int networkId, String versionId) {
+            int networkId, String versionId, String polygon) {
 
         double originLat = (south + north) / 2.0;
         double originLon = (west  + east)  / 2.0;
@@ -126,8 +127,10 @@ public class KtdbImportController {
         log.info("KTDB 변환 시작: bbox=({},{},{},{}), 원점=({},{})",
                 south, west, north, east, originLat, originLon);
 
-        KtdbNetworkConverter.ConvertResult result =
-                ktdbConverter.convert(south, west, north, east, originLat, originLon, networkId);
+        List<List<double[]>> polygonRings = PolygonBoundaryUtils.parsePolygonParam(polygon);
+        KtdbNetworkConverter.ConvertResult result = polygonRings.isEmpty()
+                ? ktdbConverter.convert(south, west, north, east, originLat, originLon, networkId)
+                : ktdbConverter.convert(south, west, north, east, originLat, originLon, networkId, polygonRings);
 
         NetworkXml networkXml = result.networkXml();
         networkXml.setBaseLat(originLat);
@@ -171,18 +174,27 @@ public class KtdbImportController {
             @Parameter(description = "북쪽 위도") @RequestParam double north,
             @Parameter(description = "동쪽 경도") @RequestParam double east,
             @Parameter(description = "Network id (기본: 0)") @RequestParam(defaultValue = "0") int networkId,
-            @Parameter(description = "시나리오 버전 키 (SFTP 저장 경로)") @RequestParam(required = false) String versionId
+            @Parameter(description = "시나리오 버전 키 (SFTP 저장 경로)") @RequestParam(required = false) String versionId,
+            @Parameter(description = "폴리곤/파일 경계 — [[[lon,lat],...],...] JSON, 여러 링이면 합집합")
+            @RequestParam(required = false) String polygon
     ) {
         log.info("KTDB Save: bbox=({},{},{},{}), versionId={}", south, west, north, east, versionId);
         boolean isLarge = KtdbStreamingConverter.LARGE_BBOX_THRESHOLD <
                           (north - south) * (east - west);
 
         if (isLarge) {
+            // 대형 bbox 스트리밍 경로(KtdbStreamingConverter)는 타일 단위로 클러스터 상태를
+            // 점증적으로 쌓는 구조라 나중에 링크 목록만 후필터링하면 소속/차수 정보가 어긋난다
+            // — 안전하게 지원하려면 타일 처리 로직 자체를 고쳐야 해서 이번 범위에서 제외했다.
+            if (polygon != null && !polygon.isBlank()) {
+                return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(new OsmSaveResponse(null,
+                        List.of("영역이 너무 넓어 폴리곤/파일 경계를 적용할 수 없습니다. 더 작은 영역으로 다시 그려주세요.")));
+            }
             return handleLargeBbox(south, west, north, east, networkId, versionId);
         }
 
         try {
-            KtdbContext ctx = build(south, west, north, east, networkId, versionId);
+            KtdbContext ctx = build(south, west, north, east, networkId, versionId, polygon);
             NetworkXml networkXml = ctx.networkXml();
 
             OsmNetworkValidator.Result validation = validator.validate(networkXml);
@@ -408,7 +420,7 @@ public class KtdbImportController {
         }
         log.info("KTDB Detail: bbox=({},{},{},{})", south, west, north, east);
         try {
-            KtdbContext ctx = build(south, west, north, east, networkId, null);
+            KtdbContext ctx = build(south, west, north, east, networkId, null, null);
             return ResponseEntity.ok(networkMapper.toResponse(ctx.networkXml()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).build();
@@ -431,7 +443,7 @@ public class KtdbImportController {
     ) {
         log.info("KTDB JSON: bbox=({},{},{},{})", south, west, north, east);
         try {
-            KtdbContext ctx = build(south, west, north, east, networkId, null);
+            KtdbContext ctx = build(south, west, north, east, networkId, null, null);
             return ResponseEntity.ok(networkMapper.toResponse(ctx.networkXml()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).build();

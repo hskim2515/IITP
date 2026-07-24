@@ -7,6 +7,7 @@ import com.iitp.iitp_rest.model.network.cell.CellXml;
 import com.iitp.iitp_rest.model.network.connection.ConnectionXml;
 import com.iitp.iitp_rest.model.network.connection.Turning;
 import com.iitp.iitp_rest.model.network.lane.LaneXml;
+import com.iitp.iitp_rest.model.network.section.SectionXml;
 import com.iitp.iitp_rest.model.network.link.LinkType;
 import com.iitp.iitp_rest.model.network.link.LinkXml;
 import com.iitp.iitp_rest.model.network.link.SimType;
@@ -18,6 +19,7 @@ import com.iitp.iitp_rest.model.ktdb.KtdbTurninfo;
 import com.iitp.iitp_rest.repository.KtdbLinkRepository;
 import com.iitp.iitp_rest.repository.KtdbNodeRepository;
 import com.iitp.iitp_rest.repository.KtdbTurninfoRepository;
+import com.iitp.iitp_rest.util.PolygonBoundaryUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -74,6 +76,7 @@ public class KtdbNetworkConverter {
     private final KtdbLinkRepository     linkRepo;
     private final KtdbNodeRepository     nodeRepo;
     private final KtdbTurninfoRepository turninfoRepo;
+    private final TerrainSlopeService    terrainSlopeService;
 
     public record ConvertResult(NetworkXml networkXml) {}
 
@@ -83,6 +86,20 @@ public class KtdbNetworkConverter {
     public ConvertResult convert(
             double south, double west, double north, double east,
             double baseLat, double baseLon, int networkId) {
+        return convert(south, west, north, east, baseLat, baseLon, networkId, null);
+    }
+
+    /**
+     * @param polygonRings 프론트가 그리거나 SHP/GeoJSON에서 업로드한 경계(WGS84 [lon,lat] 링
+     *                     목록, 여러 개면 합집합) — null이면 기존처럼 순수 bbox 사각형 그대로.
+     *                     bbox(findByBbox)는 항상 그대로 1차 조회에 쓰이고, 폴리곤은 그 결과를
+     *                     한 번 더 걸러내는 애플리케이션 레벨 point-in-polygon 필터로만 작동한다
+     *                     (PostGIS는 이 프로젝트에서 검증된 적이 없어 도입하지 않음).
+     */
+    public ConvertResult convert(
+            double south, double west, double north, double east,
+            double baseLat, double baseLon, int networkId,
+            List<List<double[]>> polygonRings) {
 
         // ── 1. DB 조회 ────────────────────────────────────────────────────────
         List<KtdbLink> links = linkRepo.findByBbox(west, east, south, north);
@@ -97,6 +114,19 @@ public class KtdbNetworkConverter {
             log.info("ROAD_USE=미사용 링크 제외: {}개", beforeUse - links.size());
         }
         if (links.isEmpty()) throw new IllegalArgumentException("해당 bbox에 사용 중인 KTDB 링크가 없습니다.");
+
+        // 폴리곤/파일 경계 필터 — 정점 중 하나라도 경계 내부면 포함(경계를 살짝 걸치는 도로도
+        // 자연스럽게 남김, bbox 필터가 원래 갖던 관대함과 동일한 성격). 이 한 곳에서만 걸러내면
+        // 이후 노드/차수/클러스터링 로직은 전부 이미 필터링된 links만 순회하므로 추가 수정 불필요.
+        if (polygonRings != null && !polygonRings.isEmpty()) {
+            int beforePoly = links.size();
+            links = links.stream()
+                    .filter(lk -> lk.getCoords().stream().anyMatch(pt ->
+                            PolygonBoundaryUtils.isInsideAnyRing(pt.get("lng"), pt.get("lat"), polygonRings)))
+                    .collect(Collectors.toList());
+            log.info("폴리곤 경계 필터: {}개 → {}개", beforePoly, links.size());
+            if (links.isEmpty()) throw new IllegalArgumentException("해당 폴리곤 경계 내에 KTDB 링크가 없습니다.");
+        }
 
         // findByNodeIdIn 대신 bbox JOIN 쿼리 사용 — 대용량 bbox에서 IN 파라미터 65535 한도 초과 방지
         Map<String, KtdbNode> nodeMap = nodeRepo.findNodesForBboxLinks(west, east, south, north)
@@ -563,6 +593,9 @@ public class KtdbNetworkConverter {
 
         // ── 11. 링크 생성 ─────────────────────────────────────────────────────
         List<LinkXml> linkList = new ArrayList<>();
+        // 종단경사(section) 계산용 — WGS84 원본 좌표(로컬 좌표 coordsMap과 별개, DEM 조회는 경위도로 해야 함)
+        Map<Long, List<Map<String, Double>>> wgsCoordsById = new HashMap<>();
+        Map<Long, Double> lengthById = new HashMap<>();
         for (KtdbLink lk : links) {
             Long ourId = linkIdMap.get(lk.getLinkId());
             if (ourId == null) continue;
@@ -609,6 +642,18 @@ public class KtdbNetworkConverter {
             lx.setShape(shape);
             lx.setLanes(buildLanes(lanes, length, shape));
             linkList.add(lx);
+
+            wgsCoordsById.put(ourId, lk.getCoords());
+            lengthById.put(ourId, length);
+        }
+
+        // 종단경사(section) — DEM 미설정 시(로컬 개발 등) 빈 맵을 받아 기존과 동일하게 무동작
+        Map<Long, List<SectionXml>> sectionsById = terrainSlopeService.computeSections(wgsCoordsById, lengthById);
+        if (!sectionsById.isEmpty()) {
+            for (LinkXml lx : linkList) {
+                List<SectionXml> sections = sectionsById.get(lx.getId());
+                if (sections != null) lx.setSections(sections);
+            }
         }
 
         log.info("KTDB 변환 완료: 노드 {}개 (클러스터 {}개), 링크 {}개",

@@ -23,6 +23,7 @@ import { NETWORK_TILING } from '@utils/lodConstants';
 import { useOnboardingStore } from '@stores/useOnboardingStore';
 import { generateDummySignals } from '@utils/signal';
 import { pollKtdbScaffoldStatus } from '@utils/ktdbScaffold';
+import { parseBoundaryFile } from '@utils/boundaryFile';
 import { useVehicleStore } from '@stores/useVehicleStore';
 import { useSimulationStore } from '@stores/useSimulationStore';
 import { useSignalTimelineStore } from '@stores/useSignalTimelineStore';
@@ -960,8 +961,10 @@ const ReanchorTab: React.FC<ReanchorTabProps> = ({
 
 // ── OSM / KTDB 탭 (공유 bbox 폼) ─────────────────────────────────────────────
 const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, onClose }) => {
-    const { selecting, bbox, setSelecting, setBbox } = useOsmBboxStore();
+    const { selecting, bbox, polygons, setSelecting, setBbox, setSelectingPolygon, setPolygons } = useOsmBboxStore();
     const versionId = getActiveVersionId() ?? '';
+    const isKtdb = type === 'ktdb';
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [south, setSouth] = useState('');
     const [west,  setWest]  = useState('');
@@ -985,9 +988,27 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
         setEast(bbox.east.toFixed(6));
     }, [bbox]);
 
+    // KTDB 탭을 벗어나거나 언마운트될 때 다음 진입에 이전 폴리곤이 남아있지 않도록 정리
+    useEffect(() => () => { if (isKtdb) setPolygons(null); }, [isKtdb, setPolygons]);
+
+    const handleBoundaryFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        e.target.value = ''; // 같은 파일 재선택 시에도 change 이벤트가 다시 뜨도록
+        if (!file) return;
+        setError(null);
+        try {
+            const rings = await parseBoundaryFile(file);
+            if (rings.length === 0) { setError('파일에서 경계(다각형)를 찾지 못했습니다.'); return; }
+            setPolygons(rings);
+        } catch (err: unknown) {
+            setError(err instanceof Error ? err.message : '경계 파일을 읽는 중 오류가 발생했습니다.');
+        }
+    };
+
     const handleImport = async () => {
         setError(null);
         if (!south || !west || !north || !east) { setError('바운딩 박스 좌표를 모두 입력하세요.'); return; }
+        if (isKtdb && !polygons) { setError('폴리곤을 그리거나 경계 파일을 업로드하세요.'); return; }
         setLoading(true);
         startProgress();
         try {
@@ -997,6 +1018,7 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
             formData.append('north', north);
             formData.append('east',  east);
             if (versionId) formData.append('versionId', versionId);
+            if (isKtdb && polygons) formData.append('polygon', JSON.stringify(polygons));
 
             const url = type === 'osm'
                 ? `${import.meta.env.VITE_API_URL}/network/import/osm/save`
@@ -1085,6 +1107,7 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
 
         useOnboardingStore.getState().setStep('need-dummy');
         setBbox(null);
+        if (isKtdb) setPolygons(null);
         onClose();
     };
 
@@ -1135,13 +1158,38 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <p style={descStyle}>{label} 데이터로 네트워크를 생성합니다.</p>
 
-            <button style={mapSelectBtnStyle} onClick={() => { setError(null); setSelecting(true); }}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
-                    <rect x="3" y="3" width="18" height="18" rx="2"/>
-                    <path d="M9 3v18M15 3v18M3 9h18M3 15h18"/>
-                </svg>
-                지도에서 영역 선택
-            </button>
+            {isKtdb ? (
+                <div style={{ display: 'flex', gap: 8 }}>
+                    <button style={{ ...mapSelectBtnStyle, flex: 1 }}
+                            onClick={() => { setError(null); setSelectingPolygon(true); }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                            <path d="M12 3l8 5-3 9H7l-3-9z"/>
+                        </svg>
+                        폴리곤 그리기
+                    </button>
+                    <button style={{ ...mapSelectBtnStyle, flex: 1 }}
+                            onClick={() => { setError(null); fileInputRef.current?.click(); }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                            <path d="M4 16v3a2 2 0 002 2h12a2 2 0 002-2v-3M7 9l5-5 5 5M12 4v13"/>
+                        </svg>
+                        파일로 경계 가져오기
+                    </button>
+                    <input ref={fileInputRef} type="file" accept=".geojson,.json,.shp,.zip"
+                           style={{ display: 'none' }} onChange={handleBoundaryFile} />
+                </div>
+            ) : (
+                <button style={mapSelectBtnStyle} onClick={() => { setError(null); setSelecting(true); }}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6 }}>
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <path d="M9 3v18M15 3v18M3 9h18M3 15h18"/>
+                    </svg>
+                    지도에서 영역 선택
+                </button>
+            )}
+
+            {isKtdb && !polygons && (
+                <p style={{ fontSize: 10, color: '#666', margin: 0 }}>폴리곤을 그리거나 파일을 업로드하세요.</p>
+            )}
 
             <div style={gridStyle}>
                 {[['남쪽 (South)', south, setSouth, '37.49'], ['서쪽 (West)', west, setWest, '126.75'],
@@ -1149,9 +1197,10 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
                     ([lbl, val, setter, ph]) => (
                         <React.Fragment key={String(lbl)}>
                             <label style={labelStyle}>{String(lbl)}</label>
-                            <input style={inputStyle} type="number" step="any"
-                                   placeholder={`예: ${String(ph)}`} value={String(val)}
-                                   onChange={e => (setter as React.Dispatch<React.SetStateAction<string>>)(e.target.value)} />
+                            <input style={isKtdb ? { ...inputStyle, opacity: 0.6, cursor: 'default' } : inputStyle}
+                                   type="number" step="any" readOnly={isKtdb}
+                                   placeholder={isKtdb ? '경계에서 자동 계산' : `예: ${String(ph)}`} value={String(val)}
+                                   onChange={e => isKtdb ? undefined : (setter as React.Dispatch<React.SetStateAction<string>>)(e.target.value)} />
                         </React.Fragment>
                     )
                 )}
