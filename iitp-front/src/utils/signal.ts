@@ -416,3 +416,131 @@ export const generateDummySignals = (network: any): Omit<SignalData, "__guid" | 
 
     return signals;
 };
+
+/* ──────────────────── 수동 편집 상충(양방향 사고위험) 검사 ────────────────── */
+
+/** 두 접근로(fromLink)가 같은 현시(phase)에서 동시 녹색이어도 안전한지 판정.
+ * 같은 접근로(같은 fromLink의 서로 다른 회전)이거나 마주보는(≈180±허용오차) 방위각 쌍이면 안전 —
+ * generateDummySignals/groupApproachesByOppositeBearing과 동일 기준. 좌표가 없어 방위각을
+ * 계산 못 하면(임포트 데이터 미비) 판정 불가로 보고 통과시킨다(false positive 방지). */
+export const isSafeApproachPair = (
+    fromLinkA: string,
+    fromLinkB: string,
+    intersectionNodeId: string,
+    linkEndpoints: Map<string, { from: string; to: string }>,
+    nodeCoords: Map<string, [number, number]>,
+    nodeLatLng: Map<string, { lat: number; lng: number }>,
+): boolean => {
+    if (fromLinkA === fromLinkB) return true;
+    const a = approachBearingDeg(fromLinkA, intersectionNodeId, linkEndpoints, nodeCoords, nodeLatLng);
+    const b = approachBearingDeg(fromLinkB, intersectionNodeId, linkEndpoints, nodeCoords, nodeLatLng);
+    if (a === null || b === null) return true;
+    return Math.abs(angularDiffDeg(a, b) - 180) <= OPPOSITE_BEARING_TOLERANCE_DEG;
+};
+
+export interface SignalPhaseConflict {
+    planId: string;
+    phaseId: string;
+    myFromLink: string;
+    conflictingTurnId: string;
+    conflictingFromLink: string;
+}
+
+/**
+ * 신호(SignalGroupedEditor) 수동 편집 시 상충 검사. candidate(저장하려는 레코드)의 turnId가
+ * 소속된 현시(phase)에, candidate의 connectionId가 가리키는 접근로(fromLink)와 마주보지 않는
+ * (직교/인접 등) 다른 접근로가 이미 같이 묶여 있으면 경고 대상으로 반환한다.
+ * plans(turnId→phase 소속)는 해당 노드의 신호 레코드 중 하나에 부착돼 있다(generateDummySignals
+ * 참고 — "노드의 첫 레코드에만 planList 부착").
+ */
+export const checkManualSignalEditConflicts = (
+    network: any,
+    nodeSignals: SignalData[],
+    candidate: SignalData,
+): SignalPhaseConflict[] => {
+    const nodeId = String(candidate.nodeId ?? "");
+    const node = (network?.nodes ?? []).find((n: any) => String(n.id) === nodeId);
+    if (!node || candidate.turnId == null || !candidate.connectionId) return [];
+
+    const connFromLink = new Map<string, string>();
+    for (const conn of node.connections ?? []) {
+        if (conn?.id != null && conn?.fromLink != null) connFromLink.set(String(conn.id), String(conn.fromLink));
+    }
+    const myFromLink = connFromLink.get(String(candidate.connectionId));
+    if (!myFromLink) return [];
+
+    const merged = nodeSignals.some(s => s.__guid && s.__guid === candidate.__guid)
+        ? nodeSignals.map(s => (s.__guid === candidate.__guid ? candidate : s))
+        : [...nodeSignals, candidate];
+
+    const planHolder = merged.find(s => s.plans && s.plans.length > 0);
+    const plans = planHolder?.plans ?? [];
+    if (plans.length === 0) return [];
+
+    const turnIdToFromLinks = new Map<string, Set<string>>();
+    for (const s of merged) {
+        if (s.turnId == null || !s.connectionId) continue;
+        const fl = connFromLink.get(String(s.connectionId));
+        if (!fl) continue;
+        const tid = String(s.turnId);
+        if (!turnIdToFromLinks.has(tid)) turnIdToFromLinks.set(tid, new Set());
+        turnIdToFromLinks.get(tid)!.add(fl);
+    }
+
+    const nodeCoords = new Map<string, [number, number]>();
+    const nodeLatLng = new Map<string, { lat: number; lng: number }>();
+    for (const n of network?.nodes ?? []) {
+        if (n?.id == null) continue;
+        const xy = parseCenter(n?.center);
+        if (xy) nodeCoords.set(String(n.id), xy);
+        const lat = n?.coordinates?.lat, lng = n?.coordinates?.lng;
+        if (typeof lat === "number" && typeof lng === "number") nodeLatLng.set(String(n.id), { lat, lng });
+    }
+    const linkEndpoints = new Map<string, { from: string; to: string }>();
+    for (const l of network?.links ?? []) {
+        if (l?.id != null && l?.fromNode != null && l?.toNode != null) {
+            linkEndpoints.set(String(l.id), { from: String(l.fromNode), to: String(l.toNode) });
+        }
+    }
+
+    const myTurnId = String(candidate.turnId);
+    const conflicts: SignalPhaseConflict[] = [];
+    for (const plan of plans) {
+        for (const phase of plan.phases ?? []) {
+            const turnIds = (phase.turnList ?? "").split(/\s+/).filter(Boolean);
+            if (!turnIds.includes(myTurnId)) continue;
+            for (const otherTid of turnIds) {
+                if (otherTid === myTurnId) continue;
+                for (const otherFromLink of turnIdToFromLinks.get(otherTid) ?? []) {
+                    if (isSafeApproachPair(myFromLink, otherFromLink, nodeId, linkEndpoints, nodeCoords, nodeLatLng)) continue;
+                    conflicts.push({ planId: plan.id, phaseId: phase.id, myFromLink, conflictingTurnId: otherTid, conflictingFromLink: otherFromLink });
+                }
+            }
+        }
+    }
+    return conflicts;
+};
+
+/** TOD 편집(SignalTodTimelineEditor) 시 상충 검사. 같은 노드에서 서로 다른 두 플랜의 시간 범위가
+ * 겹치면 두 플랜의 현시가 동시에 활성화되어(updateSignalStyles/buildSignalCache는 겹치는 구간의
+ * 모든 activeTurns를 합쳐 반영) 원래는 서로 다른 시간대에만 켜지도록 분리된 상충 방향들이 같이
+ * 녹색이 될 수 있다. */
+export const findOverlappingTodPlans = (
+    plans: { id: string | number; startTime: string; endTime: string }[],
+    candidate: { id: string | number; startTime: string; endTime: string },
+    excludeIndex?: number,
+): { id: string | number; startTime: string; endTime: string }[] => {
+    const toMin = (hhmm: string): number => {
+        const [h, m] = (hhmm ?? "00:00").slice(0, 5).split(":").map(Number);
+        return (h || 0) * 60 + (m || 0);
+    };
+    const start = toMin(candidate.startTime);
+    const end = toMin(candidate.endTime);
+    return plans.filter((p, idx) => {
+        if (idx === excludeIndex) return false;
+        if (String(p.id) === String(candidate.id)) return false;
+        const pStart = toMin(p.startTime);
+        const pEnd = toMin(p.endTime);
+        return start < pEnd && pStart < end;
+    });
+};
