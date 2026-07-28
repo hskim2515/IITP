@@ -204,16 +204,27 @@ public class DummySignalGenerator {
         OsmTrafficSignalMatcher osmMatcher = buildOsmMatcher();
         StringBuilder body = new StringBuilder();
         int signalNodeCount = 0;
+        int skippedNodeCount = 0;
 
         if (network.getNodes() != null) {
             for (NodeXml node : network.getNodes()) {
-                String block = buildNodeSignalBlockOrNull(node, geo, osmMatcher);
-                if (block == null) continue;
-                body.append(block);
-                signalNodeCount++;
+                // 노드 하나의 결함(예상 못 한 데이터 값 등)이 나머지 전체 신호 생성을 죽이지
+                // 않도록 격리 — generateSignalXmlStreaming과 동일 원칙(아래 주석 참고).
+                try {
+                    String block = buildNodeSignalBlockOrNull(node, geo, osmMatcher);
+                    if (block == null) continue;
+                    body.append(block);
+                    signalNodeCount++;
+                } catch (Exception e) {
+                    skippedNodeCount++;
+                    log.warn("[DummySignalGenerator] 노드 {} 신호 생성 실패(건너뜀): {}", node.getId(), e.toString());
+                }
             }
         }
 
+        if (skippedNodeCount > 0) {
+            log.warn("[DummySignalGenerator] signal.xml 자동 생성 중 {}개 노드 건너뜀(개별 실패)", skippedNodeCount);
+        }
         log.info("[DummySignalGenerator] signal.xml 자동 생성: 신호 노드 {}개", signalNodeCount);
         return wrapSignalXml(body);
     }
@@ -238,6 +249,7 @@ public class DummySignalGenerator {
 
         StringBuilder body = new StringBuilder();
         int[] signalNodeCount = {0};
+        int[] skippedNodeCount = {0};
         JAXBContext jaxb = JAXBContext.newInstance(NodeXml.class);
 
         try (BufferedReader reader = new BufferedReader(
@@ -258,15 +270,30 @@ public class DummySignalGenerator {
                 if (t.startsWith("<node ")) {
                     if (t.endsWith("/>")) continue; // self-closing = 포트/커넥션 없음 → 신호 불필요
                     String block = t + readUntilClose(reader, "</node>");
-                    NodeXml node = unmarshalNodeFragment(jaxb, block);
-                    String nodeBlock = buildNodeSignalBlockOrNull(node, geo, osmMatcher);
-                    if (nodeBlock != null) { body.append(nodeBlock); signalNodeCount[0]++; }
+                    // ⚠️ 실측: 대형 실제 KTDB망(4만+ 노드)에서 특정 노드 하나만 예외(JAXB 파싱 실패,
+                    // 예상 못 한 enum 값 등)를 던져도 예전엔 그 예외가 스트림 스캔 전체를 중단시켜
+                    // 이미 처리한 노드까지 통째로 버려졌다 — 그 결과 신호가 "전혀" 생성되지 않은
+                    // 것처럼 보였다(KtdbImportController가 이 예외를 잡아 로그 경고만 남기고 조용히
+                    // 빈 템플릿/기존 파일로 폴백하기 때문에 사용자에게는 아무 에러도 안 보임).
+                    // 노드 하나의 결함이 나머지 수만 개의 정상 노드 신호까지 죽이면 안 되므로,
+                    // 노드 단위로 격리해 실패한 노드만 건너뛴다.
+                    try {
+                        NodeXml node = unmarshalNodeFragment(jaxb, block);
+                        String nodeBlock = buildNodeSignalBlockOrNull(node, geo, osmMatcher);
+                        if (nodeBlock != null) { body.append(nodeBlock); signalNodeCount[0]++; }
+                    } catch (Exception e) {
+                        skippedNodeCount[0]++;
+                        log.warn("[DummySignalGenerator] 노드 신호 생성 실패(건너뜀): {}", e.toString());
+                    }
                 } else if (t.startsWith("<link ") && !t.endsWith("/>")) {
                     readUntilClose(reader, "</link>"); // 신호 생성에 불필요 — 내용을 읽지 않고 스킵
                 }
             }
         }
 
+        if (skippedNodeCount[0] > 0) {
+            log.warn("[DummySignalGenerator] signal.xml 스트리밍 생성 중 {}개 노드 건너뜀(개별 실패)", skippedNodeCount[0]);
+        }
         log.info("[DummySignalGenerator] signal.xml 스트리밍 생성: 신호 노드 {}개", signalNodeCount[0]);
         return wrapSignalXml(body);
     }

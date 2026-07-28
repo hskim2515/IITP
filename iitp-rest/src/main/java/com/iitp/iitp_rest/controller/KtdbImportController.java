@@ -419,11 +419,19 @@ public class KtdbImportController {
                         // (DummySignalGenerator.generateSignalXmlStreaming, lanes/cells 포함한 전체
                         // 객체 그래프를 절대 메모리에 올리지 않음). 실패해도 빈 템플릿으로 안전 폴백.
                         String precomputedSignalXml = null;
+                        String signalGenWarning = null;
                         try {
                             byte[] xmlBytes = fileStorage.readFile(vid + "/network.xml");
                             precomputedSignalXml = dummySignalGenerator.generateSignalXmlStreaming(xmlBytes);
                         } catch (Exception e) {
-                            log.warn("[KTDB] 대형망 스트리밍 신호 생성 실패 (빈 템플릿으로 폴백): {}", e.getMessage());
+                            // ⚠️ 실측: 이 예외를 로그로만 남기고 조용히 폴백하면(예전 동작), 재임포트인
+                            // 경우 "기존 signal.xml이 새 네트워크에도 여전히 유효"로 판정돼(참조 노드가
+                            // 우연히 새 노드 집합에도 존재) 낡은 신호가 그대로 남고, 첫 임포트인 경우
+                            // signal.xml이 완전히 빈 채로 생성된다 — 둘 다 사용자에게는 "신호 자동생성이
+                            // 안 됐다"로만 보이고 원인을 알 방법이 없었다. checkStaleRoutes와 동일하게
+                            // scaffoldWarnings에 남겨 프론트가 폴링 시 보여주게 한다.
+                            log.warn("[KTDB] 대형망 스트리밍 신호 생성 실패 (기존/빈 신호로 폴백): {}", e.toString());
+                            signalGenWarning = "신호 자동생성 실패 — 신호 메뉴에서 직접 생성하거나 다시 가져와 주세요 (" + e.getMessage() + ")";
                         }
                         // NextSim 필수 입력 정비 — 없으면 생성, 재임포트로 id 변경 시 재생성 (타일 빌드보다 먼저)
                         nextSimScaffolder.scaffoldForImport(vid, allNodeIds, sourceIds, sinkIds, terminalCoords,
@@ -432,7 +440,11 @@ public class KtdbImportController {
                         catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
                         // 2차: SFTP XML 기반 완전 재빌드 — 1차 실패와 무관하게 항상 시도 (내부 예외 처리)
                         networkTileService.rebuildFromXml(vid);
-                        String warning = checkStaleRoutes(vid, allLinkIds, allNodeIds);
+                        String staleWarning = checkStaleRoutes(vid, allLinkIds, allNodeIds);
+                        String warning = java.util.stream.Stream.of(signalGenWarning, staleWarning)
+                                .filter(java.util.Objects::nonNull)
+                                .reduce((a, b) -> a + " / " + b)
+                                .orElse(null);
                         if (warning != null) scaffoldWarnings.put(vid, warning);
                     } finally {
                         scaffoldInProgress.remove(vid);
