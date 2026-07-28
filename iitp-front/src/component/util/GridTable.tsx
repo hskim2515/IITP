@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
 import {
     AllCommunityModule,
@@ -23,6 +23,13 @@ import {
 } from "@utils/gridUtils";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
+
+// 필드가 이보다 많은 레벨에서는 처음 이 개수만 기본 표시하고 나머지는 "더보기"로 접는다 —
+// 스키마에 정의된 필드가 전부 같은 비중으로 평면 나열되면(예: network links 17개 필드) 정작
+// 자주 보는 핵심 값을 찾기 어려워 목록이 표 형태 스프레드시트처럼 느껴진다는 피드백에 따른 것.
+// 필드별 "중요도" 개념이 스키마(layer_schema_field)에 아직 없으므로, definition 순서(관리자가
+// 등록한/도메인 모델 선언 순서)를 그대로 우선순위로 사용한다.
+const DEFAULT_VISIBLE_FIELD_COUNT = 6;
 
 type GridTableProps = {
     layerName: string;
@@ -139,6 +146,15 @@ export const GridTable = ({
         [definition, columnSpec, onCellUpdate]
     );
 
+    // 레벨(frame.levelName)이 바뀌면 GridTable 자체가 새 key로 리마운트되므로(DrilldownGrid 참고)
+    // 이 상태는 자연히 초기화된다 — 별도 리셋 로직 불필요.
+    const [expanded, setExpanded] = useState(false);
+    const hasMoreFields = dataCols.length > DEFAULT_VISIBLE_FIELD_COUNT;
+    const visibleDataCols = useMemo(
+        () => (expanded || !hasMoreFields) ? dataCols : dataCols.slice(0, DEFAULT_VISIBLE_FIELD_COUNT),
+        [dataCols, expanded, hasMoreFields]
+    );
+
     const columnDefs = useMemo<ColDef[]>(() => [
         {
             headerName: "",
@@ -150,8 +166,8 @@ export const GridTable = ({
             valueGetter: "node.rowIndex + 1",
         },
         ...drillColumn,
-        ...dataCols,
-    ], [drillColumn, dataCols]);
+        ...visibleDataCols,
+    ], [drillColumn, visibleDataCols]);
 
     // 선택 동기화: selectedGuid → AG Grid
     useEffect(() => {
@@ -220,29 +236,45 @@ export const GridTable = ({
         setSelectedGuid(selected.map((r: any) => r.__guid).filter(Boolean));
     }, [setSelectedGuid]);
 
+    const fieldToggleBarHeight = hasMoreFields ? 28 : 0;
+
     return (
-        <div
-            className={`ag-theme-alpine ag-dark-custom ${style.gridWrap}`}
-            style={{ height: containerHeight, width: "100%" }}
-        >
-            <AgGridReact
-                theme="legacy"
-                ref={gridRef}
-                rowData={frame.rows}
-                columnDefs={columnDefs}
-                rowSelection={rowSelection}
-                onSelectionChanged={onSelectionChanged}
-                getRowId={(params) => params.data.__guid}
-                defaultColDef={{
-                    resizable: true,
-                    sortable: true,
-                    filter: false,
-                }}
-                suppressMovableColumns
-                suppressCellFocus
-                rowHeight={32}
-                headerHeight={34}
-            />
+        <div style={{ height: containerHeight, width: "100%" }}>
+            {hasMoreFields && (
+                <div className={style.fieldToggleBar}>
+                    <span className={style.fieldToggleInfo}>
+                        {expanded
+                            ? `전체 필드 ${dataCols.length}개 표시 중`
+                            : `핵심 필드 ${DEFAULT_VISIBLE_FIELD_COUNT}개만 표시 중 (전체 ${dataCols.length}개)`}
+                    </span>
+                    <button className={style.fieldToggleBtn} onClick={() => setExpanded(e => !e)}>
+                        {expanded ? "간단히 보기" : `+${dataCols.length - DEFAULT_VISIBLE_FIELD_COUNT}개 필드 더보기`}
+                    </button>
+                </div>
+            )}
+            <div
+                className={`ag-theme-alpine ag-dark-custom ${style.gridWrap}`}
+                style={{ height: containerHeight - fieldToggleBarHeight, width: "100%" }}
+            >
+                <AgGridReact
+                    theme="legacy"
+                    ref={gridRef}
+                    rowData={frame.rows}
+                    columnDefs={columnDefs}
+                    rowSelection={rowSelection}
+                    onSelectionChanged={onSelectionChanged}
+                    getRowId={(params) => params.data.__guid}
+                    defaultColDef={{
+                        resizable: true,
+                        sortable: true,
+                        filter: false,
+                    }}
+                    suppressMovableColumns
+                    suppressCellFocus
+                    rowHeight={32}
+                    headerHeight={34}
+                />
+            </div>
         </div>
     );
 };
