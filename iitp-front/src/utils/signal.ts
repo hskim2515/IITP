@@ -6,6 +6,7 @@ import {LayerManager} from "@deck.gl/core";
 import {Feature} from "ol";
 import {SignalData} from "@type/Signal";
 import {normalizeTurning} from "@utils/turning";
+import {useAppSettingsStore} from "@stores/useAppSettingsStore";
 
 export type SignalState = "green" | "yellow" | "red" | "default";
 
@@ -209,13 +210,14 @@ export const getSignalGuid = (layerManager: LayerManager, connectionGuid: string
     return signalFeature?.get("__guid") ?? null;
 }
 
-// 신호 phase(그룹) 1개당 부여되는 길이(초)
-const DUMMY_PHASE_DURATION = 30;
-// 두 접근로 방위각差가 180±이 값(도) 이내면 "마주보는 방향"으로 보고 동시 녹색 페어로 묶는다.
-// (iitp-rest DummySignalGenerator.buildNodeSignalBlockOrNull 과 동일 기준 — 백엔드 KTDB
+// 신호 phase(그룹) 1개당 부여되는 길이(초) / 마주보는 방향 판정 허용오차(도) — 앱 설정(⚙ →
+// 자동생성 설정)에서 사용자가 조정 가능. 훅이 아닌 순수 함수들이라 컴포넌트 밖에서도 호출되므로
+// zustand 스토어를 직접 getState()로 읽는다(리렌더 구독 불필요, 호출 시점 값이면 충분).
+// (iitp-rest DummySignalGenerator.buildNodeSignalBlockOrNull 과 기본값 기준 동일 — 백엔드 KTDB
 // 대형망 임포트가 만드는 더미 신호와 프론트에서 수동으로 다시 생성하는 더미 신호가 같은
-// 품질(마주보는 접근로끼리만 동시 녹색)을 갖도록 일치시킨다.)
-const OPPOSITE_BEARING_TOLERANCE_DEG = 30;
+// 품질(마주보는 접근로끼리만 동시 녹색)을 갖도록 일치시킨다. 단, 백엔드는 별도 설정 없이 고정값.)
+const getDummyPhaseDuration = () => useAppSettingsStore.getState().autoGeneration.signalPhaseDurationSec;
+const getOppositeBearingToleranceDeg = () => useAppSettingsStore.getState().autoGeneration.signalOppositeBearingToleranceDeg;
 
 const parseCenter = (center?: string): [number, number] | null => {
     if (!center) return null;
@@ -336,6 +338,7 @@ const groupApproachesByOppositeBearing = (
     nodeCoords: Map<string, [number, number]>,
     nodeLatLng: Map<string, { lat: number; lng: number }>,
 ): string[][] => {
+    const toleranceDeg = getOppositeBearingToleranceDeg();
     const bearings = new Map<string, number>();
     for (const fromLink of approachOrder) {
         const b = approachBearingDeg(fromLink, intersectionNodeId, linkEndpoints, nodeCoords, nodeLatLng);
@@ -355,7 +358,7 @@ const groupApproachesByOppositeBearing = (
                 const bb = bearings.get(b);
                 if (bb === undefined) continue;
                 const dist = Math.abs(angularDiffDeg(ba, bb) - 180);
-                if (dist <= OPPOSITE_BEARING_TOLERANCE_DEG && dist < bestDist) {
+                if (dist <= toleranceDeg && dist < bestDist) {
                     bestDist = dist;
                     bestPartner = b;
                 }
@@ -473,13 +476,14 @@ export const generateDummySignals = async (network: any): Promise<Omit<SignalDat
                 };
                 // 노드의 첫 번째 레코드에만 planList 부착
                 if (groupIdx === 0 && i === 0) {
+                    const phaseDuration = getDummyPhaseDuration();
                     entry.plans = [{
                         id: '0',
-                        cycle: String(phaseGroups.length * DUMMY_PHASE_DURATION),
+                        cycle: String(phaseGroups.length * phaseDuration),
                         offset: '0',
                         phases: phaseGroups.map((group, idx) => ({
                             id: String(idx),
-                            duration: String(DUMMY_PHASE_DURATION),
+                            duration: String(phaseDuration),
                             turnList: group.map(fromLink => turnIdOf.get(fromLink)).join(' '),
                         })),
                     }];
@@ -510,7 +514,7 @@ export const isSafeApproachPair = (
     const a = approachBearingDeg(fromLinkA, intersectionNodeId, linkEndpoints, nodeCoords, nodeLatLng);
     const b = approachBearingDeg(fromLinkB, intersectionNodeId, linkEndpoints, nodeCoords, nodeLatLng);
     if (a === null || b === null) return true;
-    return Math.abs(angularDiffDeg(a, b) - 180) <= OPPOSITE_BEARING_TOLERANCE_DEG;
+    return Math.abs(angularDiffDeg(a, b) - 180) <= getOppositeBearingToleranceDeg();
 };
 
 export interface SignalPhaseConflict {
