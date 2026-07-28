@@ -77,3 +77,16 @@ test {
     useJUnitPlatform()
     maxHeapSize = "2g"
 }
+
+// ⚠️ 실측(배포서버): Spring Boot Gradle 플러그인은 기본적으로 bootJar(의존성 전부 번들된
+// 실행 가능 fat jar)와 jar(컴파일된 클래스만 있는 thin jar, "-plain" 접미사) 둘 다 만든다.
+// Dockerfile의 `ADD ./build/libs/*.jar app.jar`는 build/libs/에 매치되는 파일이 둘이라
+// 어느 쪽이 최종 app.jar가 될지 모호한데, 실제로 thin(-plain) jar가 배포된 적이 있었다 —
+// 그 결과 jaxb-runtime 등 implementation 의존성이 클래스패스에서 통째로 빠져
+// "Implementation of Jakarta XML Binding-API has not been found on module path or classpath"
+// 같은 예외가 배포서버에서만(로컬 IntelliJ 실행은 풀 클래스패스라 재현 안 됨) 발생했다.
+// thin jar 생성을 아예 꺼서 build/libs/에 fat jar 하나만 남긴다 — Dockerfile의 와일드카드가
+// 항상 올바른 jar를 가리키도록 근본적으로 모호성을 제거.
+tasks.named('jar') {
+    enabled = false
+}
