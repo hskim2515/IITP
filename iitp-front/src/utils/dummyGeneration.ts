@@ -11,6 +11,7 @@ import { getNetworkForDummyGeneration } from "@utils/generationNetwork";
 import { autoSaveChangedLayers } from "@utils/autoSave";
 import { getActiveVersionId } from "@utils/versionId";
 import { refetchSignalAndTod } from "@utils/ktdbScaffold";
+import { useAppSettingsStore } from "@stores/useAppSettingsStore";
 
 /**
  * 더미 신호 생성 + 저장 + signalTOD 정합(repair-tod) 을 한 곳에 묶은 공용 함수.
@@ -87,7 +88,10 @@ export async function runAutoDummyGeneration(): Promise<void> {
     useBackgroundTaskStore.getState().setTask(TASK_KEY, "신호/노면표시 데이터 자동 생성 중...");
     try {
         const sigCount = await generateAndSaveDummySignal();
-        const pmCount = await generateAndSaveDummyPavementMarking();
+        // 앱 설정(⚙ → 자동생성 설정)에서 끄면 노면표시는 생성하지 않는다 — 신호는 이 토글
+        // 대상이 아님(NextSim 실행에 필수라 항상 생성, 노면표시는 시각화 보조 자료라 선택적).
+        const pavementMarkingEnabled = useAppSettingsStore.getState().autoGeneration.pavementMarkingEnabled;
+        const pmCount = pavementMarkingEnabled ? await generateAndSaveDummyPavementMarking() : 0;
         if (sigCount > 0 || pmCount > 0) {
             useLogStore.getState().addLog(
                 "info", `신호/노면표시 데이터 자동 생성 완료 (신호 ${sigCount}개, 노면표시 ${pmCount}개)`,

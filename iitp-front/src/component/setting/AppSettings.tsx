@@ -125,6 +125,46 @@ const AppSettings: React.FC = () => {
                     수렴합니다. 실제 임포트 시점에만 적용되며, 다음 KTDB 가져오기부터 반영됩니다.
                 </div>
 
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#888', padding: '8px 6px 2px' }}>
+                    노면표시 / 버스 / 철도
+                </div>
+                <label className={styles.layerItem}>
+                    <input
+                        type="checkbox"
+                        checked={autoGeneration.pavementMarkingEnabled}
+                        onChange={(e) => setAutoGeneration({ pavementMarkingEnabled: e.target.checked })}
+                    />
+                    노면표시 자동생성 (임포트/온보딩 완료 시)
+                </label>
+                <label className={styles.layerItem}>
+                    <input
+                        type="checkbox"
+                        checked={autoGeneration.busFacilityEnabled}
+                        onChange={(e) => setAutoGeneration({ busFacilityEnabled: e.target.checked })}
+                    />
+                    버스 정류장/노선 자동생성 (KTDB 임포트 시)
+                </label>
+                <label className={styles.layerItem}>
+                    <input
+                        type="checkbox"
+                        checked={autoGeneration.railFacilityEnabled}
+                        onChange={(e) => setAutoGeneration({ railFacilityEnabled: e.target.checked })}
+                    />
+                    철도역/노선 자동생성 (KTDB 임포트 시)
+                </label>
+                <SliderRow
+                    label="버스 기본 배차간격"
+                    min={5} max={60} step={5}
+                    value={autoGeneration.busDefaultIntervalMin}
+                    onChange={(v) => setAutoGeneration({ busDefaultIntervalMin: v })}
+                    display={`${autoGeneration.busDefaultIntervalMin}분`}
+                />
+                <div style={{ fontSize: 10, color: '#666', padding: '2px 0 6px', lineHeight: 1.4 }}>
+                    OSM에는 배차간격 정보가 없어 변환된 모든 버스 노선에 이 값을 일괄로 채웁니다.
+                    철도는 실제 시간표가 없는 노선을 임의로 지어내지 않도록 배차간격을 항상 비워둡니다
+                    (철도 노선 편집 화면에서 직접 입력).
+                </div>
+
                 <div className={styles.formActions}>
                     <button className={styles.formBtnGhost} onClick={resetAutoGeneration}>
                         기본값으로 초기화

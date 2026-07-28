@@ -927,12 +927,18 @@ const OsmNetworkSection: React.FC<{
             formData.append('north', north);
             formData.append('east',  east);
             if (versionId) formData.append('versionId', versionId);
-            // OD 매트릭스 자동생성 파라미터 — 앱 설정(⚙ → 자동생성 설정)에서 사용자가 조정한 값
+            // OD 매트릭스/버스·철도 시설물 자동생성 파라미터 — 앱 설정(⚙ → 자동생성 설정)에서 사용자가 조정한 값
             {
-                const { odMinFlow, odMaxFlow, odRefDistM } = useAppSettingsStore.getState().autoGeneration;
+                const {
+                    odMinFlow, odMaxFlow, odRefDistM,
+                    busFacilityEnabled, railFacilityEnabled, busDefaultIntervalMin,
+                } = useAppSettingsStore.getState().autoGeneration;
                 formData.append('odMinFlow', String(odMinFlow));
                 formData.append('odMaxFlow', String(odMaxFlow));
                 formData.append('odRefDistM', String(odRefDistM));
+                formData.append('generateBusFacilities', String(busFacilityEnabled));
+                formData.append('generateRailFacilities', String(railFacilityEnabled));
+                formData.append('busDefaultIntervalMin', String(busDefaultIntervalMin));
             }
 
             const res = await fetch(

@@ -22,6 +22,14 @@ export interface AutoGenerationSettings {
     odMaxFlow: number;
     /** OD 거리 감쇠 기준 거리 (m) — 이보다 가까우면 odMaxFlow 근접, 멀수록 odMinFlow로 수렴 */
     odRefDistM: number;
+    /** 네트워크 임포트/온보딩 완료 시 더미 노면표시를 자동 생성할지 (dummyGeneration.ts) */
+    pavementMarkingEnabled: boolean;
+    /** KTDB 임포트 시 OSM 버스정류장/노선을 자동 생성할지 (OsmFacilityConverter, 백엔드) */
+    busFacilityEnabled: boolean;
+    /** KTDB 임포트 시 OSM 철도역/노선을 자동 생성할지 (OsmFacilityConverter, 백엔드) */
+    railFacilityEnabled: boolean;
+    /** OSM에 배차간격 정보가 없어 변환된 버스 노선에 일괄로 채우는 기본값 (분) */
+    busDefaultIntervalMin: number;
 }
 
 export const DEFAULT_AUTO_GENERATION_SETTINGS: AutoGenerationSettings = {
@@ -30,6 +38,10 @@ export const DEFAULT_AUTO_GENERATION_SETTINGS: AutoGenerationSettings = {
     odMinFlow: 5,
     odMaxFlow: 60,
     odRefDistM: 300,
+    pavementMarkingEnabled: true,
+    busFacilityEnabled: true,
+    railFacilityEnabled: true,
+    busDefaultIntervalMin: 10,
 };
 
 /**

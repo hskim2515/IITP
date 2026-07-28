@@ -189,11 +189,20 @@ public class KtdbImportController {
             @Parameter(description = "OD 샘플 수요 최대 flow(대/h) — 앱 설정 자동생성 항목, 미지정 시 기본값")
             @RequestParam(required = false) Integer odMaxFlow,
             @Parameter(description = "OD 거리 감쇠 기준 거리(m) — 앱 설정 자동생성 항목, 미지정 시 기본값")
-            @RequestParam(required = false) Double odRefDistM
+            @RequestParam(required = false) Double odRefDistM,
+            @Parameter(description = "버스 정류장/노선 자동생성 여부 — 앱 설정 자동생성 항목, 미지정 시 true")
+            @RequestParam(required = false) Boolean generateBusFacilities,
+            @Parameter(description = "철도역/노선 자동생성 여부 — 앱 설정 자동생성 항목, 미지정 시 true")
+            @RequestParam(required = false) Boolean generateRailFacilities,
+            @Parameter(description = "버스 노선 기본 배차간격(분) — 앱 설정 자동생성 항목, 미지정 시 기본값")
+            @RequestParam(required = false) Integer busDefaultIntervalMin
     ) {
         log.info("KTDB Save: bbox=({},{},{},{}), versionId={}", south, west, north, east, versionId);
         NextSimInputScaffolder.OdGenerationParams odParams =
                 new NextSimInputScaffolder.OdGenerationParams(odMinFlow, odMaxFlow, odRefDistM);
+        com.iitp.iitp_rest.service.network.OsmFacilityConverter.FacilityGenerationOptions facilityOptions =
+                new com.iitp.iitp_rest.service.network.OsmFacilityConverter.FacilityGenerationOptions(
+                        generateBusFacilities, generateRailFacilities, busDefaultIntervalMin);
         boolean isLarge = KtdbStreamingConverter.LARGE_BBOX_THRESHOLD <
                           (north - south) * (east - west);
 
@@ -248,7 +257,7 @@ public class KtdbImportController {
             try {
                 var facilityRaw = overpassService.queryFacilities(south, west, north, east);
                 fac = facilityConverter.convert(facilityRaw, networkXml, ctx.originLat(), ctx.originLon(),
-                        new double[]{south, west, north, east});
+                        new double[]{south, west, north, east}, facilityOptions);
                 log.info("KTDB 시설물(OSM 스냅): 버스정류장 {}개, 철도역 {}개, 버스노선 {}개, 철도노선 {}개",
                         fac.busStations() != null ? fac.busStations().getBusStations().size() : 0,
                         fac.railStations() != null ? fac.railStations().getRailStations().size() : 0,

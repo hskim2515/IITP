@@ -34,6 +34,15 @@ public class OsmFacilityConverter {
     private static final double SCALE_Y = 111000.0;
     private static final double MAX_SNAP_DIST_M = 50.0; // 링크 스냅 최대 거리(m)
     private static final double GRID_CELL_M = 100.0; // 링크 공간 그리드 셀 크기(m)
+    /** OSM에는 배차간격 정보가 없어 변환된 모든 버스 노선에 일괄로 채우는 기본값(분) */
+    private static final int DEFAULT_BUS_INTERVAL_MIN = 10;
+
+    /** 버스/철도 시설물 자동생성 옵션 — null 필드는 기본값(둘 다 생성, 배차간격
+     *  {@link #DEFAULT_BUS_INTERVAL_MIN}분) 사용. 프론트 앱 설정(⚙ → 자동생성 설정)에서
+     *  사용자가 조정해 KTDB 임포트 요청에 실어 보낸다. */
+    public record FacilityGenerationOptions(Boolean includeBus, Boolean includeRail, Integer busDefaultIntervalMin) {
+        public static final FacilityGenerationOptions DEFAULT = new FacilityGenerationOptions(null, null, null);
+    }
 
     public record FacilityResult(
         PublicTransitResponse busStations,
@@ -77,6 +86,19 @@ public class OsmFacilityConverter {
             NetworkXml networkXml,
             double baseLat, double baseLon,
             double[] bbox) { // [south, west, north, east] or null
+        return convert(facilities, networkXml, baseLat, baseLon, bbox, FacilityGenerationOptions.DEFAULT);
+    }
+
+    public FacilityResult convert(
+            OsmOverpassService.FacilityQueryResult facilities,
+            NetworkXml networkXml,
+            double baseLat, double baseLon,
+            double[] bbox, // [south, west, north, east] or null
+            FacilityGenerationOptions options) {
+        boolean includeBus = options == null || options.includeBus() == null || options.includeBus();
+        boolean includeRail = options == null || options.includeRail() == null || options.includeRail();
+        int busIntervalMin = options != null && options.busDefaultIntervalMin() != null
+                ? options.busDefaultIntervalMin() : DEFAULT_BUS_INTERVAL_MIN;
 
         List<LinkXml> links = networkXml.getLinks() != null ? networkXml.getLinks() : List.of();
         buildLinkGrid(links);
@@ -92,21 +114,37 @@ public class OsmFacilityConverter {
         for (OsmWay w : facilities.allWays())
             osmWayNodes.put(w.getId(), w.getNodeIds());
 
-        PublicTransitResponse busStations = convertBusStops(
-                facilities.busStops(), links, baseLat, baseLon);
-        // OSM 노드 id → 우리가 새로 부여한 역 id (철도 노선의 railStationSeq 구성에 필요 —
-        // OSM route relation의 member node가 어느 역인지는 원본 OSM id로만 식별 가능하다)
-        Map<Long, String> railStationIdByOsmNode = new LinkedHashMap<>();
-        // 역 이름 → 역 id — route relation의 "stop" role 멤버는 railway=stop 태그의 별도
-        // 노드라 railStationIdByOsmNode에 없다(실측: 강남역 인근 2호선 relation으로 확인).
-        // 두 노드 모두 보통 동일한 name 태그를 갖고 있어 이름으로 재매칭한다.
-        Map<String, String> railStationIdByName = new LinkedHashMap<>();
-        RailPublicTransitResponse railStations = convertRailStations(
-                facilities.railStations(), links, baseLat, baseLon, railStationIdByOsmNode, railStationIdByName);
-        Map<String, Object> busRoutes  = convertBusRoutes(
-                facilities.busRoutes(), bbox, links, baseLat, baseLon, busStations.getBusStations());
-        Map<String, Object> railRoutes = convertRailRoutes(
-                facilities.railRoutes(), bbox, railStationIdByOsmNode, railStationIdByName);
+        PublicTransitResponse busStations;
+        Map<String, Object> busRoutes;
+        if (includeBus) {
+            busStations = convertBusStops(facilities.busStops(), links, baseLat, baseLon);
+            busRoutes = convertBusRoutes(
+                    facilities.busRoutes(), bbox, links, baseLat, baseLon, busStations.getBusStations(), busIntervalMin);
+        } else {
+            busStations = new PublicTransitResponse();
+            busStations.setBusStations(List.of());
+            busRoutes = Map.of("lines", List.of());
+        }
+
+        RailPublicTransitResponse railStations;
+        Map<String, Object> railRoutes;
+        if (includeRail) {
+            // OSM 노드 id → 우리가 새로 부여한 역 id (철도 노선의 railStationSeq 구성에 필요 —
+            // OSM route relation의 member node가 어느 역인지는 원본 OSM id로만 식별 가능하다)
+            Map<Long, String> railStationIdByOsmNode = new LinkedHashMap<>();
+            // 역 이름 → 역 id — route relation의 "stop" role 멤버는 railway=stop 태그의 별도
+            // 노드라 railStationIdByOsmNode에 없다(실측: 강남역 인근 2호선 relation으로 확인).
+            // 두 노드 모두 보통 동일한 name 태그를 갖고 있어 이름으로 재매칭한다.
+            Map<String, String> railStationIdByName = new LinkedHashMap<>();
+            railStations = convertRailStations(
+                    facilities.railStations(), links, baseLat, baseLon, railStationIdByOsmNode, railStationIdByName);
+            railRoutes = convertRailRoutes(
+                    facilities.railRoutes(), bbox, railStationIdByOsmNode, railStationIdByName);
+        } else {
+            railStations = new RailPublicTransitResponse();
+            railStations.setRailStations(List.of());
+            railRoutes = Map.of("routes", List.of());
+        }
 
         return new FacilityResult(busStations, railStations, busRoutes, railRoutes);
     }
@@ -229,7 +267,7 @@ public class OsmFacilityConverter {
     private Map<String, Object> convertBusRoutes(
             List<OsmOverpassService.OsmRelation> routes, double[] bbox,
             List<LinkXml> links, double baseLat, double baseLon,
-            List<BusStationResponse> busStations) {
+            List<BusStationResponse> busStations, int defaultIntervalMin) {
         List<Map<String, Object>> lines = new ArrayList<>();
         int idSeq = 1;
         for (OsmOverpassService.OsmRelation rel : routes) {
@@ -263,7 +301,7 @@ public class OsmFacilityConverter {
             Map<String, Object> line = new LinkedHashMap<>();
             line.put("id",       lineId);
             line.put("name",     name != null ? name : lineId);
-            line.put("interval", 10);
+            line.put("interval", defaultIntervalMin);
             line.put("coords",   coords);
             line.put("link",     Map.of("seq", linkSeq.stream().map(String::valueOf).reduce((a,b) -> a + " " + b).orElse("")));
             line.put("node",     Map.of("seq", ""));
