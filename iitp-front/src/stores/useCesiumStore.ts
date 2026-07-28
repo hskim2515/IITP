@@ -9,7 +9,7 @@ import {EventManager} from "@managers/EventManager";
 import {CesiumEventAdapter} from "@adaptor/CesiumEventAdapter";
 
 /** 자체 호스팅 지형 서버 (useMapInit 최초 Viewer 생성, 지형 토글 재활성화 양쪽에서 공유) */
-export const CESIUM_TERRAIN_URL = 'https://175.197.92.213:10210/terrain-tile/dem05_ellipsoid';
+export const CESIUM_TERRAIN_URL = 'https://192.168.10.182:10210/terrain-tile/dem05_ellipsoid';
 
 interface State {
     viewer: Viewer | null;
