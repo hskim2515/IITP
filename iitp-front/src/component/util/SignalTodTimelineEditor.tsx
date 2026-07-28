@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useState } from "react";
 import { useSignalTodStore } from "@stores/useSignalTodStore";
+import { findOverlappingTodPlans } from "@utils/signal";
 
 /* ───────────────────────────── 타입 ───────────────────────────── */
 interface Plan {
@@ -155,8 +156,23 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({ conta
         store.getState().setCurrentJsonData(updated as any);
     }, [rawData]);
 
+    /* 시간대 중복(상충 위험) 확인 — 겹치는 구간엔 두 플랜의 현시가 동시에 활성화된다 */
+    const confirmNoOverlap = useCallback((nodeId: string | number, candidate: Plan, excludeIndex?: number): boolean => {
+        const node = nodes.find(n => String(n.id) === String(nodeId));
+        if (!node) return true;
+        const overlaps = findOverlappingTodPlans(node.plans, candidate, excludeIndex);
+        if (overlaps.length === 0) return true;
+        const lines = overlaps.map(p => `· Plan ${p.id} (${p.startTime}~${p.endTime})`).join("\n");
+        return window.confirm(
+            `⚠️ 시간대 중복 감지 — 노드 #${nodeId}에서 아래 플랜과 시간이 겹칩니다.\n` +
+            `겹치는 구간에는 두 플랜의 현시가 동시에 활성화되어, 원래 다른 시간대로 분리했던 상충 방향이 같이 녹색이 될 수 있습니다.\n\n` +
+            `${lines}\n\n그래도 저장하시겠습니까?`
+        );
+    }, [nodes]);
+
     /* 플랜 변경 */
     const handlePlanChange = useCallback((nodeId: string | number, planIdx: number, updated: Plan) => {
+        if (!confirmNoOverlap(nodeId, updated, planIdx)) return;
         const newNodes = nodes.map(node => {
             if (String(node.id) !== String(nodeId)) return node;
             const newPlans = [...node.plans];
@@ -164,7 +180,7 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({ conta
             return { ...node, plans: newPlans };
         });
         updateNodes(newNodes);
-    }, [nodes, updateNodes]);
+    }, [nodes, updateNodes, confirmNoOverlap]);
 
     /* 플랜 삭제 */
     const handlePlanDelete = useCallback((nodeId: string | number, planIdx: number) => {
@@ -188,13 +204,14 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({ conta
             startTime: lastEnd.slice(0, 5),
             endTime: toHHMM(Math.min(toMinutes(lastEnd.slice(0, 5)) + 60, 1439)),
         };
+        if (!confirmNoOverlap(nodeId, newPlan)) return;
         const newNodes = nodes.map(n =>
             String(n.id) === String(nodeId)
                 ? { ...n, plans: [...n.plans, newPlan] }
                 : n
         );
         updateNodes(newNodes);
-    }, [nodes, updateNodes]);
+    }, [nodes, updateNodes, confirmNoOverlap]);
 
     /* 블록 클릭 → 팝오버 열기 */
     const openEdit = (e: React.MouseEvent, nodeId: string | number, planIdx: number) => {

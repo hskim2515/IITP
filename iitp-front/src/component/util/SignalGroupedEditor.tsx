@@ -1,7 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSignalStore, useSignalHistoryStore } from "@stores/useSignalStore";
+import { useNetworkStore } from "@stores/useNetworkStore";
 import { useSelectionStore } from "@stores/useSelectionStore";
 import { featureUpdateLogs } from "@utils/history";
+import { checkManualSignalEditConflicts, SignalPhaseConflict } from "@utils/signal";
+
+/** 상충 경고를 사용자에게 보여주고 계속 저장할지 확인받는다. */
+function confirmSignalConflicts(conflicts: SignalPhaseConflict[]): boolean {
+    if (conflicts.length === 0) return true;
+    const lines = conflicts.map(c =>
+        `· 현시 ${c.phaseId}: 접근로 "${c.myFromLink}" ↔ "${c.conflictingFromLink}"(turn ${c.conflictingTurnId})가 같은 현시에서 동시 녹색이 됩니다 (마주보지 않는 방향)`
+    );
+    return window.confirm(
+        `⚠️ 양방향 사고 위험 감지 — 서로 마주보지 않는 접근로가 같은 현시에서 동시에 녹색이 됩니다.\n\n${lines.join("\n")}\n\n그래도 저장하시겠습니까?`
+    );
+}
 
 /* ─────────────────────────── 타입 ────────────────────────────── */
 interface SignalRecord {
@@ -44,9 +57,10 @@ interface RowProps {
     rowRef: (el: HTMLTableRowElement | null) => void;
     onSave: (s: SignalRecord) => void;
     onDelete: () => void;
+    onValidate: (candidate: SignalRecord) => SignalPhaseConflict[];
 }
 
-const SignalRow: React.FC<RowProps> = ({ sig, isSelected, rowRef, onSave, onDelete }) => {
+const SignalRow: React.FC<RowProps> = ({ sig, isSelected, rowRef, onSave, onDelete, onValidate }) => {
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState({ turning: sig.turning ?? "", type: sig.type ?? "", connectionId: sig.connectionId ?? "" });
     const meta = dirMeta(sig.turning);
@@ -59,7 +73,9 @@ const SignalRow: React.FC<RowProps> = ({ sig, isSelected, rowRef, onSave, onDele
         setTimeout(() => useSelectionStore.getState().setSelectedGuid([sig.__guid]), 0);
     };
     const save = () => {
-        onSave({ ...sig, turning: draft.turning || null, type: draft.type || null, connectionId: draft.connectionId || null });
+        const updated = { ...sig, turning: draft.turning || null, type: draft.type || null, connectionId: draft.connectionId || null };
+        if (!confirmSignalConflicts(onValidate(updated))) return;
+        onSave(updated);
         setEditing(false);
     };
     const cancel = () => {
@@ -128,10 +144,20 @@ const SignalRow: React.FC<RowProps> = ({ sig, isSelected, rowRef, onSave, onDele
 };
 
 /* ───────────────────── 신호 추가 행 ────────────────────────────── */
-interface AddRowProps { nodeId: string; onAdd: (s: Omit<SignalRecord, "__guid">) => void; onCancel: () => void; }
+interface AddRowProps {
+    nodeId: string;
+    onAdd: (s: Omit<SignalRecord, "__guid">) => void;
+    onCancel: () => void;
+    onValidate: (candidate: SignalRecord) => SignalPhaseConflict[];
+}
 
-const AddRow: React.FC<AddRowProps> = ({ nodeId, onAdd, onCancel }) => {
+const AddRow: React.FC<AddRowProps> = ({ nodeId, onAdd, onCancel, onValidate }) => {
     const [draft, setDraft] = useState({ turning: "Straight" as DirKey, type: "", connectionId: "" });
+    const add = () => {
+        const candidate = { featureType: "signals", nodeId, turning: draft.turning, type: draft.type || null, connectionId: draft.connectionId || null } as unknown as SignalRecord;
+        if (!confirmSignalConflicts(onValidate(candidate))) return;
+        onAdd(candidate);
+    };
     return (
         <tr style={{ background: "#090e1a" }}>
             <td style={td}>
@@ -146,8 +172,7 @@ const AddRow: React.FC<AddRowProps> = ({ nodeId, onAdd, onCancel }) => {
                 <input value={draft.connectionId} onChange={e => setDraft(d => ({ ...d, connectionId: e.target.value }))} placeholder="connection ID" style={inp} />
             </td>
             <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
-                <button onClick={() => onAdd({ featureType: "signals", nodeId, turning: draft.turning, type: draft.type || null, connectionId: draft.connectionId || null })}
-                    style={btnS("#4fc97a")}>추가</button>
+                <button onClick={add} style={btnS("#4fc97a")}>추가</button>
                 <button onClick={onCancel} style={{ ...btnS("#2a3050"), marginLeft: 4 }}>취소</button>
             </td>
         </tr>
@@ -238,6 +263,13 @@ const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ container
         featureUpdateLogs(useSignalHistoryStore, { guid: newSig.__guid, updateType: "added", properties: newSig });
         setAddingTo(null);
     }, [rawData]);
+
+    /* 양방향 사고 위험(상충) 검사 — 현재 노드의 신호 목록 + 네트워크 방위각 기준 */
+    const validateConflicts = useCallback((candidate: SignalRecord): SignalPhaseConflict[] => {
+        const network = useNetworkStore.getState().currentJsonData;
+        if (!network) return [];
+        return checkManualSignalEditConflicts(network, activeSignals as any, candidate as any);
+    }, [activeSignals]);
 
     if (!signals.length) {
         return <div style={{ color: "#445", padding: 40, textAlign: "center", fontSize: 13 }}>신호 데이터가 없습니다.</div>;
@@ -352,10 +384,11 @@ const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ container
                                     }}
                                     onSave={updateSignal}
                                     onDelete={() => deleteSignal(sig.__guid)}
+                                    onValidate={validateConflicts}
                                 />
                             ))}
                             {addingTo === activeId && (
-                                <AddRow nodeId={activeId} onAdd={addSignal} onCancel={() => setAddingTo(null)} />
+                                <AddRow nodeId={activeId} onAdd={addSignal} onCancel={() => setAddingTo(null)} onValidate={validateConflicts} />
                             )}
                             {activeSignals.length === 0 && addingTo !== activeId && (
                                 <tr><td colSpan={4} style={{ padding: "24px", textAlign: "center", color: "#334", fontSize: 12 }}>

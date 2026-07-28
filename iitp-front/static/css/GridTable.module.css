@@ -2,6 +2,40 @@
     width: 100%;
 }
 
+/* ── 필드 더보기/접기 바 ─────────────────────────────────────── */
+.fieldToggleBar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 28px;
+    padding: 0 10px;
+    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.fieldToggleInfo {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.4);
+}
+
+.fieldToggleBtn {
+    padding: 2px 9px;
+    font-size: 11px;
+    border-radius: 4px;
+    border: 1px solid rgba(100, 180, 255, 0.3);
+    background: transparent;
+    color: rgba(100, 180, 255, 0.9);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+}
+
+.fieldToggleBtn:hover {
+    background: rgba(100, 180, 255, 0.15);
+    color: #fff;
+    border-color: rgba(100, 180, 255, 0.6);
+}
+
 /* ── AG Grid Dark Theme ──────────────────────────────────────── */
 :global(.ag-dark-custom.ag-theme-alpine) {
     --ag-background-color: transparent;
