@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePropertyStore } from "@stores/usePropertyStore";
 import { findMenuByCode, useMenuStore } from "@stores/useMenuStore";
 import { faClose, faEdit, faChevronDown, faChevronRight } from "@fortawesome/free-solid-svg-icons";
@@ -103,6 +103,53 @@ const PropertyModal = () => {
     const getSchemaDefinitionBySchemaDefinitionName = useSchemaStore.getState().getSchemaDefinitionBySchemaDefinitionName;
     const [expanded, setExpanded] = useState(false);
 
+    // 드래그 이동 — 기본 위치(우하단 고정)는 CSS bottom/right로 유지하다가, 한 번 드래그하면
+    // 그 이후로는 top/left 절대좌표로 전환해 사용자가 옮긴 자리에 계속 떠 있게 한다(선택 항목이
+    // 바뀌어도 위치는 유지 — expanded와 달리 리셋하지 않음).
+    const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+    const containerRef = useRef<HTMLDivElement>(null);
+    const dragOffsetRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
+    const posRef = useRef<{ x: number; y: number } | null>(null);
+
+    const handleDragMove = useCallback((e: MouseEvent) => {
+        const el = containerRef.current;
+        if (!el) return;
+        const width = el.offsetWidth;
+        const height = el.offsetHeight;
+        const x = Math.min(Math.max(0, e.clientX - dragOffsetRef.current.dx), window.innerWidth - width);
+        const y = Math.min(Math.max(0, e.clientY - dragOffsetRef.current.dy), window.innerHeight - height);
+        posRef.current = { x, y };
+        el.style.left = `${x}px`;
+        el.style.top = `${y}px`;
+        el.style.right = 'auto';
+        el.style.bottom = 'auto';
+    }, []);
+
+    const handleDragEnd = useCallback(() => {
+        document.removeEventListener('mousemove', handleDragMove);
+        document.removeEventListener('mouseup', handleDragEnd);
+        document.body.style.userSelect = 'auto';
+        if (posRef.current) setPosition(posRef.current);
+    }, [handleDragMove]);
+
+    const handleDragStart = useCallback((e: React.MouseEvent) => {
+        if ((e.target as HTMLElement).closest('button')) return; // 편집/닫기 버튼 클릭은 드래그로 취급하지 않음
+        const el = containerRef.current;
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        dragOffsetRef.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+        document.addEventListener('mousemove', handleDragMove);
+        document.addEventListener('mouseup', handleDragEnd);
+        document.body.style.userSelect = 'none';
+    }, [handleDragMove, handleDragEnd]);
+
+    useEffect(() => {
+        return () => {
+            document.removeEventListener('mousemove', handleDragMove);
+            document.removeEventListener('mouseup', handleDragEnd);
+        };
+    }, [handleDragMove, handleDragEnd]);
+
     // 스키마(layer_schema_field)에 정의된 ACTIVE 필드 순서를 그대로 우선순위로 사용 — GridTable이
     // 편집 그리드 컬럼을 만들 때 쓰는 것과 같은 순서라 그리드와 이 팝업의 필드 배치가 일관된다.
     // 스키마에 없는 나머지 값(구조 전용 필드 등)은 숨기지 않고 뒤에 그대로 붙인다.
@@ -158,10 +205,14 @@ const PropertyModal = () => {
         if (foundMenu) setActiveSubmenu(foundMenu);
     };
 
+    const containerStyle: React.CSSProperties = position
+        ? { ...styles.container, left: position.x, top: position.y, right: 'auto', bottom: 'auto' }
+        : styles.container;
+
     return (
-        <div style={styles.container}>
-            {/* 헤더 */}
-            <div style={styles.header}>
+        <div ref={containerRef} style={containerStyle}>
+            {/* 헤더 — 드래그 핸들 (버튼 제외) */}
+            <div style={styles.header} onMouseDown={handleDragStart}>
                 <span style={styles.featureType}>{featureType ?? '속성'}</span>
                 <div style={styles.actions}>
                     <button style={styles.iconBtn} title="편집" onClick={onClickEdit}>
@@ -230,6 +281,8 @@ const styles = {
         borderBottom: '1px solid rgba(255,255,255,0.08)',
         backgroundColor: 'rgba(0, 180, 255, 0.08)',
         flexShrink: 0,
+        cursor: 'grab',
+        userSelect: 'none' as const,
     },
     featureType: {
         fontSize: '13px',
