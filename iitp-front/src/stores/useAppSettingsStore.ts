@@ -2,20 +2,34 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { BaseMapType } from '@stores/useMapStore';
 
-/** 더미 신호 자동생성(signal.ts의 generateDummySignals, "화면 내 더미 신호 생성" 버튼) 파라미터.
- *  도로 형태가 지역마다 달라 고정값 하나로는 안 맞는 경우가 있어 사용자가 조정할 수 있게 노출.
- *  oppositeBearingToleranceDeg는 자동생성뿐 아니라 수동 편집 상충 검사(checkManualSignalEditConflicts)
- *  에도 같은 값이 쓰인다 — "마주보는 접근로" 판정 기준을 자동생성/수동편집 양쪽에서 일치시키기 위함. */
+/** 더미 신호 자동생성(signal.ts의 generateDummySignals, "화면 내 더미 신호 생성" 버튼) /
+ *  OD 매트릭스 자동생성(iitp-rest NextSimInputScaffolder.buildSampleOdMatrix, KTDB 임포트 시
+ *  서버가 자동 생성) 파라미터. 도로/도시 형태가 지역마다 달라 고정값 하나로는 안 맞는 경우가
+ *  있어 사용자가 조정할 수 있게 노출.
+ *  signalOppositeBearingToleranceDeg는 자동생성뿐 아니라 수동 편집 상충 검사
+ *  (checkManualSignalEditConflicts)에도 같은 값이 쓰인다 — "마주보는 접근로" 판정 기준을
+ *  자동생성/수동편집 양쪽에서 일치시키기 위함.
+ *  odMinFlow/odMaxFlow/odRefDistM은 프론트에서 값만 들고 있다가 KTDB 임포트 요청(FileImportModal)
+ *  에 실어 보내면 백엔드가 실제 계산에 쓴다 — 이 스토어 자체는 백엔드에서 읽지 않는다. */
 export interface AutoGenerationSettings {
     /** 더미 신호 현시(phase) 1개당 길이 (초) */
     signalPhaseDurationSec: number;
     /** 두 접근로 방위각差가 180±이 값(도) 이내면 "마주보는 방향"(동시 녹색 안전)으로 판정 */
     signalOppositeBearingToleranceDeg: number;
+    /** OD 샘플 수요 최소 flow (대/h) — 거리 감쇠로 가장 먼 source-sink 쌍에 부여되는 값 */
+    odMinFlow: number;
+    /** OD 샘플 수요 최대 flow (대/h) — 거리 감쇠로 가장 가까운 source-sink 쌍에 부여되는 값 */
+    odMaxFlow: number;
+    /** OD 거리 감쇠 기준 거리 (m) — 이보다 가까우면 odMaxFlow 근접, 멀수록 odMinFlow로 수렴 */
+    odRefDistM: number;
 }
 
 export const DEFAULT_AUTO_GENERATION_SETTINGS: AutoGenerationSettings = {
     signalPhaseDurationSec: 30,
     signalOppositeBearingToleranceDeg: 30,
+    odMinFlow: 5,
+    odMaxFlow: 60,
+    odRefDistM: 300,
 };
 
 /**
@@ -45,6 +59,19 @@ export const useAppSettingsStore = create<AppSettingsState>()(
                 set((s) => ({ autoGeneration: { ...s.autoGeneration, ...partial } })),
             resetAutoGeneration: () => set({ autoGeneration: DEFAULT_AUTO_GENERATION_SETTINGS }),
         }),
-        { name: 'app-settings' },
+        {
+            name: 'app-settings',
+            // persist는 기본적으로 최상위 키만 얕게 병합한다 — autoGeneration처럼 스토어 진화
+            // 중간에 필드가 늘어난 중첩 객체는 예전 localStorage 값이 그대로 통째로 덮어써
+            // 새 필드(odMinFlow 등)가 undefined가 될 수 있어, autoGeneration만 기본값과 깊이 병합.
+            merge: (persisted, current) => {
+                const p = (persisted ?? {}) as Partial<AppSettingsState>;
+                return {
+                    ...current,
+                    ...p,
+                    autoGeneration: { ...current.autoGeneration, ...p.autoGeneration },
+                };
+            },
+        },
     ),
 );

@@ -72,8 +72,11 @@ const AppSettings: React.FC = () => {
 
             <div className={styles.sectionDivider} />
 
-            <div className={styles.sectionLabel} style={{ cursor: 'default' }}>자동생성 설정 — 더미 신호</div>
+            <div className={styles.sectionLabel} style={{ cursor: 'default' }}>자동생성 설정</div>
             <div style={{ padding: '0 4px 4px' }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#888', padding: '4px 6px 2px' }}>
+                    더미 신호
+                </div>
                 <SliderRow
                     label="현시(phase) 길이"
                     min={10} max={90} step={5}
@@ -92,6 +95,36 @@ const AppSettings: React.FC = () => {
                     허용오차를 넓히면 실제로는 마주보지 않는(교차하는) 접근로까지 "안전"으로 판단할
                     수 있습니다 — 수동 편집 상충 경고에도 같은 값이 쓰입니다.
                 </div>
+
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#888', padding: '8px 6px 2px' }}>
+                    OD 매트릭스 (KTDB 임포트 시 서버가 생성하는 샘플 수요)
+                </div>
+                <SliderRow
+                    label="최소 flow"
+                    min={1} max={50} step={1}
+                    value={autoGeneration.odMinFlow}
+                    onChange={(v) => setAutoGeneration({ odMinFlow: Math.min(v, autoGeneration.odMaxFlow - 1) })}
+                    display={`${autoGeneration.odMinFlow} 대/h`}
+                />
+                <SliderRow
+                    label="최대 flow"
+                    min={10} max={200} step={5}
+                    value={autoGeneration.odMaxFlow}
+                    onChange={(v) => setAutoGeneration({ odMaxFlow: Math.max(v, autoGeneration.odMinFlow + 1) })}
+                    display={`${autoGeneration.odMaxFlow} 대/h`}
+                />
+                <SliderRow
+                    label="거리 감쇠 기준 거리"
+                    min={50} max={1000} step={50}
+                    value={autoGeneration.odRefDistM}
+                    onChange={(v) => setAutoGeneration({ odRefDistM: v })}
+                    display={`${autoGeneration.odRefDistM}m`}
+                />
+                <div style={{ fontSize: 10, color: '#666', padding: '2px 0 6px', lineHeight: 1.4 }}>
+                    source-sink 거리가 기준 거리 이내면 최대 flow에 가깝게, 멀수록 최소 flow로
+                    수렴합니다. 실제 임포트 시점에만 적용되며, 다음 KTDB 가져오기부터 반영됩니다.
+                </div>
+
                 <div className={styles.formActions}>
                     <button className={styles.formBtnGhost} onClick={resetAutoGeneration}>
                         기본값으로 초기화

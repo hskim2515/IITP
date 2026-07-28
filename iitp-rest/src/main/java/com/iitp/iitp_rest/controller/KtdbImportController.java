@@ -183,9 +183,17 @@ public class KtdbImportController {
             @Parameter(description = "Network id (기본: 0)") @RequestParam(defaultValue = "0") int networkId,
             @Parameter(description = "시나리오 버전 키 (SFTP 저장 경로)") @RequestParam(required = false) String versionId,
             @Parameter(description = "폴리곤/파일 경계 — [[[lon,lat],...],...] JSON, 여러 링이면 합집합")
-            @RequestParam(required = false) String polygon
+            @RequestParam(required = false) String polygon,
+            @Parameter(description = "OD 샘플 수요 최소 flow(대/h) — 앱 설정 자동생성 항목, 미지정 시 기본값")
+            @RequestParam(required = false) Integer odMinFlow,
+            @Parameter(description = "OD 샘플 수요 최대 flow(대/h) — 앱 설정 자동생성 항목, 미지정 시 기본값")
+            @RequestParam(required = false) Integer odMaxFlow,
+            @Parameter(description = "OD 거리 감쇠 기준 거리(m) — 앱 설정 자동생성 항목, 미지정 시 기본값")
+            @RequestParam(required = false) Double odRefDistM
     ) {
         log.info("KTDB Save: bbox=({},{},{},{}), versionId={}", south, west, north, east, versionId);
+        NextSimInputScaffolder.OdGenerationParams odParams =
+                new NextSimInputScaffolder.OdGenerationParams(odMinFlow, odMaxFlow, odRefDistM);
         boolean isLarge = KtdbStreamingConverter.LARGE_BBOX_THRESHOLD <
                           (north - south) * (east - west);
 
@@ -203,7 +211,7 @@ public class KtdbImportController {
                     ? List.of("영역이 너무 넓어(약 33km² 초과) 그리신 경계의 정확한 모양은 적용되지 않고, "
                             + "경계를 포함하는 사각형(bbox) 전체를 가져왔습니다.")
                     : List.of();
-            return handleLargeBbox(south, west, north, east, networkId, versionId, extraWarnings);
+            return handleLargeBbox(south, west, north, east, networkId, versionId, extraWarnings, odParams);
         }
 
         try {
@@ -299,7 +307,7 @@ public class KtdbImportController {
                 CompletableFuture.runAsync(() -> {
                     try {
                         nextSimScaffolder.scaffoldForImport(vid, allNodeIds, finalSourceIds, finalSinkIds,
-                                finalTerminalCoords, finalNetworkXml);
+                                finalTerminalCoords, finalNetworkXml, null, odParams);
                         try { networkTileService.ingest(vid, resp); }
                         catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
                         String warning = checkStaleRoutes(vid, allLinkIds, allNodeIds);
@@ -331,7 +339,8 @@ public class KtdbImportController {
 
     private ResponseEntity<OsmSaveResponse> handleLargeBbox(
             double south, double west, double north, double east,
-            int networkId, String versionId, List<String> extraWarnings) {
+            int networkId, String versionId, List<String> extraWarnings,
+            NextSimInputScaffolder.OdGenerationParams odParams) {
         log.info("KTDB 스트리밍 모드 (대형 bbox)");
         try {
             double originLat = (south + north) / 2.0;
@@ -409,7 +418,7 @@ public class KtdbImportController {
                         }
                         // NextSim 필수 입력 정비 — 없으면 생성, 재임포트로 id 변경 시 재생성 (타일 빌드보다 먼저)
                         nextSimScaffolder.scaffoldForImport(vid, allNodeIds, sourceIds, sinkIds, terminalCoords,
-                                null, precomputedSignalXml);
+                                null, precomputedSignalXml, odParams);
                         try { networkTileService.ingest(vid, resp); }   // 1차: simplified 빠른 빌드
                         catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
                         // 2차: SFTP XML 기반 완전 재빌드 — 1차 실패와 무관하게 항상 시도 (내부 예외 처리)

@@ -23,6 +23,7 @@ import axiosInstance from '@api/axiosInstance';
 import { useScenarioStore } from '@stores/useScenarioStore';
 import { mergeUpdateLogs } from '@utils/history';
 import SaveVersionModal from '@component/modal/SaveVersionModal';
+import { useAppSettingsStore } from '@stores/useAppSettingsStore';
 import { useImportProgress, OSM_STEPS } from '@hooks/useImportProgress';
 import ImportProgressBar from '@component/util/ImportProgressBar';
 import { useMapStore } from '@stores/useMapStore';
@@ -926,6 +927,13 @@ const OsmNetworkSection: React.FC<{
             formData.append('north', north);
             formData.append('east',  east);
             if (versionId) formData.append('versionId', versionId);
+            // OD 매트릭스 자동생성 파라미터 — 앱 설정(⚙ → 자동생성 설정)에서 사용자가 조정한 값
+            {
+                const { odMinFlow, odMaxFlow, odRefDistM } = useAppSettingsStore.getState().autoGeneration;
+                formData.append('odMinFlow', String(odMinFlow));
+                formData.append('odMaxFlow', String(odMaxFlow));
+                formData.append('odRefDistM', String(odRefDistM));
+            }
 
             const res = await fetch(
                 `${import.meta.env.VITE_API_URL}/network/import/ktdb/save`,

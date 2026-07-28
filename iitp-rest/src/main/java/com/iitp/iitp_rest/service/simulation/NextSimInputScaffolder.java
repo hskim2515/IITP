@@ -121,6 +121,21 @@ public class NextSimInputScaffolder {
                                    List<Long> sourceTerminalIds, List<Long> sinkTerminalIds,
                                    java.util.Map<Long, double[]> terminalLocalCoords,
                                    NetworkXml networkForSignal, String precomputedSignalXml) {
+        scaffoldForImport(versionId, allNodeIds, sourceTerminalIds, sinkTerminalIds,
+                terminalLocalCoords, networkForSignal, precomputedSignalXml, OdGenerationParams.DEFAULT);
+    }
+
+    /**
+     * @param odParams OD 샘플 수요 생성 파라미터(minFlow/maxFlow/refDistM) — null이거나 개별
+     *                 필드가 null이면 기본값({@link #MIN_FLOW}/{@link #MAX_FLOW}/{@link #REF_DIST_M})을
+     *                 쓴다. 프론트 앱 설정(⚙ → 자동생성 설정)에서 사용자가 조정해 KTDB 임포트
+     *                 요청에 실어 보낸다.
+     */
+    public void scaffoldForImport(String versionId, Set<String> allNodeIds,
+                                   List<Long> sourceTerminalIds, List<Long> sinkTerminalIds,
+                                   java.util.Map<Long, double[]> terminalLocalCoords,
+                                   NetworkXml networkForSignal, String precomputedSignalXml,
+                                   OdGenerationParams odParams) {
         if (versionId == null || versionId.isBlank()) return;
         List<String> lookupDirs;
         try {
@@ -162,7 +177,7 @@ public class NextSimInputScaffolder {
         try {
             ensureValidOrRegenerate(lookupDirs, versionId, "odmatrix.xml",
                     content -> odMatrixValid(content, sourceIdSet, sinkIdSet),
-                    buildSampleOdMatrix(sourceTerminalIds, sinkTerminalIds, terminalLocalCoords, isReachable),
+                    buildSampleOdMatrix(sourceTerminalIds, sinkTerminalIds, terminalLocalCoords, isReachable, odParams),
                     "od_matrix");
 
             // signalTOD 검증에 signal.xml 의 "실제 플랜 보유 노드" 집합이 필요 — 재생성 전에
@@ -462,6 +477,13 @@ public class NextSimInputScaffolder {
     /** 거리 감쇠 기준 거리(m) — 이보다 가까우면 MAX_FLOW 근접, 멀수록 MIN_FLOW 로 수렴 */
     private static final double REF_DIST_M = 300.0;
 
+    /** OD 샘플 수요 생성 파라미터 — null 필드는 위 기본 상수를 그대로 쓴다. MAX_OD_SOURCES/
+     *  SINKS_PER_SOURCE는 아직 조정 UI가 없어 상수로 남겨둠(전역 커버리지/성능 상한이라 조정
+     *  근거가 약함) — MIN_FLOW/MAX_FLOW/REF_DIST_M만 도시 규모별로 실측값이 다를 수 있어 노출. */
+    public record OdGenerationParams(Integer minFlow, Integer maxFlow, Double refDistM) {
+        public static final OdGenerationParams DEFAULT = new OdGenerationParams(null, null, null);
+    }
+
     public static String buildSampleOdMatrix(List<Long> sourceTerminalIds, List<Long> sinkTerminalIds) {
         return buildSampleOdMatrix(sourceTerminalIds, sinkTerminalIds, null);
     }
@@ -503,6 +525,22 @@ public class NextSimInputScaffolder {
     public static String buildSampleOdMatrix(List<Long> sourceTerminalIds, List<Long> sinkTerminalIds,
                                               java.util.Map<Long, double[]> terminalLocalCoords,
                                               java.util.function.BiPredicate<Long, Long> isReachable) {
+        return buildSampleOdMatrix(sourceTerminalIds, sinkTerminalIds, terminalLocalCoords, isReachable,
+                OdGenerationParams.DEFAULT);
+    }
+
+    /**
+     * @param odParams null이거나 개별 필드가 null이면 {@link #MIN_FLOW}/{@link #MAX_FLOW}/
+     *                 {@link #REF_DIST_M} 기본값을 쓴다.
+     */
+    public static String buildSampleOdMatrix(List<Long> sourceTerminalIds, List<Long> sinkTerminalIds,
+                                              java.util.Map<Long, double[]> terminalLocalCoords,
+                                              java.util.function.BiPredicate<Long, Long> isReachable,
+                                              OdGenerationParams odParams) {
+        int minFlow = odParams != null && odParams.minFlow() != null ? odParams.minFlow() : MIN_FLOW;
+        int maxFlow = odParams != null && odParams.maxFlow() != null ? odParams.maxFlow() : MAX_FLOW;
+        double refDistM = odParams != null && odParams.refDistM() != null ? odParams.refDistM() : REF_DIST_M;
+
         StringBuilder demands = new StringBuilder();
         if (sourceTerminalIds != null && !sourceTerminalIds.isEmpty()
                 && sinkTerminalIds != null && !sinkTerminalIds.isEmpty()) {
@@ -536,9 +574,9 @@ public class NextSimInputScaffolder {
                     if (distanceAware) {
                         double[] snkXy = terminalLocalCoords.get(sink);
                         double dist = Math.hypot(srcXy[0] - snkXy[0], srcXy[1] - snkXy[1]);
-                        flow = distanceDecayFlow(dist);
+                        flow = distanceDecayFlow(dist, minFlow, maxFlow, refDistM);
                     } else {
-                        flow = MIN_FLOW + ((i * 7 + rank * 3) % (MAX_FLOW - MIN_FLOW));
+                        flow = minFlow + ((i * 7 + rank * 3) % (maxFlow - minFlow));
                     }
                     appendDemand(demands, src, sink, flow);
                 }
@@ -595,10 +633,10 @@ public class NextSimInputScaffolder {
         return result;
     }
 
-    /** 거리 반비례 flow — 가까우면 MAX_FLOW 근처, REF_DIST_M 의 몇 배씩 멀어지면 MIN_FLOW 로 수렴 */
-    private static int distanceDecayFlow(double distanceM) {
-        double ratio = REF_DIST_M / Math.max(distanceM, REF_DIST_M / 4.0); // 너무 가까워 폭주하지 않도록 하한
-        double flow = MIN_FLOW + (MAX_FLOW - MIN_FLOW) * Math.min(1.0, ratio);
+    /** 거리 반비례 flow — 가까우면 maxFlow 근처, refDistM 의 몇 배씩 멀어지면 minFlow 로 수렴 */
+    private static int distanceDecayFlow(double distanceM, int minFlow, int maxFlow, double refDistM) {
+        double ratio = refDistM / Math.max(distanceM, refDistM / 4.0); // 너무 가까워 폭주하지 않도록 하한
+        double flow = minFlow + (maxFlow - minFlow) * Math.min(1.0, ratio);
         return (int) Math.round(flow);
     }
 

@@ -18,6 +18,7 @@ import { LAYER_CONFIG, detectLayerFromFilename } from '@component/tool/DataIOPan
 import { autoSaveChangedLayers, backupAndResetDependentLayers } from '@utils/autoSave';
 import { useNetworkTileStore } from '@stores/useNetworkTileStore';
 import { useMapStore } from '@stores/useMapStore';
+import { useAppSettingsStore } from '@stores/useAppSettingsStore';
 import { showConfirm } from '@utils/dialog';
 import { NETWORK_TILING } from '@utils/lodConstants';
 import { generateDummySignals } from '@utils/signal';
@@ -1040,6 +1041,14 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
             formData.append('east',  east);
             if (versionId) formData.append('versionId', versionId);
             if (isKtdb && polygons) formData.append('polygon', JSON.stringify(polygons));
+            if (isKtdb) {
+                // OD 매트릭스 자동생성(서버 NextSimInputScaffolder.buildSampleOdMatrix) 파라미터 —
+                // 앱 설정(⚙ → 자동생성 설정)에서 사용자가 조정한 값을 KTDB 임포트 요청에 실어 보낸다.
+                const { odMinFlow, odMaxFlow, odRefDistM } = useAppSettingsStore.getState().autoGeneration;
+                formData.append('odMinFlow', String(odMinFlow));
+                formData.append('odMaxFlow', String(odMaxFlow));
+                formData.append('odRefDistM', String(odRefDistM));
+            }
 
             const url = type === 'osm'
                 ? `${import.meta.env.VITE_API_URL}/network/import/osm/save`
