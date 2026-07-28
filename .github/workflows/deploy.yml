@@ -1,5 +1,5 @@
 
-name: IITP FRONT CI/CD Pipeline
+name: IITP DEVELOP CI/CD Pipeline
 
 on:
   push:
