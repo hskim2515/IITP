@@ -99,6 +99,37 @@ function postComputedPositions(elapsed) {
 // 두 좌표 사이를 보간하면 차량이 순간이동/비행하는 것처럼 보인다.
 const GAP_THRESHOLD = 7.0;
 
+// 실측(vehicle_sim.db 직접 조회): 커넥션 안쪽의 짧은 링크는 NextSim이 그 안에서 중간
+// 샘플을 하나도 안 남기고 진입/진출 좌표만 남기는 경우가 있다(예: 82.4m짜리 링크를 1.0초
+// 만에 "통과" — 그 사이 vehicle_sim.db의 실제 spd 컬럼은 시종일관 50km/h였는데, 이 구간만
+// 평균 297km/h로 계산됨). 시간 간격(7초) 기준만으로는 못 잡는다 — 이런 점프는 보통 1~3초
+// 안에 일어나서 GAP_THRESHOLD 아래다. 거리/시간으로 역산한 평균 속도가 이 상한을 넘으면
+// 시간 gap과 동일하게 처리(보간 대신 숨김).
+// ⚠️ 처음엔 spd 컬럼의 관측 최댓값(180km/h, 설정상 상한으로 추정)을 기준으로 잡았는데,
+// 그건 차량의 "그 순간 속도"일 뿐 두 샘플 사이 실제 이동거리로 역산한 평균 속도와는 다른
+// 값이다 — 400대 표본(같은 링크 내 정상 구간 98,243건) 실측 결과 그 역산 평균 속도는 단
+// 한 건도 82.9km/h를 넘지 않았다(정체 구간처럼 시간 간격이 굵어도 마찬가지). 100km/h로
+// 낮춰도 오탐 0건 유지하면서 식별된 점프의 100%(241/241)를 잡는다.
+const MAX_PLAUSIBLE_SPEED_MPS = 28; // ≈100.8km/h — 실측 정상 구간 최댓값(82.9km/h) 위 안전마진
+
+// 실측(vehicle_sim.db 직접 조회, 400대 표본): 차가 서서히 정차할 때 마지막 몇 미터의
+// 움직임은 방향이 신뢰할 수 없다 — 정차 직전 3.5m/4.1s 같은 극저속 구간이 직전까지 확립된
+// 진행방향과 전혀 다른 각도(75도+ 차이)를 내는 경우가 흔했고, 이게 "마지막 유효 heading"으로
+// 그대로 얼어붙어 정지한 차가 도로와 무관한 방향을 보고 서있는 것처럼 보였다(400대 중 1682건).
+// ⚠️ 1차 시도(짧은 거리+큰 방향변화면 무조건 억제)는 진짜 교차로 회전까지 억제해 "회전할 때
+// 방향은 안 바뀌고 위치만 바뀐다"는 회귀를 냈다(실사용자 확인). 2차 시도(링크 전환 지점이면
+// 항상 신뢰)도 틀렸다 — 원인이 됐던 실제 사례(위 1682건 중 하나) 자체가 링크 전환 지점에서
+// 발생해서, 링크가 바뀌었다는 사실만으론 회전인지 노이즈인지 못 갈랐다.
+// 진짜 회전과 노이즈를 가르는 신호는 링크가 아니라 "그 다음에도 그 방향으로 계속 갔는가"였다
+// — 회전은 이후 최소 한 번은 실제로 움직이며 같은(새) 방향을 다시 보여주는데, 노이즈는 그
+// 자리에서 바로 멈춰버려 확인해줄 후속 샘플이 없다. 이 방식(확정 전까지 새 heading을 보류)
+// 으로 400대 재검증 결과: 정차 노이즈 1682→627건(63% 감소)로 줄이면서, 실제 회전으로 보이는
+// 84건(짧은 거리+큰 방향변화+이후 그 방향 유지)은 84/84(100%) 그대로 보존됐다.
+const STOP_APPROACH_MAX_DIST = 20;
+const STOP_APPROACH_MAX_HEADING_JUMP = 30 * Math.PI / 180;
+const STOP_APPROACH_CONFIRM_LOOKAHEAD = 3; // 몇 구간 뒤까지 "그 방향으로 계속 갔는지" 확인할지
+const STOP_APPROACH_CONFIRM_TOLERANCE = 30 * Math.PI / 180; // 확인 샘플이 후보 heading과 이 이내로 맞아야 "같은 방향"
+
 /**
  * 샘플 데이터 추출 (heading 사전 계산 포함, 세그먼트별 2점 직선보간 — NextSim 원시 timestep
  * 포인트를 그대로 잇는다. 스플라인으로 매끄럽게 잇는 시도(Hermite/Catmull-Rom)를 해봤으나,
@@ -110,28 +141,52 @@ const GAP_THRESHOLD = 7.0;
  */
 function extractSampledPositionsFromFlatArray(flatArray) {
     const step = 4;
-    const result = [];
-    let lastValidHeading: number | null = null;
-    let firstValidHeading: number | null = null;
-    let firstValidIndex = -1;
 
+    // 1차 패스 — 원시 구간(거리/시간/heading 후보)만 계산. 노이즈 판정은 이후 샘플이
+    // 필요해서(확정 전까지 보류) 전체를 먼저 뽑아둬야 한다.
+    const raw: { startTime: any; endTime: any; startPos: number[]; endPos: number[]; dist: number; duration: number; candidateHeading: number | null }[] = [];
     for (let i = 0; i < flatArray.length - step; i += step) {
         const startTime = flatArray[i];
         const startPos = [flatArray[i + 1], flatArray[i + 2], flatArray[i + 3]];
-
         const endTime = flatArray[i + step];
         const endPos = [flatArray[i + step + 1], flatArray[i + step + 2], flatArray[i + step + 3]];
-
         const dx = endPos[0] - startPos[0];
         const dy = endPos[1] - startPos[1];
         const dz = endPos[2] - startPos[2];
         const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
         const duration = endTime - startTime;
+        const candidateHeading = dist > 0.5 ? computeHeadingFromEcef(startPos, endPos) : null;
+        raw.push({ startTime, endTime, startPos, endPos, dist, duration, candidateHeading });
+    }
+
+    // idx의 후보 heading이 노이즈가 아니라 "확정된 방향전환"인지 — 이후 실제로 움직인
+    // 첫 샘플이 비슷한 방향이면 확정, 다르거나 그 전까지 계속 정지 상태면 미확정(노이즈로 처리)
+    const isConfirmed = (idx: number, candidateHeading: number): boolean => {
+        for (let k = idx + 1; k < Math.min(idx + 1 + STOP_APPROACH_CONFIRM_LOOKAHEAD, raw.length); k++) {
+            const r = raw[k]!;
+            if (r.dist > 0.5 && r.candidateHeading !== null) {
+                return angularDiff(r.candidateHeading, candidateHeading) < STOP_APPROACH_CONFIRM_TOLERANCE;
+            }
+        }
+        return false; // 그 전까지 계속 정지 — 확인해줄 후속 움직임이 없음
+    };
+
+    const result = [];
+    let lastValidHeading: number | null = null;
+    let firstValidHeading: number | null = null;
+    let firstValidIndex = -1;
+
+    for (let idx = 0; idx < raw.length; idx++) {
+        const { startTime, endTime, startPos, endPos, dist, duration, candidateHeading } = raw[idx]!;
 
         // 이동 거리가 충분할 때만 heading 갱신 (0.5m 미만 = 정지/극미속)
         let heading = lastValidHeading;
-        if (dist > 0.5) {
-            heading = computeHeadingFromEcef(startPos, endPos);
+        if (dist > 0.5 && candidateHeading !== null) {
+            const isLowConfidenceJump = lastValidHeading !== null
+                && dist < STOP_APPROACH_MAX_DIST
+                && angularDiff(lastValidHeading, candidateHeading) > STOP_APPROACH_MAX_HEADING_JUMP
+                && !isConfirmed(idx, candidateHeading);
+            heading = isLowConfidenceJump ? lastValidHeading : candidateHeading;
             lastValidHeading = heading;
             if (firstValidHeading === null) {
                 firstValidHeading = heading;
@@ -140,7 +195,7 @@ function extractSampledPositionsFromFlatArray(flatArray) {
         }
 
         const speed = duration > 0 ? dist / duration : 0;
-        const isGap = duration > GAP_THRESHOLD;
+        const isGap = duration > GAP_THRESHOLD || speed > MAX_PLAUSIBLE_SPEED_MPS;
 
         result.push({ startTime, endTime, startPos, endPos, heading, speed, isGap });
     }
@@ -157,6 +212,30 @@ function extractSampledPositionsFromFlatArray(flatArray) {
 
     return result;
 }
+
+// ⚠️ 차선변경 구간에서 heading을 앞/뒤 구간 방향으로 부드럽게 블렌딩하는 시도(오늘 세션에서
+// 추가했다 되돌림)를 해봤으나, 위치 경로는 그대로 직선(실제 옆 차선으로 곧장 이동)인데
+// heading만 "정면 유지"로 매끄럽게 바뀌니 차가 정면을 본 채로 옆으로 미끄러지는(수직으로
+// 차선을 넘는) 게 더 부자연스러워 보였다(실사용자 확인 — "옆으로 이동하여 옆레인으로 진입").
+// heading은 실제 이동 방향(segment 자신의 시작→끝 벡터)과 항상 일치해야 최소한 "차가 향하는
+// 곳으로 움직인다"는 게 맞는다 — 5초간 대각선을 유지하는 게 어색해도, 그게 실제 이동 경로와
+// 다른 방향을 보고 미끄러지는 것보다는 낫다(둘 다 근본적으로는 NextSim이 차선변경 "순간"을
+// 세밀히 기록 안 하는 데이터 한계 — 차선 지오메트리를 참조해 실제 곡선 경로를 만들지 않는 한
+// 완전히 자연스럽게 만들 수 없음).
+
+// 두 각도(라디안) 사이의 최단 차이 — [0, π]
+function angularDiff(a: number, b: number): number {
+    let d = Math.abs(a - b) % (2 * Math.PI);
+    if (d > Math.PI) d = 2 * Math.PI - d;
+    return d;
+}
+
+// 트립 종료 후 마지막 알려진 방향/속도로 계속 나아가는 것처럼 보이게 하는 유예 구간(초).
+// 실측(vehicle_sim.db 직접 조회): 차량 데이터는 목적지에 "도착해 정차"한 뒤 끊기는 게 아니라
+// 정지 없이 정상 주행 중(예: 40km/h)에 그냥 뚝 끊긴다 — 즉시 null 반환하면 "주행 중 갑자기
+// 사라짐"이 되어 부자연스럽다. 마지막 구간의 방향으로 잠깐 더 외삽해 자연스럽게 화면 밖으로
+// "빠져나가는" 것처럼 보이게 한 뒤에야 사라지게 한다.
+const TRIP_END_EXTRAPOLATE_SEC = 2.0;
 
 // 시간 기반 위치 보간 (heading/speed는 추출 시 계산된 값 사용)
 function interpolatePosition(sampled, t) {
@@ -177,6 +256,28 @@ function interpolatePosition(sampled, t) {
             ];
 
             return { position: pos, heading, speed };
+        }
+    }
+
+    // 트립이 막 끝난 직후(유예 구간 이내)면 마지막 구간의 진행 방향으로 외삽
+    const last = sampled[sampled.length - 1];
+    if (last && !last.isGap && t > last.endTime) {
+        const dt = t - last.endTime;
+        if (dt <= TRIP_END_EXTRAPOLATE_SEC && last.speed > 0) {
+            const dx = last.endPos[0] - last.startPos[0];
+            const dy = last.endPos[1] - last.startPos[1];
+            const dz = last.endPos[2] - last.startPos[2];
+            const segDist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (segDist > 1e-6) {
+                const extraDist = last.speed * dt;
+                const ux = dx / segDist, uy = dy / segDist, uz = dz / segDist;
+                const pos = [
+                    last.endPos[0] + ux * extraDist,
+                    last.endPos[1] + uy * extraDist,
+                    last.endPos[2] + uz * extraDist,
+                ];
+                return { position: pos, heading: last.heading, speed: last.speed };
+            }
         }
     }
 

@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import SimulationControls from "./SimulationControls";
 import HeaderMenu from "@component/header/HeaderMenu";
 import NextSimReadinessBadge from "@component/header/NextSimReadinessBadge";
@@ -10,6 +11,10 @@ import { useScenarioStore } from "@stores/useScenarioStore";
 import { showConfirm } from "@utils/dialog";
 import SaveVersionModal from "@component/modal/SaveVersionModal";
 import { hasUnsavedLayerChanges, saveAllChangedLayers } from "@utils/networkSave";
+import { reloadIntoScenario } from "@utils/scenarioBootstrap";
+import { useMessageStore } from "@stores/useMessageStore";
+import axiosInstance from "@api/axiosInstance";
+import { ScenarioVersions } from "@type/Scenario";
 import styles from '@css/Header.module.css'
 
 interface Props {
@@ -22,6 +27,7 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
     const appMode = useModeStore((s) => s.appMode);
     const toggleAppMode = useModeStore((s) => s.toggleAppMode);
     const netChanged = useNetworkStore((s: any) => s.isChanged);
+    const selectedScenario = useScenarioStore((s) => s.selectedScenario);
     const selectedScenarioVersion = useScenarioStore((s) => s.selectedScenarioVersion);
     const [versionModalOpen, setVersionModalOpen] = useState(false);
     // SaveVersionModal은 두 가지 목적으로 재사용된다: 'branch'(새 버전으로 분기, 기존 동작) /
@@ -29,12 +35,74 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
     const [versionModalPurpose, setVersionModalPurpose] = useState<'branch' | 'saveExit'>('branch');
     const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
 
+    // ── 버전 변경 드롭다운 — 같은 시나리오의 다른 버전으로 홈을 거치지 않고 즉시 전환 ──
+    // ⚠️ 드롭다운 목록은 document.body에 포탈로 그린다 — 버튼의 부모인 .hoverReveal이 헤더
+    // hover 시 폭만 넓어지는 애니메이션을 위해 overflow:hidden을 쓰는데, 그 자식으로 드롭다운을
+    // 그리면 목록이 그 박스 높이에서 그대로 잘려 "스크롤해도 안 내려가는" 것처럼 보였다(실측
+    // 보고 — overflowY:auto 자체는 정상, 조상의 overflow:hidden이 그 아래를 통째로 가린 것).
+    const [versionSwitcherOpen, setVersionSwitcherOpen] = useState(false);
+    const [versionButtonRect, setVersionButtonRect] = useState<{ top: number; left: number } | null>(null);
+    const versionButtonRef = useRef<HTMLButtonElement>(null);
+    const [versionList, setVersionList] = useState<ScenarioVersions[]>([]);
+    const [versionListLoading, setVersionListLoading] = useState(false);
+    const [resettingData, setResettingData] = useState(false);
+
+    const openVersionSwitcher = () => {
+        setVersionSwitcherOpen((v) => {
+            const next = !v;
+            if (next && versionButtonRef.current) {
+                const r = versionButtonRef.current.getBoundingClientRect();
+                setVersionButtonRect({ top: r.bottom + 4, left: r.left });
+            }
+            return next;
+        });
+        if (!selectedScenario || versionList.length > 0) return;
+        setVersionListLoading(true);
+        fetch(`${import.meta.env.VITE_API_URL}/scenario/${selectedScenario.id}/versions`)
+            .then((r) => r.json())
+            .then((data: ScenarioVersions[]) => setVersionList(data))
+            .catch(() => useMessageStore.getState().setMessage({ type: 'error', text: '버전 목록 조회 실패' }))
+            .finally(() => setVersionListLoading(false));
+    };
+
+    const handleSwitchVersion = async (version: ScenarioVersions) => {
+        setVersionSwitcherOpen(false);
+        if (!selectedScenario || version.key === selectedScenarioVersion?.key) return;
+        const notice = netChanged
+            ? `"${version.label}" 버전으로 전환합니다.\n저장되지 않은 네트워크 편집 내용은 사라집니다. 계속할까요?`
+            : `"${version.label}" 버전으로 전환합니다. 계속할까요?`;
+        if (!(await showConfirm(notice))) return;
+        reloadIntoScenario(selectedScenario, version);
+    };
+
+    // "모든 데이터 초기화" — 버전(키)은 유지하고 그 버전에 딸린 네트워크/신호/OD/승객/차량시뮬 등
+    // 모든 산출물만 서버에서 비운 뒤, 같은 시나리오/버전으로 다시 진입해 빈 상태로 시작한다.
+    // 좌표/회전/축척 캘리브레이션도 함께 초기화된다 — 그 값은 지금 지워지는 network.xml에 대해
+    // 계산된 결과라 데이터가 없어지면 의미가 없어지기 때문(백엔드 resetVersionData 참고).
+    // 전역 store/레이어/타일 캐시가 세션에 누적되므로(goHome과 동일 이유) 리로드로 완전 초기화.
+    const handleResetAllData = async () => {
+        if (!selectedScenario || !selectedScenarioVersion) return;
+        const notice = `"${selectedScenarioVersion.label}" 버전의 모든 데이터(도로/신호/OD/승객/차량 시뮬레이션 등)와 `
+            + `좌표/회전/축척 캘리브레이션을 완전히 삭제합니다.\n`
+            + `버전 자체는 유지되며 바로 다시 가져오기를 시작할 수 있습니다.\n`
+            + `이 작업은 되돌릴 수 없습니다. 계속할까요?`;
+        if (!(await showConfirm(notice))) return;
+        setResettingData(true);
+        try {
+            await axiosInstance.post(`/scenario/version/${encodeURIComponent(selectedScenarioVersion.key)}/reset`);
+            reloadIntoScenario(selectedScenario, selectedScenarioVersion);
+        } catch (e) {
+            useMessageStore.getState().setMessage({ type: 'error', text: `데이터 초기화 실패: ${e}` });
+            setResettingData(false);
+        }
+    };
+
     // 홈(시나리오 선택)으로 복귀 — 전역 store/레이어/타일 캐시가 세션에 누적되므로
     // 전체 리로드로 완전 초기화 (시나리오 선택은 미영속이라 리로드 = 선택 화면)
     const goHome = async () => {
         const notice = netChanged
-            ? '홈으로 이동하면 현재 시나리오 편집 화면을 벗어나 시나리오 선택 화면으로 이동합니다.\n저장되지 않은 네트워크 편집 내용은 사라집니다. 계속할까요?'
-            : '홈으로 이동하면 현재 시나리오 편집 화면을 벗어나 시나리오 선택 화면으로 이동합니다.\n계속할까요?';
+            ? '홈으로 이동할까요?\n저장되지 않은 네트워크 편집 내용은 사라집니다.'
+            : '홈으로 이동할까요?';
         if (!(await showConfirm(notice))) return;
         window.location.href = '/';
     };
@@ -144,9 +212,60 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
                         ● 미저장 편집
                     </span>
                 )}
-                {/* "새 버전으로"는 가끔 쓰는 동작이라 평소엔 접어 헤더를 덜 복잡해 보이게 하고,
-                    headerRight에 마우스를 올렸을 때만 펼친다. */}
-                <div className={styles['hoverReveal']}>
+                {/* "버전 변경"/"새 버전으로"/"데이터 초기화"는 가끔 쓰는 동작이라 평소엔 접어
+                    헤더를 덜 복잡해 보이게 하고, headerRight에 마우스를 올렸을 때만 펼친다. */}
+                <div className={styles['hoverReveal']} style={{ display: 'flex', gap: 6, alignItems: 'center', position: 'relative' }}>
+                    {!dashboardMode && selectedScenario && selectedScenarioVersion && (
+                        <div style={{ position: 'relative' }}>
+                            <button
+                                ref={versionButtonRef}
+                                onClick={openVersionSwitcher}
+                                title="같은 시나리오의 다른 버전으로 전환"
+                                style={{
+                                    padding: '4px 12px', borderRadius: 4, cursor: 'pointer',
+                                    border: '1px solid #888', background: versionSwitcherOpen ? 'rgba(255,255,255,0.08)' : 'transparent',
+                                    color: '#ccc', fontWeight: 600, fontSize: 13, flexShrink: 0,
+                                }}
+                            >
+                                버전: {selectedScenarioVersion.label} ▾
+                            </button>
+                            {versionSwitcherOpen && versionButtonRect && createPortal(
+                                <>
+                                    <div style={{ position: 'fixed', inset: 0, zIndex: 2900 }} onClick={() => setVersionSwitcherOpen(false)} />
+                                    <div style={{
+                                        position: 'fixed', top: versionButtonRect.top, left: versionButtonRect.left, zIndex: 2901,
+                                        background: 'rgba(20,22,36,0.98)', border: '1px solid rgba(255,255,255,0.14)',
+                                        borderRadius: 8, boxShadow: '0 12px 32px rgba(0,0,0,0.6)',
+                                        minWidth: 180, maxHeight: 280, overflowY: 'auto', padding: 4,
+                                    }}>
+                                        {versionListLoading && (
+                                            <div style={{ padding: '8px 10px', fontSize: 12, color: '#888' }}>불러오는 중...</div>
+                                        )}
+                                        {!versionListLoading && versionList.length === 0 && (
+                                            <div style={{ padding: '8px 10px', fontSize: 12, color: '#888' }}>버전 없음</div>
+                                        )}
+                                        {!versionListLoading && versionList.map((v) => (
+                                            <button
+                                                key={v.key}
+                                                onClick={() => handleSwitchVersion(v)}
+                                                style={{
+                                                    display: 'block', width: '100%', textAlign: 'left',
+                                                    padding: '7px 10px', borderRadius: 5, fontSize: 12,
+                                                    border: 'none', cursor: 'pointer',
+                                                    background: v.key === selectedScenarioVersion.key ? 'rgba(85,136,238,0.18)' : 'transparent',
+                                                    color: v.key === selectedScenarioVersion.key ? '#7aa2ff' : '#ccc',
+                                                    fontWeight: v.key === selectedScenarioVersion.key ? 700 : 400,
+                                                }}
+                                            >
+                                                {v.key === selectedScenarioVersion.key ? '✓ ' : ''}{v.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </>,
+                                document.body
+                            )}
+                        </div>
+                    )}
                     {!dashboardMode && selectedScenarioVersion && (
                         <button
                             onClick={() => { setVersionModalPurpose('branch'); setVersionModalOpen(true); }}
@@ -158,6 +277,21 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
                             }}
                         >
                             새 버전으로
+                        </button>
+                    )}
+                    {!dashboardMode && selectedScenarioVersion && (
+                        <button
+                            onClick={handleResetAllData}
+                            disabled={resettingData}
+                            title="이 버전의 모든 데이터(도로/신호/OD/승객/차량 시뮬레이션)를 삭제하고 빈 상태로 시작 (버전은 유지)"
+                            style={{
+                                padding: '4px 12px', borderRadius: 4, cursor: resettingData ? 'default' : 'pointer',
+                                border: '1px solid rgba(220,60,60,0.5)', background: 'rgba(220,60,60,0.1)',
+                                color: '#f07070', fontWeight: 600, fontSize: 13, flexShrink: 0,
+                                opacity: resettingData ? 0.6 : 1,
+                            }}
+                        >
+                            {resettingData ? '초기화 중...' : '모든 데이터 초기화'}
                         </button>
                     )}
                 </div>

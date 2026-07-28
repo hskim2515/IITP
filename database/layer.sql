@@ -60,3 +60,22 @@ INSERT INTO layer (id, group_id, key, label, basic, auth) VALUES
                                                               (20, 3, 'tramRoute', 'TRAM 노선',         false, 0),
                                                               (22, 3, 'pavementMarking', '노면표시',         false, 0);
 
+-- 링크 혼잡도(V/C)/서비스수준(LOS)/병목 링크 분석 레이어 (analyze 그룹 추가)
+INSERT INTO layer (id, group_id, key, label, basic, auth, form_type, url) VALUES
+                                                              (25, 2, 'congestion', '혼잡도 히트맵',      false, 0, 'checkbox', ''),
+                                                              (26, 2, 'los',        '서비스수준(LOS)',    false, 0, 'checkbox', ''),
+                                                              (27, 2, 'bottleneck', '병목 링크',          false, 0, 'checkbox', '');
+
+-- 행정구역(시도/시군구/읍면동) 기반 교통량 레이어 (analyze 그룹 추가)
+INSERT INTO layer (id, group_id, key, label, basic, auth, form_type, url) VALUES
+                                                              (28, 2, 'region', '지역별 교통량(행정구역)', false, 0, 'checkbox', '');
+
+-- 지식그래프 스타일 분석 레이어 2종 (analyze 그룹 추가)
+INSERT INTO layer (id, group_id, key, label, basic, auth, form_type, url) VALUES
+                                                              (29, 2, 'regionOdGraph', '지역 OD 관계 그래프', false, 0, 'checkbox', ''),
+                                                              (30, 2, 'congestionGraph', '혼잡 전파 그래프', false, 0, 'checkbox', '');
+
+-- 등시선(isochrone) 접근성 지도 레이어 (analyze 그룹 추가)
+INSERT INTO layer (id, group_id, key, label, basic, auth, form_type, url) VALUES
+                                                              (31, 2, 'isochrone', '시설 서비스권 분석', false, 0, 'checkbox', '');
+

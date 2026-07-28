@@ -22,8 +22,8 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
     private speed: number;
     private running: boolean;
     private animationId: number | null = null;
-    private positions: number[][] = [];
-    private prevPositions: number[][] = [];
+    private positions: (number[] | null)[] = [];
+    private prevPositions: (number[] | null)[] = [];
     private lerpStartTime: number = 0;
     private readonly LERP_DURATION = 50;
     public readonly vehicleType: string;
@@ -98,7 +98,13 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
         // 줌인 시 화면 내 소수만 변환. 이전 3857 위치로 화면 판정(margin 포함 cullExtent).
         this.refreshCullExtent();
         const converted = latestPositions.positions.map((pos, idx) => {
-            if (!pos) return this.positions[idx] ?? null;
+            // ⚠️ 예전엔 위치가 없으면(gap 등) 마지막 위치를 그대로 유지했는데, 3D(Cesium
+            // VehiclePrimitive)는 같은 프레임에 그 차량을 압축 배열에서 아예 빼버려(=그 프레임엔
+            // 안 그림) 서로 다르게 동작했다 — 2D는 옛 위치에 얼어붙어 계속 보이거나, 그 얼어붙은
+            // 위치가 하필 그 시점에 culling(화면 밖 판정)에 걸리면 이후 갱신도 안 와서 영영 안
+            // 보이는 상태로 남았다("사라진 차량" 원인). 이제 3D와 동일하게 위치 없음=이번 프레임
+            // 렌더 제외로 통일한다 — 실제 위치가 다시 오면 자연히 복구된다.
+            if (!pos) return null;
             const prev = this.positions[idx];
             if (prev && this.isCulled(prev)) return prev; // 화면 밖: 변환 생략, 이전 위치 유지
             try {
@@ -144,11 +150,23 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
         this.refreshCullExtent();
         this.features.forEach((feature, index) => {
             const geom = feature.getGeometry() as Point;
+            if (!geom) return;
             const target = this.positions[index];
-            if (!geom || !target) return;
+            // 이번 프레임에 위치가 없으면(gap 등) 3D와 동일하게 숨긴다 — 옛 좌표에 그대로
+            // 두면 얼어붙은 채 계속 보이거나, 하필 그 좌표가 culling 판정을 받은 뒤로는
+            // 다시는 안 보이는 상태로 남을 수 있다(setLatestPositions 주석 참고).
+            if (!target) { this.hideFeature(feature, index); return; }
             if (this.applyCull(feature, index, target)) return;
             geom.setCoordinates(target);
         });
+    }
+
+    /** 빈 좌표로 설정해 렌더에서 제외 (culling·위치 없음 공용) */
+    private hideFeature(feature: Feature<Point>, index: number): void {
+        if (!this.hiddenIdx.has(index)) {
+            (feature.getGeometry() as Point)?.setCoordinates([]);
+            this.hiddenIdx.add(index);
+        }
     }
 
     /** culling 적용: 화면 밖이면 feature 숨김(빈 geometry) 후 true. 화면 안이면 복원 후 false */
@@ -158,10 +176,7 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
             return false;
         }
         if (this.isCulled(target)) {
-            if (!this.hiddenIdx.has(index)) {
-                (feature.getGeometry() as Point)?.setCoordinates([]); // 빈 좌표 → 렌더 제외
-                this.hiddenIdx.add(index);
-            }
+            this.hideFeature(feature, index);
             return true;
         }
         if (this.hiddenIdx.has(index)) this.hiddenIdx.delete(index);
@@ -174,18 +189,19 @@ export default class VehicleFeatureLayer extends WebGLVectorLayer {
 
         this.features.forEach((feature, index) => {
             const geom = feature.getGeometry() as Point;
+            if (!geom) return;
             const target = this.positions[index];
-            if (!geom || !target) return;
+            if (!target) { this.hideFeature(feature, index); return; }
             if (this.applyCull(feature, index, target)) return;
 
             const prev = this.prevPositions[index];
             if (prev && t < 1.0) {
-                const dx = target[0] - prev[0];
-                const dy = target[1] - prev[1];
+                const dx = target[0]! - prev[0]!;
+                const dy = target[1]! - prev[1]!;
                 if (dx * dx + dy * dy > 1e10) {
                     geom.setCoordinates(target);
                 } else {
-                    geom.setCoordinates([prev[0] + dx * t, prev[1] + dy * t]);
+                    geom.setCoordinates([prev[0]! + dx * t, prev[1]! + dy * t]);
                 }
             } else {
                 geom.setCoordinates(target);

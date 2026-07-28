@@ -57,6 +57,7 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     );
     const coordPickActive = useMapStore((s) => s.coordPickCallback !== null);
     const selecting = useOsmBboxStore((s) => s.selecting);
+    const selectingPolygon = useOsmBboxStore((s) => s.selectingPolygon);
     const prevModeRef = useRef<typeof mapViewMode | null>(null);
 
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -153,10 +154,12 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
         };
     }, []);
 
-    // OSM/KTDB bbox 선택(DragBox)과 기준점 선택(coordPick)은 둘 다 OL(2D) 지도에만
-    // 리스너를 건다 — 3D(Cesium) 화면을 클릭해도 아무 반응이 없어 보이는 문제를 막기 위해,
-    // 선택 모드에 들어가면 강제로 2D 단일 화면으로 전환해 클릭이 항상 OL로 들어가게 한다.
-    const forceOl2D = selecting || coordPickActive;
+    // OSM/KTDB bbox 선택(DragBox)·KTDB 폴리곤 그리기(Draw)·기준점 선택(coordPick)은 전부
+    // OL(2D) 지도에만 리스너를 건다 — 3D(Cesium) 화면을 클릭해도 아무 반응이 없어 보이는
+    // 문제를 막기 위해, 선택 모드에 들어가면 강제로 2D 단일 화면으로 전환해 클릭이 항상 OL로
+    // 들어가게 한다. ⚠️ selectingPolygon 이 여기 빠져 있었다 — 폴리곤 그리기 중에도 분할/3D
+    // 화면일 수 있어 그리려는 화면이 작거나(분할) 아예 안 보이는(3D 단일) 채로 두는 회귀였다.
+    const forceOl2D = selecting || selectingPolygon || coordPickActive;
     useEffect(() => {
         if (forceOl2D) {
             prevModeRef.current = mapViewMode;
@@ -289,10 +292,14 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
                         width: 8, height: 8, borderRadius: '50%',
                         background: vpVehicles.dense ? 'rgba(255,150,60,0.95)' : 'rgba(90,210,120,0.95)',
                     }}/>
+                    {/* total/shown은 CZML 프리페치 시간창(최대 300초) 동안의 누적 통행량이라
+                        그대로 보여주면 "차량이 안 보이는데 수백 대"로 오해를 준다(실측 보고) —
+                        activeNow(±3초 실제 현재 차량 수, 별도 폴링)가 오면 그것을 우선 표시하고,
+                        아직 안 왔으면(최초 로드 직후 짧은 순간) 기존 값으로 폴백한다. */}
                     {vpVehicles.dense
-                        ? <span>차량 {vpVehicles.total.toLocaleString()}대 — 히트맵 표시</span>
-                        : <span>차량 {vpVehicles.shown.toLocaleString()}대 표시
-                            {vpVehicles.total > vpVehicles.shown ? ` / 전체 ${vpVehicles.total.toLocaleString()}대` : ''}</span>}
+                        ? <span>현재 {(vpVehicles.activeNow ?? vpVehicles.total).toLocaleString()}대 — 히트맵 표시</span>
+                        : <span>현재 {(vpVehicles.activeNow ?? vpVehicles.shown).toLocaleString()}대
+                            {vpVehicles.total > vpVehicles.shown ? ` (최근 통행 ${vpVehicles.total.toLocaleString()}대)` : ''}</span>}
                 </div>
             )}
             <ToolsPanel/>

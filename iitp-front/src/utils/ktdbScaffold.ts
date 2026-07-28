@@ -2,6 +2,7 @@ import { useBackgroundTaskStore } from "@stores/useBackgroundTaskStore";
 import { useLogStore } from "@stores/useLogStore";
 import { useMessageStore } from "@stores/useMessageStore";
 import { useNextSimReadinessStore } from "@stores/useNextSimReadinessStore";
+import { useOnboardingStore } from "@stores/useOnboardingStore";
 import { useSignalStore } from "@stores/useSignalStore";
 import { useSignalTodStore } from "@stores/useSignalTodStore";
 import { assignPropertyToResponseData } from "@utils/guid";
@@ -11,7 +12,7 @@ import { refreshNetworkTiles } from "@utils/networkRefresh";
 // 프론트가 채워둔 값은 백엔드 CompletableFuture.runAsync가 아직 신호/TOD를 재생성하기
 // 전의 스냅샷(대형망은 아예 비어있는 간소화 응답)이라, 여기서 refetch하지 않으면
 // "새로고침해야만 정상으로 보이는" 상태로 영원히 남는다(실측 증상).
-async function refetchSignalAndTod(versionId: string): Promise<void> {
+export async function refetchSignalAndTod(versionId: string): Promise<void> {
     const base = import.meta.env.VITE_API_URL;
     try {
         const [signalRes, todRes] = await Promise.all([
@@ -72,6 +73,17 @@ export function pollKtdbScaffoldStatus(versionId: string, retryCount = 0): void 
                 // 직후의(백엔드 재생성 전) 값이라, 사용자가 새로고침해야만 정상으로 보였다.
                 refetchSignalAndTod(versionId).finally(() => {
                     useNextSimReadinessStore.getState().runAll();
+                    // "신호 데이터 없음" 온보딩 배너가 떠 있는 동안 이 배경 스캐폴딩이 끝나
+                    // 신호가 이미 생겼으면, App.tsx의 자동 생성 이펙트가 이걸 모른 채 또다시
+                    // 더미를 만들어 덮어쓰지 않도록 missingSignal 을 즉시 false 로 반영한다
+                    // (과거 수동 버튼 시절엔 이 경합으로 TOD 커버리지가 깨졌었다 — 실측 노드
+                    // 18,486건 불일치).
+                    const hasSignals = (useSignalStore.getState().currentJsonData as any)?.signals?.length > 0;
+                    const ob = useOnboardingStore.getState();
+                    if (hasSignals && ob.step === 'need-simulation' && ob.missingSignal) {
+                        if (!ob.missingVehicle) ob.setStep('idle');
+                        else ob.setNeedSimulation(false, ob.missingVehicle);
+                    }
                 });
                 // 재임포트로 링크/노드 id 가 바뀌어 기존 버스 노선이 안 맞을 수 있음 — 자동으로
                 // 고칠 방법이 없는 연쇄(노선 재작성은 사용자 판단 필요)라 조용히 넘기지 않고

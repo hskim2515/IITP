@@ -72,6 +72,7 @@ public class VehicleController {
     private final DummyVehicleGenerator dummyVehicleGenerator;
     private final DummySignalGenerator dummySignalGenerator;
     private final FileStorageService fileStorage;
+    private final com.iitp.iitp_rest.repository.VehicleTypeRepository vehicleTypeRepository;
 
     /** vehicle_sim.db 무효화 연쇄 — NextSim 재실행 등 외부 갱신 시 ViewportCtx 도 함께 비움 */
     @jakarta.annotation.PostConstruct
@@ -229,6 +230,7 @@ public class VehicleController {
                 .collect(Collectors.groupingBy(VehicleEvent::getId));
 
         Map<String, VehicleInfo> vehicleInfoMap = vehicleDataReader.readVehicleInfoMap(scenarioKey);
+        Map<String, String> nextsimCodeToVehicleId = loadNextsimCodeToVehicleIdMap();
 
         List<Map<String, Object>> czml = Collections.synchronizedList(new ArrayList<>());
         List<Map<String, Object>> featureList = Collections.synchronizedList(new ArrayList<>());
@@ -254,8 +256,8 @@ public class VehicleController {
         stageMap.put(scenarioKey, "CZML 좌표 변환 중... (차량 " + grouped.size() + "대)");
         List<SignalTimelineResponse> signalTimeline = signalTimelineService.generateSignalTimeline(baseEpoch, "0", scenarioKey, simulationDuration);
 
-        Instant[] range = buildVehiclePackets(grouped, scenario, baseEpoch,
-                startTime, vehicleInfoMap, czml, featureList, vehiclePathList);
+        Instant[] range = buildVehiclePackets(scenarioKey, grouped, scenario, baseEpoch,
+                startTime, vehicleInfoMap, nextsimCodeToVehicleId, czml, featureList, vehiclePathList);
         Instant globalStart = range[0];
         Instant globalStop  = range[1];
 
@@ -296,23 +298,165 @@ public class VehicleController {
      * 차량 이벤트 그룹 → CZML 패킷/feature/positions 빌드 (generateVehicleRoute·viewport 공용).
      * @return [earliestStart, latestStop] — 유효 차량이 없으면 [null, null]
      */
+    /**
+     * 인접 차선 셀 사이를 오가며 pos_x/pos_y가 왕복하는 현상을 억제한다. vehicle_sim.db 직접
+     * 조회로 실측 확인한 원인: 정체(mode="None", 메조스코픽 큐 모델) 중엔 5초 간격의 굵은
+     * 타임스텝으로 기록되며 lane_id/좌표가 몇 개의 고정 지점 사이를 반복해서 튄다 — NextSim
+     * 원시 출력 자체의 특성이라 엔진(벤더 바이너리) 쪽은 못 고친다.
+     * <p>
+     * ⚠️ 처음엔 mode="None" 구간에만 이 필터를 적용했으나, 실측 재현 결과 **정상 주행
+     * (mode="CF") 중에도 같은 왕복 패턴이 발생**함을 확인했다(예: 한 차량이 같은 링크의 두
+     * 차선 사이를 50초 동안 반복 왕복, 계속 "CF"). mode="None"만 걸러서는 이런 CF 구간의
+     * 왕복이 그대로 통과해 "주행 중 대각선 뒤로 옆 차선 이동", "정지 시 옆을 보고 정지"로
+     * 보였다(실사용자 관찰). 그래서 mode 구분 없이 **같은 링크가 이어지는 구간 전체**에 이
+     * 필터를 적용하도록 일반화했다 — 실측(400대 샘플) 결과 mode="None"만 걸렀을 때 812건이던
+     * 급격한 방향 반전(인접 두 구간 heading 차 100도 초과)이 84건으로 90% 감소했고, 남은
+     * 84건은 대부분 실제 이동거리가 3m 미만인 저속 구간의 잔여 노이즈였다. 진짜 차선변경
+     * (같은 방향으로 단조 진행)은 아래 단조증가 검사를 통과하므로 건드리지 않는다(검증 완료).
+     * <p>
+     * 1차 시도(anchor 기준 "지금까지 가장 멀리 나아간 지점"만 유지)는 실측 재현 결과 결함이
+     * 있었다 — 왕복이 두 지점 사이가 아니라 3개 이상의 인접 지점을 오갈 때, 첫 번째로 튄
+     * 지점이 anchor의 "최댓값"으로 고정돼버려서 그 뒤에 이어지는 (진짜와 구분 안 되는) 잡음
+     * 샘플들이 전부 그 튄 지점으로 눌러앉는 문제가 있었다 — 결과적으로 "잠깐 멈췄다가 옆
+     * 차선으로 밀린 뒤에야 다음 링크로 진입"하는 것처럼 보였다(실사용자 관찰로 확인).
+     * <p>
+     * 2차 시도(잡음 구간 전체를 첫 지점 좌표로 고정)도 실사용 결과 문제가 있었다 — 정체가
+     * 흔한 시나리오에서는 다수 차량이 동시에 "한참 얼어있다가 링크가 바뀌는 순간 훅 이동"하는
+     * 모양이 돼, 전체적으로 시뮬레이션이 뚝뚝 끊기는 것처럼 보였다("아예 안 되는 것 같다"는
+     * 사용자 피드백).
+     * <p>
+     * 지금은 같은 링크가 이어지는 구간(streak, mode 무관)을 모은 뒤, 그 구간의 첫 지점 기준
+     * 거리가 단조증가(1m 잡음 허용)하는지 검사해 잡음 여부만 판별하고, 잡음이면 좌표를 고정하는
+     * 대신 구간의 첫 지점→끝 지점을 시간 비례로 잇는 직선(등속 크리프)으로 대체한다 — 차량이
+     * 죽 멈춰있지 않고 느리지만 매끄럽게 계속 나아가는 것처럼 보이면서도, 왕복 잡음으로 인한
+     * 지그재그는 사라진다. 시작/끝 지점(구간 경계, 실제로 링크가 바뀌기 직전 상태)은 원본 그대로
+     * 유지한다. timestep은 손대지 않으므로(샘플을 삭제하지 않음) availability gap 계산(7초
+     * 임계)에는 영향 없다.
+     */
+    private static void filterQueueJitter(List<VehicleEvent> events) {
+        int n = events.size();
+        int i = 0;
+        while (i < n) {
+            VehicleEvent e = events.get(i);
+            int j = i + 1;
+            while (j < n && Objects.equals(events.get(j).getLinkId(), e.getLinkId())) {
+                j++;
+            }
+            collapseIfNoisyQueueStreak(events, i, j);
+            i = j;
+        }
+    }
+
+    /**
+     * [start, endExclusive) 구간(같은 링크, 전부 mode="None")이 단조 전진이 아니면(=왕복 잡음)
+     * 첫/끝 지점만 원본 그대로 두고 그 사이는 시간 비례 직선(등속 크리프)으로 대체한다.
+     */
+    private static void collapseIfNoisyQueueStreak(List<VehicleEvent> events, int start, int endExclusive) {
+        if (endExclusive - start < 3) return; // 점 2개 이하는 왕복 여부를 판별할 수 없음 — 그대로 둠
+
+        VehicleEvent first = events.get(start);
+        final double NOISE_TOLERANCE_M = 1.0; // 실측 잡음 규모 이하의 뒷걸음은 허용(진짜 전진으로 간주)
+        double maxDistSoFar = 0;
+        boolean monotonic = true;
+        for (int k = start + 1; k < endExclusive; k++) {
+            VehicleEvent e = events.get(k);
+            double dx = e.getPosX() - first.getPosX();
+            double dy = e.getPosY() - first.getPosY();
+            double dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < maxDistSoFar - NOISE_TOLERANCE_M) {
+                monotonic = false;
+                break;
+            }
+            maxDistSoFar = Math.max(maxDistSoFar, dist);
+        }
+        if (monotonic) return;
+
+        VehicleEvent last = events.get(endExclusive - 1);
+        double totalDuration = last.getTimestep() - first.getTimestep();
+        for (int k = start + 1; k < endExclusive - 1; k++) {
+            VehicleEvent e = events.get(k);
+            double localT = totalDuration > 0 ? (e.getTimestep() - first.getTimestep()) / totalDuration : 0;
+            e.setPosX((float) (first.getPosX() + (last.getPosX() - first.getPosX()) * localT));
+            e.setPosY((float) (first.getPosY() + (last.getPosY() - first.getPosY()) * localT));
+        }
+    }
+
+    /**
+     * versionId → [baseLon, baseLat, baseRotationDeg, baseScale] — network.xml 자체에 박혀있는
+     * 캘리브레이션 값(2점 캘리브레이션/reanchor 결과)의 캐시. 백엔드 재시작 전까지 유지되며,
+     * 네트워크가 재캘리브레이션되면 갱신 전까지는 예전 값을 쓸 수 있음(드문 수동 작업이라
+     * 당장은 감수 — 필요해지면 캘리브레이션 엔드포인트 쪽에서 invalidate 호출 추가할 것).
+     */
+    private final Map<String, double[]> networkCalibrationCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 차량 위치 계산에 쓸 기준점/회전/축척을 network.xml 자체의 값에서 읽어온다.
+     * ⚠️ 실측 확정된 근본원인: Scenario.baseRotation/baseScale은 "네트워크 캘리브레이션 결과의
+     * 미러"로 설계됐지만(주석상 의도), 실제로는 동기화가 안 돼 있는 시나리오가 있었다(예:
+     * scenario3_1 — Scenario는 rotation=null/scale=null인데 network.xml은 rotation=-4.97°,
+     * scale=1.49로 실제 캘리브레이션돼 있었음). 그 결과 도로는 회전·확대된 위치에 그려지는데
+     * 차량은 미회전 좌표로 계산돼, 직선 도로에서도 차량이 차선과 어긋나 보였다(실사용자 확인 —
+     * "직선도 안 맞음"). Scenario를 신뢰하는 대신 network.xml의 <Network base_lat/base_lon/
+     * base_rotation/base_scale> 속성을 직접 읽어 도로와 반드시 같은 기준을 쓰게 한다. 전체
+     * network.xml(수십MB 가능)을 파싱하는 대신 파일 앞부분만 읽어 루트 태그 속성만 뽑는다
+     * (성능 — 이 조회가 viewport 스트리밍마다 반복 호출됨).
+     */
+    private double[] resolveVehicleCalibration(String versionId, Scenario scenario) {
+        return networkCalibrationCache.computeIfAbsent(versionId, vid -> {
+            double fallbackLon = scenario.getLongitude() != null ? scenario.getLongitude() : 0.0;
+            double fallbackLat = scenario.getLatitude() != null ? scenario.getLatitude() : 0.0;
+            double fallbackRotation = scenario.getBaseRotation() != null ? scenario.getBaseRotation() : 0.0;
+            double fallbackScale = scenario.getBaseScale() != null ? scenario.getBaseScale() : 1.0;
+            try (InputStream is = RemoteXmlFetch.openStream(remoteUrl + vid + "/network.xml")) {
+                byte[] head = new byte[4096];
+                int n = is.read(head);
+                String snippet = n > 0 ? new String(head, 0, n, StandardCharsets.UTF_8) : "";
+                Double lon = extractDoubleAttr(snippet, "base_lon");
+                Double lat = extractDoubleAttr(snippet, "base_lat");
+                Double rotation = extractDoubleAttr(snippet, "base_rotation");
+                Double scale = extractDoubleAttr(snippet, "base_scale");
+                return new double[]{
+                        lon != null ? lon : fallbackLon,
+                        lat != null ? lat : fallbackLat,
+                        rotation != null ? rotation : fallbackRotation,
+                        scale != null ? scale : fallbackScale,
+                };
+            } catch (Exception e) {
+                logger.warn("[resolveVehicleCalibration] {} network.xml 헤더 읽기 실패, scenario 값으로 폴백: {}", vid, e.getMessage());
+                return new double[]{fallbackLon, fallbackLat, fallbackRotation, fallbackScale};
+            }
+        });
+    }
+
+    private static Double extractDoubleAttr(String xml, String attrName) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(attrName + "=\"([^\"]+)\"").matcher(xml);
+        if (m.find()) {
+            try { return Double.parseDouble(m.group(1)); } catch (NumberFormatException ignored) { }
+        }
+        return null;
+    }
+
     private Instant[] buildVehiclePackets(
+            String versionId,
             Map<String, List<VehicleEvent>> grouped,
             Scenario scenario,
             long baseEpoch,
             Instant startTime,
             Map<String, VehicleInfo> vehicleInfoMap,
+            Map<String, String> nextsimCodeToVehicleId,
             List<Map<String, Object>> czml,
             List<Map<String, Object>> featureList,
             List<Map<String, Object>> vehiclePathList) {
 
         AtomicReference<Instant> earliestStartRef = new AtomicReference<>(null);
         AtomicReference<Instant> latestStopRef = new AtomicReference<>(null);
+        double[] calibration = resolveVehicleCalibration(versionId, scenario);
 
         grouped.entrySet().parallelStream().forEach(entry -> {
             String vehicleId = entry.getKey();
             List<VehicleEvent> vehicles = entry.getValue();
             if (vehicles.isEmpty()) return;
+            filterQueueJitter(vehicles);
 
             double firstTimestep = vehicles.get(0).getTimestep();
             double lastTimestep = vehicles.get(vehicles.size() - 1).getTimestep();
@@ -332,12 +476,14 @@ public class VehicleController {
                 // pos_x/pos_y는 링크 기준 상대좌표가 아니라 network.xml의 node.center와 동일한
                 // 좌표계의 절대 로컬 좌표다(실측 확인 — CoordinateConverter.toAbsoluteLocal 참고).
                 // 링크/커넥션 도형을 조회·보간할 필요 없이 바로 변환한다.
-                // 회전/축척은 Scenario.baseRotation/baseScale(네트워크 캘리브레이션 결과의 미러) —
-                // 안 넘기면 도로는 회전·확대됐는데 차량만 평행이동만 반영돼 도로에서 어긋나 보인다.
+                // 기준점/회전/축척은 network.xml 자체의 캘리브레이션 값(resolveVehicleCalibration)을
+                // 쓴다 — Scenario 필드는 이 값의 "미러"로 설계됐지만 동기화가 안 돼 있던 시나리오가
+                // 있었다(실측 확정 — 도로는 회전·확대돼 그려지는데 차량은 미회전 좌표를 써서 직선
+                // 도로에서도 차선과 어긋나 보인 원인). 도로와 반드시 같은 기준을 쓰도록 network.xml을
+                // 직접 신뢰한다.
                 ProjCoordinate actualCoord = CoordinateConverter.toAbsoluteLocal(
-                        vehicle.getPosX(), vehicle.getPosY(), scenario.getLongitude(), scenario.getLatitude(),
-                        scenario.getBaseRotation() != null ? scenario.getBaseRotation() : 0.0,
-                        scenario.getBaseScale() != null ? scenario.getBaseScale() : 1.0);
+                        vehicle.getPosX(), vehicle.getPosY(), calibration[0], calibration[1],
+                        calibration[2], calibration[3]);
 
                 Cartesian3 pos = Cartesian3.fromDegrees(actualCoord.x, actualCoord.y, 0);
 
@@ -417,9 +563,13 @@ public class VehicleController {
 
             Map<String, Object> vehicleEntry = new HashMap<>();
             vehicleEntry.put("id", vehicleId);
-            vehicleEntry.put("type", resolveVehicleType(vehicleId, vehicles.get(0).getType()));
-            vehicleEntry.put("path", cartesianArray);
             VehicleInfo info = vehicleInfoMap.get(vehicleId);
+            // 차종은 VehicleInfo.veh_type(NextSim이 vehicletypes.xml 분류로 실제 채워주는 값,
+            // 예: "NV"/"AV"/"NB"/"AB")을 우선 사용한다 — 예전엔 vehicles.get(0).getType()을
+            // 넘겼는데 이건 VehicleEventDebugging의 정수형 디버그 코드(레거시 스키마에서만
+            // 존재, 차종과 무관)라 실질적으로 항상 비어 있어 매번 ID 해시 폴백만 타고 있었다.
+            vehicleEntry.put("type", resolveVehicleType(vehicleId, info != null ? info.getType() : null, nextsimCodeToVehicleId));
+            vehicleEntry.put("path", cartesianArray);
             if (info != null) {
                 vehicleEntry.put("length", info.getLength());
                 vehicleEntry.put("width", info.getWidth());
@@ -437,6 +587,7 @@ public class VehicleController {
 
     private record ViewportCtx(Scenario scenario,
                                Map<String, VehicleInfo> vehicleInfoMap,
+                               Map<String, String> nextsimCodeToVehicleId,
                                long baseEpoch, double simMin, double simMax) {}
 
     private ViewportCtx ensureViewportCtx(String scenarioKey) throws IOException {
@@ -453,9 +604,10 @@ public class VehicleController {
             long t0 = System.currentTimeMillis();
             double[] simRange = vehicleDataReader.readSimTimeRange(scenarioKey);
             Map<String, VehicleInfo> infoMap = vehicleDataReader.readVehicleInfoMap(scenarioKey);
+            Map<String, String> nextsimCodeToVehicleId = loadNextsimCodeToVehicleIdMap();
             // baseEpoch은 컨텍스트 수명 동안 고정 → viewport 요청 간 CZML epoch/clock 이 일치 (재생 연속성)
             long baseEpoch = Instant.now().getEpochSecond();
-            c = new ViewportCtx(scenario, infoMap, baseEpoch, simRange[0], simRange[1]);
+            c = new ViewportCtx(scenario, infoMap, nextsimCodeToVehicleId, baseEpoch, simRange[0], simRange[1]);
             viewportCtxCache.put(scenarioKey, c);
             logger.info("[viewport] {} 컨텍스트 빌드 완료 ({}ms, simRange={}~{})",
                     scenarioKey, System.currentTimeMillis() - t0, simRange[0], simRange[1]);
@@ -467,6 +619,9 @@ public class VehicleController {
     private static final int VIEWPORT_DEFAULT_MAX_VEHICLES = 3000;
     /** 요청이 아무리 커도 넘지 못하는 하드캡 (~260MB 응답 방지) */
     private static final int VIEWPORT_HARD_CAP = 10_000;
+    /** "지금 이 순간" 활성 차량 카운트 조회 시 atTime 기준 ± 이 초만큼 — 더미/NextSim 출력의
+     *  timestep 간격(보통 1초)보다 넉넉하게 잡아 정확히 그 순간 레코드가 없어도 놓치지 않는다. */
+    private static final double ACTIVE_COUNT_HALF_WINDOW_SEC = 3.0;
 
     /**
      * viewport(bbox) + 재생 시간창의 차량 궤적만 반환 (대용량 시나리오 개별 차량 스트리밍).
@@ -518,8 +673,10 @@ public class VehicleController {
                     ? Math.min(request.getNumVehicle(), VIEWPORT_HARD_CAP)
                     : VIEWPORT_DEFAULT_MAX_VEHICLES;
             long t0 = System.currentTimeMillis();
+            java.util.Set<String> stickyIds = request.getStickyIds() != null
+                    ? new java.util.HashSet<>(request.getStickyIds()) : null;
             VehicleDataReader.FilteredVehicleEvents filtered = vehicleDataReader.readVehicleEventsFiltered(
-                    scenarioKey, linkIds, from, to, maxVehicles);
+                    scenarioKey, linkIds, from, to, maxVehicles, stickyIds);
             List<VehicleEvent> events = filtered.events();
             Map<String, List<VehicleEvent>> grouped = events.stream()
                     .collect(Collectors.groupingBy(VehicleEvent::getId));
@@ -527,9 +684,9 @@ public class VehicleController {
             List<Map<String, Object>> czml = Collections.synchronizedList(new ArrayList<>());
             List<Map<String, Object>> featureList = Collections.synchronizedList(new ArrayList<>());
             List<Map<String, Object>> vehiclePathList = Collections.synchronizedList(new ArrayList<>());
-            buildVehiclePackets(grouped, ctx.scenario(),
+            buildVehiclePackets(scenarioKey, grouped, ctx.scenario(),
                     ctx.baseEpoch(), Instant.ofEpochSecond(ctx.baseEpoch()), ctx.vehicleInfoMap(),
-                    czml, featureList, vehiclePathList);
+                    ctx.nextsimCodeToVehicleId(), czml, featureList, vehiclePathList);
 
             // document clock 은 전체 시뮬 시간 범위 (viewport 마다 달라지지 않음 → 재생 clock 안정)
             Instant globalStart = Instant.ofEpochSecond(ctx.baseEpoch() + (long) ctx.simMin());
@@ -570,6 +727,54 @@ public class VehicleController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", e.getMessage()));
         } catch (Exception e) {
             logger.error("[viewport] {} 요청 실패", scenarioKey, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage() != null ? e.getMessage() : "알 수 없는 오류"));
+        }
+    }
+
+    /**
+     * bbox 안에 "지금 이 순간"(fromTime ± {@link #ACTIVE_COUNT_HALF_WINDOW_SEC}초) 존재하는
+     * 서로 다른 차량 수만 가볍게 반환 — /viewport의 totalVehicles는 CZML 프리페치를 위해 최대
+     * 300초 창의 누적 통행량이라 화면 표시용으로 쓰면 "차량이 안 보이는데 수백 대"로 보이는
+     * 오해를 준다(실측 보고). 이벤트/CZML을 만들지 않고 COUNT만 구해 자주 폴링해도 가볍다.
+     * body: { bbox: "w,s,e,n", fromTime }
+     */
+    @PostMapping("/vehicle-route/{scenarioKey}/active-count")
+    public ResponseEntity<Map<String, Object>> getActiveVehicleCount(
+            @RequestBody VehicleRequest request,
+            @PathVariable String scenarioKey) {
+        try {
+            if (request.getBbox() == null || request.getBbox().isBlank()) {
+                return ResponseEntity.badRequest().body(Map.of("error", "bbox 파라미터가 필요합니다"));
+            }
+            String[] p = request.getBbox().split(",");
+            if (p.length != 4) {
+                return ResponseEntity.badRequest().body(Map.of("error", "bbox 형식: west,south,east,north"));
+            }
+            double west = Double.parseDouble(p[0].trim());
+            double south = Double.parseDouble(p[1].trim());
+            double east = Double.parseDouble(p[2].trim());
+            double north = Double.parseDouble(p[3].trim());
+            double atTime = request.getFromTime() != null ? request.getFromTime() : 0;
+
+            if (!fileStorage.exists(scenarioKey + "/vehicle_sim.db")) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("error", "vehicle_sim.db 없음: " + scenarioKey));
+            }
+
+            List<String> linkIds = new ArrayList<>();
+            for (var link : networkTileService.queryByBbox(
+                    scenarioKey, west, south, east, north, NetworkTileService.Lod.NEAR).getLinks()) {
+                if (link.getId() != null) linkIds.add(String.valueOf(link.getId()));
+            }
+
+            int count = vehicleDataReader.countActiveVehicles(scenarioKey, linkIds, atTime, ACTIVE_COUNT_HALF_WINDOW_SEC);
+            return ResponseEntity.ok(Map.of("count", count));
+
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", "bbox 숫자 형식 오류"));
+        } catch (Exception e) {
+            logger.error("[active-count] {} 요청 실패", scenarioKey, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", e.getMessage() != null ? e.getMessage() : "알 수 없는 오류"));
         }
@@ -884,13 +1089,42 @@ public class VehicleController {
     }
 
     /**
+     * vehicle_type 테이블(nextsim_type_code 컬럼, "교통수단 유형" 편집 화면에서 관리)에서
+     * "NextSim 코드 → 우리 시각화 차종(vehicleId)" 매핑을 빌드한다. 한 차종에 여러 코드를
+     * 쉼표로 등록할 수 있다(예: CAR 행에 "NV,AV"). 요청마다(또는 viewport 컨텍스트 수명 동안)
+     * 한 번만 호출해서 재사용할 것 — vehicle 단위로 매번 DB 조회하지 않는다.
+     *
+     * <p>예전엔 이 매핑이 Java 코드에 하드코딩돼 있어("교통수단 유형" 화면에서 차종을 새로
+     * 추가/이름 변경해도 반영 안 됨), 사용자가 직접 관리할 수 있도록 DB 기반으로 전환했다.
+     */
+    private Map<String, String> loadNextsimCodeToVehicleIdMap() {
+        Map<String, String> map = new HashMap<>();
+        for (var vt : vehicleTypeRepository.findAll()) {
+            if (vt.getVehicleId() == null) continue;
+            String vehicleId = vt.getVehicleId().toUpperCase();
+            // 코드 매핑이 없어도 vehicleId 자기 자신은 항상 통과시킨다(예: dbType이 이미
+            // "CAR"/"BUS" 같은 우리 분류명 그대로 온 경우).
+            map.put(vehicleId, vehicleId);
+            if (vt.getNextsimTypeCode() == null || vt.getNextsimTypeCode().isBlank()) continue;
+            for (String code : vt.getNextsimTypeCode().split(",")) {
+                String trimmed = code.trim();
+                if (!trimmed.isEmpty()) map.put(trimmed.toUpperCase(), vehicleId);
+            }
+        }
+        return map;
+    }
+
+    /**
      * vehicle ID 또는 DB의 type 값을 기반으로 차량 유형을 결정합니다.
-     * DB에 type 컬럼이 없거나 null인 경우 vehicle ID 숫자로 분포 배정합니다.
+     * DB에 type 컬럼이 없거나 null이거나 인식 불가한 코드인 경우 vehicle ID 숫자로 분포 배정합니다.
      * 배정 비율: CAR 70%, TAXI 15%, BUS 10%, TRUCK 4%, MOTO 1%
      */
-    private String resolveVehicleType(String vehicleId, String dbType) {
+    private String resolveVehicleType(String vehicleId, String dbType, Map<String, String> nextsimCodeToVehicleId) {
         if (dbType != null && !dbType.isBlank()) {
-            return dbType.toUpperCase();
+            String mapped = nextsimCodeToVehicleId.get(dbType.toUpperCase());
+            if (mapped != null) return mapped;
+            // 매핑도 없고 우리 분류명도 아닌 낯선 코드 — 그대로 내보내면 어떤 3D 모델과도
+            // 매칭 안 돼 항상 기본 GLB로만 렌더되므로, 아래 ID 해시 폴백으로 계속 진행한다.
         }
         // DB에 type 없을 때 vehicle ID 기반으로 배정
         try {

@@ -269,6 +269,93 @@ export const VEHICLE_AGG_FEED = {
  * 별개의 "odFlow" 레이어로 렌더(OdFlowCesiumLayer) — 같은 ParabolicArrowPrimitive를 그대로
  * 재사용하되 setOdData()에 집계 결과만 주입한다.
  */
+/**
+ * 행정구역(시도/시군구/읍면동) 교통량 레이어 — 줌(카메라 고도)에 따라 표시 tier를 자동 전환.
+ * 행정구역은 네트워크 lane/link처럼 "실제 크기가 고정된" 개체(시군구≈수 km, 읍면동≈1~3km)라
+ * VEHICLE_ZOOM_TIER_PX_M(시나리오 크기에 비례 정규화)과 달리 원본(비정규화) pixelSizeM을 쓴다 —
+ * NETWORK_LOD_TIER와 동일한 사고방식.
+ */
+export const ADMIN_REGION_TIER_PX_M = {
+    /** 이상: 시도 단위(광역 조망 — 개별 시군구가 화면에서 분간 안 되는 거리) */
+    SIDO_MIN: 200,
+    /** 이상(SIDO_MIN 미만): 시군구 단위 */
+    SIGUNGU_MIN: 20,
+    /** 미만: 읍면동 단위(근접) */
+} as const;
+
+export type AdminRegionTier = 'sido' | 'sigungu' | 'eupmyeondong';
+
+/** 원본(비정규화) pixelSizeM(m/px) → 행정구역 표시 tier */
+export function getAdminRegionTier(pixelSizeM: number): AdminRegionTier {
+    if (pixelSizeM >= ADMIN_REGION_TIER_PX_M.SIDO_MIN) return 'sido';
+    if (pixelSizeM >= ADMIN_REGION_TIER_PX_M.SIGUNGU_MIN) return 'sigungu';
+    return 'eupmyeondong';
+}
+
+/**
+ * 행정구역 교통량 volume — "지금 이 순간 그 지역에 있는 차량 수"를 반영해야 한다는 지적을
+ * 받았다. 시간창을 누적(fromTime=toTime=0)하면 "그 지역을 스쳐간 적 있는 모든 차량"이 합산돼
+ * 실제 동시 교통량보다 훨씬 큰(실측: 10분 시뮬 전체 누적 1728대 vs 순간 스냅샷 수십~백여 대)
+ * 숫자가 나오고("전체 140대인데 동마다 1000대"), 체류시간 다수결로 차량 1대=지역 1곳을 정해도
+ * 여전히 "한동안의" 집계지 "지금"이 아니다. 그래서 백엔드(`/analytics/region-traffic`)는
+ * atTime(순간 시각) ± 짧은 반경(5초, countActiveVehicles와 동일 관례)의 스냅샷만 반환한다 —
+ * 프론트는 재생 시각이 흐르는 동안 이 값을 계속 재요청해야 실시간으로 보인다.
+ */
+export const REGION_TRAFFIC = {
+    /** 재요청 최소 간격 (ms) — "실시간"으로 느껴지되 재생마다 매 프레임 요청하진 않도록.
+     *  기존 활성차량수 배지(fetchActiveCount)의 3000ms와 동일 관례 */
+    REFRESH_THROTTLE_MS: 3000,
+} as const;
+
+/**
+ * "지식그래프" 스타일 분석 레이어 2종(regionOdGraph/congestionAdjacency) 공용 설정.
+ * ⚠️ clock 미준비 시 시간창 폴백은 {0,0}("전체 시간 누적"으로 오해석)이 아니라 {0, window*2}
+ * 를 써야 한다 — 이번 세션에 region-traffic/link-metric/od-flow에서 반복 발견한 함정
+ * (VehicleAggregationFeeder.timeWindow, LinkMetricPolylineLayer._timeWindow,
+ * OdFlowCesiumLayer._timeWindow 전부 이 관례로 통일함) — 새 레이어도 처음부터 지킨다.
+ */
+export const KNOWLEDGE_GRAPH = {
+    /** 지역 OD 그래프 집계 시간창 (재생 현재 시각 ± 이 초) */
+    REGION_OD_TIME_WINDOW_SEC: 60,
+    /** 혼잡 전파 그래프 집계 시간창 (LINK_METRICS와 동일 관례) */
+    CONGESTION_TIME_WINDOW_SEC: 60,
+    /** 혼잡 전파 그래프 V/C 임계값 — 이 이상만 "정체 노드" */
+    CONGESTION_THRESHOLD: 0.7,
+    /** 재요청 최소 간격 (ms) */
+    REFRESH_THROTTLE_MS: 3000,
+} as const;
+
+/**
+ * 등시선(isochrone) 접근성 지도 — 클릭 지점에서 자유흐름속도+V/C 근사로 도달 가능한 도로를
+ * 계산한다(IsochroneService, 백엔드). V/C 계산용 시간창은 LINK_METRICS와 동일 관례를 쓴다.
+ */
+export const ISOCHRONE = {
+    /** 기본 탐색 상한 (분) */
+    DEFAULT_MAX_MINUTES: 10,
+    /** 시설 원점 스냅 반경 (m) — 백엔드 ISOCHRONE_SNAP_RADIUS_M와 동일 */
+    SNAP_RADIUS_M: 300,
+    /** V/C 계산용 시간창 (재생 현재 시각 ± 이 초) */
+    TIME_WINDOW_SEC: 60,
+    /** 재요청 최소 간격 (ms) — 전체 시설 Dijkstra 반복이라 링크 레이어보다 느슨하게 */
+    REFRESH_THROTTLE_MS: 8000,
+} as const;
+
+/**
+ * 링크 혼잡도(V/C)/서비스수준(LOS)/병목 링크 — 신규 analyze 레이어 3종(congestion/los/bottleneck)
+ * 공용 설정. `/analytics/link-traffic` 응답(volume/capacity/vcRatio/losGrade)을 그대로 재사용
+ * (백엔드가 이미 계산해 내림). OD_FLOW와 달리 줌 티어에 따른 자동 표시전환은 없다 — 표시 여부는
+ * 전적으로 분석 메뉴 체크박스가 소유하고, 줌은 fetch throttle에만 영향(OdFlowCesiumLayer 패턴).
+ */
+export const LINK_METRICS = {
+    ENABLED: true,
+    /** 재생 현재 시각 기준 ± 집계 시간창 (초) */
+    TIME_WINDOW_SEC: 60,
+    /** moveend/재생 집계 호출 최소 간격 (ms, throttle) */
+    THROTTLE_MS: 1200,
+    /** bottleneck 레이어에서 강조할 상위 V/C 링크 개수 */
+    BOTTLENECK_TOP_N: 20,
+} as const;
+
 export const OD_FLOW = {
     ENABLED: true,
     /** 이 resolution 이상에서만 활성 — VEHICLE_AGG_FEED와 경계 공유 */

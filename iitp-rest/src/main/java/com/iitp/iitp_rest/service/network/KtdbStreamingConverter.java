@@ -117,6 +117,8 @@ public class KtdbStreamingConverter {
     private final JdbcTemplate       jdbc;
     private final ObjectMapper        objectMapper;
     private final FileStorageService  fileStorage;
+    // KtdbNetworkConverter와 동일 — TURNINFO가 못 잡는 회전 금지를 OSM으로 보조 검증
+    private final OsmTurnRestrictionRepository osmTurnRestrictionRepo;
 
     // ── 메인 엔트리포인트 ─────────────────────────────────────────────────────
 
@@ -515,11 +517,16 @@ public class KtdbStreamingConverter {
             Map<Long, Map<String, List<InternalEdge>>> clusterInternalAdj) {
 
         Map<Long, List<ConnTuple>> result = new HashMap<>();
+        // KtdbNetworkConverter와 동일 — TURNINFO가 못 잡는 회전 금지를 OSM으로 보조 검증
+        OsmTurnRestrictionMatcher osmTurnMatcher = osmTurnRestrictionRepo.hasData()
+                ? new OsmTurnRestrictionMatcher(osmTurnRestrictionRepo.loadAll())
+                : null;
 
         for (long clusterId : clusters.keySet()) {
             List<ExtLink> ins  = clusterIn.getOrDefault(clusterId, List.of());
             List<ExtLink> outs = clusterOut.getOrDefault(clusterId, List.of());
             if (ins.isEmpty() || outs.isEmpty()) continue;
+            ClusterInfo clusterInfo = clusters.get(clusterId);
 
             // 병합 교차로의 내부링크 그래프 (단일 노드 클러스터는 null → 전조합 = 통과 연결)
             Map<String, List<InternalEdge>> adj = clusterInternalAdj.get(clusterId);
@@ -558,6 +565,16 @@ public class KtdbStreamingConverter {
 
                     double inB  = approachBearing(inLk.localCoords());
                     double outB = departureBearing(outLk.localCoords());
+
+                    // OSM 회전제약 금지 체크 — TURNINFO에 없는 실제 금지를 보조로 걸러냄
+                    // (실측: 강남 일대에서 이렇게만 잡히는 사례 13건 확인). 클러스터 대표
+                    // WGS84 좌표(clusterInfo)를 via 지점으로 쓴다 — 클러스터=실제 교차로 1개 대응.
+                    if (osmTurnMatcher != null) {
+                        String osmProhibition = osmTurnMatcher.findProhibition(
+                                clusterInfo.wgsLat(), clusterInfo.wgsLon(), inB, outB);
+                        if (osmProhibition != null) continue;
+                    }
+
                     double diff = ((outB - inB) + 360) % 360;
                     // 기하학적 U턴(역방향): TURNINFO에 명시된 지점(011 U턴 등)만 허용.
                     // 클러스터 왕복(from==to)은 명시 허용이 있어도 자기 링크 되돌아가기라 항상 제외.

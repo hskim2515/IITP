@@ -287,6 +287,9 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
             { name: "id", label: "노선 ID", type: "number" },
             { name: "name", label: "노선명", type: "text" },
             { name: "railStationSeq", label: "역 시퀀스", type: "text" },
+            { name: "fee", label: "요금", type: "text" },
+            { name: "departureTime", label: "출발시각 (공백구분, HH:mm)", type: "text" },
+            { name: "timeOffsetSeq", label: "역별 시간오프셋 (공백구분, 초, 역 시퀀스와 1:1)", type: "text" },
         ],
         inputFields: [],
         rowFields: []
@@ -346,6 +349,10 @@ export const propertyFormSchema: Record<string, PropertyFormSchemaProps> = {
             { name: "v2x", label: "v2x", type: "select" , options: ['on', 'off'] },
             { name: "drt", label: "drt", type: "select" , options: ['0', '1'] },
             { name: "maxPax", label: "최대 탑승 승객 수", type: "number" },
+            // NextSim이 vehicle_sim.db(VehicleInfo.veh_type)에 실제로 기록하는 차종 축약 코드.
+            // 쉼표로 여러 개 등록 가능(예: "NV,AV") — VehicleController가 시뮬레이션 결과의
+            // 차종 코드를 이 차종ID(CAR/BUS/TRUCK 등)로 해석해 3D 모델을 고를 때 사용한다.
+            { name: "nextsimTypeCode", label: "NextSim 코드 (쉼표구분)", type: "text" },
         ],
         inputFields: [
             { name: "mean", label: "평균값", type: "float" },

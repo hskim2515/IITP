@@ -166,10 +166,34 @@ public class BusPtLineController {
         log.info("[BusPtLineController] POST layerKey={} key={}", layerKey, key);
         try {
             xmlLayerVersionService.save(layerKey, key, req.getData(), req.getLogs());
+            // DB 저장과 동시에 실제 roadPTline(-weekday/-weekend).xml 파일도 SFTP에 동기화한다
+            // (SignalController.saveSignal의 "DB 저장과 동시에 signal.xml 파일도 동기화"와
+            // 동일 패턴). 이 동기화가 없으면 앱에서 버스 노선을 편집/저장해도 DB 캐시
+            // (xml_layer_versions, 편집 UI/undo용)에만 반영되고, NextSimRunner와
+            // BusPtLineService.getDefault/Weekday/Weekend가 실제로 읽는 SFTP의 XML 파일은
+            // 전혀 갱신되지 않아 시뮬레이션에 절대 반영되지 않는 문제가 있었다(실사용 발견 —
+            // 지금까지 import(파일 업로드)로만 실제 roadPTline.xml이 생성되고 있었음).
+            try {
+                BusPtLinesXml xml = XmlLayerConverter.fromMap(req.getData(), BusPtLinesXml.class);
+                syncXmlByLayerKey(layerKey, key, xml);
+            } catch (Exception e) {
+                log.warn("[BusPtLineController] XML 파일 동기화 실패(DB는 정상 저장됨) layerKey={} key={}: {}",
+                        layerKey, key, e.getMessage());
+            }
             return ResponseEntity.ok().build();
         } catch (Exception e) {
             log.error("[BusPtLineController] 저장 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /** layerKey(default/weekday/weekend)에 맞는 실제 SFTP XML(roadPTline[-변형].xml)로 동기화 */
+    private void syncXmlByLayerKey(String layerKey, String scenarioKey, BusPtLinesXml xml) throws Exception {
+        switch (layerKey) {
+            case LAYER_KEY_DEFAULT -> busPtLineService.saveDefault(scenarioKey, xml);
+            case LAYER_KEY_WEEKDAY -> busPtLineService.saveWeekday(scenarioKey, xml);
+            case LAYER_KEY_WEEKEND -> busPtLineService.saveWeekend(scenarioKey, xml);
+            default -> log.warn("[BusPtLineController] 알 수 없는 layerKey={} — XML 동기화 생략", layerKey);
         }
     }
 

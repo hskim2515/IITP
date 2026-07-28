@@ -209,17 +209,19 @@ const GlbMiniViewer: React.FC<Props> = ({ glbUrl, hprRad, zOffset = 0 }) => {
                 }}
             />
 
-            {/* 축 범례 */}
+            {/* 축 범례 — ENU 축 이름(X East/Y North/Z Up) 대신 이 도구의 실제 쓰임(방향 보정)
+                기준으로 직관적인 한글 레이블 사용. heading=0일 때 모델이 North를 향한다는
+                Cesium 관례상 Y(North)=정면, 그 기준 오른쪽이 X(East), 위가 Z(Up). */}
             <div style={{
                 position: 'absolute', top: 6, left: 8,
                 fontSize: 10, lineHeight: 1.6,
                 pointerEvents: 'none', userSelect: 'none',
             }}>
-                <span style={{ color: '#ff5555' }}>■ X East</span>
+                <span style={{ color: '#55ff55' }}>■ 정면</span>
                 {'  '}
-                <span style={{ color: '#55ff55' }}>■ Y North(→)</span>
+                <span style={{ color: '#ff5555' }}>■ 오른쪽</span>
                 {'  '}
-                <span style={{ color: '#5599ff' }}>■ Z Up</span>
+                <span style={{ color: '#5599ff' }}>■ 위</span>
             </div>
 
             {/* 로딩/에러 오버레이 */}

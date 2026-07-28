@@ -23,12 +23,32 @@ const MAX_SYNTHETIC_TOTAL = VEHICLE_AGG_FEED.MAX_SYNTHETIC_VEHICLES;
 /** 정체 링크(avgSpeed≈0)도 최소한의 흐름감이 있도록 하는 최저 속도 */
 const MIN_SPEED_MS = 2;
 /**
+ * avgSpeed 데이터가 없을 때("모름") 쓸 중립 대체값(km/h) — 현재 운영 스키마(VehicleEvent)에는
+ * spd 컬럼이 없어 `/analytics/link-traffic`의 avgSpeed가 **항상 0.0**으로 내려온다(null/undefined
+ * 아님). 예전 코드는 `lt.avgSpeed ?? 20`으로 null만 잡았는데 avgSpeed가 진짜 숫자 0이라 이 폴백이
+ * 한 번도 안 걸리고 항상 MIN_SPEED_MS(2m/s)로 떨어져, volume>0인 링크는 무조건 "정체"(빨강)로
+ * 보였다 — 실제 그 순간 화면에 차량이 없어도 마찬가지였다(실사용 보고: "차량이 없는데도
+ * 빨간색으로 히트맵이 나옴"). "데이터 없음"을 최악(정체)이 아니라 중립(SPEED_FREE_FLOW의 절반
+ * 정도)으로 해석하도록 바꾼다 — 실제 속도를 아는 게 아니므로 어느 쪽으로도 과장하지 않는다.
+ */
+const UNKNOWN_SPEED_KMH = 36; // ≈ SPEED_FREE_FLOW(20m/s)의 절반 — 색상 스케일 중간(노랑 부근)
+/**
  * 링크 위 합성 차량 간 목표 간격(m). HeatBarLayer의 grid cell(100m)보다 좁게 잡아, exaggeration이
  * 높아 falloff 반경이 0(해당 셀 하나만)이 되는 경우에도 연속한 두 합성 차량의 커버 셀이 항상
  * 이어지거나 겹치도록 한다 — 그래야 차량들이 다 같이 이동해도 지나간 자리 사이에 완전히 빈
  * 셀(즉시 어두워졌다 다음 차량이 올 때 다시 밝아지는 깜빡임)이 생기지 않는다.
  */
 const COVERAGE_SPACING_M = 80;
+/**
+ * volume(그 링크를 최근 시간창 안에 지나간 차량 수) 기반 밀도 배율의 상한. 배율이 없으면
+ * volume이 1이든 50이든 desiredCount가 링크 길이만으로 정해져 똑같이 "빈틈없이 채워진" 최대
+ * 밀도로 보인다 — HeatBarLayer 색상은 그리드 전체 상대 최댓값 대비 정규화라, 한 프레임에
+ * volume이 다른 링크들이 섞여 있어도 전부 새빨갛게 뜨는 문제가 있었다(실측 보고: "차량이 안
+ * 보이는 곳도 빨갛게 나옴" — 지나간 지 얼마 안 된 차량 1대짜리 링크가 정체 링크와 똑같이
+ * 보임). 상한을 두는 이유는 volume이 매우 큰 링크 하나가 전체 예산(MAX_SYNTHETIC_TOTAL)을
+ * 독식해 다른 링크들이 배분받는 대수가 과도하게 줄어드는 것을 막기 위함.
+ */
+const VOLUME_DENSITY_MAX_MULTIPLIER = 6;
 
 /**
  * 개별 차량(3D)이 감당 안 되는 원거리 줌에서, 기존 "heatmap"(HeatBarLayer/HeatmapFeatureLayer,
@@ -193,18 +213,27 @@ export default class VehicleAggregationFeeder {
         // 조절" 방침으로 제거됨. 이 피더는 데이터 공급원 역할만 한다.
     }
 
-    /** 재생 현재 시각 기준 ± 집계 시간창 (TrafficHeatmapCesiumLayer._timeWindow와 동일) */
+    /**
+     * 재생 현재 시각 기준 ± 집계 시간창 (TrafficHeatmapCesiumLayer._timeWindow와 동일).
+     *
+     * ⚠️ clock 미준비(cur/start 없음) 시 예전엔 {0,0}을 반환했는데, 백엔드
+     * (`VehicleDataReader.readLinkTraffic`)는 fromTime=toTime=0을 "시간창 없음(전체 시간 누적)"
+     * 으로 해석한다 — region-traffic에서 실제로 겪은 것과 같은 함정(전체 시뮬 누적 volume이
+     * 순간 스냅샷보다 훨씬 크게 나와 히트맵 밀도가 튀는 원인이 될 수 있음). clock이 아직
+     * 준비 안 된 아주 짧은 구간에서만 발생하는 좁은 엣지케이스이긴 하지만, {0, 시간창×2}로
+     * 안전한 유한 창을 반환하도록 통일한다.
+     */
     private timeWindow(): { fromTime: number; toTime: number } {
         const sim = useSimulationStore.getState() as any;
         const cur = sim.currentTime;
         const start = sim.startTime ?? sim.simStartTime;
-        if (!cur || !start) return { fromTime: 0, toTime: 0 };
+        const half = VEHICLE_AGG_FEED.TIME_WINDOW_SEC;
+        if (!cur || !start) return { fromTime: 0, toTime: half * 2 };
         try {
             const sec = Math.round(JulianDate.secondsDifference(cur, start));
-            const half = VEHICLE_AGG_FEED.TIME_WINDOW_SEC;
             return { fromTime: Math.max(0, sec - half), toTime: sec + half };
         } catch {
-            return { fromTime: 0, toTime: 0 };
+            return { fromTime: 0, toTime: half * 2 };
         }
     }
 
@@ -218,11 +247,20 @@ export default class VehicleAggregationFeeder {
      * 밝아진다 — "개별 셀이 꺼졌다 켜졌다" 깜빡임의 원인. 실제 개별 차량 히트맵이 안정적인 건
      * 차량 수가 많아 셀 사이 간격이 항상 촘촘하게 채워지기 때문이다.
      *
-     * 그래서 링크당 대수를 volume 비중이 아니라 "링크 길이 / COVERAGE_SPACING_M"로 정해 — 이
-     * 간격이 grid cell + falloff 반경보다 좁게 유지되도록 해서, 링크 전체 길이에 걸쳐 항상
-     * 최소 하나의 점이 각 구간을 덮도록 한다(실제 차량이 아니라 밀도 시각화가 목적이므로
-     * 정확한 대수보다 "빈 구간이 없는 것"이 중요). 예산(MAX_SYNTHETIC_TOTAL) 초과 시에만
-     * 전체를 비례 축소(그래도 링크당 최소 1대는 유지).
+     * 그래서 링크당 대수의 **하한**을 volume 비중이 아니라 "링크 길이 / COVERAGE_SPACING_M"로
+     * 정해 — 이 간격이 grid cell + falloff 반경보다 좁게 유지되도록 해서, 링크 전체 길이에
+     * 걸쳐 항상 최소 하나의 점이 각 구간을 덮도록 한다(실제 차량이 아니라 밀도 시각화가
+     * 목적이므로 정확한 대수보다 "빈 구간이 없는 것"이 중요).
+     *
+     * ⚠️ 이 최소 커버리지"만" 적용하면 volume(그 링크를 최근 지나간 차량 수)이 1이든 50이든
+     * 링크 전체가 똑같이 "빈틈없이 채워진" 최대 밀도로 보인다 — HeatBarLayer 색상은 그리드
+     * 전체 상대 최댓값 대비 정규화되므로, 한 프레임에 volume이 다른 링크들이 섞여 있어도
+     * 전부 똑같이 새빨갛게 뜨는 문제가 있었다(실측 보고: "차량이 안 보이는 곳도 빨갛게
+     * 나옴"). 최소 커버리지에 VOLUME_DENSITY_MAX_MULTIPLIER 이내에서 volume 기반 배율을
+     * 곱해 — volume이 클수록 최소 커버리지보다 더 촘촘하게(추가 배치) 점을 늘려 falloff가
+     * 겹치는 정도 자체를 키운다. 성기게 하는 방향(간격을 min보다 넓힘)은 셀이 비었다 다시
+     * 채워지는 깜빡임을 재발시키므로 절대 쓰지 않고, 항상 최소 커버리지 이상으로만 조절한다.
+     * 예산(MAX_SYNTHETIC_TOTAL) 초과 시에만 전체를 비례 축소(그래도 링크당 최소 1대는 유지).
      */
     private rebuildSyntheticVehicles(links: any[]): void {
         const valid = links.filter((lt: any) =>
@@ -240,10 +278,21 @@ export default class VehicleAggregationFeeder {
             }
             const total = cum[cum.length - 1] ?? 0;
             if (total <= 0) continue;
+            // log2 스케일 — volume이 1→2로 늘 때마다 배율이 완만하게 커져, 소수 volume 차이
+            // (1대 vs 2대)로 색이 과장되게 벌어지지 않으면서도 진짜 정체 구간(volume 수십~
+            // 수백)은 뚜렷하게 더 진하게 보이도록 한다. volume=1(최근 딱 한 대만 지남)은
+            // density=1로 기존과 동일한 최소 커버리지만 적용된다.
+            const density = Math.min(
+                VOLUME_DENSITY_MAX_MULTIPLIER,
+                1 + Math.log2(Math.max(1, lt.volume ?? 1)),
+            );
+            // avgSpeed <= 0은 "실측 없음"(현재 스키마에서 항상 이 값) — ?? 는 0을 못 걸러내므로
+            // 명시적으로 <=0 체크 (UNKNOWN_SPEED_KMH 주석 참고)
+            const avgSpeedKmh = (lt.avgSpeed ?? 0) > 0 ? lt.avgSpeed : UNKNOWN_SPEED_KMH;
             infos.set(String(lt.linkId), {
                 coords, cum, total,
-                desiredCount: Math.max(1, Math.ceil(total / COVERAGE_SPACING_M)),
-                speed: Math.max(MIN_SPEED_MS, ((lt.avgSpeed ?? 20) * 1000) / 3600),
+                desiredCount: Math.max(1, Math.ceil((total / COVERAGE_SPACING_M) * density)),
+                speed: Math.max(MIN_SPEED_MS, (avgSpeedKmh * 1000) / 3600),
             });
         }
 

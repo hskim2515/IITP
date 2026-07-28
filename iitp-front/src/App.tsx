@@ -25,16 +25,10 @@ import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 import { useOnboardingStore } from "@stores/useOnboardingStore";
 import { useLogStore } from "@stores/useLogStore";
 import FileImportModal from "@component/modal/FileImportModal";
-import { useSignalStore } from "@stores/useSignalStore";
-import { useNetworkStore } from "@stores/useNetworkStore";
-import { assignPropertyToResponseData } from "@utils/guid";
-import { generateDummySignals } from "@utils/signal";
-import { generateDummyPavementMarkings } from "@utils/pavementMarking";
-import { getNetworkForDummyGeneration } from "@utils/generationNetwork";
-import { usePavementMarkingStore } from "@stores/usePavementMarkingStore";
-import { autoSaveChangedLayers } from "@utils/autoSave";
 import { useBackgroundTaskStore } from "@stores/useBackgroundTaskStore";
+import { runAutoDummyGeneration } from "@utils/dummyGeneration";
 import { useNextSimRunStore, checkNextSimAvailable, startNextSimRun, cancelNextSimRun, resumeNextSimPollingIfRunning, formatElapsed } from "@utils/nextsim";
+import { consumePendingScenario } from "@utils/scenarioBootstrap";
 
 function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const step = useOnboardingStore((s) => s.step);
@@ -42,11 +36,10 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const missingSignal = useOnboardingStore((s) => s.missingSignal);
     const missingVehicle = useOnboardingStore((s) => s.missingVehicle);
     const scenarioKey = getActiveVersionId() ?? '';
-    // 위저드 2단계(신호+노면표시 더미 생성) 진행 중 여부 — 차량 시뮬레이션은 NextSim으로 별도 생성.
-    const [generatingWizardDummy, setGeneratingWizardDummy] = useState(false);
     // KTDB 가져오기 백그라운드 스캐폴딩(백엔드가 signal.xml/OD를 직접 재생성 중)과 겹치면
     // 안 됨 — 이 온보딩 배너는 가져오기 직후 바로 뜨는 화면이라 특히 이 레이스에 취약하다.
     const ktdbScaffolding = useBackgroundTaskStore((s) => !!s.tasks['ktdb-scaffold']);
+    const dummyGenerating = useBackgroundTaskStore((s) => !!s.tasks['dummy-gen']);
     const [signalDone, setSignalDone] = useState(false);
     // NextSim 실행 상태 — 전역 스토어(utils/nextsim): 모달이 닫혔다 열려도/재접속해도 유지
     const nextsimAvailable = useNextSimRunStore((s) => s.available);
@@ -62,6 +55,21 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     useEffect(() => {
         if (step === 'need-simulation') void checkNextSimAvailable();
     }, [step]);
+
+    // 신호 데이터가 없다고 뜨면(missingSignal) 버튼을 눌러달라고 요구하지 않고 필요한 시점에
+    // 자동으로 생성한다 — KTDB 배경 스캐폴딩이 아직 돌고 있으면(ktdbScaffolding) 그쪽이 곧
+    // 진짜 신호를 만들어줄 것이므로 여기서 끼어들지 않고 기다린다.
+    useEffect(() => {
+        if (step !== 'need-simulation' || !missingSignal || signalDone || ktdbScaffolding || dummyGenerating) return;
+        let cancelled = false;
+        void runAutoDummyGeneration().then(() => {
+            if (cancelled) return;
+            setSignalDone(true);
+            if (step === 'need-simulation' && !missingVehicle) setStep('idle');
+        });
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [step, missingSignal, ktdbScaffolding, dummyGenerating]);
 
     // NextSim이 이 배너가 떠 있는 동안 성공적으로 완료되면(러닝→비러닝 하강 엣지, 에러 없음)
     // 차량 요구사항이 충족된 것 — 신호 요구사항도 충족됐다면 배너를 자동으로 닫는다.
@@ -80,123 +88,25 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
 
     const handleDismiss = () => setStep('idle');
 
-    const handleGeneratePavementMarking = async () => {
-        const network = await getNetworkForDummyGeneration();
-        if (!network?.nodes?.length) {
-            useLogStore.getState().addLog('warn', '네트워크 데이터가 없어 노면 표시 더미를 생성할 수 없습니다.');
-            return;
-        }
-        const pavementMarkings = generateDummyPavementMarkings(network);
-        if (pavementMarkings.length === 0) {
-            useLogStore.getState().addLog('warn', 'intersection 노드가 없어 노면 표시 더미를 생성할 수 없습니다.');
-            return;
-        }
-        const pavementMarkingData = { pavementMarkings };
-        assignPropertyToResponseData(pavementMarkingData);
-        usePavementMarkingStore.getState().setCurrentJsonData(pavementMarkingData);
-        usePavementMarkingStore.getState().setChange(true);
-        const versionKey = getActiveVersionId();
-        if (versionKey) await autoSaveChangedLayers(versionKey);
-        useLogStore.getState().addLog('info', `노면 표시 더미 생성 완료 (${pavementMarkings.length}개)`);
-    };
-
-    const handleGenerateDummy = async () => {
-        if (ktdbScaffolding) {
-            useLogStore.getState().addLog('warn', '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다 — 완료 후 다시 시도하세요.');
-            return;
-        }
-        setGeneratingWizardDummy(true);
-        await handleGenerateSignal();
-        await handleGeneratePavementMarking();
-        setGeneratingWizardDummy(false);
-        // 위저드는 신호+노면표시만 다룬다 — 차량 시뮬레이션은 NextSim으로 별도 생성(need-simulation 배너 참고)
-        if (step === 'need-dummy') setStep('idle');
-    };
-
     /** NextSim 시뮬레이터 실행 — 완료되면 vehicle_sim.db 갱신 → 기존 차량 파이프라인이 소비.
      *  폴링/취소/재개는 utils/nextsim 전역 스토어가 담당 (모달 생명주기와 무관). */
     const handleRunNextSim = () => { void startNextSimRun(scenarioKey); };
     const handleCancelNextSim = () => { void cancelNextSimRun(scenarioKey); };
 
-    const handleGenerateSignal = async () => {
-        if (ktdbScaffolding) {
-            useLogStore.getState().addLog('warn', '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다 — 완료 후 다시 시도하세요.');
-            return;
-        }
-        const network = await getNetworkForDummyGeneration();
-        if (!network?.nodes?.length) {
-            useLogStore.getState().addLog('warn', '네트워크 데이터가 없어 신호 더미를 생성할 수 없습니다.');
-            return;
-        }
-        const signals = generateDummySignals(network);
-        if (signals.length === 0) {
-            useLogStore.getState().addLog('warn', 'intersection 노드가 없어 신호 더미를 생성할 수 없습니다.');
-            return;
-        }
-        const signalData = { signals };
-        assignPropertyToResponseData(signalData);
-        useSignalStore.getState().setCurrentJsonData(signalData);
-        useSignalStore.getState().setChange(true);
-
-        // 자동 저장
-        const versionKey = getActiveVersionId();
-        if (versionKey) {
-            await autoSaveChangedLayers(versionKey);
-            useLogStore.getState().addLog('info', `신호 더미 생성 완료 (${signals.length}개)`);
-        } else {
-            useLogStore.getState().addLog('info', `신호 더미 생성 완료 (${signals.length}개) — 버전 미선택, DataIOPanel에서 저장 필요`);
-        }
-        setSignalDone(true);
-        // 원래 차량은 이미 있고 신호만 없던 케이스 — 신호 완료로 요구사항이 다 충족됐으면 바로 닫는다.
-        if (step === 'need-simulation' && !missingVehicle) setStep('idle');
-    };
-
-    const isWizard = step === 'need-network' || step === 'need-dummy';
-
     return (
         <div style={obOverlayStyle}>
             <div style={obPanelStyle}>
-                {/* 네트워크 임포트 마법사 단계 표시 */}
-                {isWizard && (
-                    <div style={obStepRowStyle}>
-                        <StepDot active={step === 'need-network'} done={step === 'need-dummy'} label="1" />
-                        <div style={obStepLineStyle} />
-                        <StepDot active={step === 'need-dummy'} done={false} label="2" />
-                    </div>
-                )}
-
                 {step === 'need-network' && (
                     <>
                         <div style={obTitleStyle}>네트워크 데이터 없음</div>
                         <p style={obDescStyle}>
                             이 버전에는 아직 도로 네트워크 데이터가 없습니다.<br />
-                            OSM, KTDB 또는 XML 파일로 네트워크를 가져오세요.
+                            OSM, KTDB 또는 XML 파일로 네트워크를 가져오세요.<br />
+                            신호/노면표시 더미는 네트워크가 준비되면 자동으로 생성됩니다.
                         </p>
                         <div style={obFooterStyle}>
                             <button style={obDismissBtn} onClick={handleDismiss}>나중에</button>
                             <button style={obPrimaryBtn} onClick={() => { handleDismiss(); onOpenImport(); }}>가져오기</button>
-                        </div>
-                    </>
-                )}
-
-                {step === 'need-dummy' && (
-                    <>
-                        <div style={obTitleStyle}>신호+노면표시 데이터 생성</div>
-                        <p style={obDescStyle}>
-                            네트워크 반영이 완료됐습니다.<br />
-                            신호/노면표시 더미를 생성해 지도를 미리 확인할 수 있습니다.<br />
-                            차량 시뮬레이션은 준비되면 NextSim으로 실행하세요.
-                        </p>
-                        <div style={obFooterStyle}>
-                            <button style={obDismissBtn} onClick={handleDismiss} disabled={generatingWizardDummy}>건너뛰기</button>
-                            <button
-                                style={(generatingWizardDummy || ktdbScaffolding) ? { ...obPrimaryBtn, opacity: 0.6 } : obPrimaryBtn}
-                                onClick={handleGenerateDummy}
-                                disabled={generatingWizardDummy || ktdbScaffolding}
-                                title={ktdbScaffolding ? '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다' : undefined}
-                            >
-                                {generatingWizardDummy ? '생성 중...' : ktdbScaffolding ? '서버 생성 중...' : '신호+노면표시 데이터 생성'}
-                            </button>
                         </div>
                     </>
                 )}
@@ -211,22 +121,16 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                                 ? <>신호 데이터가 없습니다.</>
                                 : <>차량 시뮬레이션 데이터가 없습니다.</>
                             }<br />
-                            필요한 데이터를 아래에서 준비하거나 <span style={obHighlight}>가져오기</span>로 추가하세요.
+                            {missingSignal && <>신호 데이터는 자동으로 생성됩니다.<br /></>}
+                            차량 시뮬레이션은 아래에서 준비하거나 <span style={obHighlight}>가져오기</span>로 추가하세요.
                         </p>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
                             {missingSignal && (
                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: 6 }}>
                                     <span style={{ fontSize: 12, color: '#ccc' }}>🚦 신호 데이터</span>
-                                    <button
-                                        style={signalDone
-                                            ? { ...obPrimaryBtn, fontSize: 11, background: 'rgba(78,203,141,0.15)', borderColor: 'rgba(78,203,141,0.4)', color: '#4ecb8d' }
-                                            : { ...obPrimaryBtn, fontSize: 11, opacity: ktdbScaffolding ? 0.6 : 1 }}
-                                        onClick={handleGenerateSignal}
-                                        disabled={signalDone || ktdbScaffolding}
-                                        title={ktdbScaffolding ? '서버가 백그라운드에서 신호/OD 데이터를 생성 중입니다' : undefined}
-                                    >
-                                        {signalDone ? '생성 완료 ✓' : ktdbScaffolding ? '서버 생성 중...' : '더미 생성'}
-                                    </button>
+                                    <span style={{ fontSize: 11, color: signalDone ? '#4ecb8d' : '#888' }}>
+                                        {signalDone ? '생성 완료 ✓' : (ktdbScaffolding || dummyGenerating) ? '자동 생성 중...' : '대기 중...'}
+                                    </span>
                                 </div>
                             )}
                             {missingVehicle && nextsimAvailable === true && (
@@ -289,16 +193,6 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     );
 }
 
-function StepDot({ active, done, label }: { active: boolean; done: boolean; label: string }) {
-    const bg = done ? '#4ecb8d' : active ? '#5588ee' : 'rgba(255,255,255,0.1)';
-    const color = (done || active) ? '#fff' : '#555';
-    return (
-        <div style={{ width: 24, height: 24, borderRadius: '50%', background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color, flexShrink: 0 }}>
-            {done ? '✓' : label}
-        </div>
-    );
-}
-
 const obOverlayStyle: React.CSSProperties = {
     position: 'fixed', inset: 0,
     background: 'rgba(0,0,0,0.55)',
@@ -311,12 +205,6 @@ const obPanelStyle: React.CSSProperties = {
     borderRadius: 12, boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
     width: 420, maxWidth: '90vw',
     padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 16,
-};
-const obStepRowStyle: React.CSSProperties = {
-    display: 'flex', alignItems: 'center', gap: 0,
-};
-const obStepLineStyle: React.CSSProperties = {
-    flex: 1, height: 1, background: 'rgba(255,255,255,0.1)', margin: '0 8px',
 };
 const obTitleStyle: React.CSSProperties = {
     fontSize: 14, fontWeight: 600, color: '#e0e0e0',
@@ -348,6 +236,19 @@ function App() {
 
     const selectedScenario = useScenarioStore((state) => state.selectedScenario);
     const selectedScenarioVersion = useScenarioStore((state) => state.selectedScenarioVersion);
+
+    // 헤더의 "버전 변경"/"데이터 초기화"는 전역 store·레이어·타일 캐시 누적 때문에 안전하게
+    // 되돌리려면 전체 리로드가 필요하다(goHome과 동일 이유) — 리로드 직전에 sessionStorage에
+    // 잠깐 적어둔 목표 시나리오/버전을 여기서 소비해 홈 화면을 거치지 않고 바로 복원한다.
+    useEffect(() => {
+        if (selectedScenario) return;
+        const pending = consumePendingScenario();
+        if (pending) {
+            useScenarioStore.getState().setScenario(pending.scenario);
+            useScenarioStore.getState().setVersion(pending.version);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     const fetchSchema = useSchemaStore((state) => state.fetchSchema)
 

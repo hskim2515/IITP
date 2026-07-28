@@ -15,6 +15,7 @@ public class VehicleTypeParameterDTO {
     private String v2x;
     private String drt;
     private String maxPax;
+    private String nextsimTypeCode;
 
     private Long parameterId;
     private String parameterName;

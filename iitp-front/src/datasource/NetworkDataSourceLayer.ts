@@ -265,6 +265,8 @@ export default class NetworkDataSourceLayer {
     private unsubscribe: (() => void) | undefined;
     private unsubscribeDraw: (() => void) | undefined;
     private unsubscribeTileMode: (() => void) | undefined;
+    private unsubscribeChanged: (() => void) | undefined;
+    private prevIsChanged = false;
     private static readonly EPSILON = 1e-9;
     private selectedScenario = useScenarioStore.getState().selectedScenario;
 
@@ -316,6 +318,36 @@ export default class NetworkDataSourceLayer {
         }
     }
 
+    /**
+     * 도로가 실제로 앉아있는 고도를 가장 가까운 링크 정점의 캐시값에서 찾아 반환한다.
+     * ⚠️ 차량(useSimulation.ts)이 예전엔 이 맵을 쓰지 않고 자기 웨이포인트로 지형을
+     * 독립적으로 재조회했다 — 도로는 이 맵(링크 정점, ~1m 격자)으로 그려지는데 차량은
+     * 전혀 다른 점(차선 오프셋 경로)을 전혀 다른 격자(~11m)로 조회하니, 아무리 스무딩해도
+     * "도로 기준"과 근본적으로 다른 고도가 나와 차량이 도로 위/아래로 떴다 파묻혔다 했다
+     * (실사용자 관찰 — "잘못된 방식"). 도로와 같은 소스를 쓰게 하려면 이 맵에서 조회해야
+     * 한다. maxDistM 밖이면 null(호출측이 폴백 처리).
+     */
+    public getNearestTerrainHeight(lng: number, lat: number, maxDistM = 30): number | null {
+        if (this.terrainHeightMap.size === 0) return null;
+        const METERS_PER_DEG_LAT = 111000;
+        const metersPerDegLng = 111000 * Math.cos(lat * Math.PI / 180);
+        let bestDistSq = Infinity;
+        let bestHeight: number | null = null;
+        for (const [key, height] of this.terrainHeightMap) {
+            const comma = key.indexOf(',');
+            const kLng = Number(key.slice(0, comma));
+            const kLat = Number(key.slice(comma + 1));
+            const dx = (kLng - lng) * metersPerDegLng;
+            const dy = (kLat - lat) * METERS_PER_DEG_LAT;
+            const distSq = dx * dx + dy * dy;
+            if (distSq < bestDistSq) {
+                bestDistSq = distSq;
+                bestHeight = height;
+            }
+        }
+        return bestDistSq <= maxDistM * maxDistM ? bestHeight : null;
+    }
+
     // 증분 업데이트 상태
     private prevNetwork: Network | null = null;
     private lastImportEpoch = 0;
@@ -348,6 +380,22 @@ export default class NetworkDataSourceLayer {
                 (state: { currentJsonData: Network }) => state.currentJsonData,
                 () => { this.load(); },
                 { equalityFn: (a: Network, b: Network) => a === b }
+            );
+
+            // 저장/폐기(isChanged true→false) 감지 → 타일 캐시 무효화 + 즉시 재fetch.
+            //   2D NetworkFeatureLayer.onEditsCleared 와 동일한 목적. 이게 없으면 3D 는
+            //   id 재채번(hasRemap)이 있었을 때만(utils/networkRefresh) 갱신을 받고,
+            //   그 외의 흔한 편집(예: 기존 링크 폭 수정 — 신규 요소도 degree 변화도 없음)은
+            //   서버가 저장 시점에 재빌드해둔 타일을 3D 가 카메라를 움직이기 전까지 못 받아온다
+            //   (사용자 보고 — 확인됨). refreshNetworkTiles() 는 임포트 후 잔존 네트워크 정리용으로
+            //   이미 만들어둔 "타일 전체 무효화 + 즉시 재fetch" 메서드를 그대로 재사용한다.
+            this.prevIsChanged = !!(store.getState() as any).isChanged;
+            this.unsubscribeChanged = store.subscribe(
+                (state: any) => !!state.isChanged,
+                (isChanged: boolean) => {
+                    if (this.prevIsChanged && !isChanged) this.refreshNetworkTiles();
+                    this.prevIsChanged = isChanged;
+                },
             );
         }
 
@@ -634,6 +682,14 @@ export default class NetworkDataSourceLayer {
             setTimeout(removeOldWhenReady, 500);
         }
         assignTileGuids(payload);
+
+        // ⚠️ 이 타일 링크들의 지형 고도를 terrainHeightMap에 채운다(비동기, 결과 기다리지 않음
+        // — 타일 지오메트리 빌드와 무관, 나중에 차량 높이 조회(getNearestTerrainHeight)에서만
+        // 쓰임). sampleTerrainForTile/sampleTerrainHeights가 그동안 정의만 되고 어디서도 호출된
+        // 적이 없어서 terrainHeightMap이 항상 비어있었다 — 차량이 도로 높이 캐시를 조회해도
+        // 매번 null이라 "지형 독립 재조회+스무딩" 폴백만 계속 타서, 도로와 다른 소스로 계산된
+        // 높이를 계속 쓰는 원래 문제(뜸/파묻힘)가 그대로 재발했다(실사용자 재확인).
+        this.sampleTerrainForTile(payload.links).catch(() => {});
 
         // cached 맵 병합 (노드/링크 상호참조용)
         for (const node of payload.nodes) this.cachedNodeMap.set(String(node.id), node);
@@ -2058,6 +2114,7 @@ export default class NetworkDataSourceLayer {
         this.unsubscribeDraw?.();
         this.unsubscribeTileMode?.();
         this.unsubscribeEdit?.();
+        this.unsubscribeChanged?.();
         for (const p of this.editOverlayPrims) {
             try { this.viewer.scene.groundPrimitives.remove(p); } catch (_) { /* noop */ }
         }

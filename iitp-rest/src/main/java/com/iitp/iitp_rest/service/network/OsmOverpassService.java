@@ -2,6 +2,7 @@ package com.iitp.iitp_rest.service.network;
 
 import com.iitp.iitp_rest.model.osm.OsmNode;
 import com.iitp.iitp_rest.model.osm.OsmWay;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -15,7 +16,12 @@ import java.util.*;
 
 @Log4j2
 @Service
+@RequiredArgsConstructor
 public class OsmOverpassService {
+
+    // 로컬 DB(osm_pt_node/way/relation, OsmPtFacilityImporter로 적재)에 데이터가 있으면 이걸
+    // 우선 쓴다(밀리초 단위) — 없으면(임포트 전) 기존 공개 Overpass API 호출로 안전하게 폴백한다.
+    private final OsmPtFacilityRepository facilityRepository;
 
     private static final List<String> OVERPASS_URLS = List.of(
             "https://overpass-api.de/api/interpreter",
@@ -197,8 +203,32 @@ public class OsmOverpassService {
      * }
      */
     public FacilityQueryResult queryFacilities(double south, double west, double north, double east) {
+        try {
+            if (facilityRepository.hasLocalData()) {
+                return facilityRepository.queryFacilities(south, west, north, east);
+            }
+        } catch (Exception e) {
+            log.warn("로컬 DB 시설물 조회 실패, Overpass API로 폴백: {}", e.getMessage());
+        }
+        return queryFacilitiesViaOverpass(south, west, north, east);
+    }
+
+    private FacilityQueryResult queryFacilitiesViaOverpass(double south, double west, double north, double east) {
         // 노선 relation → bbox 내 way 멤버만 가져와 형상 구성
         // way(r.routes)(bbox): 범위 초과 방지, .routeWays >: 해당 way의 노드만 재귀
+        // ⚠️ relation의 "stop" role 멤버(정류장 시퀀스 구성의 핵심)는 way의 자식 노드가 아니라
+        // relation의 **직접** 노드 멤버다 — 기존 쿼리는 .routeWays > 로 way 자식 노드만 재귀
+        // 조회해서 이 stop 노드들을 아예 못 가져왔다(실측: 강남역 인근 2호선/신분당선 relation의
+        // "stop" role 멤버가 railway=stop 태그를 가진 별도 노드였는데, 이 태그는 railway=station
+        // 필터에도 안 걸리고 way 멤버도 아니라 완전히 누락됐었음 — OsmFacilityConverter가
+        // railStationSeq를 못 채우는 근본 원인).
+        // ⚠️ 실측 성능 회귀: 처음엔 이걸 `.routes >;`(relation의 노드+way 멤버 전부, bbox 무관
+        // 재귀)로 고쳤는데, 버스 노선처럼 멤버가 전부 way인 relation(실측: 서울버스 140번 —
+        // 멤버 330개가 전부 way)에서 `.routeWays`가 이미 bbox로 잘라 가져온 way들을 bbox 무시하고
+        // 도시 전체 범위로 통째로 다시 가져오는 꼴이 되어 쿼리가 급격히 느려졌다(사용자 실측:
+        // 강남역~역삼~선릉 정도 bbox에서 180초 타임아웃). node(r.세트)는 relation의 **노드**
+        // 멤버만 뽑아오는 별도 필터라 way 멤버는 안 건드리므로 이 문제가 없다 — 정류장/역
+        // node 멤버만 필요한 우리 목적엔 이걸로 충분.
         String query = String.format(
             "[out:json][timeout:90];\n" +
             "(\n" +
@@ -206,10 +236,12 @@ public class OsmOverpassService {
             "  relation[\"route\"~\"^(subway|train|tram|rail)$\"](%.7f,%.7f,%.7f,%.7f);\n" +
             ")->.routes;\n" +
             "way(r.routes)(%.7f,%.7f,%.7f,%.7f)->.routeWays;\n" +
+            "node(r.routes)->.routeNodes;\n" +
             "(\n" +
             "  .routes;\n" +
             "  .routeWays;\n" +
             "  .routeWays >;\n" +
+            "  .routeNodes;\n" +
             "  node[\"highway\"=\"bus_stop\"](%.7f,%.7f,%.7f,%.7f);\n" +
             "  node[\"railway\"~\"^(station|halt|tram_stop|subway_entrance)$\"](%.7f,%.7f,%.7f,%.7f);\n" +
             ");\n" +

@@ -128,18 +128,23 @@ export default class OdFlowCesiumLayer {
         this.show = active;
     }
 
-    /** 재생 현재 시각 기준 ± 집계 시간창 (TrafficHeatmapCesiumLayer._timeWindow와 동일) */
+    /**
+     * 재생 현재 시각 기준 ± 집계 시간창.
+     * ⚠️ clock 미준비 시 {0,0}("전체 시간 누적")을 반환하면 그 짧은 구간 동안 시뮬 전체의 모든
+     * OD 쌍이 한꺼번에 잡혀 화살표가 튄다(region-traffic에서 실제로 겪은 것과 같은 함정) —
+     * {0, 시간창×2}로 유한 창을 보장한다.
+     */
     private _timeWindow(): { fromTime: number; toTime: number } {
         const sim = useSimulationStore.getState() as any;
         const cur = sim.currentTime;
         const start = sim.startTime ?? sim.simStartTime;
-        if (!cur || !start) return { fromTime: 0, toTime: 0 };
+        const half = OD_FLOW.TIME_WINDOW_SEC;
+        if (!cur || !start) return { fromTime: 0, toTime: half * 2 };
         try {
             const sec = Math.round(JulianDate.secondsDifference(cur, start));
-            const half = OD_FLOW.TIME_WINDOW_SEC;
             return { fromTime: Math.max(0, sec - half), toTime: sec + half };
         } catch {
-            return { fromTime: 0, toTime: 0 };
+            return { fromTime: 0, toTime: half * 2 };
         }
     }
 

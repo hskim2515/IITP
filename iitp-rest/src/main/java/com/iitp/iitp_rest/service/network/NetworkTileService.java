@@ -96,6 +96,19 @@ public class NetworkTileService {
 
         String url = "jdbc:sqlite:" + db.getAbsolutePath();
         try (Connection conn = DriverManager.getConnection(url)) {
+            // width는 임포트 시점(base_scale=1.0 가정) 실제 미터값으로 고정 저장돼, 이후
+            // 캘리브레이션으로 base_scale이 바뀌면 낡은 값이 된다 — buildDb 저장부/queryMvt
+            // 주석 참고(2D MVT와 동일 버그, 3D 차선 렌더링도 이 API의 width를 그대로 써서
+            // 차선이 실제 차량 위치보다 안쪽에 그려졌다). 여기서 보정해두면 이 API를 쓰는
+            // 모든 소비자(3D 등)가 별도 처리 없이 정확한 값을 받는다.
+            double baseScale = 1.0;
+            try (Statement metaSt = conn.createStatement();
+                 ResultSet metaRs = metaSt.executeQuery("SELECT value FROM meta WHERE key='baseScale'")) {
+                if (metaRs.next()) baseScale = Double.parseDouble(metaRs.getString(1));
+            } catch (SQLException ignored) {
+                // meta 테이블이 없는 구버전 DB(이 수정 전에 빌드됨) — 보정 없이 폴백
+            }
+
             // ── 링크: RTree 로 bbox 교차 후보 → JSON 역직렬화 + LOD 필터 ──
             String linkSql =
                 "SELECT l.json FROM links l JOIN link_rtree r ON l.id = r.id " +
@@ -107,6 +120,7 @@ public class NetworkTileService {
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         LinkResponse link = objectMapper.readValue(rs.getString(1), LinkResponse.class);
+                        link.setWidth(link.getWidth() * baseScale);
                         if (macroOnly && link.getMaxSpd() < 90 && link.getNumLane() < 6) continue;
                         if (stripDetail) {
                             link.getLanes().clear();
@@ -221,6 +235,17 @@ public class NetworkTileService {
         MvtEncoder enc = new MvtEncoder("network", MVT_EXTENT);
         String url = "jdbc:sqlite:" + db.getAbsolutePath();
         try (Connection conn = DriverManager.getConnection(url)) {
+            // width는 임포트 시점(base_scale=1.0 가정) 실제 미터값으로 고정 저장돼, 이후
+            // 캘리브레이션으로 base_scale이 바뀌면(중심선 좌표는 새 스케일로 정확히 변환되는 것과
+            // 달리) 낡은 값이 된다 — 차선 오프셋 계산 시 곱해 보정(buildDb 저장부 주석 참고).
+            double baseScale = 1.0;
+            try (Statement metaSt = conn.createStatement();
+                 ResultSet metaRs = metaSt.executeQuery("SELECT value FROM meta WHERE key='baseScale'")) {
+                if (metaRs.next()) baseScale = Double.parseDouble(metaRs.getString(1));
+            } catch (SQLException ignored) {
+                // meta 테이블이 없는 구버전 DB(이 수정 전에 빌드됨) — 보정 없이 폴백
+            }
+
             String sql =
                 "SELECT l.id, l.json FROM links l JOIN link_rtree r ON l.id = r.id " +
                 "WHERE r.maxX >= ? AND r.minX <= ? AND r.maxY >= ? AND r.minY <= ? AND l.lod_rank <= ?";
@@ -235,9 +260,10 @@ public class NetworkTileService {
                         int[][] tileCoords = toTileCoords(link.getCoordinates(), z, x, y);
                         if (tileCoords == null) continue;
                         int numLane = link.getNumLane();
+                        double scaledWidth = link.getWidth() * baseScale;
                         if (lod == Lod.DETAIL && link.getWidth() > 0 && numLane > 0) {
                             // 최근접(detail): 차선별 폴리곤 → 3D 차선 표현과 일치. 차선 폭의 94%로 사이 틈.
-                            double laneW = metersToTile(link.getWidth() / (double) numLane, z, tileCenterLat);
+                            double laneW = metersToTile(scaledWidth / (double) numLane, z, tileCenterLat);
                             double laneHw = laneW / 2.0 * 0.94;
                             for (int li = 0; li < numLane; li++) {
                                 // 차선 0 = 최좌측(중앙선 쪽) — 법선(-dy,dx)은 타일 y-down 좌표계에서 우측(+)
@@ -246,7 +272,7 @@ public class NetworkTileService {
                                 if (lanePoly != null) enc.addPolygon(id * 100 + li, lanePoly);
                             }
                         } else if (usePolygon && link.getWidth() > 0) {
-                            double hwTile = metersToTile(link.getWidth() / 2.0, z, tileCenterLat);
+                            double hwTile = metersToTile(scaledWidth / 2.0, z, tileCenterLat);
                             int[][] poly = buildRoadPolygon(tileCoords, hwTile);
                             if (poly != null) enc.addPolygon(id, poly);
                             else enc.addLineString(id, tileCoords);
@@ -392,6 +418,20 @@ public class NetworkTileService {
                 st.executeUpdate("CREATE TABLE nodes (id INTEGER PRIMARY KEY, json TEXT)");
                 st.executeUpdate("CREATE VIRTUAL TABLE link_rtree USING rtree(id, minX, maxX, minY, maxY)");
                 st.executeUpdate("CREATE VIRTUAL TABLE node_rtree USING rtree(id, minX, maxX, minY, maxY)");
+                st.executeUpdate("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)");
+            }
+
+            // ⚠️ 실측 확정된 버그: link.width/length는 임포트 시점(base_scale=1.0 가정)의 실제
+            // 미터값으로 계산·저장되는데, 이후 2점 캘리브레이션으로 base_scale이 바뀌어도(예:
+            // 1.49) 이미 저장된 width는 재계산되지 않는다 — 중심선 좌표는 새 스케일로 정확히
+            // 변환되는데 width(차선 오프셋 계산에 쓰임)는 옛 스케일 기준이라, 차선 중심선은
+            // 맞아도 옆 차선은 실제(정확히 스케일된) 차량 위치보다 안쪽에 그려져 차량이 상대적
+            // 으로 "바깥으로 밀린" 것처럼 보였다(실사용자 확인). meta 테이블에 baseScale을 저장해
+            // queryMvt에서 차선 오프셋 계산 시 곱해 보정한다.
+            try (PreparedStatement metaPs = conn.prepareStatement("INSERT INTO meta(key,value) VALUES (?,?)")) {
+                metaPs.setString(1, "baseScale");
+                metaPs.setString(2, String.valueOf(resp.getBaseScale() != null ? resp.getBaseScale() : 1.0));
+                metaPs.executeUpdate();
             }
 
             try (PreparedStatement linkPs = conn.prepareStatement("INSERT INTO links(id,lod_rank,json) VALUES (?,?,?)");

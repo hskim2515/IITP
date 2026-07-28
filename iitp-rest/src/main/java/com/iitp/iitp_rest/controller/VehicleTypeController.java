@@ -48,6 +48,7 @@ public class VehicleTypeController {
                         vehicleType.getV2x(),
                         vehicleType.getDrt(),
                         vehicleType.getMaxPax(),
+                        vehicleType.getNextsimTypeCode(),
                         p.getId(),
                         p.getParameterName(),
                         p.getMean(),
@@ -70,6 +71,7 @@ public class VehicleTypeController {
         String v2x = (String) rawData.get("v2x");
         String drt = (String) rawData.get("drt");
         String maxPax = (String) rawData.get("maxPax");
+        String nextsimTypeCode = (String) rawData.get("nextsimTypeCode");
 
         VehicleType vehicleType = new VehicleType();
         vehicleType.setVehicleId(vehicleId);
@@ -77,11 +79,12 @@ public class VehicleTypeController {
         vehicleType.setV2x(v2x);
         vehicleType.setDrt(drt);
         vehicleType.setMaxPax(maxPax);
+        vehicleType.setNextsimTypeCode(nextsimTypeCode);
 
         VehicleType savedVehicleType = vehicleTypeRepository.save(vehicleType);
 
         rawData.forEach((key, value) -> {
-            if (List.of("vehicleId", "name", "v2x", "drt", "maxPax").contains(key)) {
+            if (List.of("vehicleId", "name", "v2x", "drt", "maxPax", "nextsimTypeCode").contains(key)) {
                 return;
             }
 
@@ -119,12 +122,13 @@ public class VehicleTypeController {
         vehicleType.setV2x((String) updatedData.get("v2x"));
         vehicleType.setDrt((String) updatedData.get("drt"));
         vehicleType.setMaxPax((String) updatedData.get("maxPax"));
+        vehicleType.setNextsimTypeCode((String) updatedData.get("nextsimTypeCode"));
         vehicleTypeRepository.save(vehicleType);
 
         vehicleTypeParameterRepository.deleteByVehicleType(vehicleType);
 
         updatedData.forEach((key, value) -> {
-            if (List.of("vehicleId", "name", "v2x", "drt", "maxPax").contains(key)) return;
+            if (List.of("vehicleId", "name", "v2x", "drt", "maxPax", "nextsimTypeCode").contains(key)) return;
             if (!(value instanceof Map)) return;
 
             Map<String, String> paramMap = (Map<String, String>) value;

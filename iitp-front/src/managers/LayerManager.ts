@@ -4,6 +4,15 @@ import TailPrimitive from "@primitives/TailPrimitive";
 import VehiclePrimitive from "@primitives/VehiclePrimitive";
 import SpeedHeatmapLayer from "@primitives/SpeedHeatmapLayer";
 import OdFlowCesiumLayer from "@primitives/OdFlowCesiumLayer";
+import LinkMetricPolylineLayer, { LinkMetricType } from "@primitives/LinkMetricPolylineLayer";
+import LinkMetricOlLayer, { intersectionPointStyle } from "@features/LinkMetricOlLayer";
+import RegionTrafficLayer from "@primitives/RegionTrafficLayer";
+import RegionTrafficOlLayer from "@features/RegionTrafficOlLayer";
+import KnowledgeGraphLayer, { GraphType } from "@primitives/KnowledgeGraphLayer";
+import KnowledgeGraphOlLayer from "@features/KnowledgeGraphOlLayer";
+import IsochroneLayer from "@primitives/IsochroneLayer";
+import IsochroneOlLayer from "@features/IsochroneOlLayer";
+import VectorLayer from "ol/layer/Vector";
 import SpeedHeatmapOlLayer from "@features/SpeedHeatmapOlLayer";
 import PrimitiveLayerManager from "./PrimitiveLayerManager";
 import BaseMapLayerManager from "./BaseMapLayerManager";
@@ -191,6 +200,167 @@ export class LayerManager {
 
         const odFlowCesium = new OdFlowCesiumLayer(this.cesiumViewer);
         this.primitiveLayerManager.add(odFlowCesium, groupName, layerName, false);
+    }
+
+    /**
+     * 링크 혼잡도(V/C)/서비스수준(LOS)/병목 링크 — 네트워크 링크 자체를 지표로 색칠하는
+     * analyze 레이어 3종. OdFlowCesiumLayer와 동일하게 카메라/재생시각/분석메뉴 체크를 자체
+     * 구독해 `/analytics/link-traffic`(+los는 `/analytics/intersection-los`)을 throttle fetch한다.
+     * 표시 여부는 전적으로 분석메뉴 체크박스가 소유(줌 자동전환 없음).
+     *
+     * 2D(OL) 쪽은 자체 fetch 없이 Cesium 레이어의 onData/onIntersections 콜백으로 같은 데이터를
+     * 받아 그리기만 한다 — 두 지도가 각각 fetch하면 요청이 중복되므로 데이터는 한 곳에서만 가져온다.
+     */
+    private addLinkMetricLayer(metric: LinkMetricType) {
+        const groupName = "analyze";
+        const layerName = metric;
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        let olLayer: LinkMetricOlLayer | null = null;
+        if (this.vectorLayerManager) {
+            olLayer = new LinkMetricOlLayer(metric);
+            const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+            const layers = this.vectorLayerManager.add(olLayer, groupName, layerName, false);
+            layers.forEach((layer: BaseLayer) => { if (!vectorLayers.includes(layer)) vectorLayers.push(layer); });
+
+            if (metric === "los") {
+                const pointLayer = new VectorLayer({
+                    source: olLayer.getPointSource(),
+                    visible: false,
+                    zIndex: 211,
+                    style: intersectionPointStyle as any,
+                });
+                const pointLayers = this.vectorLayerManager.add(pointLayer, groupName, "los_intersections", false);
+                pointLayers.forEach((layer: BaseLayer) => { if (!vectorLayers.includes(layer)) vectorLayers.push(layer); });
+            }
+        }
+
+        const cesiumLayer = new LinkMetricPolylineLayer(
+            this.cesiumViewer, metric,
+            (links) => olLayer?.setData(links),
+            metric === "los" ? (items) => olLayer?.setIntersections(items) : undefined,
+        );
+        const primitiveCollections = this.primitiveLayerManager.add(cesiumLayer, groupName, layerName, false);
+        const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
+        if (!managedCollection.includes(primitiveCollections)) {
+            managedCollection.push(primitiveCollections);
+        }
+    }
+
+    addCongestionLayer() { this.addLinkMetricLayer("congestion"); }
+    addLosLayer()        { this.addLinkMetricLayer("los"); }
+    addBottleneckLayer() { this.addLinkMetricLayer("bottleneck"); }
+
+    /**
+     * 행정구역(시도/시군구/읍면동) 단위 교통량 — 경계가 정적이라(재생 중 안 바뀜) 링크 V/C
+     * 레이어들과 달리 카메라/재생시각을 계속 구독해 재요청하지 않는다(RegionTrafficLayer 참고).
+     * 2D(OL)는 자체 fetch 없이 Cesium 레이어의 onData 콜백으로 데이터를 공유받는다.
+     */
+    addRegionTrafficLayer() {
+        const groupName = "analyze";
+        const layerName = "region";
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        let olLayer: RegionTrafficOlLayer | null = null;
+        if (this.vectorLayerManager) {
+            olLayer = new RegionTrafficOlLayer();
+            const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+            const layers = this.vectorLayerManager.add(olLayer, groupName, layerName, false);
+            layers.forEach((layer: BaseLayer) => { if (!vectorLayers.includes(layer)) vectorLayers.push(layer); });
+            olLayer.attachMap(this.vectorLayerManager.getOlMap());
+        }
+
+        const cesiumLayer = new RegionTrafficLayer(
+            this.cesiumViewer,
+            (tier, regions) => olLayer?.setData(tier, regions),
+        );
+        const primitiveCollections = this.primitiveLayerManager.add(cesiumLayer, groupName, layerName, false);
+        const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
+        if (!managedCollection.includes(primitiveCollections)) {
+            managedCollection.push(primitiveCollections);
+        }
+    }
+
+    /**
+     * 지식그래프 스타일 분석 레이어 2종(regionOd/congestionAdjacency) 공용 등록 — 노드(원) VectorLayer
+     * 와 엣지(선) VectorLayer를 별도로 등록한다(LOS 교차로 마커와 동일하게 "layerName_노드/엣지"
+     * 접두 매칭 패턴 재사용, VectorLayerManager._matchName 참고).
+     */
+    private addKnowledgeGraphLayer(graphType: GraphType) {
+        const groupName = "analyze";
+        const layerName = graphType === "regionOd" ? "regionOdGraph" : "congestionGraph";
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        let olLayer: KnowledgeGraphOlLayer | null = null;
+        if (this.vectorLayerManager) {
+            olLayer = new KnowledgeGraphOlLayer(graphType);
+            const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+            const edgeLayers = this.vectorLayerManager.add(olLayer, groupName, layerName, false);
+            edgeLayers.forEach((layer: BaseLayer) => { if (!vectorLayers.includes(layer)) vectorLayers.push(layer); });
+
+            const pointLayer = new VectorLayer({
+                source: olLayer.getPointSource(),
+                visible: false,
+                zIndex: 216,
+                style: (feature) => olLayer!.nodeStyleFunction(feature as any),
+            });
+            const nodeLayers = this.vectorLayerManager.add(pointLayer, groupName, `${layerName}_nodes`, false);
+            nodeLayers.forEach((layer: BaseLayer) => { if (!vectorLayers.includes(layer)) vectorLayers.push(layer); });
+        }
+
+        const cesiumLayer = new KnowledgeGraphLayer(
+            this.cesiumViewer, graphType,
+            (nodes, edges) => olLayer?.setData(nodes, edges),
+        );
+        const primitiveCollections = this.primitiveLayerManager.add(cesiumLayer, groupName, layerName, false);
+        const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
+        if (!managedCollection.includes(primitiveCollections)) {
+            managedCollection.push(primitiveCollections);
+        }
+    }
+
+    addRegionOdGraphLayer()    { this.addKnowledgeGraphLayer("regionOd"); }
+    addCongestionGraphLayer()  { this.addKnowledgeGraphLayer("congestionAdjacency"); }
+
+    /**
+     * 등시선(isochrone) 접근성 지도 — 지도 클릭으로 원점을 찍는 유일한 analyze 레이어. 클릭
+     * 바인딩/해제는 IsochroneLayer 내부가 체크박스 on/off(useLayerStore)에 맞춰 자체 처리한다.
+     */
+    addIsochroneLayer() {
+        const groupName = "analyze";
+        const layerName = "isochrone";
+        const layerGroup: Record<string, any[]> = (this.layerGroups.get(groupName) || {}) as any;
+        if (!this.layerGroups.has(groupName)) this.layerGroups.set(groupName, layerGroup);
+
+        let olLayer: IsochroneOlLayer | null = null;
+        if (this.vectorLayerManager) {
+            olLayer = new IsochroneOlLayer();
+            const vectorLayers: BaseLayer[] = (layerGroup["vectorLayerManager"] ||= []);
+            const edgeLayers = this.vectorLayerManager.add(olLayer, groupName, layerName, false);
+            edgeLayers.forEach((layer: BaseLayer) => { if (!vectorLayers.includes(layer)) vectorLayers.push(layer); });
+
+            const facilityLayer = new VectorLayer({
+                source: olLayer.getFacilitySource(),
+                visible: false,
+                zIndex: 221,
+                style: (feature) => olLayer!.facilityStyleFunction(feature as any),
+            });
+            const facilityLayers = this.vectorLayerManager.add(facilityLayer, groupName, `${layerName}_facilities`, false);
+            facilityLayers.forEach((layer: BaseLayer) => { if (!vectorLayers.includes(layer)) vectorLayers.push(layer); });
+        }
+
+        const cesiumLayer = new IsochroneLayer(
+            this.cesiumViewer,
+            (data) => olLayer?.setData(data),
+        );
+        const primitiveCollections = this.primitiveLayerManager.add(cesiumLayer, groupName, layerName, false);
+        const managedCollection = (layerGroup["primitiveLayerManager"] ||= []);
+        if (!managedCollection.includes(primitiveCollections)) {
+            managedCollection.push(primitiveCollections);
+        }
     }
 
     addVehicleLayer(

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Function;
 
 /**
  * KTDB 임포트의 폴리곤/파일(SHP·GeoJSON) 경계 필터 — 프론트가 그리거나 업로드한 경계로
@@ -58,6 +59,24 @@ public final class PolygonBoundaryUtils {
             if (isInsideRing(lon, lat, ring)) return true;
         }
         return false;
+    }
+
+    /**
+     * 여러 지역(regions) 중 (lon,lat)을 포함하는 첫 지역을 반환 — 행정구역(시도/시군구/읍면동) 등
+     * "이 점이 어느 지역에 속하는가" 단일 배정에 사용(isInsideAnyRing은 "포함되는가" bool만 반환).
+     * ringsOf로 지역 타입에 관계없이 재사용 가능(RegionBoundary에 결합하지 않음).
+     */
+    public static <T> T findContainingRegion(double lon, double lat, List<T> regions,
+                                               Function<T, List<List<double[]>>> ringsOf) {
+        if (regions == null) return null;
+        for (T region : regions) {
+            List<List<double[]>> rings = ringsOf.apply(region);
+            if (rings == null) continue;
+            for (List<double[]> ring : rings) {
+                if (isInsideRing(lon, lat, ring)) return region;
+            }
+        }
+        return null;
     }
 
     /** 표준 레이캐스팅(짝-홀수 규칙) point-in-polygon. ring은 닫혀있지 않아도 무방(첫점=끝점 강제 안 함). */

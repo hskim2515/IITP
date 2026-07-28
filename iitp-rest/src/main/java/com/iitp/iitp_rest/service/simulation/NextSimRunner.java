@@ -1,5 +1,7 @@
 package com.iitp.iitp_rest.service.simulation;
 
+import com.iitp.iitp_rest.model.vehicle.type.VehicleType;
+import com.iitp.iitp_rest.model.vehicle.type.VehicleTypeParameter;
 import com.iitp.iitp_rest.repository.ScenarioVersionRepository;
 import com.iitp.iitp_rest.util.FileStorageService;
 import com.iitp.iitp_rest.util.VehicleDataReader;
@@ -93,6 +95,11 @@ public class NextSimRunner {
     private final FileStorageService fileStorage;
     private final VehicleDataReader vehicleDataReader;
     private final ScenarioVersionRepository scenarioVersionRepository;
+    private final com.iitp.iitp_rest.repository.VehicleTypeRepository vehicleTypeRepository;
+    private final com.iitp.iitp_rest.repository.VehicleTypeParameterRepository vehicleTypeParameterRepository;
+    private final com.iitp.iitp_rest.service.publicTransit.line.BusPtLineService busPtLineService;
+    private final com.iitp.iitp_rest.service.publicTransit.station.BusStationService busStationService;
+    private final com.iitp.iitp_rest.service.publicTransit.line.RailPtLineService railPtLineService;
 
     /** 취소 요청으로 종료된 실행 (컨트롤러가 CANCELLED 로 구분) */
     public static class CancelledException extends RuntimeException {
@@ -169,9 +176,23 @@ public class NextSimRunner {
             // 가장 비싼 단계인 route-generator 를 통째로 생략한다.
             // (터미널 가지치기 사용 시 OD 의 터미널 집합이 바뀌면 스테이징 network 도 바뀌어
             //  자연히 캐시 미스 → 정확성 유지)
-            String inputsHash = sha256Of(networkDir.resolve("network.xml"));
+            // ⚠️ PTRoute.json 은 route-generator 가 network.xml 뿐 아니라 roadPTline.xml/
+            // roadStation.xml(버스)·railPTline.xml/railStation.xml(철도)도 입력으로 사용한다
+            // (generate_routes.sh 주석: "Generate Route.json and PTRoute.json"). network.xml만
+            // 해시하면 버스/철도 노선만 새로 만들거나 수정한 경우 캐시가 그대로 히트해 이전(노선
+            // 추가 전) PTRoute.json 이 재사용되고, NextSim 이 새 노선의 경로를 못 찾아
+            // ("PT Error: No route found for line ...") 이후 출력 없이 CPU 100%로 무한 행(hang)
+            // 한다 — 실측(scenario3_1, TEST_LINE_1 버스 노선 추가 후 재현, doctest FAILURE
+            // 시그니처 없이 조용히 멈춤이라 크래시 감지 로직도 못 잡음). 따라서 PT 관련 입력
+            // 파일도 캐시 키에 포함시켜 노선/정류장 변경 시 반드시 route-generator 를 재실행한다.
+            // passenger.xml(승객 OD 수요)도 포함 — PaxRoute.json(아래)이 이 파일에서 파생된다.
+            String inputsHash = sha256Of(networkDir.resolve("network.xml"),
+                    networkDir.resolve("roadPTline.xml"), networkDir.resolve("roadStation.xml"),
+                    networkDir.resolve("railPTline.xml"), networkDir.resolve("railStation.xml"),
+                    networkDir.resolve("passenger.xml"));
             Path cacheDir = routeCacheDir(versionId);
             Path routeJson = networkDir.resolve("Route.json");
+            Path paxRouteJson = networkDir.resolve("PaxRoute.json");
             if (isRouteCacheHit(cacheDir, inputsHash)) {
                 // NOTE: SimulationController.classifyStep()이 이 문구의 접두어로 매칭 — 문구를 바꾸면 그쪽도 같이 고칠 것.
                 progress.accept("경로 캐시 재사용 — 경로 생성 생략");
@@ -181,6 +202,10 @@ public class NextSimRunner {
                 if (Files.exists(cachedPt)) {
                     Files.copy(cachedPt, networkDir.resolve("PTRoute.json"),
                             java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+                Path cachedPax = cacheDir.resolve("PaxRoute.json");
+                if (Files.exists(cachedPax)) {
+                    Files.copy(cachedPax, paxRouteJson, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 }
                 log.info("[NextSimRunner] 경로 캐시 히트: {} (hash={})", versionId, inputsHash.substring(0, 12));
             } else {
@@ -192,6 +217,24 @@ public class NextSimRunner {
                     throw new RuntimeException("route-generator 가 Route.json 을 생성하지 않았습니다. " +
                             "odmatrix.xml 의 source/sink 노드가 네트워크와 일치하는지 확인하세요.\n" + tail(routeLog, 800));
                 }
+                // PaxRoute.json: 시뮬레이션 엔진이 대중교통 노선/정류장이 하나라도 있으면
+                // 무조건 참조한다 — 파일 자체가 없으면 "vector::_M_range_check: __n=0 >= size=0"
+                // (빈 vector 인덱싱)로 즉시 크래시함을 실측(scenario3_1, TEST_LINE_1 버스 노선
+                // 추가 후 재현). 그렇다고 pax-route-generator 를 무조건 돌리면 안 된다 — 실측:
+                // 승객 OD 수요가 없는(=passenger.xml 이 빈 스텁인) 상태에서도 전체 정류장 쌍에 대해
+                // 경로를 계산하려다 OOMKilled(docker inspect State.OOMKilled=true, 호스트 메모리
+                // 15.6GB 전체를 다 쓰고 죽음 — route-generator/nextsim 과 같은 계열의 NextSim
+                // 바이너리 결함으로 추정)된다. generate_routes.sh 도 이걸 --with-pax 로 선택적
+                // 취급(기본 OFF)한다 — 실제 승객 수요가 있을 때만 돌리고, 없으면 스키마만 맞는
+                // 빈 stub 을 직접 써서 파일 부재로 인한 크래시만 막는다(계산 비용 0, OOM 위험 없음).
+                if (hasPassengerDemand(networkDir.resolve("passenger.xml"))) {
+                    // pax-route-generator 는 route-generator 와 다른 크래시 클래스(터미널 격리로
+                    // 해결되는 문제가 아님)라 크래시 복구 이분탐색 래퍼는 적용하지 않는다.
+                    runStage(versionId, workDir, "pax-route-generator", "PaxRouteGenerator", progress);
+                } else {
+                    Files.writeString(paxRouteJson, "{\n    \"PaxRoute\": []\n}", StandardCharsets.UTF_8);
+                    log.info("[NextSimRunner] {} 승객 OD 수요 없음 — PaxRoute.json 빈 stub 사용(pax-route-generator 생략)", versionId);
+                }
             }
 
             // route-generator 직후(=Route.json 이 완성된 시점) 스냅샷 — 캐시는 이 시점 기준으로
@@ -199,7 +242,13 @@ public class NextSimRunner {
             // 재격리) nextsim 자신이 Route.json 을 다시 열어 쓰는 경우(실측: 복구 재시도 시
             // Route.json 이 0바이트로 잘리는 현상 발생 — nextsim 이 쓰기 모드로 열고 실패)에도
             // 캐시가 "route-generator 가 실제로 만든 유효한 Route.json"을 가리키게 한다.
-            String routeGenHash = sha256Of(networkDir.resolve("network.xml"));
+            // ⚠️ inputsHash(캐시 조회 키)와 반드시 같은 파일 집합을 해시해야 한다 — 다르면
+            // 저장된 해시가 조회 시 절대 일치하지 않아(파일 개수 자체가 다름) 캐시가 매번
+            // 무조건 미스한다(정확성엔 문제 없으나 캐시 이점이 통째로 사라짐 — 실측으로 발견).
+            String routeGenHash = sha256Of(networkDir.resolve("network.xml"),
+                    networkDir.resolve("roadPTline.xml"), networkDir.resolve("roadStation.xml"),
+                    networkDir.resolve("railPTline.xml"), networkDir.resolve("railStation.xml"),
+                    networkDir.resolve("passenger.xml"));
             Path routeJsonSnapshot = networkDir.resolveSibling("Route.json.snapshot");
             Files.copy(routeJson, routeJsonSnapshot, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             Path ptRouteJson = networkDir.resolve("PTRoute.json");
@@ -207,6 +256,11 @@ public class NextSimRunner {
                     ? networkDir.resolveSibling("PTRoute.json.snapshot") : null;
             if (ptRouteJsonSnapshot != null) {
                 Files.copy(ptRouteJson, ptRouteJsonSnapshot, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            Path paxRouteJsonSnapshot = Files.exists(paxRouteJson)
+                    ? networkDir.resolveSibling("PaxRoute.json.snapshot") : null;
+            if (paxRouteJsonSnapshot != null) {
+                Files.copy(paxRouteJson, paxRouteJsonSnapshot, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
 
             // NOTE: SimulationController.classifyStep()이 이 문구의 접두어로 매칭 — 문구를 바꾸면 그쪽도 같이 고칠 것.
@@ -241,9 +295,11 @@ public class NextSimRunner {
             // 다음 실행이 원본 network.xml 로 재크래시하지 않음), nextsim 단계가 Route.json 을
             // 건드렸어도 영향받지 않는다.
             saveRouteCache(cacheDir, routeGenHash, routeJsonSnapshot,
-                    ptRouteJsonSnapshot != null ? ptRouteJsonSnapshot : ptRouteJson);
+                    ptRouteJsonSnapshot != null ? ptRouteJsonSnapshot : ptRouteJson,
+                    paxRouteJsonSnapshot != null ? paxRouteJsonSnapshot : paxRouteJson);
             Files.deleteIfExists(routeJsonSnapshot);
             if (ptRouteJsonSnapshot != null) Files.deleteIfExists(ptRouteJsonSnapshot);
+            if (paxRouteJsonSnapshot != null) Files.deleteIfExists(paxRouteJsonSnapshot);
 
             log.info("[NextSimRunner] 완료: versionId={}, result={} bytes", versionId, Files.size(resultDb));
             return tail(simLog, 2000);
@@ -272,13 +328,18 @@ public class NextSimRunner {
         }
     }
 
-    private void saveRouteCache(Path cacheDir, String inputsHash, Path routeJson, Path ptRouteJson) {
+    private void saveRouteCache(Path cacheDir, String inputsHash, Path routeJson, Path ptRouteJson,
+                                 Path paxRouteJson) {
         try {
             Files.createDirectories(cacheDir);
             Files.copy(routeJson, cacheDir.resolve("Route.json"),
                     java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             if (Files.exists(ptRouteJson)) {
                 Files.copy(ptRouteJson, cacheDir.resolve("PTRoute.json"),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+            if (Files.exists(paxRouteJson)) {
+                Files.copy(paxRouteJson, cacheDir.resolve("PaxRoute.json"),
                         java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             }
             Files.writeString(cacheDir.resolve("inputs.sha256"), inputsHash);
@@ -341,6 +402,16 @@ public class NextSimRunner {
                 "    <SignalControlEvent active=\"f\" />\n" +
                 "</RecordModes>"), StandardCharsets.UTF_8);
 
+        // vehicletypes.xml: "교통수단 유형" 편집 화면(VehicleType/VehicleTypeParameter)의
+        // 내용으로 배포판 템플릿을 덮어쓴다 — 편집 화면에서 고친 차종별 주행 파라미터(veh_len/
+        // jamgap/vf/reaction_time/max_acc/max_dec/lc_param1/lc_param2/lc_sensitivity)가
+        // 실제 실행에 반영되게 하려는 목적. 등록된 차종이 하나도 없으면(화면을 아직 안 채운
+        // 경우) 배포판 템플릿을 그대로 둔다 — 빈 파일로 덮어써 실행을 깨뜨리지 않기 위함.
+        String vehicleTypesXml = buildVehicleTypesXml();
+        if (vehicleTypesXml != null) {
+            Files.writeString(dstParam.resolve("vehicletypes.xml"), vehicleTypesXml, StandardCharsets.UTF_8);
+        }
+
         // 3) 버전 스토리지 파일 (플랫폼이 NextSim 형식 그대로 관리 중)
         //    network.xml 필수, odmatrix.xml 필수(수요 없으면 시뮬 무의미), 나머지는 폴백 생성
         copyRequired(versionId, "network.xml", networkDir,
@@ -402,14 +473,56 @@ public class NextSimRunner {
                     xml("<Passenger>\n\t<od_pax>\n\t</od_pax>\n</Passenger>"), StandardCharsets.UTF_8);
         }
         writeIfAbsent(networkDir, "footpathNetwork.xml", xml("<Network id=\"0\">\n    <nodes>\n    </nodes>\n    <links>\n    </links>\n</Network>"));
-        writeIfAbsent(networkDir, "roadPTline.xml", xml("<Lines mode=\"Bus\">\n</Lines>"));
-        writeIfAbsent(networkDir, "roadStation.xml", xml("<PublicTransit>\n  <Stations>\n  </Stations>\n</PublicTransit>"));
-        writeIfAbsent(networkDir, "railStation.xml", xml("<RailPublicTransit>\n</RailPublicTransit>"));
+
+        // roadStation.xml: 우리 BusStationXml/PublicTransitXml 스키마(id/link_ref/lane_ref/
+        // pos/center/parkingLots/line)가 NextSim이 기대하는 형식과 이미 거의 동일해서 변환
+        // 없이 그대로 복사한다 — signal.xml과 동일한 copyOptional 패턴.
+        if (!copyOptional(versionId, "roadStation.xml", networkDir)) {
+            Files.writeString(networkDir.resolve("roadStation.xml"),
+                    xml("<PublicTransit>\n  <Stations>\n  </Stations>\n</PublicTransit>"), StandardCharsets.UTF_8);
+        }
+        // roadPTline.xml: 우리 스키마(<Line id interval><link seq="공백구분 id목록"/>...)는
+        // NextSim이 기대하는 형식(<Line id fee interval><links><link id seq station
+        // use_ptlane/></links></Line>)과 달라 그대로 복사할 수 없다 — "버스 노선"/"버스
+        // 정류장" 데이터를 읽어 직접 변환한다(vehicletypes.xml과 동일한 "DB에서 직접 생성"
+        // 패턴). 노선 데이터가 없으면(아직 안 그림) 안전한 빈 스텁을 그대로 쓴다.
+        // ⚠️ railPTline.xml과 달리 이 변환 로직은 아직 실제 NextSim 바이너리로 검증되지
+        // 않았다 — 버스 노선이 있는 시나리오로 처음 실행할 땐 결과를 주의 깊게 확인할 것.
+        String roadPtLineXml = buildRoadPtLineXml(versionId);
+        Files.writeString(networkDir.resolve("roadPTline.xml"),
+                roadPtLineXml != null ? roadPtLineXml : xml("<Lines mode=\"Bus\">\n</Lines>"),
+                StandardCharsets.UTF_8);
+
+        // ⚠️ 실측 발견(2026-07-27): roadStation.xml과 달리 railStation.xml은 SFTP에서 실제
+        // 저장된 데이터를 가져오는 copyOptional 호출이 아예 없었다 — 항상 빈 스텁만 써서
+        // "철도 정류장" 편집 화면에 실제 역을 등록해도 시뮬레이션에는 단 하나도 반영되지
+        // 않았다(railPTline.xml이 참조하는 역 id가 railStation.xml에 전혀 없는 상태가 되어,
+        // 크래시는 안 나지만 열차가 조용히 배차되지 않는 원인이었던 것으로 추정). RailStationXml
+        // 스키마는 roadStation.xml과 마찬가지로 NextSim 실제 스키마와 이미 호환(RailStationService
+        // SFTP 동기화 수정 시 name 속성도 채우도록 보강함) — 그대로 복사만 하면 된다.
+        if (!copyOptional(versionId, "railStation.xml", networkDir)) {
+            Files.writeString(networkDir.resolve("railStation.xml"),
+                    xml("<RailPublicTransit>\n</RailPublicTransit>"), StandardCharsets.UTF_8);
+        }
         writeIfAbsent(networkDir, "backgroundTraffic.xml", xml("<BackgroundTraffics>\n</BackgroundTraffics>"));
-        // ⚠️ railPTline.xml 은 자체 제작 빈 XML(<Mode/> 루트, 주석-only 둘 다)이 nextsim 을
-        //    SIGSEGV 로 죽인다(실측 — 파서가 이 파일을 특수 처리). 배포판 예시 파일(내용 전체가
-        //    주석이라 네트워크 무관 = 사실상 빈 노선)을 그대로 복사하는 것만 안전.
-        if (!Files.exists(networkDir.resolve("railPTline.xml"))) {
+        // railPTline.xml: 실제 철도 노선 데이터가 있으면 "철도 노선" 편집 화면 데이터로 생성한다
+        // (roadPTline.xml과 동일한 "DB에서 직접 생성" 패턴).
+        // ⚠️ 실측 회귀 발견(2026-07-27): 데이터가 없을 때 "제대로 된 root+Lines, 내용만 빈"
+        // stub(<Mode type="subway"><Lines></Lines></Mode>)으로 바꿨다가, 철도 노선이 전혀
+        // 없는 기존 시나리오(scenario1_1 등, 이번 세션에서 전혀 건드리지 않은 시나리오 포함)
+        // 까지 전부 "Complete: Initializing Public Transit" 직후 출력 없이 CPU 100%로 무한
+        // 행(hang)하는 전역 회귀로 이어졌다 — bucheon 배포판 예시를 그대로 복사하던 이전 동작
+        // (semantically 잘못된 역 참조를 담고 있음에도)에서는 재현되지 않던 증상. 즉 "내용이
+        // 빈 self-authored XML이 nextsim을 죽인다"던 기존 주석이 실제로는 SIGSEGV뿐 아니라
+        // 이런 무한 행 형태로도 나타나는 것으로 재확인됨 — 이 stub 형태 자체가 여전히 위험하다.
+        // 따라서 데이터 없을 때는 안전이 실측 확인된 bucheon 번들 예시 복사로 되돌린다(회귀
+        // 이전 동작 복원). 실제 철도 노선 데이터가 있을 때만 새 생성 로직을 쓰되, 이 경로는
+        // 아직 end-to-end 성공 검증 전이므로(생성된 콘텐츠로도 같은 지점에서 행 재현됨)
+        // 주의해서 사용할 것 — 원인 미해결.
+        String railPtLineXml = buildRailPtLineXml(versionId);
+        if (railPtLineXml != null) {
+            Files.writeString(networkDir.resolve("railPTline.xml"), railPtLineXml, StandardCharsets.UTF_8);
+        } else if (!Files.exists(networkDir.resolve("railPTline.xml"))) {
             Path bundled = Path.of(nextsimHome, "SimulationInput", "datasets", BRANCH,
                     "network_xml_bucheon", "railPTline.xml");
             if (Files.exists(bundled)) {
@@ -815,6 +928,13 @@ public class NextSimRunner {
         Matcher m = p.matcher(s);
         while (m.find()) n++;
         return n;
+    }
+
+    /** passenger.xml 에 실제 &lt;demand&gt; 항목이 하나라도 있는지 (없으면 빈 스텁 — 기본값) */
+    private static boolean hasPassengerDemand(Path passengerXml) throws IOException {
+        if (!Files.exists(passengerXml)) return false;
+        String xml = Files.readString(passengerXml, StandardCharsets.UTF_8);
+        return Pattern.compile("<demand\\b").matcher(xml).find();
     }
 
     /** odmatrix.xml 에 flow>0 인 수요가 하나라도 있는지 검증 (없으면 실행 무의미) */
@@ -1304,6 +1424,287 @@ public class NextSimRunner {
 
     private static String xml(String body) {
         return "<?xml version='1.0' encoding='UTF-8'?>\n" + body + "\n";
+    }
+
+    /** NextSim이 이름으로 조회하는 6개 고정 차종 카테고리 — vehicletypes.xml 값이 이 이름과
+     *  다르면 "Initializing NB/AB/TRT/Public Transit" 단계에서 매칭 실패 후 출력 없이 CPU
+     *  100%로 무한 행(hang)함을 실측(2026-07-27, scenario1_1 — 이번 세션 버스/철도 작업과
+     *  무관한 기존 시나리오에서도 재현되어 전역 회귀였음이 드러남). 배포판 기본값 그대로. */
+    private static final List<String> REQUIRED_VEHTYPE_NAMES =
+            List.of("NormalVeh", "AutonomousVeh", "Truck", "NormalBus", "AutonomousBus", "TRT");
+
+    /** 배포판 vehicletypes.xml 템플릿의 기본값 — DB에 해당 카테고리로 매핑된 차종이 없을 때
+     *  이 값을 그대로 써서 6개 카테고리가 항상 존재하도록 보장한다. */
+    private static final Map<String, String> DEFAULT_VEHTYPE_BODY = Map.of(
+            "NormalVeh",
+            "        <veh_len dist=\"Normal\" max=\"5.5\" mean=\"5.0\" min=\"4.5\" sd=\"0.5\"/>\n" +
+            "        <jamgap dist=\"Normal\" max=\"4.5\" mean=\"2.5\" min=\"2.0\" sd=\"1.0\"/>\n" +
+            "        <vf dist=\"Normal\" max=\"60.0\" mean=\"50.0\" min=\"45.0\" sd=\"10.0\"/>\n" +
+            "        <reaction_time dist=\"LogNormal\" max=\"3.0\" mean=\"0.8\" min=\"0.5\" sd=\"2\"/>\n" +
+            "        <max_acc dist=\"Normal\" max=\"5.0\" mean=\"4.5\" min=\"4.0\" sd=\"1.1\"/>\n" +
+            "        <max_dec dist=\"Normal\" max=\"5.5\" mean=\"5\" min=\"4.5\" sd=\"1.2\"/>\n" +
+            "        <lc_param1 dist=\"Normal\" max=\"0.04\" mean=\"0.025\" min=\"0.01\" sd=\"0.02\"/>\n" +
+            "        <lc_param2 dist=\"Normal\" max=\"0.08\" mean=\"0.055\" min=\"0.03\" sd=\"0.02\"/>\n" +
+            "        <lc_sensitivity dist=\"LogNormal\" max=\"0.1\" mean=\"0.0033\" min=\"0.001\" sd=\"2.5\"/>\n",
+            "AutonomousVeh",
+            "        <veh_len dist=\"Normal\" max=\"5.5\" mean=\"5.0\" min=\"4.5\" sd=\"0.5\"/>\n" +
+            "        <jamgap dist=\"Normal\" max=\"3.5\" mean=\"2.0\" min=\"1.0\" sd=\"0.01\"/>\n" +
+            "        <vf dist=\"Normal\" max=\"125.0\" mean=\"110.0\" min=\"90.0\" sd=\"0.01\"/>\n" +
+            "        <reaction_time dist=\"Normal\" max=\"3.5\" mean=\"1.7\" min=\"1.1\" sd=\"0.01\"/>\n" +
+            "        <max_acc dist=\"Normal\" max=\"5.5\" mean=\"4.8\" min=\"4.5\" sd=\"0.01\"/>\n" +
+            "        <max_dec dist=\"Normal\" max=\"6.5\" mean=\"5.6\" min=\"4.5\" sd=\"0.01\"/>\n" +
+            "        <lc_param1 dist=\"Normal\" max=\"0.04\" mean=\"0.025\" min=\"0.01\" sd=\"0.02\"/>\n" +
+            "        <lc_param2 dist=\"Normal\" max=\"0.08\" mean=\"0.055\" min=\"0.03\" sd=\"0.02\"/>\n" +
+            "        <lc_sensitivity dist=\"LogNormal\" max=\"0.1\" mean=\"0.0033\" min=\"0.001\" sd=\"2.5\"/>\n",
+            "Truck",
+            "        <veh_len dist=\"Normal\" max=\"10.0\" mean=\"8.0\" min=\"6.0\" sd=\"0.5\"/>\n" +
+            "        <jamgap dist=\"LogNormal\" max=\"6.0\" mean=\"4.0\" min=\"2.0\" sd=\"0.5\"/>\n" +
+            "        <vf dist=\"Normal\" max=\"100.0\" mean=\"85.0\" min=\"70.0\" sd=\"10.0\"/>\n" +
+            "        <reaction_time dist=\"LogNormal\" max=\"3.5\" mean=\"2.4\" min=\"1.5\" sd=\"0.5\"/>\n" +
+            "        <max_acc dist=\"Normal\" max=\"1.8\" mean=\"1.0\" min=\"0.6\" sd=\"0.5\"/>\n" +
+            "        <max_dec dist=\"Normal\" max=\"6.0\" mean=\"5.0\" min=\"4.0\" sd=\"0.5\"/>\n" +
+            "        <lc_param1 dist=\"Normal\" max=\"0.04\" mean=\"0.025\" min=\"0.01\" sd=\"0.02\"/>\n" +
+            "        <lc_param2 dist=\"Normal\" max=\"0.08\" mean=\"0.055\" min=\"0.03\" sd=\"0.02\"/>\n" +
+            "        <lc_sensitivity dist=\"LogNormal\" max=\"0.1\" mean=\"0.0033\" min=\"0.001\" sd=\"2.5\"/>\n",
+            "NormalBus",
+            "        <veh_len dist=\"Normal\" max=\"11.0\" mean=\"11.0\" min=\"11.0\" sd=\"0\"/>\n" +
+            "        <jamgap dist=\"LogNormal\" max=\"2.5\" mean=\"2.0\" min=\"1.5\" sd=\"0.5\"/>\n" +
+            "        <vf dist=\"Normal\" max=\"50.0\" mean=\"45.0\" min=\"40.0\" sd=\"10.0\"/>\n" +
+            "        <reaction_time dist=\"LogNormal\" max=\"3.5\" mean=\"2.4\" min=\"1.5\" sd=\"0.2\"/>\n" +
+            "        <max_acc dist=\"Normal\" max=\"4.0\" mean=\"3.0\" min=\"2.0\" sd=\"0.5\"/>\n" +
+            "        <max_dec dist=\"Normal\" max=\"3.6\" mean=\"3.3\" min=\"3\" sd=\"0.5\"/>\n" +
+            "        <lc_param1 dist=\"Normal\" max=\"0.04\" mean=\"0.025\" min=\"0.01\" sd=\"0.02\"/>\n" +
+            "        <lc_param2 dist=\"Normal\" max=\"0.08\" mean=\"0.055\" min=\"0.03\" sd=\"0.02\"/>\n" +
+            "        <lc_sensitivity dist=\"LogNormal\" max=\"0.1\" mean=\"0.0033\" min=\"0.001\" sd=\"2.5\"/>\n",
+            "AutonomousBus",
+            "        <veh_len dist=\"Normal\" max=\"11.0\" mean=\"11.0\" min=\"11.0\" sd=\"0\"/>\n" +
+            "        <jamgap dist=\"LogNormal\" max=\"6.0\" mean=\"4.0\" min=\"2.0\" sd=\"0.01\"/>\n" +
+            "        <vf dist=\"Normal\" max=\"80.0\" mean=\"70.0\" min=\"50.0\" sd=\"0.01\"/>\n" +
+            "        <reaction_time dist=\"LogNormal\" max=\"3.5\" mean=\"2.4\" min=\"1.5\" sd=\"0.01\"/>\n" +
+            "        <max_acc dist=\"Normal\" max=\"1.8\" mean=\"1.0\" min=\"0.8\" sd=\"0.01\"/>\n" +
+            "        <max_dec dist=\"Normal\" max=\"6.0\" mean=\"5.0\" min=\"4.0\" sd=\"0.01\"/>\n" +
+            "        <lc_param1 dist=\"Normal\" max=\"0.04\" mean=\"0.025\" min=\"0.01\" sd=\"0.02\"/>\n" +
+            "        <lc_param2 dist=\"Normal\" max=\"0.08\" mean=\"0.055\" min=\"0.03\" sd=\"0.02\"/>\n" +
+            "        <lc_sensitivity dist=\"LogNormal\" max=\"0.1\" mean=\"0.0033\" min=\"0.001\" sd=\"2.5\"/>\n",
+            "TRT",
+            "        <veh_len dist=\"Normal\" max=\"10.0\" mean=\"10.0\" min=\"10.0\" sd=\"0\"/>\n" +
+            "        <jamgap dist=\"LogNormal\" max=\"5.0\" mean=\"3.5\" min=\"2.5\" sd=\"0.01\"/>\n" +
+            "        <vf dist=\"Normal\" max=\"75.0\" mean=\"75.0\" min=\"75.0\" sd=\"0\"/>\n" +
+            "        <reaction_time dist=\"LogNormal\" max=\"3.0\" mean=\"2.0\" min=\"1.0\" sd=\"0.01\"/>\n" +
+            "        <max_acc dist=\"Normal\" max=\"3\" mean=\"2.5\" min=\"2\" sd=\"0.1\"/>\n" +
+            "        <max_dec dist=\"Normal\" max=\"2.0\" mean=\"2.0\" min=\"2.0\" sd=\"0\"/>\n" +
+            "        <lc_param1 dist=\"Normal\" max=\"0.04\" mean=\"0.025\" min=\"0.01\" sd=\"0.02\"/>\n" +
+            "        <lc_param2 dist=\"Normal\" max=\"0.08\" mean=\"0.055\" min=\"0.03\" sd=\"0.02\"/>\n" +
+            "        <lc_sensitivity dist=\"LogNormal\" max=\"0.1\" mean=\"0.0033\" min=\"0.001\" sd=\"2.5\"/>\n");
+
+    private static final Map<String, String> DEFAULT_VEHTYPE_MAXPAX = Map.of(
+            "NormalVeh", "0", "AutonomousVeh", "15", "Truck", "1",
+            "NormalBus", "30", "AutonomousBus", "30", "TRT", "91");
+
+    /** vehicle_type.nextsim_type_code(쉼표구분 코드) → NextSim 정식 카테고리 이름 */
+    private static final Map<String, String> CODE_TO_CANONICAL_NAME = Map.of(
+            "NV", "NormalVeh", "AV", "AutonomousVeh",
+            "NB", "NormalBus", "AB", "AutonomousBus",
+            "TRUCK", "Truck", "TRK", "Truck", "TR", "Truck");
+
+    /**
+     * "교통수단 유형" 편집 화면(VehicleType + VehicleTypeParameter, VehicleTypeController가
+     * 관리)의 내용으로 vehicletypes.xml을 생성한다.
+     *
+     * <p>⚠️ 실측 확인된 회귀(2026-07-27): 처음 구현 시 vehtype의 name 속성에 편집 화면의
+     * 한글 이름(예: "택시", "버스")을 그대로 썼는데, NextSim 엔진은 "Initializing NB/AB/TRT"
+     * 단계에서 vehtype 목록을 **정식 카테고리 이름**(NormalVeh/AutonomousVeh/Truck/NormalBus/
+     * AutonomousBus/TRT)으로 조회한다. 이름이 일치하지 않으면 에러 없이 "Complete: Initializing
+     * Public Transit" 직후 출력 없이 CPU 100%로 무한 행(hang)한다 — bus/rail 작업과 무관하게
+     * 이번 세션의 모든 시나리오에서 재현된 전역 회귀였다(scenario1_1 등, 오늘 건드리지 않은
+     * 시나리오 포함). veh_width 속성 누락도 배포판 예시와의 또 다른 차이점이라 함께 채운다
+     * (편집 화면에 아직 이 파라미터가 없어 고정값 사용).
+     *
+     * <p>따라서 vehicle_type.nextsim_type_code(NV/AV/NB/AB/TRK/TR/TRUCK)로 6개 정식 카테고리에
+     * 매핑되는 DB 행을 찾아 그 파라미터로 해당 카테고리를 채우고, 매핑되는 행이 없는 카테고리는
+     * 배포판 기본값을 그대로 사용해 6개 카테고리가 항상 전부 존재하도록 보장한다. 매핑된
+     * 카테고리가 하나도 없으면(어떤 차종에도 코드 미설정) null — 호출측이 배포판 템플릿을
+     * 통째로 그대로 둔다.
+     */
+    private String buildVehicleTypesXml() {
+        List<VehicleType> types = vehicleTypeRepository.findAll();
+
+        // canonical name → 그 이름을 채울 DB 차종(첫 매치 우선)
+        Map<String, VehicleType> canonicalToSource = new java.util.LinkedHashMap<>();
+        for (VehicleType vt : types) {
+            if (vt.getNextsimTypeCode() == null || vt.getNextsimTypeCode().isBlank()) continue;
+            for (String code : vt.getNextsimTypeCode().split(",")) {
+                String canonical = CODE_TO_CANONICAL_NAME.get(code.trim().toUpperCase());
+                if (canonical != null) canonicalToSource.putIfAbsent(canonical, vt);
+            }
+        }
+        if (canonicalToSource.isEmpty()) return null; // 매핑된 코드 없음 — 배포판 템플릿 그대로
+
+        StringBuilder sb = new StringBuilder("<VehType_Scenario>\n");
+        int idx = 0;
+        for (String canonicalName : REQUIRED_VEHTYPE_NAMES) {
+            VehicleType vt = canonicalToSource.get(canonicalName);
+            sb.append("    <vehtype id=\"").append(idx++)
+              .append("\" max_pax=\"").append(vt != null ? escapeXmlAttr(vt.getMaxPax()) : DEFAULT_VEHTYPE_MAXPAX.get(canonicalName))
+              .append("\" name=\"").append(canonicalName)
+              .append("\" v2x=\"").append(vt != null ? escapeXmlAttr(vt.getV2x()) : "off")
+              .append("\">\n");
+            sb.append("        <veh_width dist=\"Normal\" max=\"2.1\" mean=\"1.9\" min=\"1.8\" sd=\"0.2\"/>\n");
+            if (vt != null) {
+                List<VehicleTypeParameter> params = vehicleTypeParameterRepository.findByVehicleType_Id(vt.getId());
+                for (VehicleTypeParameter p : params) {
+                    sb.append("        <").append(p.getParameterName())
+                      .append(" dist=\"").append(normalizeDist(p.getDist()))
+                      .append("\" max=\"").append(escapeXmlAttr(p.getMax()))
+                      .append("\" mean=\"").append(escapeXmlAttr(p.getMean()))
+                      .append("\" min=\"").append(escapeXmlAttr(p.getMin()))
+                      .append("\" sd=\"").append(escapeXmlAttr(p.getSd()))
+                      .append("\"/>\n");
+                }
+            } else {
+                sb.append(DEFAULT_VEHTYPE_BODY.get(canonicalName));
+            }
+            sb.append("    </vehtype>\n");
+        }
+        sb.append("</VehType_Scenario>");
+        return xml(sb.toString());
+    }
+
+    /** "normal"/"lognormal"(편집 화면 select 옵션, 소문자) → NextSim이 기대하는 대문자
+     *  표기("Normal"/"LogNormal", 실측 vehicletypes.xml 샘플 기준)로 정규화. */
+    private static String normalizeDist(String dist) {
+        if (dist != null && dist.equalsIgnoreCase("lognormal")) return "LogNormal";
+        return "Normal";
+    }
+
+    private static String escapeXmlAttr(String s) {
+        if (s == null) return "";
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;");
+    }
+
+    /**
+     * "버스 노선"(BusPtLineService, roadPTline.xml) + "버스 정류장"(BusStationService,
+     * roadStation.xml) 데이터를 조합해 NextSim이 기대하는 roadPTline.xml 스키마
+     * (NEXTSIM_DATA_STRUCTURE.md: {@code <Line id fee interval><links><link id seq station
+     * use_ptlane/></links></Line>})로 변환한다.
+     *
+     * <p>우리 {@code BusPtLinesXml.LineXml}은 노선 하나를 link/node/station/garage 4개의
+     * "공백구분 id 목록" 문자열로 담는다 — link 목록의 등장 순서가 곧 노선이 지나가는
+     * 순서다. NextSim 스키마는 링크마다 개별 {@code <link id seq .../>} 요소가 필요하고
+     * (seq = 0부터 순번), 그중 정류장이 있는 링크에만 station 속성을 붙인다. 어느 링크가
+     * 정류장인지는 노선 파일 자체엔 없고, 정류장 레코드(BusStationResponse.linkRef —
+     * "이 정류장은 어느 링크 위에 있다")로 역매핑해야 한다.
+     *
+     * <p>fee(요금)/use_ptlane은 우리 데이터에 없는 필드라 각각 0/"False"로 기본값 처리한다.
+     * 노선 데이터가 없으면(파일 없음·빈 목록) null — 호출측이 안전한 빈 스텁을 쓴다.
+     */
+    private String buildRoadPtLineXml(String versionId) {
+        com.iitp.iitp_rest.model.publicTransit.bus.BusPtLinesXml lines;
+        try {
+            lines = busPtLineService.getDefault(versionId);
+        } catch (Exception e) {
+            return null; // roadPTline.xml 없음/파싱 실패 — 노선 미정의로 보고 안전 스텁에 맡김
+        }
+        if (lines == null || lines.getLines() == null || lines.getLines().isEmpty()) return null;
+
+        // 정류장 id → 그 정류장이 위치한 링크 id (문자열 비교용으로 String화)
+        Map<String, String> stationIdToLinkId = new HashMap<>();
+        try {
+            var stations = busStationService.getBusStationsByVersionId(versionId).getBusStations();
+            if (stations != null) {
+                for (var st : stations) {
+                    if (st.getId() != null && st.getLinkRef() != null) {
+                        stationIdToLinkId.put(st.getId(), String.valueOf(st.getLinkRef()));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[NextSimRunner] {} 정류장 조회 실패(station 속성 없이 진행): {}", versionId, e.getMessage());
+        }
+
+        StringBuilder sb = new StringBuilder("<Lines mode=\"Bus\">\n");
+        for (var line : lines.getLines()) {
+            String linkSeq = line.getLink() != null ? line.getLink().getSeq() : null;
+            if (linkSeq == null || linkSeq.isBlank()) continue; // 경로 없는 노선은 건너뜀
+
+            String[] linkIds = linkSeq.trim().split("\\s+");
+            String stationSeq = line.getStation() != null ? line.getStation().getSeq() : null;
+            Set<String> routeStationIds = (stationSeq == null || stationSeq.isBlank())
+                    ? Set.of() : Set.of(stationSeq.trim().split("\\s+"));
+
+            sb.append("    <Line id=\"").append(escapeXmlAttr(line.getId()))
+              .append("\" fee=\"0\" interval=\"").append(line.getInterval() != null ? line.getInterval() : 10)
+              .append("\">\n        <links>\n");
+            for (int i = 0; i < linkIds.length; i++) {
+                String linkId = linkIds[i];
+                String stationAttr = "";
+                for (String stId : routeStationIds) {
+                    if (linkId.equals(stationIdToLinkId.get(stId))) {
+                        stationAttr = " station=\"" + escapeXmlAttr(stId) + "\"";
+                        break;
+                    }
+                }
+                sb.append("            <link id=\"").append(escapeXmlAttr(linkId))
+                  .append("\" seq=\"").append(i).append('"')
+                  .append(stationAttr)
+                  .append(" use_ptlane=\"False\"/>\n");
+            }
+            sb.append("        </links>\n    </Line>\n");
+        }
+        sb.append("</Lines>");
+        return xml(sb.toString());
+    }
+
+    /**
+     * railPTline.xml을 "철도 노선" 편집 화면(RailPtLineController/RailPtLineXml.RouteXml —
+     * id/name/railStationSeq/fee/departureTime/timeOffsetSeq) 데이터로 생성한다. buildRoadPtLineXml과
+     * 동일한 "DB에서 직접 생성" 패턴.
+     *
+     * <p>실측 확인: NextSim 배포판이 기본 제공하던 "안전한 예시"(bucheon railPTline.xml)를
+     * 그대로 복사하던 기존 방식은 실제로는 안전하지 않았다 — 그 예시는 bucheon 자신의
+     * railStation.xml(정류장 40000001/2/3)에만 유효한 실제 지하철 노선 데이터를 담고 있어,
+     * 우리 쪽처럼 railStation.xml이 비어있는(정류장 0개) 네트워크에 그대로 꽂으면 존재하지 않는
+     * 역을 참조하는 노선이 되어버린다(이후 실행 이상 현상들의 잠재 원인 중 하나로 의심됨).
+     * 실제 철도 노선 데이터가 없으면 완전히 빈(0개 노선) stub을 대신 쓴다 — 실측으로 이 형태
+     * (제대로 된 root+Lines 요소, 내용만 빈) 자체는 안전함을 확인함(SIGSEGV 유발한 것으로
+     * 알려졌던 과거 시도는 root 요소 자체가 없거나 Lines 자식이 아예 없는 더 퇴화된 형태였던
+     * 것으로 추정).
+     */
+    private String buildRailPtLineXml(String versionId) {
+        com.iitp.iitp_rest.model.publicTransit.rail.RailPtLineXml lines;
+        try {
+            lines = railPtLineService.getByScenarioKey(versionId);
+        } catch (Exception e) {
+            return null; // railPTline.xml 없음/파싱 실패 — 노선 미정의로 보고 안전 스텁에 맡김
+        }
+        if (lines == null || lines.getRoutes() == null || lines.getRoutes().isEmpty()) return null;
+
+        StringBuilder sb = new StringBuilder("<Mode type=\"subway\">\n    <Lines>\n");
+        for (var route : lines.getRoutes()) {
+            String stationSeq = route.getRailStationSeq();
+            if (stationSeq == null || stationSeq.isBlank()) continue; // 역 시퀀스 없는 노선은 건너뜀
+
+            String[] stationIds = stationSeq.trim().split("\\s+");
+            String[] timeOffsets = (route.getTimeOffsetSeq() == null || route.getTimeOffsetSeq().isBlank())
+                    ? new String[0] : route.getTimeOffsetSeq().trim().split("\\s+");
+            String fee = (route.getFee() == null || route.getFee().isBlank()) ? "0" : route.getFee();
+            String departureTime = route.getDepartureTime() == null ? "" : route.getDepartureTime();
+
+            sb.append("        <Line id=\"").append(escapeXmlAttr(String.valueOf(route.getId())))
+              .append("\" fee=\"").append(escapeXmlAttr(fee))
+              .append("\" departureTime=\"").append(escapeXmlAttr(departureTime))
+              .append("\">\n");
+            for (int i = 0; i < stationIds.length; i++) {
+                String offset = i < timeOffsets.length ? timeOffsets[i] : "0";
+                sb.append("            <stationSeq id=\"").append(escapeXmlAttr(stationIds[i]))
+                  .append("\" seq=\"").append(i)
+                  .append("\" timeOffset=\"").append(escapeXmlAttr(offset))
+                  .append("\" />\n");
+            }
+            sb.append("        </Line>\n");
+        }
+        sb.append("    </Lines>\n</Mode>");
+        return xml(sb.toString());
     }
 
     private static String tail(String s, int max) {

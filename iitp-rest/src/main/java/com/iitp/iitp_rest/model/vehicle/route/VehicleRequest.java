@@ -3,6 +3,7 @@ package com.iitp.iitp_rest.model.vehicle.route;
 import com.iitp.iitp_rest.model.network.road.RoadResponse;
 import lombok.Data;
 
+import java.util.List;
 
 @Data
 public class VehicleRequest {
@@ -23,4 +24,7 @@ public class VehicleRequest {
     private Integer toTime;
     /** 시간창 양쪽 버퍼 초 (보간 연속성, 기본 60) */
     private Integer bufferSec;
+    /** 직전 viewport 응답에 포함됐던 veh_id 목록 — 창/bbox가 살짝 바뀌어도 이미 보이던 차량이
+     *  단순 순위 밖 밀림으로 사라지지 않도록 선별 시 우선순위를 준다(readVehicleEventsFiltered 참고) */
+    private List<String> stickyIds;
 }

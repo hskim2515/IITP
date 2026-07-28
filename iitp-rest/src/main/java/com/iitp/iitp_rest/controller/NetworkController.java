@@ -85,6 +85,7 @@ public class NetworkController {
     private final XmlLayerLogRepository xmlLayerLogRepository;
     private final VehicleRouteRepository vehicleRouteRepository;
     private final VehicleDataReader vehicleDataReader;
+    private final com.iitp.iitp_rest.service.network.OsmTrafficSignalRepository osmTrafficSignalRepository;
 
     /** DB 우선, 없으면 XML fallback → NetworkResponse 반환 */
     @GetMapping("/{versionId}")
@@ -148,6 +149,39 @@ public class NetworkController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (Exception e) {
             log.error("[NetworkController] 타일 조회 오류 versionId={}", versionId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * bbox 내 실제 OSM 신호등(highway=traffic_signals) 좌표 목록 — 프론트 더미 신호 생성
+     * (signal.ts)이 "여기 진짜 신호등이 있는가"를 확인하는 용도로 소비한다. 로컬 DB에
+     * 데이터가 아직 없으면(OsmTrafficSignalImporter 미실행) 빈 배열 — 호출부가 게이트를
+     * 건너뛰고 기존 동작(포트 기반 판정만)으로 폴백하도록.
+     *
+     * @param bbox "west,south,east,north" (WGS84 경위도) — /{versionId}/tiles 와 동일 규약
+     */
+    @GetMapping("/osm-traffic-signals")
+    public ResponseEntity<List<Map<String, Object>>> getOsmTrafficSignals(@RequestParam String bbox) {
+        try {
+            String[] p = bbox.split(",");
+            if (p.length != 4) return ResponseEntity.badRequest().build();
+            double west  = Double.parseDouble(p[0].trim());
+            double south = Double.parseDouble(p[1].trim());
+            double east  = Double.parseDouble(p[2].trim());
+            double north = Double.parseDouble(p[3].trim());
+
+            if (!osmTrafficSignalRepository.hasData()) return ResponseEntity.ok(List.of());
+
+            List<Map<String, Object>> result = osmTrafficSignalRepository.findInBbox(south, west, north, east)
+                    .stream()
+                    .map(s -> Map.<String, Object>of("id", s.id(), "lat", s.lat(), "lon", s.lon()))
+                    .toList();
+            return ResponseEntity.ok(result);
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().build();
+        } catch (Exception e) {
+            log.error("[NetworkController] OSM 신호등 조회 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

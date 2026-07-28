@@ -56,6 +56,13 @@ public class KtdbImportController {
     private final com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService xmlLayerVersionService;
     private final NextSimInputScaffolder nextSimScaffolder;
     private final com.iitp.iitp_rest.service.vehicle.DummySignalGenerator dummySignalGenerator;
+    // KTDB(표준노드링크)는 도로 geometry 전용이라 버스/철도 정류장·노선 데이터가 아예 없다 —
+    // OSM(Overpass)에서 같은 bbox로 시설물만 별도로 가져와 KTDB 도로망에 스냅한다(OSM/SUMO
+    // 임포트가 이미 쓰는 것과 동일한 OsmFacilityConverter — 링크 id 네임스페이스만 KTDB 것으로
+    // 스냅되므로 그대로 재사용 가능). 실측: 이게 없어서 "KTDB 임포트하면 버스/철도 데이터가
+    // 아예 안 생긴다"는 문제가 있었음.
+    private final com.iitp.iitp_rest.service.network.OsmOverpassService overpassService;
+    private final com.iitp.iitp_rest.service.network.OsmFacilityConverter facilityConverter;
 
     // ── 백그라운드 스캐폴딩(더미 신호/OD/TOD 생성 + 타일 빌드) 진행 상태 ────────────
     // KTDB 저장 응답은 이 백그라운드 작업(CompletableFuture.runAsync)을 기다리지 않고 먼저
@@ -185,12 +192,18 @@ public class KtdbImportController {
         if (isLarge) {
             // 대형 bbox 스트리밍 경로(KtdbStreamingConverter)는 타일 단위로 클러스터 상태를
             // 점증적으로 쌓는 구조라 나중에 링크 목록만 후필터링하면 소속/차수 정보가 어긋난다
-            // — 안전하게 지원하려면 타일 처리 로직 자체를 고쳐야 해서 이번 범위에서 제외했다.
-            if (polygon != null && !polygon.isBlank()) {
-                return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY).body(new OsmSaveResponse(null,
-                        List.of("영역이 너무 넓어 폴리곤/파일 경계를 적용할 수 없습니다. 더 작은 영역으로 다시 그려주세요.")));
-            }
-            return handleLargeBbox(south, west, north, east, networkId, versionId);
+            // — 안전하게 지원하려면 타일 처리 로직 자체를 고쳐야 해서 정밀 클리핑은 이번 범위에서
+            // 제외했다. ⚠️ 예전엔 여기서 422로 완전히 막았는데, KTDB 탭은 폴리곤 그리기/파일
+            // 업로드가 아니면 bbox를 아예 못 정하는 구조(남/서/북/동 입력이 readOnly)라 —
+            // "사각형으로 넓게 그려도 무조건 폴리곤이 잡혀 전송"되면서 넓은 지역 KTDB 임포트 자체가
+            // 완전히 막혀버리는 회귀였다(사용자 보고: "이전에는 더 넓게도 가져왔잖아"). 정밀 경계
+            // 클리핑 대신 폴리곤의 bbox(포함 사각형) 전체를 그대로 가져오고, 경계가 근사됐음을
+            // 경고로 알린다 — 예전에 "사각형 그리기"로 되던 동작과 동일한 결과.
+            List<String> extraWarnings = (polygon != null && !polygon.isBlank())
+                    ? List.of("영역이 너무 넓어(약 33km² 초과) 그리신 경계의 정확한 모양은 적용되지 않고, "
+                            + "경계를 포함하는 사각형(bbox) 전체를 가져왔습니다.")
+                    : List.of();
+            return handleLargeBbox(south, west, north, east, networkId, versionId, extraWarnings);
         }
 
         try {
@@ -220,6 +233,22 @@ public class KtdbImportController {
             NetworkResponse networkResponse = networkMapper.toResponse(networkXml);
             log.info("KTDB 완료: 노드 {}개, 링크 {}개",
                     networkResponse.getNodes().size(), networkResponse.getLinks().size());
+
+            // 버스/철도 정류장·노선 — OSM에서 같은 bbox로 조회해 방금 만든 KTDB 도로망에 스냅
+            // (실패해도 네트워크 임포트 자체는 계속 성공해야 하므로 별도로 감싼다)
+            com.iitp.iitp_rest.service.network.OsmFacilityConverter.FacilityResult fac = null;
+            try {
+                var facilityRaw = overpassService.queryFacilities(south, west, north, east);
+                fac = facilityConverter.convert(facilityRaw, networkXml, ctx.originLat(), ctx.originLon(),
+                        new double[]{south, west, north, east});
+                log.info("KTDB 시설물(OSM 스냅): 버스정류장 {}개, 철도역 {}개, 버스노선 {}개, 철도노선 {}개",
+                        fac.busStations() != null ? fac.busStations().getBusStations().size() : 0,
+                        fac.railStations() != null ? fac.railStations().getRailStations().size() : 0,
+                        fac.busRoutes() != null ? ((List<?>) fac.busRoutes().get("lines")).size() : 0,
+                        fac.railRoutes() != null ? ((List<?>) fac.railRoutes().get("routes")).size() : 0);
+            } catch (Exception e) {
+                log.warn("[KTDB] OSM 시설물 조회/변환 실패(무시 — 네트워크 임포트는 계속 진행): {}", e.getMessage());
+            }
 
             // 타일 SQLite DB 백그라운드 선빌드 → 첫 타일 요청 즉시 응답 가능
             // + NextSim 필수 입력 정비 — 없으면 생성, 재임포트로 id 가 바뀌어 낡았으면 재생성
@@ -282,7 +311,12 @@ public class KtdbImportController {
             }
 
             return ResponseEntity.ok(new OsmSaveResponse(
-                    networkResponse, validation.warnings(), List.of(), List.of(), null, null, null, null, false));
+                    networkResponse, validation.warnings(), List.of(), List.of(),
+                    fac != null ? fac.busStations() : null,
+                    fac != null ? fac.railStations() : null,
+                    fac != null ? fac.busRoutes() : null,
+                    fac != null ? fac.railRoutes() : null,
+                    false));
 
         } catch (IllegalArgumentException e) {
             log.warn("KTDB Save 파라미터 오류: {}", e.getMessage());
@@ -297,7 +331,7 @@ public class KtdbImportController {
 
     private ResponseEntity<OsmSaveResponse> handleLargeBbox(
             double south, double west, double north, double east,
-            int networkId, String versionId) {
+            int networkId, String versionId, List<String> extraWarnings) {
         log.info("KTDB 스트리밍 모드 (대형 bbox)");
         try {
             double originLat = (south + north) / 2.0;
@@ -388,8 +422,10 @@ public class KtdbImportController {
                 });
             }
 
+            List<String> combinedWarnings = new java.util.ArrayList<>(extraWarnings);
+            combinedWarnings.addAll(sr.warnings());
             return ResponseEntity.ok(new OsmSaveResponse(
-                    simplified, sr.warnings(), List.of(), List.of(), null, null, null, null, true));
+                    simplified, combinedWarnings, List.of(), List.of(), null, null, null, null, true));
 
         } catch (IllegalArgumentException e) {
             log.warn("KTDB 스트리밍 파라미터 오류: {}", e.getMessage());

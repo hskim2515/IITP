@@ -41,7 +41,7 @@ const PLACEMENT_LABELS: Partial<Record<string, PlacementMode>> = {
 const DUMMY_GENERATORS: Partial<Record<string, () => Promise<any>>> = {
     signal: async () => {
         const network = await getNetworkForDummyGeneration();
-        const signals = generateDummySignals(network);
+        const signals = await generateDummySignals(network);
         return signals.length > 0 ? { signals } : null;
     },
     pavementMarking: async () => {

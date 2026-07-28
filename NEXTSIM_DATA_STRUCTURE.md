@@ -674,6 +674,17 @@ AutonomousBus
 TRT
 ```
 
+> ⚠️ **실측 확인된 전역 회귀 (2026-07-27)**: `NextSimRunner.buildVehicleTypesXml()`가 "교통수단
+> 유형" 편집 화면의 한글 이름(예: "택시", "버스")을 `name` 속성에 그대로 썼었다. NextSim 엔진은
+> "Initializing NB/AB/TRT" 단계에서 vehtype 목록을 위 6개 **정식 카테고리 이름**으로 조회하는데,
+> 이름이 일치하지 않으면 에러 없이 "Complete: Initializing Public Transit" 직후 출력 없이 CPU
+> 100%로 무한 행(hang)한다 — 버스/철도 작업과 무관하게 이번 세션의 **모든** 시나리오에서
+> 재현된 전역 회귀였다(예: scenario1_1 — 이 세션에서 전혀 건드리지 않은 시나리오도 포함).
+> `veh_width` 속성 누락도 배포판 예시와의 또 다른 차이점이었다. `vehicle_type.nextsim_type_code`
+> (NV/AV/NB/AB/TRK/TR/TRUCK)로 6개 정식 카테고리에 매핑하고, 매핑 없는 카테고리는 배포판
+> 기본값을 채우도록 수정 완료 — `NextSimRunner.java`의 `REQUIRED_VEHTYPE_NAMES`/
+> `CODE_TO_CANONICAL_NAME`/`DEFAULT_VEHTYPE_BODY` 참고.
+
 예시:
 
 ```xml
@@ -901,6 +912,26 @@ Route[]
 
 선택  
 버스 사용 시 필요
+
+> ⚠️ **실측 확인된 NextSim 바이너리 결함/제약 (2026-07-27, scenario3_1)**: 실제 버스 노선(1개
+> 노선, 정류장 2개)을 넣고 실행하면 위상(토폴로지)에 따라 아래 문제가 재현된다. 우리 쪽 XML
+> 변환/스테이징 코드 문제가 아니라 NextSim 자체(`route-generator`/`nextsim` 바이너리, 소스
+> 미접근)의 결함으로 판단됨.
+> 1. 노선의 시작/끝 링크가 실제 네트워크 **터미널 노드**가 아니면 `route-generator`가
+>    `PT Route Generation Start` 단계에서 `std::out_of_range: _Map_base::at`로 크래시.
+> 2. 터미널↔터미널 노선(짧은 4링크·긴 6링크 둘 다)이라도 `nextsim`이 시뮬레이션 사이클을
+>    시작하기 직전(Recording & Routes 초기화 직후) `vector::_M_range_check`로 크래시.
+>
+> **주의 — 최초 조사 당시엔 별개 오류로 보였던 세 번째 증상(6링크일 때 크래시 대신 CPU 100%
+> 무한 행)은 사실 [`vehicletypes.xml` 회귀 버그](#vehicletypes-xml)의 증상이었다.** 그 버그를
+> 고친 뒤 동일 6링크 구성을 재실행하면 행 없이 훨씬 더 진행되어(Public Transit → Vehicle
+> Demand → Passenger Demand → Events → Recordings까지) 2번 증상과 동일한 지점에서 크래시한다
+> — 즉 실제 남은 버스 노선 결함은 위 두 가지뿐이며, 그마저도 원래 알려진 것보다 범위가 좁을
+> 수 있다(재조사 필요). fee/interval/use_ptlane 값, station 유무·위치, garage 노드 회피 여부는
+> 결과에 영향 없음.
+>
+> 버스 파이프라인의 나머지(SFTP 동기화·경로 캐시·PaxRoute.json 처리)는 모두 정상 동작 확인됨
+> (`NextSimRunner.java`, `BusPtLineController`/`BusStationService`).
 
 역할: 버스 노선을 정의한다.
 

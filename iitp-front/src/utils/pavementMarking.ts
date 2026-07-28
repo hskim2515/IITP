@@ -24,9 +24,16 @@ export const generateDummyPavementMarkings = (network: any): any[] => {
         // 그 결과 직접 그린/편집한 교차로는 노면표시가 하나도 안 생기는 버그가 있었다.
         // 대신 useNetworkDraw.ts의 autoGenerateAllIntersections와 동일한 포트 기반 판정 사용
         // (진입/진출 포트가 모두 있으면 실제 교차로).
+        //
+        // ⚠️ 후속 버그(실측: 위성영상 대조): 위 판정이 KTDB의 순수 통과점(type=normal, 1진입+
+        // 1진출 — KtdbNetworkConverter.classifyNodeType 기준 명시적으로 "교차로 아님")까지
+        // 통과시켜, 실제로는 분기 없는 도로 중간 지점에 노면표시가 생성됐다. 진짜 분기(선택
+        // 지점)가 있으려면 1진입+1진출 단독 조합은 제외해야 한다 — Merging(2+in/1out)·
+        // Diverging(1in/2+out)·Intersection(2+in/2+out)만 통과.
         const inCount = node.ports?.filter((p: any) => p.type === 'in').length ?? 0;
         const outCount = node.ports?.filter((p: any) => p.type === 'out').length ?? 0;
         if (inCount < 1 || outCount < 1) continue;
+        if (inCount === 1 && outCount === 1) continue;
         const conns = node.connections ?? [];
         if (conns.length === 0) continue;
 

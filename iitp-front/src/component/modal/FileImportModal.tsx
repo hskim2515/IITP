@@ -20,9 +20,9 @@ import { useNetworkTileStore } from '@stores/useNetworkTileStore';
 import { useMapStore } from '@stores/useMapStore';
 import { showConfirm } from '@utils/dialog';
 import { NETWORK_TILING } from '@utils/lodConstants';
-import { useOnboardingStore } from '@stores/useOnboardingStore';
 import { generateDummySignals } from '@utils/signal';
 import { pollKtdbScaffoldStatus } from '@utils/ktdbScaffold';
+import { runAutoDummyGeneration } from '@utils/dummyGeneration';
 import { parseBoundaryFile } from '@utils/boundaryFile';
 import { useVehicleStore } from '@stores/useVehicleStore';
 import { useSimulationStore } from '@stores/useSimulationStore';
@@ -238,7 +238,7 @@ function injectAll(data: any) {
 // ── 메인 컴포넌트 ─────────────────────────────────────────────────────────────
 const FileImportModal: React.FC<Props> = ({ onClose }) => {
     const [tab, setTab] = useState<Tab>('file');
-    const { selecting, setSelecting } = useOsmBboxStore();
+    const { selecting, setSelecting, selectingPolygon, setSelectingPolygon } = useOsmBboxStore();
     // 기준점 재설정 탭에서 "지도에서 선택" 클릭 시 true — BboxTab의 selecting과 동일하게
     // 풀스크린 오버레이를 잠깐 걷어내 지도 클릭이 오버레이가 아니라 지도(useCoordPick)로
     // 전달되게 한다 (선택 후 콜백에서 다시 false로 돌아옴).
@@ -258,13 +258,14 @@ const FileImportModal: React.FC<Props> = ({ onClose }) => {
         const h = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 if (selecting) setSelecting(false);
+                else if (selectingPolygon) setSelectingPolygon(false);
                 else if (pickingReanchor) { useMapStore.getState().cancelCoordPick(); setPickingReanchor(false); }
                 else onClose();
             }
         };
         document.addEventListener('keydown', h);
         return () => document.removeEventListener('keydown', h);
-    }, [onClose, selecting, setSelecting, pickingReanchor]);
+    }, [onClose, selecting, setSelecting, selectingPolygon, setSelectingPolygon, pickingReanchor]);
 
     // 지도 영역 선택 중: overlay 없이 배너만
     if (selecting) {
@@ -272,6 +273,18 @@ const FileImportModal: React.FC<Props> = ({ onClose }) => {
             <div style={selectingBannerStyle}>
                 <span style={{ fontSize: 13, color: '#e0e0e0' }}>Shift + 드래그로 영역을 선택하세요 (일반 드래그: 지도 이동)</span>
                 <button style={cancelSelectBtnStyle} onClick={() => setSelecting(false)}>취소</button>
+            </div>,
+            document.body
+        );
+    }
+    // KTDB 폴리곤 그리기 중: 위와 동일한 이유로 overlay 를 걷어내야 한다 — 안 그러면
+    // 모달의 풀스크린 overlay(onClick=onClose)가 지도 클릭을 가로채 useKtdbPolygonDraw 의
+    // OL Draw 인터랙션에 클릭이 전혀 전달되지 않는다("버튼 눌러도 그려지지 않음", 사용자 보고).
+    if (selectingPolygon) {
+        return createPortal(
+            <div style={selectingBannerStyle}>
+                <span style={{ fontSize: 13, color: '#e0e0e0' }}>지도를 클릭해 폴리곤 꼭짓점을 추가하고, 더블클릭으로 완성하세요</span>
+                <button style={cancelSelectBtnStyle} onClick={() => setSelectingPolygon(false)}>취소</button>
             </div>,
             document.body
         );
@@ -381,8 +394,8 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     }
                 }
                 if (versionKey) await autoSaveChangedLayers(versionKey);
-                // 신호 데이터도 함께 임포트됐으면 더미 생성 팝업 불필요
-                if (networkLoaded && !signalLoaded) useOnboardingStore.getState().setStep('need-dummy');
+                // 신호 데이터도 함께 임포트됐으면 자동 생성 불필요 — 없으면 조용히 자동 생성
+                if (networkLoaded && !signalLoaded) void runAutoDummyGeneration();
                 setStatus(s => s ? { ...s, text: s.text.replace(' — 저장 중...', ' — 서버 저장 완료') } : null);
             } catch { setStatus({ type: 'error', text: 'JSON 파싱 오류' }); }
         };
@@ -518,7 +531,7 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             if (results.some(r => r.status === 'ok')) {
                 setZipProgress('저장 중...');
                 await autoSaveChangedLayers(versionId);
-                if (networkLoaded && !signalLoaded) useOnboardingStore.getState().setStep('need-dummy');
+                if (networkLoaded && !signalLoaded) void runAutoDummyGeneration();
             }
             setZipResults(results);
         } catch (e) {
@@ -602,7 +615,7 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             if (versionId) await autoSaveChangedLayers(versionId);
             if (xmlImport.selectedKey === 'network') {
                 refreshNetworkTiles(); // 타일 모드: 2D/3D 타일 캐시 무효화 (없으면 이전 네트워크 잔존)
-                useOnboardingStore.getState().setStep('need-dummy');
+                void runAutoDummyGeneration(); // network XML만 가져온 경우 — 신호는 없으므로 자동 생성
             }
             setStatus({ type: 'ok', text: `${cfg.label} XML 가져오기 완료` });
             setXmlImport(null);
@@ -988,8 +1001,16 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
         setEast(bbox.east.toFixed(6));
     }, [bbox]);
 
-    // KTDB 탭을 벗어나거나 언마운트될 때 다음 진입에 이전 폴리곤이 남아있지 않도록 정리
-    useEffect(() => () => { if (isKtdb) setPolygons(null); }, [isKtdb, setPolygons]);
+    // KTDB 탭을 벗어나거나 모달이 닫힐 때 다음 진입에 이전 폴리곤이 남아있지 않도록 정리.
+    // ⚠️ "폴리곤 그리기" 버튼을 누르면 selectingPolygon=true 가 되어 부모(FileImportModal)가
+    // 이 탭을 배너로 잠깐 대체하며 BboxTab 도 그 순간 언마운트된다 — 그때도 이 cleanup이
+    // 걸려 setPolygons(null)이 selectingPolygon 까지 도로 false 로 되돌려버려서 배너가 뜨는
+    // 순간도 없이 원래 모달로 곧장 복귀하는 버그가 있었다(사용자 실측: "아무 일도 발생하지
+    // 않음"). 그리기를 "막 시작"해서 언마운트되는 경우(selectingPolygon 이 이미 true)는 여기서
+    // 지우면 안 되고, 실제로 탭/모달을 떠나는 경우(selectingPolygon 이 false)에만 지운다.
+    useEffect(() => () => {
+        if (isKtdb && !useOsmBboxStore.getState().selectingPolygon) setPolygons(null);
+    }, [isKtdb, setPolygons]);
 
     const handleBoundaryFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
@@ -1075,7 +1096,7 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
             // (실측: 재임포트할 때마다 신호 TOD 커버리지가 계속 깨짐). 진짜 데이터는
             // pollKtdbScaffoldStatus 완료 시 refetchSignalAndTod가 서버에서 다시 받아와 교체한다.
             if (type === 'ktdb') {
-                const signals = generateDummySignals(pendingData);
+                const signals = await generateDummySignals(pendingData);
                 if (signals.length > 0) {
                     const signalData = { signals };
                     assignPropertyToResponseData(signalData);
@@ -1105,7 +1126,10 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
             setReflecting(false);
         }
 
-        useOnboardingStore.getState().setStep('need-dummy');
+        // KTDB는 백엔드가 이 가져오기와 별개로 신호/OD/TOD를 이미 자동 스캐폴딩 중이라(위
+        // pollKtdbScaffoldStatus) 여기서 또 만들 필요가 없다 — OSM은 그런 백엔드 스캐폴딩이
+        // 없으므로 여기서 직접 자동 생성한다.
+        if (type === 'osm') void runAutoDummyGeneration();
         setBbox(null);
         if (isKtdb) setPolygons(null);
         onClose();

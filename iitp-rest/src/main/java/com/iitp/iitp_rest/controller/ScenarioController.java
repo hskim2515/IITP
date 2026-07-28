@@ -54,6 +54,17 @@ public class ScenarioController {
         }
     }
 
+    /** 버전은 유지하고 그 버전에 딸린 모든 데이터(네트워크/신호/OD/승객/차량시뮬 등)만 비운다. */
+    @PostMapping("/version/{versionKey}/reset")
+    public ResponseEntity<Void> resetVersionData(@PathVariable String versionKey) {
+        try {
+            scenarioService.resetVersionData(versionKey);
+            return ResponseEntity.noContent().build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @GetMapping("/check-key")
     public ResponseEntity<Boolean> checkKey(@RequestParam String key) {
         return ResponseEntity.ok(scenarioService.existsByKey(key));

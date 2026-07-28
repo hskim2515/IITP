@@ -13,9 +13,12 @@ interface VehicleState {
     /** viewport 내 차량이 상한(3천대) 초과 — 개별 차량 대신 집계 히트맵 가시화로 전환 */
     denseViewport: boolean,
     setDenseViewport: (v: boolean) => void;
-    /** viewport 스트리밍 차량 수 표시 (지도 배지): shown=표시 중, total=창 내 전체. null=비스트리밍 */
-    viewportVehicleInfo: { shown: number; total: number; dense: boolean } | null,
-    setViewportVehicleInfo: (info: { shown: number; total: number; dense: boolean } | null) => void;
+    /** viewport 스트리밍 차량 수 표시 (지도 배지): shown=표시 중, total=프리페치 시간창(최대
+     *  300초) 내 통행 누적 총수(=화면에 지금 보이는 수가 아님, CZML 예산 판단용),
+     *  activeNow=atTime ±3초의 실제 "지금 이 순간" 차량 수(표시 전용, 별도 가벼운 폴링으로
+     *  갱신 — total과 갱신 주기가 다르므로 첫 viewport 응답 전까지는 undefined). null=비스트리밍 */
+    viewportVehicleInfo: { shown: number; total: number; dense: boolean; activeNow?: number } | null,
+    setViewportVehicleInfo: (info: { shown: number; total: number; dense: boolean; activeNow?: number } | null) => void;
     setNumVehicle: (num: number) => void;
     setActiveVehicleCount: (count: number) => void;
     setSpeedFactor: (speed: number) => void;

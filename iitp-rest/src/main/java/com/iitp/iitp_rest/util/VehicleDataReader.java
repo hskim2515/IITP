@@ -144,7 +144,7 @@ public class VehicleDataReader {
                 String inClause = String.join(",", Collections.nCopies(limitedIds.size(), "?"));
 
                 String dataQuery = isNewSchema
-                        ? "SELECT veh_id, timestep, link_id, lane_id, pos_x, pos_y FROM vehicle_sim_db.VehicleEvent WHERE veh_id IN (" + inClause + ") ORDER BY veh_id, timestep"
+                        ? "SELECT veh_id, timestep, link_id, lane_id, pos_x, pos_y, mode FROM vehicle_sim_db.VehicleEvent WHERE veh_id IN (" + inClause + ") ORDER BY veh_id, timestep"
                         : "SELECT veh_id, type, timestep, link_id, lane_id, pos_x, pos_y, spd, acc, spacing, mode, leader_id, target_lane_id FROM vehicle_sim_db.VehicleEventDebugging WHERE veh_id IN (" + inClause + ")";
 
                 try (PreparedStatement pstmt = conn.prepareStatement(dataQuery)) {
@@ -161,12 +161,12 @@ public class VehicleDataReader {
                             v.setLaneId(rs.getString("lane_id"));
                             v.setPosX(rs.getFloat("pos_x"));
                             v.setPosY(rs.getFloat("pos_y"));
+                            v.setDriveMode(rs.getString("mode"));
                             if (!isNewSchema) {
                                 v.setType(rs.getString("type"));
                                 v.setSpeed(rs.getFloat("spd"));
                                 v.setAcc(rs.getFloat("acc"));
                                 v.setSpacing(rs.getString("spacing"));
-                                v.setDriveMode(rs.getString("mode"));
                                 v.setLeaderId(rs.getString("leader_id"));
                                 v.setTargetlaneId(rs.getString("target_lane_id"));
                             }
@@ -200,6 +200,20 @@ public class VehicleDataReader {
      */
     public FilteredVehicleEvents readVehicleEventsFiltered(String versionId, List<String> linkIds,
                                                            double fromTime, double toTime, int maxVehicles) {
+        return readVehicleEventsFiltered(versionId, linkIds, fromTime, toTime, maxVehicles, null);
+    }
+
+    /**
+     * @param stickyIds 직전 응답에 포함됐던 veh_id — 선별 시 최우선순위를 준다. 재생 시간창이
+     *                  슬라이드하면서 창 내 체류 이벤트 수(cnt) 순위가 흔들려, sticky 가드가
+     *                  없으면 방금 화면에 보이던 차량이 다음 fetch에서 등수 밖으로 밀려 응답에서
+     *                  통째로 빠졌다 몇 창 뒤 재등장하는 "깜빡임"이 발생했다(실사용 보고). sticky
+     *                  차량도 all_sel의 JOIN 조건(창 내 이벤트 1건 이상)을 통과 못 하면 자동으로
+     *                  후보에서 빠지므로 — 화면을 완전히 벗어난 차량까지 억지로 붙잡진 않는다.
+     */
+    public FilteredVehicleEvents readVehicleEventsFiltered(String versionId, List<String> linkIds,
+                                                           double fromTime, double toTime, int maxVehicles,
+                                                           Set<String> stickyIds) {
         List<VehicleEvent> out = new ArrayList<>();
         int total = 0;
         if (linkIds == null || linkIds.isEmpty()) return new FilteredVehicleEvents(out, 0);
@@ -222,23 +236,39 @@ public class VehicleDataReader {
                     ps.executeBatch();
                 }
 
+                // 1b) sticky(직전 응답) veh_id temp table — 없으면 빈 테이블(전부 is_sticky=0)
+                stmt.execute("CREATE TEMP TABLE sticky_ids (id TEXT PRIMARY KEY)");
+                if (stickyIds != null && !stickyIds.isEmpty()) {
+                    try (PreparedStatement ps = conn.prepareStatement("INSERT OR IGNORE INTO sticky_ids(id) VALUES (?)")) {
+                        for (String id : stickyIds) { ps.setString(1, id); ps.addBatch(); }
+                        ps.executeBatch();
+                    }
+                }
+
                 // 2) 시간창 내 bbox 링크를 지난 차량 전체 집합 (1회 스캔 → 전체 수 + 상한 선별에 재사용).
-                //    상한 초과 시 우선순위 = viewport 체류시간(창 내 bbox 링크 이벤트 수) 내림차순
-                //    → 밀집 지역에서 화면을 스쳐가는 차보다 오래 보이는 차를 우선 표시.
-                //    veh_id 2차 정렬로 결정적(deterministic) → 창 갱신 간 선별 집합이 안정적.
+                //    상한 초과 시 우선순위 = ①sticky(직전 응답에 있었음) 여부 → ②viewport 체류시간
+                //    (창 내 bbox 링크 이벤트 수) 내림차순 → 밀집 지역에서 화면을 스쳐가는 차보다
+                //    오래 보이는 차를 우선 표시. veh_id 3차 정렬로 결정적(deterministic).
                 stmt.execute("CREATE TEMP TABLE all_sel AS " +
-                        "SELECT e.veh_id AS id, COUNT(*) AS cnt FROM vehicle_sim_db." + tableName + " e " +
-                        "JOIN bbox_links b ON e.link_id = b.id WHERE 1=1" + timeFilter +
+                        "SELECT e.veh_id AS id, COUNT(*) AS cnt, " +
+                        "MAX(CASE WHEN st.id IS NOT NULL THEN 1 ELSE 0 END) AS is_sticky " +
+                        "FROM vehicle_sim_db." + tableName + " e " +
+                        "JOIN bbox_links b ON e.link_id = b.id " +
+                        "LEFT JOIN sticky_ids st ON st.id = e.veh_id " +
+                        "WHERE 1=1" + timeFilter +
                         " GROUP BY e.veh_id");
                 try (ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM all_sel")) {
                     if (rs.next()) total = rs.getInt(1);
                 }
                 String limitClause = maxVehicles > 0 ? " LIMIT " + maxVehicles : "";
                 stmt.execute("CREATE TEMP TABLE sel_vehicles AS " +
-                        "SELECT id FROM all_sel ORDER BY cnt DESC, id" + limitClause);
+                        "SELECT id FROM all_sel ORDER BY is_sticky DESC, cnt DESC, id" + limitClause);
 
                 // 3) 선별 차량의 시간창 내 전체 이벤트 (링크 무관)
-                String dataSql = "SELECT e.veh_id, e.timestep, e.link_id, e.lane_id, e.pos_x, e.pos_y " +
+                // mode(=driveMode)는 정체 구간(큐 모델, "None") 판별용 — buildVehiclePackets의
+                // filterQueueJitter가 이 값으로 차선 왕복 튐 구간을 잡아낸다. 신형/구형 스키마
+                // 모두 mode 컬럼 보유.
+                String dataSql = "SELECT e.veh_id, e.timestep, e.link_id, e.lane_id, e.pos_x, e.pos_y, e.mode " +
                         "FROM vehicle_sim_db." + tableName + " e JOIN sel_vehicles s ON e.veh_id = s.id " +
                         "WHERE 1=1" + timeFilter + " ORDER BY e.veh_id, e.timestep";
                 try (ResultSet rs = stmt.executeQuery(dataSql)) {
@@ -250,6 +280,7 @@ public class VehicleDataReader {
                         v.setLaneId(rs.getString("lane_id"));
                         v.setPosX(rs.getFloat("pos_x"));
                         v.setPosY(rs.getFloat("pos_y"));
+                        v.setDriveMode(rs.getString("mode"));
                         out.add(v);
                     }
                 }
@@ -258,6 +289,47 @@ public class VehicleDataReader {
             logger.error("[readVehicleEventsFiltered] 필터 조회 실패 versionId={}", versionId, e);
         }
         return new FilteredVehicleEvents(out, total);
+    }
+
+    /**
+     * bbox 링크 위에 특정 시각(atTime) 근방(±halfWindowSec)에 존재하는 서로 다른 차량 수만
+     * 카운트 — readVehicleEventsFiltered/readLinkTraffic이 쓰는 넓은 프리페치/집계 시간창
+     * (최대 300초/±60초)과는 목적이 다르다. 그 창들은 "CZML을 얼마나 미리 만들어둘지"나
+     * "히트맵 밀도"를 위한 것이라 window 안에서 스쳐 지나가기만 한 차량도 전부 잡히는데,
+     * 그 총합을 사용자에게 "차량 N대"로 그대로 보여주면 화면에 차량이 안 보이는데도 큰
+     * 숫자가 뜨는 것처럼 오해를 산다(실측 보고: "차량이 한 대도 없는데 523대 표시"). 이
+     * 메서드는 오직 "지금 이 순간" 표시용 — 이벤트 목록을 만들지 않고 COUNT(DISTINCT)만
+     * 구해 가볍다. halfWindowSec은 더미/NextSim 출력의 timestep 간격(보통 1초)보다 조금
+     * 넉넉하게 잡아 정확히 그 순간 레코드가 없어도(클록 반올림 등) 놓치지 않게 한다.
+     */
+    public int countActiveVehicles(String versionId, List<String> linkIds, double atTime, double halfWindowSec) {
+        if (linkIds == null || linkIds.isEmpty()) return 0;
+        try {
+            File dbFile = prepareDbFileCached(versionId);
+            try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:");
+                 Statement stmt = conn.createStatement()) {
+                stmt.execute("ATTACH DATABASE '" + dbFile.getAbsolutePath() + "' AS vehicle_sim_db");
+                boolean isNewSchema = tableExists(conn, "vehicle_sim_db", "VehicleEvent");
+                String tableName = isNewSchema ? "VehicleEvent" : "VehicleEventDebugging";
+
+                stmt.execute("CREATE TEMP TABLE bbox_links (id TEXT PRIMARY KEY)");
+                try (PreparedStatement ps = conn.prepareStatement("INSERT OR IGNORE INTO bbox_links(id) VALUES (?)")) {
+                    for (String id : linkIds) { ps.setString(1, id); ps.addBatch(); }
+                    ps.executeBatch();
+                }
+                double from = Math.max(0, atTime - halfWindowSec);
+                double to = atTime + halfWindowSec;
+                try (ResultSet rs = stmt.executeQuery(
+                        "SELECT COUNT(DISTINCT e.veh_id) FROM vehicle_sim_db." + tableName + " e " +
+                        "JOIN bbox_links b ON e.link_id = b.id " +
+                        "WHERE e.timestep >= " + from + " AND e.timestep < " + to)) {
+                    if (rs.next()) return rs.getInt(1);
+                }
+            }
+        } catch (SQLException | IOException e) {
+            logger.error("[countActiveVehicles] 조회 실패 versionId={}", versionId, e);
+        }
+        return 0;
     }
 
     /** 이벤트 총 건수 (DB 없으면 0). 대용량 전체-로드 가드/largeMode 판단용 */
@@ -378,6 +450,20 @@ public class VehicleDataReader {
 
                 String inClause = String.join(",", Collections.nCopies(linkIds.size(), "?"));
                 boolean useTimeWindow = !(fromTime == 0 && toTime == 0);
+                if (!useTimeWindow) {
+                    // "전체 시간" 요청 — V/C ratio 계산(volume을 시간당으로 환산)에 실제 관측
+                    // 구간이 필요해, 여기서 채운 뒤 응답에 그대로 실어 보낸다(요청 파라미터
+                    // echo가 아니라 실측값). 명시적 window 요청은 기존처럼 그대로 echo.
+                    try (PreparedStatement rangePs = conn.prepareStatement(
+                            "SELECT MIN(timestep) AS lo, MAX(timestep) AS hi FROM vehicle_sim_db." + tableName)) {
+                        try (ResultSet rangeRs = rangePs.executeQuery()) {
+                            if (rangeRs.next()) {
+                                out.setFromTime((int) rangeRs.getDouble("lo"));
+                                out.setToTime((int) rangeRs.getDouble("hi"));
+                            }
+                        }
+                    }
+                }
                 String timeFilter = useTimeWindow ? " AND timestep >= ? AND timestep < ? " : " ";
                 String speedExpr = hasSpd ? "ROUND(AVG(spd) * 3.6, 2)" : "0.0";
                 String sql = "SELECT link_id, COUNT(DISTINCT veh_id) AS volume, " + speedExpr + " AS avg_speed "
@@ -398,6 +484,63 @@ public class VehicleDataReader {
             }
         } catch (Exception e) {
             logger.error("[readLinkTraffic] 집계 실패 versionId={}", versionId, e);
+        }
+        return out;
+    }
+
+    public record VehicleLinkPair(String vehId, String linkId) {}
+
+    /**
+     * 차량별 "지금 이 순간의 링크" 1개(veh_id당 정확히 한 행) — atTime ± halfWindowSec 안에서
+     * atTime에 가장 가까운 이벤트의 link_id. 지역(시도/시군구/읍면동) 교통량을 시간창 누적/체류
+     * 다수결이 아니라 **실시간 위치**로 집계해야 한다는 지적("실시간으로 변화하는 위치를 반영
+     * 못 시키는 문제") — 이전 두 버전(distinct 다중배정 → 체류시간 다수결)은 전부 "한동안의
+     * 집계"였지 "지금 어디 있는가"가 아니었다. countActiveVehicles와 동일한 atTime/halfWindowSec
+     * 관례(±3초 등 짧게)를 그대로 따른다. 지역 집계 시 이 대표 링크 하나로만 배정하므로
+     * "지역별 합계 = 전체 차량 수" 분할(partition)도 자동으로 유지된다.
+     */
+    public List<VehicleLinkPair> readVehicleCurrentLink(String versionId, List<String> linkIds,
+                                                          double atTime, double halfWindowSec) {
+        List<VehicleLinkPair> out = new ArrayList<>();
+        if (linkIds == null || linkIds.isEmpty()) return out;
+
+        try {
+            File tempDbFile = prepareDbFileCached(versionId);
+            try (Connection conn = DriverManager.getConnection("jdbc:sqlite::memory:");
+                 Statement stmt = conn.createStatement()) {
+                stmt.execute("ATTACH DATABASE '" + tempDbFile.getAbsolutePath() + "' AS vehicle_sim_db");
+
+                boolean hasEvent = tableExists(conn, "vehicle_sim_db", "VehicleEvent");
+                boolean hasDebugging = !hasEvent && tableExists(conn, "vehicle_sim_db", "VehicleEventDebugging");
+                if (!hasEvent && !hasDebugging) return out;
+                String tableName = hasEvent ? "VehicleEvent" : "VehicleEventDebugging";
+
+                String inClause = String.join(",", Collections.nCopies(linkIds.size(), "?"));
+                double from = Math.max(0, atTime - halfWindowSec);
+                double to = atTime + halfWindowSec;
+                String sql =
+                        "SELECT veh_id, link_id FROM (" +
+                        "  SELECT veh_id, link_id, " +
+                        "         ROW_NUMBER() OVER (PARTITION BY veh_id ORDER BY ABS(timestep - ?) ASC) AS rn " +
+                        "  FROM vehicle_sim_db." + tableName +
+                        "  WHERE link_id IN (" + inClause + ") AND timestep >= ? AND timestep < ?" +
+                        ") WHERE rn = 1";
+
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    int idx = 1;
+                    ps.setDouble(idx++, atTime);
+                    for (String id : linkIds) ps.setString(idx++, id);
+                    ps.setDouble(idx++, from);
+                    ps.setDouble(idx++, to);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            out.add(new VehicleLinkPair(rs.getString("veh_id"), rs.getString("link_id")));
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error("[readVehicleCurrentLink] 조회 실패 versionId={}", versionId, e);
         }
         return out;
     }

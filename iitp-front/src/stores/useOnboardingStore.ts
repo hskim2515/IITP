@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 
-type OnboardingStep = 'idle' | 'need-network' | 'need-dummy' | 'need-simulation';
+// 'need-dummy'(신호+노면표시 더미 생성 요구) 단계는 제거됨 — 이제 필요할 때
+// utils/dummyGeneration.runAutoDummyGeneration() 이 자동으로 생성한다.
+type OnboardingStep = 'idle' | 'need-network' | 'need-simulation';
 
 interface OnboardingState {
     step: OnboardingStep;

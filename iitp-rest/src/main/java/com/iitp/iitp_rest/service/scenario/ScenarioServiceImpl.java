@@ -186,6 +186,25 @@ public class ScenarioServiceImpl implements ScenarioService {
     }
 
     @Override
+    public void resetVersionData(String versionKey) {
+        // deleteVersion과 달리 ScenarioVersion 행 자체(id/key/label/scenario 연관관계)는 지우지
+        // 않는다. 다만 좌표/회전/축척 캘리브레이션(latitude/longitude/baseRotation/baseScale)은
+        // 그 값이 바로 이 network.xml에 대해 계산된 결과라 — network.xml이 통째로 사라지는
+        // 이 작업 후에는 값 자체가 의미를 잃는다(사용자 지적). null로 되돌려 "이 버전 자체
+        // 캘리브레이션 없음 → 부모 Scenario 기본값 사용"인 신규 버전과 동일한 깨끗한 상태로
+        // 만든다(ScenarioVersion.toEffectiveScenario 참고) — 다음 가져오기가 새로 계산해 채운다.
+        ScenarioVersion version = versionRepository.findByKey(versionKey)
+                .orElseThrow(() -> new IllegalArgumentException("ScenarioVersion not found key: " + versionKey));
+        version.setLatitude(null);
+        version.setLongitude(null);
+        version.setBaseRotation(null);
+        version.setBaseScale(null);
+        versionRepository.save(version);
+        versionPurgeService.purgeVersionData(versionKey);
+        log.info("[ScenarioService] 버전 데이터 초기화(버전 유지, 캘리브레이션 리셋): key={}", versionKey);
+    }
+
+    @Override
     public Scenario createScenario(Scenario scenario) {
         if (!scenario.getKey().matches("[A-Za-z0-9_]+")) {
             throw new IllegalArgumentException("시나리오 키는 영문자, 숫자, 밑줄(_)만 허용됩니다.");

@@ -94,6 +94,45 @@ public class BusStationService {
                 .data(request.getLogs())
                 .build();
         busStationLogsRepository.save(entityLog);
+
+        // DB 저장과 동시에 실제 roadStation.xml 파일도 SFTP에 동기화한다(signal.xml,
+        // BusPtLineController/RailPtLineController와 동일 패턴). 이게 없으면 지금까지처럼
+        // import(파일 업로드)로만 실제 SFTP 파일이 생성되고, 앱의 일반 저장 경로는 DB
+        // 캐시에만 반영돼 NextSim 실행(roadStation.xml)에 전혀 반영되지 않는다.
+        try {
+            PublicTransitXml xml = toPublicTransitXmlFromData(request.getData());
+            byte[] xmlBytes = busStationJaxbParser.marshal(xml);
+            fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "roadStation.xml");
+            log.info("[BusStationService] roadStation.xml 저장 완료: {}/roadStation.xml", versionId);
+        } catch (Exception e) {
+            log.warn("[BusStationService] roadStation.xml 파일 동기화 실패(DB는 정상 저장됨): {}", e.getMessage());
+        }
+    }
+
+    /** List&lt;BusStationData&gt;(프론트 저장 요청) → PublicTransitXml. toPublicTransitXml과
+     *  거의 동일하나, BusStationData는 transitMode/type이 이미 String이라(Response는 enum)
+     *  XmlJavaTypeAdapter 대상 enum으로 별도 변환이 필요하다. */
+    private PublicTransitXml toPublicTransitXmlFromData(List<BusStationData> stations) {
+        List<BusStationXml> xmlStations = (stations == null ? List.<BusStationData>of() : stations).stream().map(d -> {
+            BusStationXml x = new BusStationXml();
+            try { x.setId(Long.parseLong(d.getId())); } catch (Exception ignore) {}
+            if (d.getTransitMode() != null) x.setTransitMode(TransitMode.fromValue(d.getTransitMode()));
+            x.setLinkRef(d.getLinkRef());
+            x.setLaneRef(d.getLaneRef() != null ? String.valueOf(d.getLaneRef()) : null);
+            x.setOffset(d.getOffset());
+            if (d.getType() != null) x.setType(StationType.fromValue(d.getType()));
+            x.setParkingLots(d.getParkingLots() != null ? String.valueOf(d.getParkingLots()) : null);
+            x.setCenter(d.getCenter());
+            if (d.getLine() != null) {
+                BusLineXml line = new BusLineXml();
+                line.setList(d.getLine().getList());
+                x.setLine(line);
+            }
+            return x;
+        }).toList();
+        PublicTransitXml xml = new PublicTransitXml();
+        xml.setBusStations(xmlStations);
+        return xml;
     }
 
     /**

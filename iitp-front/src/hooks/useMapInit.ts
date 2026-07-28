@@ -86,6 +86,11 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
             requestRenderMode: true,
             maximumRenderTimeChange: Infinity,
             baseLayerPicker: false,
+            // imageryProvider 미지정 시 Cesium이 자체 기본 배경(Ion World Imagery, asset id 2)을
+            // 만드는데, Ion 토큰을 비워뒀으므로(위) 그 요청은 항상 401로 실패한다(콘솔에
+            // "api.cesium.com/v1/assets/2/endpoint 401" 로 나타남) — 실제 배경지도는
+            // BaseMapLayerManager가 VWorld 타일로 별도 추가하므로 이 기본 레이어는 불필요.
+            baseLayer: false,
             creditContainer: document.createElement("div")
             // contextOptions: {
             //     webgl: gl, // ✅ OpenLayers의 WebGL 컨텍스트 재사용

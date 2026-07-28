@@ -5,8 +5,11 @@ import com.iitp.iitp_rest.model.network.connection.ConnectionXml;
 import com.iitp.iitp_rest.model.network.connection.Turning;
 import com.iitp.iitp_rest.model.network.link.LinkXml;
 import com.iitp.iitp_rest.model.network.node.NodeXml;
+import com.iitp.iitp_rest.service.network.OsmTrafficSignalMatcher;
+import com.iitp.iitp_rest.service.network.OsmTrafficSignalRepository;
 import jakarta.xml.bind.JAXBContext;
 import jakarta.xml.bind.Unmarshaller;
+import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -38,9 +41,18 @@ import java.util.regex.Pattern;
  * </ul>
  */
 @Component
+@RequiredArgsConstructor
 public class DummySignalGenerator {
 
     private static final Logger log = LoggerFactory.getLogger(DummySignalGenerator.class);
+
+    // 실측(부천 참조 데이터): 커넥션이 있는 노드 104개 중 실제 신호가 있는 노드는 18개뿐 —
+    // 나머지 86개는 무신호 우선순위 교차로다("접근로 2개 이상"이라는 조건만으로는 신호
+    // 필요 여부를 못 가른다). OSM의 실제 highway=traffic_signals 태그로 "여기 진짜 신호등이
+    // 있다"를 확인해, 그 위치 근처에서만 신호를 생성하도록 게이팅한다. 데이터가 아직
+    // 임포트 안 됐으면(hasData()==false) 이 게이트를 건너뛰고 기존 동작(접근로 2개 이상이면
+    // 생성) 그대로 — 회귀 방지.
+    private final OsmTrafficSignalRepository osmTrafficSignalRepository;
 
     private static final int CYCLE         = 120; // 기본 사이클 (초) — generate()(차량 CZML용)가 사용
     private static final int YELLOW        = 3;   // 황색 신호 (초)
@@ -80,6 +92,7 @@ public class DummySignalGenerator {
         }
 
         Geometry geo = Geometry.fromNetwork(network);
+        OsmTrafficSignalMatcher osmMatcher = buildOsmMatcher();
         int signalNodeCount = 0;
 
         for (NodeXml node : network.getNodes()) {
@@ -96,6 +109,14 @@ public class DummySignalGenerator {
 
             // 접근 방향이 1개 이하면 신호 불필요 (통과 노드)
             if (approachMap.size() <= 1) continue;
+
+            // OSM 신호등 게이트 — buildNodeSignalBlockOrNull과 동일 근거(실측: 부천 참조데이터
+            // 커넥션노드 104개 중 신호 18개뿐). 이 메서드는 signal.xml 파싱 실패 시의 CZML
+            // 폴백이라 buildNodeSignalBlockOrNull과 별개 코드경로이므로 동일 게이트를 중복 적용.
+            if (osmMatcher != null && node.getId() != null) {
+                double[] wgs = geo.nodeWgs84(node.getId());
+                if (wgs != null && !osmMatcher.hasSignalNear(wgs[0], wgs[1])) continue;
+            }
 
             List<Long> approaches = new ArrayList<>(approachMap.keySet());
 
@@ -180,12 +201,13 @@ public class DummySignalGenerator {
      */
     public String generateSignalXml(NetworkXml network) {
         Geometry geo = Geometry.fromNetwork(network);
+        OsmTrafficSignalMatcher osmMatcher = buildOsmMatcher();
         StringBuilder body = new StringBuilder();
         int signalNodeCount = 0;
 
         if (network.getNodes() != null) {
             for (NodeXml node : network.getNodes()) {
-                String block = buildNodeSignalBlockOrNull(node, geo);
+                String block = buildNodeSignalBlockOrNull(node, geo, osmMatcher);
                 if (block == null) continue;
                 body.append(block);
                 signalNodeCount++;
@@ -212,6 +234,7 @@ public class DummySignalGenerator {
      */
     public String generateSignalXmlStreaming(byte[] networkXmlBytes) throws Exception {
         Geometry geo = scanGeometry(new ByteArrayInputStream(networkXmlBytes));
+        OsmTrafficSignalMatcher osmMatcher = buildOsmMatcher();
 
         StringBuilder body = new StringBuilder();
         int[] signalNodeCount = {0};
@@ -236,7 +259,7 @@ public class DummySignalGenerator {
                     if (t.endsWith("/>")) continue; // self-closing = 포트/커넥션 없음 → 신호 불필요
                     String block = t + readUntilClose(reader, "</node>");
                     NodeXml node = unmarshalNodeFragment(jaxb, block);
-                    String nodeBlock = buildNodeSignalBlockOrNull(node, geo);
+                    String nodeBlock = buildNodeSignalBlockOrNull(node, geo, osmMatcher);
                     if (nodeBlock != null) { body.append(nodeBlock); signalNodeCount[0]++; }
                 } else if (t.startsWith("<link ") && !t.endsWith("/>")) {
                     readUntilClose(reader, "</link>"); // 신호 생성에 불필요 — 내용을 읽지 않고 스킵
@@ -256,6 +279,7 @@ public class DummySignalGenerator {
     private static Geometry scanGeometry(InputStream in) throws IOException {
         Map<Long, double[]> nodeCoords = new HashMap<>();
         Map<Long, long[]> linkEndpoints = new HashMap<>();
+        Double[] base = new Double[2]; // [baseLat, baseLon]
 
         try (BufferedReader reader = new BufferedReader(
                 new InputStreamReader(in, StandardCharsets.UTF_8), 1 << 20)) {
@@ -272,7 +296,13 @@ public class DummySignalGenerator {
                 String t = tag.toString();
                 tag = null;
 
-                if (t.startsWith("<node ")) {
+                if (t.startsWith("<Network ")) {
+                    Map<String, String> attrs = parseAttrs(t);
+                    try {
+                        if (attrs.get("base_lat") != null) base[0] = Double.parseDouble(attrs.get("base_lat"));
+                        if (attrs.get("base_lon") != null) base[1] = Double.parseDouble(attrs.get("base_lon"));
+                    } catch (NumberFormatException ignored) { }
+                } else if (t.startsWith("<node ")) {
                     Map<String, String> attrs = parseAttrs(t);
                     putNodeCoords(nodeCoords, attrs);
                     if (!t.endsWith("/>")) readUntilClose(reader, "</node>");
@@ -283,7 +313,7 @@ public class DummySignalGenerator {
                 }
             }
         }
-        return new Geometry(nodeCoords, linkEndpoints);
+        return new Geometry(nodeCoords, linkEndpoints, base[0], base[1]);
     }
 
     private static final Pattern ATTR_PATTERN = Pattern.compile("(\\w+)=\"([^\"]*)\"");
@@ -333,12 +363,21 @@ public class DummySignalGenerator {
      * 는 링크 id → [from_node, to_node].
      */
     private static final class Geometry {
+        // KtdbStreamingConverter/KtdbNetworkConverter와 동일한 로컬↔WGS84 변환 스케일 —
+        // OSM 신호등(WGS84)과 노드 로컬 좌표를 비교하려면 이 상수로 되돌려야 한다.
+        private static final double SCALE_X = 88000.0;
+        private static final double SCALE_Y = 111000.0;
+
         final Map<Long, double[]> nodeCoords;
         final Map<Long, long[]> linkEndpoints;
+        final Double baseLat;
+        final Double baseLon;
 
-        Geometry(Map<Long, double[]> nodeCoords, Map<Long, long[]> linkEndpoints) {
+        Geometry(Map<Long, double[]> nodeCoords, Map<Long, long[]> linkEndpoints, Double baseLat, Double baseLon) {
             this.nodeCoords = nodeCoords;
             this.linkEndpoints = linkEndpoints;
+            this.baseLat = baseLat;
+            this.baseLon = baseLon;
         }
 
         static Geometry fromNetwork(NetworkXml network) {
@@ -357,7 +396,16 @@ public class DummySignalGenerator {
                     linkEndpoints.put(l.getId(), new long[]{l.getFromNode(), l.getToNode()});
                 }
             }
-            return new Geometry(nodeCoords, linkEndpoints);
+            return new Geometry(nodeCoords, linkEndpoints, network.getBaseLat(), network.getBaseLon());
+        }
+
+        /** 노드의 로컬 좌표를 WGS84(lat, lon)로 역변환. base_lat/base_lon이나 노드 좌표가
+         *  없으면 null — 호출부가 "확인 불가"로 안전 처리(OSM 게이트를 건너뛰고 기존 동작 유지). */
+        double[] nodeWgs84(long nodeId) {
+            if (baseLat == null || baseLon == null) return null;
+            double[] xy = nodeCoords.get(nodeId);
+            if (xy == null) return null;
+            return new double[]{ xy[1] / SCALE_Y + baseLat, xy[0] / SCALE_X + baseLon };
         }
 
         /**
@@ -380,6 +428,14 @@ public class DummySignalGenerator {
         }
     }
 
+    /** OSM 신호등 데이터가 임포트돼 있으면 매처를 만들고, 없으면 null(호출부가 게이트를
+     *  건너뛰고 기존 동작 유지 — OsmPtFacilityRepository/OsmTurnRestrictionRepository와 동일 관례). */
+    private OsmTrafficSignalMatcher buildOsmMatcher() {
+        return osmTrafficSignalRepository.hasData()
+                ? new OsmTrafficSignalMatcher(osmTrafficSignalRepository.loadAll())
+                : null;
+    }
+
     private static String wrapSignalXml(CharSequence body) {
         return "<?xml version='1.0' encoding='UTF-8'?>\n" +
                 "<!-- 네트워크 가져오기 시 자동 생성된 샘플 신호입니다. 신호 메뉴에서 수정하세요. -->\n" +
@@ -387,7 +443,7 @@ public class DummySignalGenerator {
     }
 
     /** 노드 하나의 {@code <node>...</node>} 신호 블록, 신호가 불필요하면 null. */
-    private static String buildNodeSignalBlockOrNull(NodeXml node, Geometry geo) {
+    private static String buildNodeSignalBlockOrNull(NodeXml node, Geometry geo, OsmTrafficSignalMatcher osmMatcher) {
         if (node.getConnections() == null || node.getConnections().isEmpty()) return null;
 
         Map<Long, List<ConnectionXml>> approachMap = new LinkedHashMap<>();
@@ -396,6 +452,16 @@ public class DummySignalGenerator {
             approachMap.computeIfAbsent(conn.getFromLink(), k -> new ArrayList<>()).add(conn);
         }
         if (approachMap.size() <= 1) return null;
+
+        // OSM 신호등 게이트: 접근로가 2개 이상이라도(=분기가 있는 실제 교차로) 실측(부천
+        // 참조데이터, 커넥션노드 104개 중 신호 18개)상 대부분은 무신호 우선순위 교차로다.
+        // OSM에 실제 traffic_signals가 확인된 위치 근처(40m)에서만 신호를 생성한다.
+        // 노드 좌표를 WGS84로 못 되돌리면(base_lat/lon 누락 등) 판정 불가 — 과다생성보다
+        // 과소생성(실제 신호 누락)이 시뮬레이션에 더 나쁠 수 있어 이 경우는 기존 동작 유지.
+        if (osmMatcher != null && node.getId() != null) {
+            double[] wgs = geo.nodeWgs84(node.getId());
+            if (wgs != null && !osmMatcher.hasSignalNear(wgs[0], wgs[1])) return null;
+        }
 
         Map<Long, String> approachToTurnId = new LinkedHashMap<>();
         Map<String, List<String>> turnConnIds = new LinkedHashMap<>(); // turnId → connection id 목록

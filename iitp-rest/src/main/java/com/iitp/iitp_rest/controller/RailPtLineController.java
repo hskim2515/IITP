@@ -99,6 +99,19 @@ public class RailPtLineController {
         log.info("[RailPtLineController] POST scenarioKey={}", scenarioKey);
         try {
             xmlLayerVersionService.save(LAYER_KEY, scenarioKey, request.getData(), request.getLogs());
+            // DB 저장과 동시에 실제 railPTline.xml 파일도 SFTP에 동기화한다
+            // (SignalController.saveSignal / BusPtLineController.saveResp와 동일 패턴).
+            // 이게 없으면 앱에서 철도 노선을 편집/저장해도 DB 캐시(xml_layer_versions,
+            // 편집 UI/undo용)에만 반영되고, NextSim이 실제로 읽는 SFTP의 railPTline.xml은
+            // 전혀 갱신되지 않아 시뮬레이션에 반영되지 않는다(import로만 실제 파일이
+            // 생성되던 버스 노선과 동일 버그).
+            try {
+                RailPtLineXml xml = XmlLayerConverter.fromMap(request.getData(), RailPtLineXml.class);
+                railPtLineService.saveByScenarioKey(scenarioKey, xml);
+            } catch (Exception e) {
+                log.warn("[RailPtLineController] XML 파일 동기화 실패(DB는 정상 저장됨) scenarioKey={}: {}",
+                        scenarioKey, e.getMessage());
+            }
             return ResponseEntity.ok().build();
         } catch (Exception e) {
             log.error("[RailPtLineController] 저장 오류", e);

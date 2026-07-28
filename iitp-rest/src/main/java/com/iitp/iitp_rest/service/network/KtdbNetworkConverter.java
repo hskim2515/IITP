@@ -76,6 +76,10 @@ public class KtdbNetworkConverter {
     private final KtdbLinkRepository     linkRepo;
     private final KtdbNodeRepository     nodeRepo;
     private final KtdbTurninfoRepository turninfoRepo;
+    // KTDB의 TURNINFO가 못 잡는 회전 금지를 OSM type=restriction으로 보조 검증(실측: 강남 일대
+    // bbox에서 13건 발견 — turn_oper='1' 데이터가 없어 각도상 가능하면 그대로 허용되던 사례).
+    // turninfoRepo와 동일하게 변환 1회당 한 번만 전체 로드해 메모리에서 조회한다.
+    private final OsmTurnRestrictionRepository osmTurnRestrictionRepo;
     private final TerrainSlopeService    terrainSlopeService;
 
     public record ConvertResult(NetworkXml networkXml) {}
@@ -432,6 +436,11 @@ public class KtdbNetworkConverter {
                     allClusterNodeIds.size(), prohibitedTurns.size(), allowedTurns.size());
         }
 
+        // OSM 회전제약 매처 — TURNINFO가 못 잡는 금지를 보조로 걸러낸다(아래 커넥션 후보 루프에서 사용).
+        OsmTurnRestrictionMatcher osmTurnMatcher = osmTurnRestrictionRepo.hasData()
+                ? new OsmTurnRestrictionMatcher(osmTurnRestrictionRepo.loadAll())
+                : null;
+
         // clusterRep → 회전 동선 목록 (경유 내부링크 지오메트리 포함)
         Map<String, List<ConnData>> clusterConnData = new HashMap<>();
 
@@ -483,6 +492,18 @@ public class KtdbNetworkConverter {
 
                             double inBearing  = approachBearing(inCoords);
                             double outBearing = departureBearing(outCoords);
+
+                            // OSM 회전제약 금지 체크 — TURNINFO에 없는 실제 금지를 보조로 걸러냄
+                            // (실측: 강남 일대에서 이렇게만 잡히는 사례 13건 확인). KtdbNode의 lat/lon
+                            // 은 local x/y와 별개로 원본 WGS84 좌표라 그대로 쓸 수 있다.
+                            if (osmTurnMatcher != null) {
+                                KtdbNode entryKtdbNode = nodeMap.get(entryNodeForTurn);
+                                if (entryKtdbNode != null) {
+                                    String osmProhibition = osmTurnMatcher.findProhibition(
+                                            entryKtdbNode.getLat(), entryKtdbNode.getLon(), inBearing, outBearing);
+                                    if (osmProhibition != null) continue;
+                                }
+                            }
 
                             // 기하학적 U턴 제외: 진입 방향과 진출 방향이 반대(각도차 150°~210°)
                             // TURNINFO에 명시적으로 허용된 경우만 예외
