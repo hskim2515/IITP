@@ -15,6 +15,7 @@
 - [입력 경로와 설정 방법](#input-path)
 - [DB 파일 설명](#db-file-summary)
 - [ID 네이밍/채번 규칙](#id-naming)
+- [데이터 변경 영향 매트릭스](#impact-matrix)
 - [Input 데이터](#input-data)
   - [`SimulationInput/config.txt` 필수](#config-txt)
   - [`parameter_xml` 공통 파라미터 폴더](#parameter-xml-folder)
@@ -213,6 +214,62 @@ KTDB 원본 `node_id`/`link_id`(문자열)는 위 규칙으로 재채번되며 �
 - 버스/철도 PT 노선(`roadPTline.xml`/`railPTline.xml`의 link seq/node seq/railStationSeq): **검증만 하고 자동 재매핑은 없다**(`PtLineValidation.java`) — 안 맞으면 노선을 직접 다시 그려야 함
 - 포장 노면표시(`linkRef`/`laneRef`/`cellId`): **검증·재매핑 로직이 아예 없다** — id가 재할당되면 조용히 끊어질 수 있는, 아직 안 고쳐진 알려진 갭
 - station/garage id는 재임포트로 안 바뀌는 별도 네임스페이스라 위 검증 대상에서 제외됨
+
+---
+
+<a id="impact-matrix"></a>
+
+## 데이터 변경 영향 매트릭스
+
+> ⚠️ **가장 중요한 전제**: 네트워크를 편집하는 경로가 **두 가지**이고, 편집 경로에 따라 연쇄 처리 수준이 다르다.
+> - **지도 툴 경로**(`NetworkEditToolbar.tsx`/`LinkContextMenu.tsx` → `useNetworkSelect.ts`): 삭제·이동 시 자동 캐스케이드가 폭넓게 구현되어 있다.
+> - **속성 그리드 경로**(`DrilldownGrid.tsx`의 `handleDelete`/`handleAdd`): **레인/커넥션/포트 같은 하위 레벨 삭제·추가는 캐스케이드가 있지만, Node/Link를 그리드 최상위 레벨에서 직접 삭제하면 캐스케이드가 전혀 없다** — 참조 무결성이 깨진 채로 저장될 수 있는 위험한 경로이니 Node/Link 삭제는 지도 툴을 쓸 것.
+
+### 네트워크 구조 (Node/Link/Lane/Connection/Port)
+
+| 대상 | 작업 | 경로 | 연쇄되는 것 | 자동/수동 |
+|---|---|---|---|---|
+| Node | 삭제(통과노드 아님: in/out 포트 구성이 병합 조건 불충족) | 지도 툴 | 연결된 모든 Link cascade 삭제 → Signal의 connectionId 정리 → 그 노드의 Signal 자체 삭제 → 사라진 Link 위 정류장 삭제 → 타일 마스킹 | ✅ |
+| Node | 삭제(통과노드: in/out 각 1개, 양쪽 차선수 동일) | 지도 툴 | Link cascade 삭제 대신 앞뒤 Link를 하나로 병합 | ✅ |
+| Node | 삭제 (그리드 최상위 레벨에서 직접) | 속성 그리드 | **없음** — 참조하던 Link/Signal/정류장/타일마스크가 전부 그대로 남음 | ❌ **위험, 지도 툴 사용 권장** |
+| Node | 좌표 이동(드래그) | 지도 툴 | 연결 Link 끝점 좌표·길이 재계산, Lane cells/segments 비율 재조정, Connection 좌표 평행이동 | ✅ (좌표만) |
+| Node | 좌표 이동 후 신호 재계산 | — | 방위각 기반 신호 페어링은 자동 재계산되지 않는다 — "화면 내 더미 신호 생성"을 별도로 다시 눌러야 함 | ❌ 수동 |
+| Node | 병합(교차로 정리 도구) | 지도 툴 | self-loop Link 자동 제거, ports/connections 병합. 단 병합된 Connection의 좌표는 빈 배열로 리셋되어 재계산 필요 | ⚠️ 부분 자동 |
+| Link | 삭제 | 지도 툴 | 양끝 Node의 ports(link_id 일치)·connections(from_link/to_link 일치) 필터링 + numPort/numConnection 재동기화 | ✅ |
+| Link | 삭제 (그리드 최상위 레벨에서 직접) | 속성 그리드 | **없음** | ❌ **위험, 지도 툴 사용 권장** |
+| Link | 방향 반전 | 지도 툴 | 포트 in/out은 자동으로 뒤집히지만, 관련 Connection은 **삭제만 하고 재생성하지 않는다** | ⚠️ 부분 자동 — 반전 후 커넥션 직접 재작업 필요 |
+| Link.numLane 감소 | 필드 수정 | 속성 그리드 | 사라진 레인(index ≥ 새 numLane)을 참조하던 Connection 삭제 → 그 connectionId를 쓰던 Signal의 connectionId를 null로 초기화 | ✅ |
+| Link.length | 필드 수정 | 속성 그리드 | 그 Link의 Lane들의 cells/segments를 비율로 재조정 | ✅ |
+| Lane | 그리드에서 행 직접 삭제 | 속성 그리드 | 부모 Link의 numLane 재동기화 + 사라진 레인을 참조하던 Connection 삭제 + 그 Connection을 쓰던 Signal의 connectionId 정리 | ✅ (numLane 필드 편집과 동일 결과) |
+| Connection | 그리드에서 행 추가 | 속성 그리드 | 부모 Node의 numConnection을 실제 배열 길이로 재동기화 | ✅ |
+| Connection | 그리드에서 행 삭제 | 속성 그리드 | 부모 Node의 numConnection 재동기화 + 그 connectionId를 쓰던 Signal의 connectionId 정리 | ✅ |
+| Port | 그리드에서 행 삭제 | 속성 그리드 | 부모 Node의 numPort만 재동기화. **그 포트가 참조하던 Link는 그대로 방치**(그 Link는 이 노드를 계속 참조하는 구조적으로 잘못된 상태가 됨) | ❌ 수동 — 저장 시 경고 문구: "포트만 삭제되었습니다 — 해당 링크는 이 노드를 계속 참조하니 링크도 함께 정리하세요" |
+| 네트워크 저장(diff) | — | — | 저장 API(`NetworkTileService.applyDiff`)는 id 기준 순수 upsert/delete만 수행하고 참조 무결성 검증·캐스케이드를 전혀 하지 않는다 — **위 캐스케이드는 전부 클라이언트(프론트) 책임**이며, 캐스케이드 없이 저장된 데이터는 서버에 그대로 반영된다 | ⚠️ 클라이언트 책임 |
+
+### 신호 (Signal / SignalTOD)
+
+| 상황 | 연쇄되는 것 | 자동/수동 |
+|---|---|---|
+| 네트워크 재임포트(id 전면 교체) | signal.xml의 node 참조가 새 네트워크에 없으면 전체 재생성(더미 신호 생성기 재사용, 방위각 기반 페어링) | ✅ (`NextSimInputScaffolder`) |
+| Signal이 재생성됨 | signalTOD.xml도 무조건 같이 재생성 | ✅ |
+| Signal은 유효한데 TOD 커버리지만 빠짐(수동 편집 등) | 빠진 노드만 기본 TOD로 채움 | ✅ (`repairSignalTod`) |
+| Connection이 삭제되어 connectionId가 무효해짐 | Signal 자체는 유지한 채 connectionId만 null로 초기화 | ✅ (`reconcileSignalConnectionIds`) |
+| 수동 편집으로 마주보지 않는 접근로가 같은 현시에 배정됨 | 저장 전 상충 경고(저장을 막지는 않음) | ⚠️ 경고만, 강제 차단 없음 |
+| TOD의 두 플랜 시간대가 겹침 | 저장 전 경고(저장을 막지는 않음) | ⚠️ 경고만 |
+
+### OD 매트릭스
+
+| 상황 | 연쇄되는 것 | 자동/수동 |
+|---|---|---|
+| 네트워크 재임포트로 source/sink id가 새 터미널 집합과 안 맞음 | 거리 감쇠 기반 샘플 수요로 전체 재생성(앱 설정에서 flow 범위/기준거리 조정 가능) | ✅ (`NextSimInputScaffolder`) |
+| 노드 삭제(그 노드가 source/sink로 쓰이던 경우) | 해당 demand 항목 자동 삭제(prune) | ✅ (`OdTerminalIdBandService`) |
+
+### 그 외 알려진 갭 (자동 처리 없음)
+
+| 대상 | 상황 | 대응 |
+|---|---|---|
+| 버스/철도 PT 노선(link seq/node seq/railStationSeq) | 재임포트로 참조 id가 안 맞음 | 검증만 하고(`PtLineValidation`) 자동 재매핑은 없음 — 노선을 직접 다시 그려야 함 |
+| 포장 노면표시(linkRef/laneRef/cellId) | 재임포트로 참조 id가 안 맞음 | 검증·재매핑 로직 자체가 없음 — id가 재할당되면 조용히 끊어질 수 있는, 아직 안 고쳐진 갭 |
 
 ---
 
