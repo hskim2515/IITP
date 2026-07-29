@@ -245,7 +245,7 @@ KTDB 원본 `node_id`/`link_id`(문자열)는 위 규칙으로 재채번되며 �
 | Connection | 그리드에서 행 추가 | 속성 그리드 | 부모 Node의 numConnection을 실제 배열 길이로 재동기화 | ✅ |
 | Connection | 그리드에서 행 삭제 | 속성 그리드 | 부모 Node의 numConnection 재동기화 + 그 connectionId를 쓰던 Signal의 connectionId 정리 | ✅ |
 | Port | 그리드에서 행 추가 | 속성 그리드 | 부모 Node의 numPort를 실제 배열 길이로 재동기화. **linkId는 임의값이라 실제 존재하는 링크로 수동 지정 필요** | ⚠️ 부분 자동 — 저장 시 경고 문구: "포트가 추가되었습니다. ⚠ linkId를 실제 존재하는 링크로 지정해야 유효합니다." |
-| Port | 그리드에서 행 삭제 | 속성 그리드 | 부모 Node의 numPort만 재동기화. **그 포트가 참조하던 Link는 그대로 방치**(그 Link는 이 노드를 계속 참조하는 구조적으로 잘못된 상태가 됨) | ❌ 수동 — 저장 시 경고 문구: "포트만 삭제되었습니다 — 해당 링크는 이 노드를 계속 참조하니 링크도 함께 정리하세요" |
+| Port | 그리드에서 행 삭제 | 속성 그리드 | 포트가 가리키던 Link를 지도 툴 링크 삭제와 동일하게 cascade 삭제(양끝 Node ports/connections 정리, Signal connectionId 정리, 정류장 삭제, 타일 마스킹) | ✅ (포트 삭제 = 참조 Link 삭제로 취급) |
 | 네트워크 저장(diff) | — | — | 저장 API(`NetworkTileService.applyDiff`)는 id 기준 순수 upsert/delete만 수행하고 참조 무결성 검증·캐스케이드를 전혀 하지 않는다 — **위 캐스케이드는 전부 클라이언트(프론트) 책임**이며, 캐스케이드 없이 저장된 데이터는 서버에 그대로 반영된다 | ⚠️ 클라이언트 책임 |
 
 ### 신호 (Signal / SignalTOD)

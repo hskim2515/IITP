@@ -370,19 +370,34 @@ const DrilldownGrid = ({
                 extra = clearedCount > 0 ? `, 신호 ${clearedCount}개의 커넥션 참조 초기화` : "";
             }
         } else if (isNetworkLayer && levelName === "ports" && parentRecord?.id != null) {
-            // 포트는 링크와 1:1로 대응 — 포트만 지우고 링크는 안 지우면 그 링크가 이
-            // 노드를 여전히 가리키는 구조적으로 잘못된 상태가 된다. 여기서 자동으로
-            // 링크까지 지우는 건 과한 개입이라 카운트만 맞추고 사용자에게 알린다.
-            const cur = useNetworkStore.getState().currentJsonData;
-            const curNode = cur?.nodes?.find((n: any) => String(n.id) === String(parentRecord.id));
-            if (cur && curNode) {
-                const actualNumPort = curNode.ports?.length ?? 0;
-                if (actualNumPort !== curNode.numPort) {
-                    useNetworkStore.getState().updateCurrentJsonData(
-                        { __guid: curNode.__guid, numPort: actualNumPort } as any, historyStore,
-                    );
+            // 포트는 링크가 이 노드에 연결된다는 사실 자체를 나타내는 파생 레코드라
+            // 포트만 지우고 링크는 남기면 그 링크가 존재하지 않는 연결을 계속 참조하는
+            // 구조적으로 잘못된 상태가 된다 — 지도 툴의 링크 삭제와 동일하게, 포트가
+            // 가리키던 링크를 통째로 deleteLinkFromNetwork로 cascade 삭제한다
+            // (반대편 노드의 ports/connections 정리까지 포함).
+            const preRows = currentFrame?.rows ?? [];
+            const deletedLinkIds = [...new Set(
+                currentSelectedGuid
+                    .map((g) => preRows.find((r: any) => r.__guid === g)?.linkId)
+                    .filter((id: any) => id != null)
+                    .map((id: any) => String(id))
+            )];
+            const beforeNet = useNetworkStore.getState().currentJsonData;
+            if (beforeNet && deletedLinkIds.length > 0) {
+                let next = beforeNet;
+                const affectedNodeIds = new Set<string>();
+                for (const linkId of deletedLinkIds) {
+                    const link = next.links.find((l: any) => String(l.id) === linkId);
+                    if (link) { affectedNodeIds.add(String(link.fromNode)); affectedNodeIds.add(String(link.toNode)); }
+                    next = deleteLinkFromNetwork(next, linkId);
                 }
-                extra = " ⚠ 포트만 삭제되었습니다 — 해당 링크는 이 노드를 계속 참조하니 링크도 함께 정리하세요.";
+                applyNetworkUpdate(next);
+                const clearedCount = reconcileSignalConnectionIds(next, [...affectedNodeIds]);
+                const removedStationCount = deleteStationsForLinks(removedLinkIds(beforeNet, next));
+                markRemovedForTileMask(beforeNet, next);
+                extra = ` — 참조하던 링크 ${deletedLinkIds.length}개도 함께 삭제됨`
+                    + `${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ""}`
+                    + `${clearedCount > 0 ? `, 신호 ${clearedCount}개의 커넥션 참조 초기화` : ""}`;
             }
         }
 
