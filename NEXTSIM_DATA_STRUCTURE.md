@@ -211,9 +211,9 @@ KTDB 원본 `node_id`/`link_id`(문자열)는 위 규칙으로 재채번되며 �
 - `network.xml`: link/node id, from_node/to_node, port의 link_id, connection의 from_link/to_link
 - `odmatrix.xml`: source/sink — `OdTerminalIdBandService`가 자동으로 재정합하고, 노드 삭제 시 해당 demand를 자동 삭제(prune)
 - `signal.xml`/`signalTOD.xml`: node id, connectionId — 참조가 안 맞으면 `NextSimInputScaffolder`가 signal.xml 전체를 재생성하거나 connectionId만 null로 초기화
-- 버스/철도 PT 노선(`roadPTline.xml`/`railPTline.xml`의 link seq/node seq/railStationSeq): **검증만 하고 자동 재매핑은 없다**(`PtLineValidation.java`) — 안 맞으면 노선을 직접 다시 그려야 함
+- 버스/철도 정류장(`roadStation.xml`/`railStation.xml`)·PT 노선(`roadPTline.xml`/`railPTline.xml`): KTDB 재임포트 확인 시 앱 설정의 `busFacilityEnabled`/`railFacilityEnabled`가 켜져 있으면 OSM에서 새로 가져와 새 네트워크에 재스냅한 뒤 **자동 저장(기존 데이터 덮어쓰기)**된다(`OsmFacilityConverter` → `FileImportModal.tsx`의 `injectAll`+`autoSaveChangedLayers`) — link_ref/lane_ref/link seq/node seq/railStationSeq는 이 과정에서 자동으로 맞춰진다. **단, 수동으로 추가·편집한 정류장/노선도 이때 통째로 덮어써져 사라진다** — 보존하려면 이 토글을 꺼야 한다. 토글을 꺼서 재임포트해도 기존 데이터가 유지되는 경우엔, 새 네트워크와의 정합은 `PtLineValidation.java`가 검증만 하고 자동 재매핑은 안 하므로 안 맞으면 수동으로 재작업해야 함
 - 포장 노면표시(`linkRef`/`laneRef`/`cellId`): **검증·재매핑 로직이 아예 없다** — id가 재할당되면 조용히 끊어질 수 있는, 아직 안 고쳐진 알려진 갭
-- station/garage id는 재임포트로 안 바뀌는 별도 네임스페이스라 위 검증 대상에서 제외됨
+- station/garage id는 재임포트로 안 바뀌는 별도 네임스페이스라 `PtLineValidation`의 검증 대상에서 제외됨(id 자체는 안정적, 위 링크 참조만 문제가 됨)
 
 ---
 
@@ -221,9 +221,9 @@ KTDB 원본 `node_id`/`link_id`(문자열)는 위 규칙으로 재채번되며 �
 
 ## 데이터 변경 영향 매트릭스
 
-> ⚠️ **가장 중요한 전제**: 네트워크를 편집하는 경로가 **두 가지**이고, 편집 경로에 따라 연쇄 처리 수준이 다르다.
-> - **지도 툴 경로**(`NetworkEditToolbar.tsx`/`LinkContextMenu.tsx` → `useNetworkSelect.ts`): 삭제·이동 시 자동 캐스케이드가 폭넓게 구현되어 있다.
-> - **속성 그리드 경로**(`DrilldownGrid.tsx`의 `handleDelete`/`handleAdd`): **레인/커넥션/포트 같은 하위 레벨 삭제·추가는 캐스케이드가 있지만, Node/Link를 그리드 최상위 레벨에서 직접 삭제하면 캐스케이드가 전혀 없다** — 참조 무결성이 깨진 채로 저장될 수 있는 위험한 경로이니 Node/Link 삭제는 지도 툴을 쓸 것.
+> ⚠️ **가장 중요한 전제**: 네트워크를 편집하는 경로가 **두 가지**이고, 두 경로 다 동일한 `useNetworkSelect.ts`의 순수 함수(`batchDeleteOrMergeNodes`/`deleteLinkFromNetwork`/`reconcileSignalConnectionIds`/`deleteStationsForLinks` 등)를 재사용해 캐스케이드를 보장한다.
+> - **지도 툴 경로**(`NetworkEditToolbar.tsx`/`LinkContextMenu.tsx`): 삭제·이동 시 자동 캐스케이드가 폭넓게 구현되어 있다.
+> - **속성 그리드 경로**(`DrilldownGrid.tsx`의 `handleDelete`/`handleAdd`): 레인/커넥션/포트 같은 하위 레벨 삭제·추가는 자체 캐스케이드가 있고, Node/Link를 그리드 최상위 레벨에서 삭제하는 경우도 지도 툴과 동일한 캐스케이드 함수를 호출하도록 수정됨(과거엔 캐스케이드가 전혀 없어 참조 무결성이 깨진 채로 저장되는 위험한 경로였음).
 
 ### 네트워크 구조 (Node/Link/Lane/Connection/Port)
 
@@ -231,18 +231,20 @@ KTDB 원본 `node_id`/`link_id`(문자열)는 위 규칙으로 재채번되며 �
 |---|---|---|---|---|
 | Node | 삭제(통과노드 아님: in/out 포트 구성이 병합 조건 불충족) | 지도 툴 | 연결된 모든 Link cascade 삭제 → Signal의 connectionId 정리 → 그 노드의 Signal 자체 삭제 → 사라진 Link 위 정류장 삭제 → 타일 마스킹 | ✅ |
 | Node | 삭제(통과노드: in/out 각 1개, 양쪽 차선수 동일) | 지도 툴 | Link cascade 삭제 대신 앞뒤 Link를 하나로 병합 | ✅ |
-| Node | 삭제 (그리드 최상위 레벨에서 직접) | 속성 그리드 | **없음** — 참조하던 Link/Signal/정류장/타일마스크가 전부 그대로 남음 | ❌ **위험, 지도 툴 사용 권장** |
+| Node | 삭제 (그리드 최상위 레벨에서 직접) | 속성 그리드 | 지도 툴과 동일: 연결 Link cascade 삭제/병합, Signal connectionId 정리·삭제, 정류장 삭제, 타일 마스킹 | ✅ (`handleRootNetworkDelete` — 지도 툴 캐스케이드 함수 재사용) |
 | Node | 좌표 이동(드래그) | 지도 툴 | 연결 Link 끝점 좌표·길이 재계산, Lane cells/segments 비율 재조정, Connection 좌표 평행이동 | ✅ (좌표만) |
 | Node | 좌표 이동 후 신호 재계산 | — | 방위각 기반 신호 페어링은 자동 재계산되지 않는다 — "화면 내 더미 신호 생성"을 별도로 다시 눌러야 함 | ❌ 수동 |
 | Node | 병합(교차로 정리 도구) | 지도 툴 | self-loop Link 자동 제거, ports/connections 병합. 단 병합된 Connection의 좌표는 빈 배열로 리셋되어 재계산 필요 | ⚠️ 부분 자동 |
 | Link | 삭제 | 지도 툴 | 양끝 Node의 ports(link_id 일치)·connections(from_link/to_link 일치) 필터링 + numPort/numConnection 재동기화 | ✅ |
-| Link | 삭제 (그리드 최상위 레벨에서 직접) | 속성 그리드 | **없음** | ❌ **위험, 지도 툴 사용 권장** |
+| Link | 삭제 (그리드 최상위 레벨에서 직접) | 속성 그리드 | 지도 툴과 동일: 양끝 Node의 ports/connections 정리, Signal connectionId 정리, 정류장 삭제, 타일 마스킹 | ✅ (`handleRootNetworkDelete` — 지도 툴 캐스케이드 함수 재사용) |
 | Link | 방향 반전 | 지도 툴 | 포트 in/out은 자동으로 뒤집히지만, 관련 Connection은 **삭제만 하고 재생성하지 않는다** | ⚠️ 부분 자동 — 반전 후 커넥션 직접 재작업 필요 |
 | Link.numLane 감소 | 필드 수정 | 속성 그리드 | 사라진 레인(index ≥ 새 numLane)을 참조하던 Connection 삭제 → 그 connectionId를 쓰던 Signal의 connectionId를 null로 초기화 | ✅ |
 | Link.length | 필드 수정 | 속성 그리드 | 그 Link의 Lane들의 cells/segments를 비율로 재조정 | ✅ |
+| Lane | 그리드에서 행 추가 | 속성 그리드 | 부모 Link의 numLane을 실제 배열 길이로 재동기화. id는 부모 레인 배열의 다음 순번으로 자동 배정(fromLane/toLane 참조 정합 유지) | ✅ |
 | Lane | 그리드에서 행 직접 삭제 | 속성 그리드 | 부모 Link의 numLane 재동기화 + 사라진 레인을 참조하던 Connection 삭제 + 그 Connection을 쓰던 Signal의 connectionId 정리 | ✅ (numLane 필드 편집과 동일 결과) |
 | Connection | 그리드에서 행 추가 | 속성 그리드 | 부모 Node의 numConnection을 실제 배열 길이로 재동기화 | ✅ |
 | Connection | 그리드에서 행 삭제 | 속성 그리드 | 부모 Node의 numConnection 재동기화 + 그 connectionId를 쓰던 Signal의 connectionId 정리 | ✅ |
+| Port | 그리드에서 행 추가 | 속성 그리드 | 부모 Node의 numPort를 실제 배열 길이로 재동기화. **linkId는 임의값이라 실제 존재하는 링크로 수동 지정 필요** | ⚠️ 부분 자동 — 저장 시 경고 문구: "포트가 추가되었습니다. ⚠ linkId를 실제 존재하는 링크로 지정해야 유효합니다." |
 | Port | 그리드에서 행 삭제 | 속성 그리드 | 부모 Node의 numPort만 재동기화. **그 포트가 참조하던 Link는 그대로 방치**(그 Link는 이 노드를 계속 참조하는 구조적으로 잘못된 상태가 됨) | ❌ 수동 — 저장 시 경고 문구: "포트만 삭제되었습니다 — 해당 링크는 이 노드를 계속 참조하니 링크도 함께 정리하세요" |
 | 네트워크 저장(diff) | — | — | 저장 API(`NetworkTileService.applyDiff`)는 id 기준 순수 upsert/delete만 수행하고 참조 무결성 검증·캐스케이드를 전혀 하지 않는다 — **위 캐스케이드는 전부 클라이언트(프론트) 책임**이며, 캐스케이드 없이 저장된 데이터는 서버에 그대로 반영된다 | ⚠️ 클라이언트 책임 |
 
@@ -264,11 +266,18 @@ KTDB 원본 `node_id`/`link_id`(문자열)는 위 규칙으로 재채번되며 �
 | 네트워크 재임포트로 source/sink id가 새 터미널 집합과 안 맞음 | 거리 감쇠 기반 샘플 수요로 전체 재생성(앱 설정에서 flow 범위/기준거리 조정 가능) | ✅ (`NextSimInputScaffolder`) |
 | 노드 삭제(그 노드가 source/sink로 쓰이던 경우) | 해당 demand 항목 자동 삭제(prune) | ✅ (`OdTerminalIdBandService`) |
 
+### 버스/철도 정류장·PT 노선
+
+| 상황 | 연쇄되는 것 | 자동/수동 |
+|---|---|---|
+| KTDB 네트워크 재임포트(앱 설정 `busFacilityEnabled`/`railFacilityEnabled` 켜짐, 기본값) | OSM에서 새로 정류장/노선을 가져와 새 네트워크에 재스냅 후 자동 저장 — `roadStation.xml`/`railStation.xml`/`roadPTline.xml`/`railPTline.xml` 전부 **덮어쓰기** | ✅ (`OsmFacilityConverter` → `FileImportModal.tsx`) — 단 **수동으로 추가·편집한 정류장/노선도 이때 같이 사라짐** |
+| KTDB 네트워크 재임포트(위 토글 꺼짐) | 기존 정류장/노선 데이터는 보존되지만, 새 네트워크와의 link/node 참조 정합은 검증만 됨 | ⚠️ 검증만(`PtLineValidation`) — 안 맞으면 노선/정류장을 수동으로 재작업해야 함 |
+| OSM 재조회 실패(Overpass 타임아웃 등) | 신규 데이터가 비어 있어 `injectAll`이 주입을 건너뜀 → 기존 데이터 그대로 남되 새 네트워크와 안 맞을 수 있음 | ⚠️ 위와 동일하게 검증만, 수동 재작업 필요 |
+
 ### 그 외 알려진 갭 (자동 처리 없음)
 
 | 대상 | 상황 | 대응 |
 |---|---|---|
-| 버스/철도 PT 노선(link seq/node seq/railStationSeq) | 재임포트로 참조 id가 안 맞음 | 검증만 하고(`PtLineValidation`) 자동 재매핑은 없음 — 노선을 직접 다시 그려야 함 |
 | 포장 노면표시(linkRef/laneRef/cellId) | 재임포트로 참조 id가 안 맞음 | 검증·재매핑 로직 자체가 없음 — id가 재할당되면 조용히 끊어질 수 있는, 아직 안 고쳐진 갭 |
 
 ---
@@ -1092,7 +1101,7 @@ Lines
 선택  
 버스 사용 시 필요
 
-> ⚠️ **id는 30M 대역, 재임포트 시 자동 재매핑 없음**: `station.id`는 OSM 자동 스냅 시 `30,000,001`부터 채번된다([ID 네이밍/채번 규칙](#id-naming) 참고). 네트워크를 재임포트해도 이 대역은 KTDB 도로망과 별개 네임스페이스라 안 바뀐다(`PtLineValidation`이 검증 대상에서 제외). 다만 `link_ref`/`lane_ref`(스냅된 도로 링크/차로)는 도로망 id라 재임포트 시 낡아질 수 있는데, 이건 검증만 하고 자동 재매핑은 안 되므로 안 맞으면 수동으로 다시 스냅해야 한다.
+> ⚠️ **id는 30M 대역, 재임포트 시 기본적으로 자동 재생성(덮어쓰기)됨**: `station.id`는 OSM 자동 스냅 시 `30,000,001`부터 채번된다([ID 네이밍/채번 규칙](#id-naming) 참고). KTDB 네트워크를 재임포트하면 앱 설정의 `busFacilityEnabled`가 켜져 있는 한(기본값) `OsmFacilityConverter`가 OSM에서 정류장을 새로 가져와 새 네트워크에 맞게 `link_ref`/`lane_ref`를 다시 스냅하고, 그 결과가 자동으로 저장된다(`FileImportModal.tsx`의 `injectAll`+`autoSaveChangedLayers`) — 즉 link_ref/lane_ref는 수동 재스냅 없이 자동으로 맞춰진다. **다만 이 과정은 기존 `roadStation.xml`을 통째로 덮어쓰므로, 수동으로 추가·편집한 정류장은 재임포트할 때마다 조용히 사라진다.** 수동 편집분을 보존하려면 재임포트 전 `busFacilityEnabled`를 꺼야 하는데, 이 경우 기존 정류장의 `link_ref`/`lane_ref`는 새 네트워크와의 정합을 `PtLineValidation`이 검증만 하고 자동 재매핑은 하지 않으므로, 안 맞으면 수동으로 다시 스냅해야 한다.
 
 역할: 버스 정류장을 정의한다.
 
@@ -1127,7 +1136,7 @@ PublicTransit
 선택  
 철도 사용 시 필요
 
-> ⚠️ 아래 예시의 `stationSeq id="40000001"`은 KAIST 부천 레퍼런스 데이터셋 값이다 — 현재 자동생성되는 철도역 id 대역은 `31,000,001`부터다([ID 네이밍/채번 규칙](#id-naming) 참고). `link seq`/`node seq`/`railStationSeq`는 `PtLineValidation`이 새 네트워크와의 정합만 검증하고 자동 재매핑은 하지 않으므로, 재임포트로 안 맞게 되면 노선을 다시 그려야 한다.
+> ⚠️ 아래 예시의 `stationSeq id="40000001"`은 KAIST 부천 레퍼런스 데이터셋 값이다 — 현재 자동생성되는 철도역 id 대역은 `31,000,001`부터다([ID 네이밍/채번 규칙](#id-naming) 참고). KTDB 재임포트 시 앱 설정 `railFacilityEnabled`가 켜져 있으면(기본값) `link seq`/`node seq`/`railStationSeq`는 OSM 재조회 기반으로 노선 전체가 자동 재생성되어 저장된다 — 단 기존에 수동으로 그린/편집한 노선도 이때 같이 덮어써져 사라진다. 이 토글을 꺼서 기존 노선을 보존한 경우엔 `PtLineValidation`이 새 네트워크와의 정합을 검증만 하고 자동 재매핑은 하지 않으므로, 재임포트로 안 맞게 되면 노선을 다시 그려야 한다.
 
 역할: 철도 노선과 운행시각을 정의한다.
 
