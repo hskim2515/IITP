@@ -14,6 +14,7 @@
 
 - [입력 경로와 설정 방법](#input-path)
 - [DB 파일 설명](#db-file-summary)
+- [ID 네이밍/채번 규칙](#id-naming)
 - [Input 데이터](#input-data)
   - [`SimulationInput/config.txt` 필수](#config-txt)
   - [`parameter_xml` 공통 파라미터 폴더](#parameter-xml-folder)
@@ -157,6 +158,61 @@ NextSim 실행 후 생성되는 SQLite 데이터베이스 파일이며, 차량�
 | `simulation_output.db` | 시뮬레이션 후 생성되는 결과 DB |
 | `Vehicle.json` | 시뮬레이션 후 생성되는 차량 요약 결과 |
 | `SimulationInfo.xml` | 시뮬레이션 후 생성되는 실행 정보 |
+
+---
+
+<a id="id-naming"></a>
+
+## ID 네이밍/채번 규칙
+
+노드/링크 등 네트워크 요소의 id는 **8자리 정수 대역**으로 타입을 구분한다. 이 대역을 벗어나거나 섞이면 NextSim route-generator가 `std::out_of_range`(빈 vector/맵 인덱싱)로 크래시하므로, 여러 실측 사례에서 반복 확인된 만큼 반드시 지켜야 한다.
+
+### 네트워크 요소 (KTDB/OSM 도로망 임포트 공통 — `NetworkIdAssigner.java`)
+
+| 타입 | 대역 | 채번 규칙 |
+|---|---|---|
+| Link | `20,000,000 ~` | `20_000_000 + 순번` |
+| 일반 Node | `10,000,000 ~ 10,999,999` | `10_000_000 + 순번` (Link와 카운터를 공유, 외부 링크 스캔 순서대로 배정) |
+| Terminal(출발/도착 전용 노드) | `11,000,000 ~ 11,999,999` | 연결된 유일한 Link id의 뒷자리 3자리를 그대로 파생(예: Link `20000326` ↔ Terminal `11000326`), 충돌 시 순번 폴백 |
+| Garage(버스/트램 차고지) | `12,000,000 ~ 12,999,999` | 채번하지 않고 원본 id 그대로 보존 — 과거 이 구분이 없어 Garage를 Normal로 오인해 인덱스가 크게 어긋난 실측 버그가 있었음 |
+
+`NetworkIdNormalizer.java`(수동편집 저장 시), `OdTerminalIdBandService.java`(OD 대역 재정합)도 같은 대역 체계를 공유한다.
+
+### 대중교통 시설물 (OSM 자동 스냅 — `OsmFacilityConverter.java`)
+
+| 타입 | 대역 | 비고 |
+|---|---|---|
+| 버스 정류장 | `30,000,001 ~` | |
+| 철도역 + 출입구(exit) | `31,000,001 ~` | **역과 출입구가 하나의 카운터를 공유**한다 |
+
+> ⚠️ **실측 크래시(scenario2_1)**: 철도역 id를 채번한 뒤 `idGen.get()`으로 출입구 id를 "훔쳐보기만" 하고 카운터를 소비하지 않으면, 바로 다음 루프의 역 id가 같은 값을 또 써서 출입구 id와 충돌한다 — NextSim route-generator가 이 id를 키로 맵을 구성하다 `std::out_of_range`로 크래시했다(railStation.xml의 exit 85개 전부가 다른 역의 id와 겹치는 형태로 재현). 반드시 `getAndIncrement()`로 소비할 것.
+>
+> 이 문서의 `railStation.xml` 예시(`id="40000001"`)는 KAIST 부천 레퍼런스 데이터셋에서 가져온 값이고, **현재 자동생성 코드가 실제로 배정하는 대역은 31M**이다 — 40M대는 강제되는 규칙이 아니라 그 레퍼런스 데이터셋만의 값이니 새 규칙으로 오인하지 말 것.
+
+### 수동 그리기 (`useNetworkDraw.ts`)
+
+프론트엔드에서 새로 그린 노드/링크는 `Date.now()`(13자리 타임스탬프)를 그대로 id로 쓴다 — 위 8자리 대역과 무관하다. **저장(diff merge) 시점에 백엔드(`NetworkIdNormalizer`)가 8자리 규칙으로 전면 재채번**한다. 링크 분할(`splitLinkInNetwork`)은 타임스탬프 `ts`에 `+10/+11/+12` 오프셋을 더해 같은 그리기 세션 내 충돌을 피한다.
+
+### KTDB 원본 id 보존
+
+KTDB 원본 `node_id`/`link_id`(문자열)는 위 규칙으로 재채번되며 그 자체로는 버려진다. 대신 `origId`(원본 id 해시)를 별도 필드로 남겨 **TURNINFO(회전정보) 매칭에만** 쓴다 — 재채번된 `id()`로 TURNINFO를 조회하면 안 된다.
+
+### 하위 요소(lane/cell/segment/connection/turn)
+
+부모 요소 안에서 **0부터 시작하는 로컬 순번**이다. 전역 8자리 대역과 무관하다 — 예: `lane id="0"`, `cell id="0"`, `connection id="0"`은 그 링크/노드 안에서만 유일하면 된다.
+
+### id 타입(number vs string)
+
+백엔드는 전부 `Long`이라 JSON 직렬화 시 number로 온다. 다만 프론트 수동편집의 `Date.now()` 타임스탬프(매우 큰 정수)가 섞이면서 프론트 타입은 `number | string` 유니언으로 되어 있다 — **Map 키로 쓸 때는 항상 `String()`으로 통일**할 것(number/string 타입 불일치로 조회가 조용히 실패하는 사고가 반복 확인됨).
+
+### ID가 바뀔 때(재임포트 등) 반드시 갱신해야 하는 것
+
+- `network.xml`: link/node id, from_node/to_node, port의 link_id, connection의 from_link/to_link
+- `odmatrix.xml`: source/sink — `OdTerminalIdBandService`가 자동으로 재정합하고, 노드 삭제 시 해당 demand를 자동 삭제(prune)
+- `signal.xml`/`signalTOD.xml`: node id, connectionId — 참조가 안 맞으면 `NextSimInputScaffolder`가 signal.xml 전체를 재생성하거나 connectionId만 null로 초기화
+- 버스/철도 PT 노선(`roadPTline.xml`/`railPTline.xml`의 link seq/node seq/railStationSeq): **검증만 하고 자동 재매핑은 없다**(`PtLineValidation.java`) — 안 맞으면 노선을 직접 다시 그려야 함
+- 포장 노면표시(`linkRef`/`laneRef`/`cellId`): **검증·재매핑 로직이 아예 없다** — id가 재할당되면 조용히 끊어질 수 있는, 아직 안 고쳐진 알려진 갭
+- station/garage id는 재임포트로 안 바뀌는 별도 네임스페이스라 위 검증 대상에서 제외됨
 
 ---
 
@@ -447,6 +503,8 @@ Scenarios[]
 
 필수
 
+> ⚠️ **재임포트 시 id 정합 필수**: `source`/`sink`는 각각 out포트 전용/in포트 전용 터미널 id 집합(위 [ID 네이밍/채번 규칙](#id-naming) 참고)에 전부 존재해야 유효하다. 네트워크를 재임포트해 id가 전면 교체되면 `NextSimInputScaffolder`가 이 유효성을 검사해 안 맞으면 거리 감쇠 기반 샘플 수요로 자동 재생성한다(방향이 뒤집혀도 낡음으로 처리) — 앱 설정(⚙ → 자동생성 설정)에서 flow 범위/기준거리 조정 가능.
+
 역할: 차량 OD 수요를 정의한다.
 
 계층구조:
@@ -518,6 +576,8 @@ Route[]
 
 필수
 
+> ⚠️ **재임포트 시 id 정합 필수 + 자동생성 시 상충 검사**: `node`의 `id`는 참조 노드가 하나라도 새 네트워크 노드 집합에 없으면 낡은 것으로 보고 `NextSimInputScaffolder`가 전체 재생성한다(더미 신호 생성기 재사용). 더미 신호 자동생성은 마주보는 접근로끼리만 동시 녹색으로 묶는 방위각 기반 페어링을 쓰고(허용오차는 앱 설정에서 조정 가능), 수동으로 turn/connList를 편집할 때도 같은 기준으로 "마주보지 않는 접근로가 동시 녹색이 되는" 상충을 경고한다.
+
 역할: 교차로 신호 plan, phase, turn 정보를 정의한다.
 
 계층구조:
@@ -556,6 +616,8 @@ Signal
 ## `signalTOD.xml` [필수]
 
 필수
+
+> ⚠️ **signal.xml의 plan 보유 노드를 전부 커버해야 함**: 하나라도 빠지면(플랜은 있는데 TOD 항목이 없는 노드) NextSim이 "지금 어느 플랜을 써야 하는지" 조회에 실패해 `std::out_of_range`로 크래시한다(실측 확인). `signal.xml`이 재생성되면 signalTOD.xml도 무조건 같이 재생성되고, signal.xml 자체는 유효해도 TOD 커버리지만 빠진 경우엔(수동 편집 등) 그 데이터에 맞는 기본 TOD로 부족한 부분만 채운다(`NextSimInputScaffolder.repairSignalTod`). 노드가 평시(plan 0)/혼잡(plan 1) 두 플랜을 다 가지면 출퇴근 러시아워(07~09시, 17~19시)엔 혼잡 플랜을 쓰는 기본 스케줄을 만든다.
 
 역할: 시간대별 신호 plan 적용 정보를 정의한다.
 
@@ -830,6 +892,8 @@ Passenger
 조건부 생성 필요  
 승객 경로 사용 시 필요하며, `generate_routes.sh --with-pax` 실행으로 생성/갱신한다.
 
+> ⚠️ **양쪽 방향 다 실측 크래시 확인됨(`NextSimRunner.java`)**: 대중교통 노선/정류장이 하나라도 있으면 시뮬레이션 엔진이 이 파일을 무조건 참조한다 — 파일 자체가 없으면 `vector::_M_range_check: __n=0 >= size=0`(빈 vector 인덱싱)으로 즉시 크래시(scenario3_1, 버스 노선 추가 후 재현). 그렇다고 승객 OD 수요가 없는데도 `pax-route-generator`를 무조건 돌리면, 전체 정류장 쌍에 대해 경로를 계산하려다 호스트 메모리를 전부 써버리고 OOMKilled된다. 그래서 **승객 수요(`hasPassengerDemand`, `passenger.xml`의 `<demand>` 존재 여부)가 있을 때만 실제로 생성**하고, 없으면 스키마만 맞는 빈 stub(`{"PaxRoute": []}`)을 직접 써서 파일 부재로 인한 크래시만 막는다(계산 비용 0, OOM 위험 없음). `generate_routes.sh --with-pax`도 이 옵션을 기본 OFF로 두는 것과 같은 이유다. `footpathNetwork.xml`도 정확히 이 조건과 짝을 맞춰야 한다([해당 절](#footpathnetwork-xml) 참고).
+
 역할: 승객 경로 후보를 정의한다.
 
 구조:
@@ -971,6 +1035,8 @@ Lines
 선택  
 버스 사용 시 필요
 
+> ⚠️ **id는 30M 대역, 재임포트 시 자동 재매핑 없음**: `station.id`는 OSM 자동 스냅 시 `30,000,001`부터 채번된다([ID 네이밍/채번 규칙](#id-naming) 참고). 네트워크를 재임포트해도 이 대역은 KTDB 도로망과 별개 네임스페이스라 안 바뀐다(`PtLineValidation`이 검증 대상에서 제외). 다만 `link_ref`/`lane_ref`(스냅된 도로 링크/차로)는 도로망 id라 재임포트 시 낡아질 수 있는데, 이건 검증만 하고 자동 재매핑은 안 되므로 안 맞으면 수동으로 다시 스냅해야 한다.
+
 역할: 버스 정류장을 정의한다.
 
 계층구조:
@@ -1003,6 +1069,8 @@ PublicTransit
 
 선택  
 철도 사용 시 필요
+
+> ⚠️ 아래 예시의 `stationSeq id="40000001"`은 KAIST 부천 레퍼런스 데이터셋 값이다 — 현재 자동생성되는 철도역 id 대역은 `31,000,001`부터다([ID 네이밍/채번 규칙](#id-naming) 참고). `link seq`/`node seq`/`railStationSeq`는 `PtLineValidation`이 새 네트워크와의 정합만 검증하고 자동 재매핑은 하지 않으므로, 재임포트로 안 맞게 되면 노선을 다시 그려야 한다.
 
 역할: 철도 노선과 운행시각을 정의한다.
 
@@ -1040,6 +1108,8 @@ Mode
 선택  
 철도 사용 시 필요
 
+> ⚠️ **역과 출입구는 id 카운터를 공유**: `railStation.id`와 그 `exit.id`는 OSM 자동 스냅 시 하나의 카운터(`31,000,001`부터)를 나눠 쓴다 — 아래 예시의 `id="40000001"`은 부천 레퍼런스 데이터셋 값이니 착오하지 말 것([ID 네이밍/채번 규칙](#id-naming) 참고). 과거 이 카운터를 잘못 소비해(`.get()`만 하고 증가 안 함) 역 id와 출입구 id가 충돌해 크래시한 실측 사례가 있다.
+
 역할: 철도역과 출입구 정보를 정의한다.
 
 계층구조:
@@ -1072,10 +1142,12 @@ RailPublicTransit
 
 ## `footpathNetwork.xml` [조건부]
 
-선택  
-승객 보행/환승 경로 사용 시 필요
+조건부  
+**승객 OD 수요(`passenger.xml`)가 있을 때만 존재해야 한다** — `PaxRoute.json`이 실제로 생성될 때(=`hasPassengerDemand`가 true일 때)와 정확히 같은 조건. 승객 수요가 없으면(=PaxRoute.json이 빈 stub) footpathNetwork.xml도 아예 없어야 한다(`NextSimRunner.stageInputs()`, 없으면 이전 run의 잔여 파일까지 명시적으로 삭제).
 
-역할: 보행 네트워크를 정의한다.
+역할: 보행 네트워크를 정의한다. `network.xml`의 전체 노드를 좌표만 x_coord/y_coord로 풀어 그대로 미러링한 형태로 생성된다(`NextSimRunner.buildFootpathNetworkFromNodes`).
+
+> ⚠️ **정확한 트리거 조건(2026-07-29 정정)**: 처음엔 "PT 정류장이 있으면"(`roadStation.xml`/`railStation.xml`에 실제 station이 있는지)으로 게이팅했었다. 실측(scenario2_1, 2026-07-28) 확인 결과, footpathNetwork.xml을 항상 빈 스텁으로 두면 NextSim이 PT 정류장 위치에서 "가장 가까운 보행 네트워크 지점"을 못 찾아(`Captain::footpath::FindNearestFootpathLinkPoint`) `"GetDistance Error: Could not find nearest link point for origin (...)"`로 실패하고 시뮬레이션이 불안정해졌었는데, 게이팅 기준 자체가 정류장 유무가 아니라 **승객 수요 유무**여야 한다는 게 이후 확인되어 정정됐다. 정류장은 있어도 승객 수요가 없으면 pax-route-generator 자체가 안 돌아 footpath 조회가 발생하지 않는다.
 
 계층구조:
 
