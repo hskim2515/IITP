@@ -232,53 +232,6 @@ const angularDiffDeg = (a: number, b: number): number => {
     return diff > 180 ? 360 - diff : diff;
 };
 
-// ── OSM 신호등 게이트 ────────────────────────────────────────────────────────
-// iitp-rest OsmTrafficSignalMatcher와 동일 임계값(40m) — 백엔드 더미 신호 생성과 프론트
-// 수동 재생성이 같은 기준으로 판정하도록 일치.
-const OSM_SIGNAL_MATCH_DIST_M = 40;
-
-const haversineM = (lat1: number, lng1: number, lat2: number, lng2: number): number => {
-    const R = 6371000;
-    const toRad = Math.PI / 180;
-    const p1 = lat1 * toRad, p2 = lat2 * toRad;
-    const dPhi = (lat2 - lat1) * toRad;
-    const dLmb = (lng2 - lng1) * toRad;
-    const a = Math.sin(dPhi / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dLmb / 2) ** 2;
-    return 2 * R * Math.asin(Math.sqrt(a));
-};
-
-/**
- * 네트워크 노드들의 bbox 내 실제 OSM 신호등(highway=traffic_signals) 좌표를 서버에서 받아온다
- * (GET /network/osm-traffic-signals, iitp-rest NetworkController — OsmTrafficSignalRepository
- * 로컬 DB 조회, OsmTrafficSignalImporter로 사전 적재됨). 네트워크가 비었거나 좌표가 하나도
- * 없거나 요청이 실패하면 빈 배열 — 호출부가 게이트를 건너뛰고 기존 동작으로 폴백한다.
- */
-const fetchOsmTrafficSignals = async (
-    nodeLatLng: Map<string, { lat: number; lng: number }>,
-): Promise<{ lat: number; lon: number }[]> => {
-    if (nodeLatLng.size === 0) return [];
-    let south = Infinity, west = Infinity, north = -Infinity, east = -Infinity;
-    for (const { lat, lng } of nodeLatLng.values()) {
-        if (lat < south) south = lat;
-        if (lat > north) north = lat;
-        if (lng < west) west = lng;
-        if (lng > east) east = lng;
-    }
-    if (!Number.isFinite(south) || !Number.isFinite(west)) return [];
-
-    try {
-        const base = import.meta.env.VITE_API_URL;
-        const bbox = `${west},${south},${east},${north}`;
-        const res = await fetch(`${base}/network/osm-traffic-signals?bbox=${encodeURIComponent(bbox)}`);
-        if (!res.ok) return [];
-        const data = await res.json();
-        return Array.isArray(data) ? data : [];
-    } catch (e) {
-        console.warn("[signal] OSM 신호등 조회 실패(게이트 건너뜀):", e);
-        return [];
-    }
-};
-
 /** WGS84 방위각(도, 0~360, 북=0/동=90) — useNetworkDraw.ts의 computeBearing과 동일 공식. */
 const computeBearingLatLng = (from: { lat: number; lng: number }, to: { lat: number; lng: number }): number => {
     const toRad = Math.PI / 180;
@@ -376,21 +329,57 @@ const groupApproachesByOppositeBearing = (
 };
 
 /**
+ * 접근로(fromLink 그룹)가 정확히 2개이고, 두 접근로의 커넥션이 전부 직진(Straight)뿐이며,
+ * 두 접근로가 서로 거의 마주보는(≈180도) 경우 — 실제 교차 충돌이 없는 "양방향 통과부"로
+ * 보고 제외한다(iitp-rest DummySignalGenerator.isPureThroughPassNode와 동일 기준). 곡선
+ * 도로를 짧은 세그먼트로 쪼개면서 생기는 KTDB 합성 경유점(양방향 각각 1개 링크가 들어오고
+ * 나가되 회전 없이 그대로 직진만 하는 지점)이 in≥1/out≥1 && !(1,1) 조건은 통과하면서도
+ * 실제로는 교차로가 아닌 경우다 — 좌회전/우회전이 하나라도 있거나(=실제 분기), 접근로가
+ * 3개 이상이거나(=실제 교차로), 방위각을 계산할 좌표가 없으면(=판단 불가) 안전하게
+ * "제외하지 않음"(신호 생성 유지) 쪽으로 폴백한다.
+ */
+const isPureThroughPassNode = (
+    groups: Map<string, any[]>,
+    intersectionNodeId: string,
+    linkEndpoints: Map<string, { from: string; to: string }>,
+    nodeCoords: Map<string, [number, number]>,
+    nodeLatLng: Map<string, { lat: number; lng: number }>,
+): boolean => {
+    const keys = Array.from(groups.keys());
+    if (keys.length !== 2) return false;
+    for (const key of keys) {
+        for (const conn of groups.get(key)!) {
+            if (normalizeTurning(conn.turning) !== 'Straight') return false;
+        }
+    }
+    const b1 = approachBearingDeg(keys[0]!, intersectionNodeId, linkEndpoints, nodeCoords, nodeLatLng);
+    const b2 = approachBearingDeg(keys[1]!, intersectionNodeId, linkEndpoints, nodeCoords, nodeLatLng);
+    if (b1 === null || b2 === null) return false;
+    return angularDiffDeg(b1, b2) >= 180 - getOppositeBearingToleranceDeg();
+};
+
+/**
  * intersection 노드의 connection을 fromLink(진입로) 기준으로 그룹핑하여
  * 더미 turnList(진입로별 turn 그룹) + planList(진입로 순환 신호 계획)를 생성한다.
  * 노드/링크 좌표(center, fromNode/toNode)가 있으면 마주보는 접근로끼리 페어링해 동시
  * 녹색을 주는 표준 2페이즈로 운영하고(iitp-rest DummySignalGenerator와 동일 기준),
  * 좌표가 없거나 짝을 못 찾은 접근로는 30초씩 단독으로 도는 라운드로빈으로 안전하게 폴백한다.
  *
- * OSM 신호등 게이트(실측: 부천 참조데이터 — 커넥션 있는 노드 104개 중 신호는 18개뿐)를
- * iitp-rest DummySignalGenerator와 동일 기준으로 적용 — 네트워크 bbox 내 실제 OSM
- * highway=traffic_signals 위치를 미리 받아와, 그 근처(40m)에서만 신호를 생성한다. 비동기
- * 네트워크 호출이 실패하거나(오프라인 등) 서버에 OSM 데이터가 아직 없으면 빈 배열로 취급해
- * 게이트를 건너뛴다(기존 포트 기반 판정만으로 동작 — 회귀 방지).
+ * ⚠️ 한때 OSM highway=traffic_signals 근처(40m)에서만 생성하는 하드 게이트가 있었으나,
+ * 2026-07-29 실측(강남 지역)에서 OSM 신호등 태깅 자체가 성긴 지역(유명 교차로도 300~900m
+ * 이내에 태그가 없는 경우 다수)에서는 대량 과소생성을 유발함을 확인해 제거했다 — iitp-rest
+ * DummySignalGenerator와 동일 결정. 외부 데이터 게이팅 대신 우리가 가진 토폴로지 정보만으로
+ * 판정을 다듬는다: 포트 기반(1진입+1진출 순수 통과점 제외) + isPureThroughPassNode(2진입/
+ * 2진출이라도 전부 직진뿐이고 서로 마주보면 KTDB 합성 경유점으로 보고 제외 — 위 두 조건
+ * 만으로는 못 거르는 사례, iitp-rest 동일 함수와 같은 배경).
  */
-export const generateDummySignals = async (network: any): Promise<Omit<SignalData, "__guid" | "featureType" | "id">[]> => {
-    const signals: Omit<SignalData, "__guid" | "featureType" | "id">[] = [];
+type NetworkGeometry = {
+    nodeCoords: Map<string, [number, number]>;
+    nodeLatLng: Map<string, { lat: number; lng: number }>;
+    linkEndpoints: Map<string, { from: string; to: string }>;
+};
 
+const buildNetworkGeometry = (network: any): NetworkGeometry => {
     const nodeCoords = new Map<string, [number, number]>();
     const nodeLatLng = new Map<string, { lat: number; lng: number }>();
     for (const n of network?.nodes ?? []) {
@@ -407,93 +396,129 @@ export const generateDummySignals = async (network: any): Promise<Omit<SignalDat
             linkEndpoints.set(String(l.id), { from: String(l.fromNode), to: String(l.toNode) });
         }
     }
+    return { nodeCoords, nodeLatLng, linkEndpoints };
+};
 
-    const osmSignals = await fetchOsmTrafficSignals(nodeLatLng);
-    const hasOsmSignalNear = (lat: number, lng: number): boolean => {
-        for (const s of osmSignals) {
-            if (haversineM(lat, lng, s.lat, s.lon) <= OSM_SIGNAL_MATCH_DIST_M) return true;
-        }
-        return false;
-    };
+/**
+ * 노드 하나에 대해 더미 turnList(진입로별 turn 그룹) + planList(진입로 순환 신호 계획)를
+ * 생성한다. generateDummySignals(전체 네트워크 일괄 생성)와 SignalGroupedEditor의 "이 교차로
+ * 자동 생성"(단일 노드 재생성) 양쪽에서 공유하는 핵심 로직 — 판정 기준은 두 호출부가 항상
+ * 동일해야 하므로 분리했다.
+ */
+const buildSignalsForNode = (
+    node: any,
+    geo: NetworkGeometry,
+): Omit<SignalData, "__guid" | "featureType" | "id">[] => {
+    const { nodeCoords, nodeLatLng, linkEndpoints } = geo;
 
-    for (const node of network?.nodes ?? []) {
-        // node.type === 'intersection'은 KTDB/SUMO 임포트 컨버터만 붙이는 값이라, 직접 그리기
-        // 도구로 만든 노드는 실제 교차로가 돼도 영원히 'normal'로 남는다 — 그 결과 직접
-        // 그린/편집한 교차로엔 더미 신호가 하나도 안 생기는 버그가 있었다(pavementMarking.ts와
-        // 동일 버그). useNetworkDraw.ts의 autoGenerateAllIntersections와 동일한 포트 기반
-        // 판정으로 교체(진입/진출 포트가 모두 있으면 실제 교차로).
-        //
-        // ⚠️ 후속 버그(실측: 위성영상 대조): 위 판정이 KTDB의 순수 통과점(type=normal, 1진입+
-        // 1진출 — KtdbNetworkConverter.classifyNodeType 기준 명시적으로 "교차로 아님")까지
-        // 통과시켜, 실제로는 분기 없는 도로 중간 지점에 더미 신호가 생성됐다. 진짜 분기(선택
-        // 지점)가 있으려면 1진입+1진출 단독 조합은 제외해야 한다 — Merging(2+in/1out)·
-        // Diverging(1in/2+out)·Intersection(2+in/2+out)만 통과.
-        const inCount = node.ports?.filter((p: any) => p.type === 'in').length ?? 0;
-        const outCount = node.ports?.filter((p: any) => p.type === 'out').length ?? 0;
-        if (inCount < 1 || outCount < 1) continue;
-        if (inCount === 1 && outCount === 1) continue;
-        const conns = node.connections ?? [];
-        if (conns.length === 0) continue;
+    // node.type === 'intersection'은 KTDB/SUMO 임포트 컨버터만 붙이는 값이라, 직접 그리기
+    // 도구로 만든 노드는 실제 교차로가 돼도 영원히 'normal'로 남는다 — 그 결과 직접
+    // 그린/편집한 교차로엔 더미 신호가 하나도 안 생기는 버그가 있었다(pavementMarking.ts와
+    // 동일 버그). useNetworkDraw.ts의 autoGenerateAllIntersections와 동일한 포트 기반
+    // 판정으로 교체(진입/진출 포트가 모두 있으면 실제 교차로).
+    //
+    // ⚠️ 후속 버그(실측: 위성영상 대조): 위 판정이 KTDB의 순수 통과점(type=normal, 1진입+
+    // 1진출 — KtdbNetworkConverter.classifyNodeType 기준 명시적으로 "교차로 아님")까지
+    // 통과시켜, 실제로는 분기 없는 도로 중간 지점에 더미 신호가 생성됐다. 진짜 분기(선택
+    // 지점)가 있으려면 1진입+1진출 단독 조합은 제외해야 한다 — Merging(2+in/1out)·
+    // Diverging(1in/2+out)·Intersection(2+in/2+out)만 통과.
+    const inCount = node.ports?.filter((p: any) => p.type === 'in').length ?? 0;
+    const outCount = node.ports?.filter((p: any) => p.type === 'out').length ?? 0;
+    if (inCount < 1 || outCount < 1) return [];
+    if (inCount === 1 && outCount === 1) return [];
+    const conns = node.connections ?? [];
+    if (conns.length === 0) return [];
 
-        // OSM 신호등 게이트 — 위 파일 상단 주석 참고. 좌표를 못 구하면(수동 그리기 등) 판정
-        // 불가로 보고 기존 동작 유지(과소생성보다 과다생성이 덜 위험 — 신호 메뉴에서 직접 지울 수 있음).
-        if (osmSignals.length > 0) {
-            const ll = nodeLatLng.get(String(node.id));
-            if (ll && !hasOsmSignalNear(ll.lat, ll.lng)) continue;
-        }
-
-        // fromLink(진입로) 기준 그룹핑 → 그룹 하나 = turn 그룹(approach)
-        const groups = new Map<string, any[]>();
-        for (const conn of conns) {
-            const key = String(conn.fromLink ?? 'default');
-            if (!groups.has(key)) groups.set(key, []);
-            groups.get(key)!.push(conn);
-        }
-        const groupKeys = Array.from(groups.keys());
-        const turnIdOf = new Map(groupKeys.map((key, idx) => [key, String(idx)]));
-
-        const phaseGroups = groupApproachesByOppositeBearing(
-            groupKeys, String(node.id), linkEndpoints, nodeCoords, nodeLatLng,
-        );
-
-        groupKeys.forEach((key, groupIdx) => {
-            const turnId = String(groupIdx);
-            groups.get(key)!.forEach((conn, i) => {
-                // conn.turning은 KTDB(짧은 코드 "S"/"L"/"R"/"U")와 직접 그리기 도구(전체 단어
-                // "Straight"/"Left_Turn"/...)가 섞여 들어온다 — 정규화 없이 그대로 저장/비교하면
-                // (1) SignalData.turning이 짧은 코드로 저장된 신호는 SignalGroupedEditor의 방향
-                // select(DIR, 전체 단어 기준)와 형식이 안 맞고, (2) RTOR(적신호 우회전) 판정도
-                // conn.turning === 'R' 비교라 직접 그린 우회전 커넥션은 항상 놓친다.
-                // SignalData.turning의 canonical 형식은 전체 단어(SignalGroupedEditor의 DIR/select
-                // 값 참고)이므로 그쪽으로 정규화.
-                const normalized = normalizeTurning(conn.turning);
-                const entry: Omit<SignalData, "__guid" | "featureType" | "id"> = {
-                    nodeId: String(node.id),
-                    turnId,
-                    turning: normalized,
-                    type: normalized === 'Right_Turn' ? 'RTOR' : 'None',
-                    connectionId: String(conn.id),
-                };
-                // 노드의 첫 번째 레코드에만 planList 부착
-                if (groupIdx === 0 && i === 0) {
-                    const phaseDuration = getDummyPhaseDuration();
-                    entry.plans = [{
-                        id: '0',
-                        cycle: String(phaseGroups.length * phaseDuration),
-                        offset: '0',
-                        phases: phaseGroups.map((group, idx) => ({
-                            id: String(idx),
-                            duration: String(phaseDuration),
-                            turnList: group.map(fromLink => turnIdOf.get(fromLink)).join(' '),
-                        })),
-                    }];
-                }
-                signals.push(entry);
-            });
-        });
+    // fromLink(진입로) 기준 그룹핑 → 그룹 하나 = turn 그룹(approach)
+    const groups = new Map<string, any[]>();
+    for (const conn of conns) {
+        const key = String(conn.fromLink ?? 'default');
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key)!.push(conn);
     }
+    if (isPureThroughPassNode(groups, String(node.id), linkEndpoints, nodeCoords, nodeLatLng)) return [];
 
+    const groupKeys = Array.from(groups.keys());
+    const turnIdOf = new Map(groupKeys.map((key, idx) => [key, String(idx)]));
+
+    const phaseGroups = groupApproachesByOppositeBearing(
+        groupKeys, String(node.id), linkEndpoints, nodeCoords, nodeLatLng,
+    );
+
+    const result: Omit<SignalData, "__guid" | "featureType" | "id">[] = [];
+    groupKeys.forEach((key, groupIdx) => {
+        const turnId = String(groupIdx);
+        groups.get(key)!.forEach((conn, i) => {
+            // conn.turning은 KTDB(짧은 코드 "S"/"L"/"R"/"U")와 직접 그리기 도구(전체 단어
+            // "Straight"/"Left_Turn"/...)가 섞여 들어온다 — 정규화 없이 그대로 저장/비교하면
+            // (1) SignalData.turning이 짧은 코드로 저장된 신호는 SignalGroupedEditor의 방향
+            // select(DIR, 전체 단어 기준)와 형식이 안 맞고, (2) RTOR(적신호 우회전) 판정도
+            // conn.turning === 'R' 비교라 직접 그린 우회전 커넥션은 항상 놓친다.
+            // SignalData.turning의 canonical 형식은 전체 단어(SignalGroupedEditor의 DIR/select
+            // 값 참고)이므로 그쪽으로 정규화.
+            const normalized = normalizeTurning(conn.turning);
+            const entry: Omit<SignalData, "__guid" | "featureType" | "id"> = {
+                nodeId: String(node.id),
+                turnId,
+                turning: normalized,
+                type: normalized === 'Right_Turn' ? 'RTOR' : 'None',
+                connectionId: String(conn.id),
+            };
+            // 노드의 첫 번째 레코드에만 planList 부착
+            if (groupIdx === 0 && i === 0) {
+                const phaseDuration = getDummyPhaseDuration();
+                entry.plans = [{
+                    id: '0',
+                    cycle: String(phaseGroups.length * phaseDuration),
+                    offset: '0',
+                    phases: phaseGroups.map((group, idx) => ({
+                        id: String(idx),
+                        duration: String(phaseDuration),
+                        turnList: group.map(fromLink => turnIdOf.get(fromLink)).join(' '),
+                    })),
+                }];
+            }
+            result.push(entry);
+        });
+    });
+    return result;
+};
+
+/**
+ * intersection 노드의 connection을 fromLink(진입로) 기준으로 그룹핑하여
+ * 더미 turnList(진입로별 turn 그룹) + planList(진입로 순환 신호 계획)를 생성한다.
+ * 노드/링크 좌표(center, fromNode/toNode)가 있으면 마주보는 접근로끼리 페어링해 동시
+ * 녹색을 주는 표준 2페이즈로 운영하고(iitp-rest DummySignalGenerator와 동일 기준),
+ * 좌표가 없거나 짝을 못 찾은 접근로는 30초씩 단독으로 도는 라운드로빈으로 안전하게 폴백한다.
+ *
+ * ⚠️ 한때 OSM highway=traffic_signals 근처(40m)에서만 생성하는 하드 게이트가 있었으나,
+ * 2026-07-29 실측(강남 지역)에서 OSM 신호등 태깅 자체가 성긴 지역(유명 교차로도 300~900m
+ * 이내에 태그가 없는 경우 다수)에서는 대량 과소생성을 유발함을 확인해 제거했다 — iitp-rest
+ * DummySignalGenerator와 동일 결정. 외부 데이터 게이팅 대신 우리가 가진 토폴로지 정보만으로
+ * 판정을 다듬는다: 포트 기반(1진입+1진출 순수 통과점 제외) + isPureThroughPassNode(2진입/
+ * 2진출이라도 전부 직진뿐이고 서로 마주보면 KTDB 합성 경유점으로 보고 제외 — 위 두 조건
+ * 만으로는 못 거르는 사례, iitp-rest 동일 함수와 같은 배경).
+ */
+export const generateDummySignals = async (network: any): Promise<Omit<SignalData, "__guid" | "featureType" | "id">[]> => {
+    const geo = buildNetworkGeometry(network);
+    const signals: Omit<SignalData, "__guid" | "featureType" | "id">[] = [];
+    for (const node of network?.nodes ?? []) {
+        signals.push(...buildSignalsForNode(node, geo));
+    }
     return signals;
+};
+
+/**
+ * 교차로(노드) 하나에 대해서만 더미 신호 turnList/planList를 재생성한다 —
+ * SignalGroupedEditor의 "이 교차로 자동 생성" 버튼 전용. 판정 기준은
+ * {@link generateDummySignals}와 완전히 동일(같은 buildSignalsForNode 재사용) — 이 노드가
+ * 신호 후보 조건(진입/진출 포트, 순수 통과부 제외 등)을 충족하지 못하면 빈 배열을 반환한다.
+ */
+export const generateDummySignalsForNode = (network: any, nodeId: string): Omit<SignalData, "__guid" | "featureType" | "id">[] => {
+    const node = (network?.nodes ?? []).find((n: any) => String(n?.id) === String(nodeId));
+    if (!node) return [];
+    const geo = buildNetworkGeometry(network);
+    return buildSignalsForNode(node, geo);
 };
 
 /* ──────────────────── 수동 편집 상충(양방향 사고위험) 검사 ────────────────── */

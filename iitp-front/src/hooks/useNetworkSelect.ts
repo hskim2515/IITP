@@ -28,6 +28,8 @@ import { useBusStationStore, useBusStationHistoryStore } from '@stores/useBusSta
 import { useRailStationStore, useRailStationHistoryStore } from '@stores/useRailStationStore';
 import { usePavementMarkingStore, usePavementMarkingHistoryStore } from '@stores/usePavementMarkingStore';
 import { assignPropertyToResponseData } from '@utils/guid';
+import { featureUpdateLogs } from '@utils/history';
+import { generateDummySignalsForNode } from '@utils/signal';
 import { getNetworkLodTierByResolution } from '@utils/lodConstants';
 import { useModeStore } from '@stores/useModeStore';
 import { usePropertyStore } from '@stores/usePropertyStore';
@@ -408,6 +410,30 @@ export function deleteSignalsForNodes(nodeIds: (number | string)[]): void {
     if (todGuids.length > 0) {
         useSignalTodStore.getState().removeRecordsByGuid(todGuids, useSignalTodHistoryStore as any);
     }
+}
+
+/**
+ * 노드 하나의 신호를 토폴로지(접근로/방위각) 기준으로 통째로 (재)생성한다 — 기존 신호가
+ * 있으면 먼저 전부 지운다(부분 병합이 아니라 "이 교차로의 완전한 신호 세트로 교체"가 목표,
+ * SignalGroupedEditor의 "자동 생성"과 동일 원칙 — 둘 다 이 함수를 공유). 판정 기준은
+ * generateDummySignalsForNode(iitp-rest DummySignalGenerator와 동일 로직)를 그대로 쓰므로
+ * 신호 후보 조건(접근로 2개 이상 등) 미충족 노드는 null을 반환하고 아무 것도 하지 않는다.
+ */
+export function generateSignalsForNode(network: Network, nodeId: number | string): number | null {
+    const generated = generateDummySignalsForNode(network, String(nodeId));
+    if (generated.length === 0) return null;
+    deleteSignalsForNodes([nodeId]);
+    const base = (useSignalStore.getState().currentJsonData as { signals?: any[] } | undefined)?.signals?.length ?? 0;
+    generated.forEach((partial, i) => {
+        const newSig = {
+            featureType: 'signals',
+            ...partial,
+            __guid: `signals-${base + i}`,
+        };
+        useSignalStore.getState().updateCurrentJsonData(newSig, useSignalHistoryStore as any);
+        featureUpdateLogs(useSignalHistoryStore as any, { guid: newSig.__guid, updateType: 'added', properties: newSig });
+    });
+    return generated.length;
 }
 
 // ── 링크 삭제 연쇄: 정류장 정리 ──────────────────────────────────
@@ -1088,7 +1114,7 @@ type DragState = ({
 };
 
 /** 선택 링크의 세그먼트 위 최근접점 — 정점 추가(세그먼트 드래그)용 */
-function projectOnSegments(
+export function projectOnSegments(
     coords: Coordinates[], cursor: Coordinate, threshold: number,
 ): { segIdx: number; point: Coordinate } | null {
     let best: { segIdx: number; point: Coordinate; dist: number } | null = null;
@@ -1119,6 +1145,7 @@ export const useNetworkSelect = () => {
     const selectedLaneId  = useNetworkDrawStore(s => s.selectedLaneId);
     const selectedLinkIds = useNetworkDrawStore(s => s.selectedLinkIds);
     const selectedNodeIds = useNetworkDrawStore(s => s.selectedNodeIds);
+    const connectTargetNodeId = useNetworkDrawStore(s => s.connectTargetNodeId);
     const appMode        = useModeStore(s => s.appMode); // 모드 전환 시 선택 초기화용
 
     // (구) 선택 편집 진입 시 mapViewMode='2D' 강제 로직 제거 — 편집모드는 split(2D 편집 + 3D 로드뷰)
@@ -1129,7 +1156,19 @@ export const useNetworkSelect = () => {
         if (!isSelectActive) return;
         const hasSingle = selectedLinkId !== null || selectedNodeId !== null;
         const multiCount = selectedLinkIds.length + selectedNodeIds.length;
-        if (selectedLinkId !== null) {
+        if (connectTargetNodeId) {
+            // "🔗 링크 연결" 진입 — 일반 선택 가이드보다 우선(연결 대상 지정 중에는 평소 선택
+            // 안내가 아니라 이 전용 안내를 봐야 함).
+            useEditGuideStore.getState().setGuide({
+                title: `링크 연결 — 노드 ${connectTargetNodeId}`,
+                steps: [
+                    { keys: ['Shift+클릭'], text: '연결할 링크(도로)를 하나 이상 선택하세요', em: true },
+                    { keys: ['맥락 툴바'], text: '"✅ 연결 생성" — 선택한 링크마다 이 노드 위치에서 분할해 도로 형상 자체를 연결(도로 형상 안 바꾸고 커넥션만 필요하면 ESC 후 "⬡ 커넥션 생성" 사용)' },
+                    { keys: ['ESC'], text: '링크 연결 취소' },
+                ],
+                tip: '여러 도로를 한 번에 선택하면 다중 접근로 교차로가 만들어집니다.',
+            });
+        } else if (selectedLinkId !== null) {
             useEditGuideStore.getState().setGuide({
                 title: '선택·편집 — 링크 선택됨',
                 steps: [
@@ -1172,7 +1211,7 @@ export const useNetworkSelect = () => {
             });
         }
         return () => { useEditGuideStore.getState().clear(); };
-    }, [isSelectActive, selectedLinkId, selectedNodeId, selectedLinkIds, selectedNodeIds]);
+    }, [isSelectActive, selectedLinkId, selectedNodeId, selectedLinkIds, selectedNodeIds, connectTargetNodeId]);
 
     const selSrcRef   = useRef<VectorSource | null>(null);
     const hoverSrcRef = useRef<VectorSource | null>(null);
@@ -1796,6 +1835,24 @@ export const useNetworkSelect = () => {
             useNetworkDrawStore.getState().clearSelection();
             usePropertyStore.getState().setSelectedProps(null);
             useNetworkToolbarStore.getState().hide();
+
+            // Alt+빈 지형 클릭: "도로를 그리는 게 아니라 노드 하나만 놓고 싶다"는 실사용 요청 —
+            // 도로 그리기(beginDrawAt)로 자동 전환하지 않고 항상 고립 노드만 놓는다.
+            // ⚠️ 2026-07-29: 처음엔 여기서 근처 링크에 자동 스냅해 바로 분할·연결까지 했으나,
+            // 실사용 피드백으로 자동 추측 연결을 제거 — 어떤 도로에 연결할지는 노드를 놓은 뒤
+            // 노드 컨텍스트 툴바의 "🔗 링크 연결" 버튼으로 명시적으로 링크를 선택해 정하도록
+            // 바꿨다(NetworkEditToolbar의 connectTargetNodeId 흐름, connectNodeToLinks 참고).
+            // 실제 네트워크 변경은 useNetworkDraw.ts의 전용 effect가 pendingNodePlacement를
+            // 소비해 수행(beginDrawAt/pendingStartCoord와 동일한 분업).
+            if (e.altKey) {
+                const ll = toLonLat(coord);
+                useNetworkDrawStore.getState().placeNodeAt(
+                    { lng: ll[0]!, lat: ll[1]! },
+                    { x: e.clientX, y: e.clientY },
+                );
+                return;
+            }
+
             // 선택 모드에서 도로/노드가 하나도 없는 빈 지형을 클릭 — 보통 "여기서부터 새 도로를
             // 그리고 싶다"는 의도라 실사용 요청으로 그리기 모드로 자동 전환한다. beginDrawAt이
             // 이 클릭 좌표를 draw effect의 시작점으로 직접 주입하므로 재클릭 없이 바로 그려진다.
@@ -1809,6 +1866,10 @@ export const useNetworkSelect = () => {
             const { selectedLinkId: sl, selectedNodeId: sn,
                     selectedLinkIds, selectedNodeIds } = useNetworkDrawStore.getState();
             if (e.key === 'Escape') {
+                // "링크 연결" 대상 선택 중이었다면 그 모드부터 취소(일반 선택 해제와 별개 상태).
+                if (useNetworkDrawStore.getState().connectTargetNodeId) {
+                    useNetworkDrawStore.getState().clearConnectTarget();
+                }
                 useNetworkDrawStore.getState().clearSelection();
                 useNetworkToolbarStore.getState().hide();
             } else if (e.key === 'Delete' || e.key === 'Backspace') {

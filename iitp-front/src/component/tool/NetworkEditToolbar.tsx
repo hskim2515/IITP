@@ -11,7 +11,7 @@ import {
     mergeNodesInNetwork, moveNode,
     batchDeleteLinksFromNetwork, batchUpdateLinksInNetwork,
     applyNetworkUpdate, markRemovedForTileMask,
-    countSignalsForNodes, deleteSignalsForNodes,
+    countSignalsForNodes, deleteSignalsForNodes, generateSignalsForNode,
     isPassThroughNode, mergeLinksAtNode, batchDeleteOrMergeNodes,
     reconcileSignalConnectionIds, farNodeIdsForCascadeDelete,
     toggleSegmentBlock, splitSegmentInNetwork, mergeSegmentInNetwork,
@@ -19,7 +19,7 @@ import {
     countStationsForLinks, countStationsForNodes, deleteStationsForLinks, deletePavementMarkingsForLinks,
     deletePavementMarkingsForShrunkLanes,
 } from '@hooks/useNetworkSelect';
-import { createIntersectionAtNode, regenerateNodeConnections, splitLinkInNetwork } from '@hooks/useNetworkDraw';
+import { connectNodeToLinks, createIntersectionAtNode, regenerateNodeConnections, splitLinkInNetwork } from '@hooks/useNetworkDraw';
 import { segmentIndexAtFrac, cellIndexAtFrac } from '@utils/networkDrilldown';
 import styles from '@css/ToolsPanel.module.css';
 
@@ -127,6 +127,7 @@ const NetworkEditToolbar: React.FC = () => {
     const selectedNodeId  = useNetworkDrawStore((s) => s.selectedNodeId);
     const selectedLinkIds = useNetworkDrawStore((s) => s.selectedLinkIds);
     const selectedNodeIds = useNetworkDrawStore((s) => s.selectedNodeIds);
+    const connectTargetNodeId = useNetworkDrawStore((s) => s.connectTargetNodeId);
     const network = useNetworkStore((s) => s.currentJsonData);
 
     // ── 링크 속성 인라인 편집 상태 ───────────────────────────────────
@@ -320,6 +321,29 @@ const NetworkEditToolbar: React.FC = () => {
             });
         };
 
+        // "🔗 도로 연결" 흐름 전용 — 노드 컨텍스트 툴바에서 도로 연결을 시작한 뒤(startConnectTarget)
+        // Shift+클릭으로 고른 링크들을 그 노드에 실제로 연결한다. 자동 스냅 추측은 하지 않고
+        // 사용자가 선택한 링크만 다룬다(2026-07-29 실사용 피드백으로 자동 스냅 방식 폐기).
+        const handleConnectToTarget = () => {
+            if (!connectTargetNodeId) return;
+            const cur = useNetworkStore.getState().currentJsonData;
+            if (!cur) return;
+            const originalLinkIds = selectedLinkIds; // connectNodeToLinks가 분할·소거하기 전 원본 링크 id — tile mask용
+            const next = connectNodeToLinks(cur, connectTargetNodeId, selectedLinkIds, Date.now());
+            applyNetworkUpdate(next);
+            const clearedCount = reconcileSignalConnectionIds(next, [connectTargetNodeId]);
+            markRemovedForTileMask(cur, next);
+            useNetworkEditStore.getState().addDeleted(originalLinkIds);
+            useNetworkDrawStore.getState().clearConnectTarget();
+            useNetworkDrawStore.getState().clearMultiSelection();
+            useNetworkDrawStore.getState().setSelectedNode(connectTargetNodeId);
+            useNetworkToolbarStore.getState().show({ x: toolbar.x, y: toolbar.y }, 'node', { nodeId: connectTargetNodeId });
+            useMessageStore.getState().setMessage({
+                type: 'info',
+                text: `노드 ${connectTargetNodeId}에 도로 ${selectedLinkIds.length}개 연결 + 커넥션 생성됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}`,
+            });
+        };
+
         return (
             <div style={{ position: 'fixed', left, top, zIndex: 4000 }}>
                 <div style={barStyle}>
@@ -327,6 +351,9 @@ const NetworkEditToolbar: React.FC = () => {
                         {label} {count}개
                     </span>
                     <VDivider />
+                    {isMultiLink && connectTargetNodeId && (
+                        <Btn onClick={handleConnectToTarget} title={`선택한 링크를 노드 ${connectTargetNodeId}에 연결`}>✅ 연결 생성</Btn>
+                    )}
                     {isMultiLink && (
                         <Btn onClick={() => setBatchOpen((v) => !v)} title="일괄 속성 변경">⚙ 속성</Btn>
                     )}
@@ -679,12 +706,18 @@ const NetworkEditToolbar: React.FC = () => {
             useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${nodeId} 좌표 수정됨` });
         };
 
+        // "⬡ 커넥션 생성" — 도로(링크) 형상은 전혀 건드리지 않고, 이 노드가 "이미" 가지고
+        // 있는 포트(=이미 물려있는 도로)만으로 S/L/R 회전 커넥션을 재생성한다. 따라서 아직
+        // 어떤 도로에도 안 물린 고립 노드(포트 0개)에는 쓸 수 없다 — 그 경우는 아래
+        // "🔗 링크 연결"로 먼저 실제 도로에 물려야 한다. "🔗 링크 연결"과 정확히 대비되는
+        // 개념(2026-07-29 실사용 피드백: "링크를 연결할지 커넥션으로 연결할지 헷갈림"에 대한
+        // 명칭 정리) — 링크 연결=도로 형상 변경, 커넥션 생성=형상 안 건드리고 회전규칙만 갱신.
         const handleCreateIntersection = () => {
             if (!canCreateIntersection) return;
             const clearedCount = createIntersectionAtNode(nodeId);
             useMessageStore.getState().setMessage({
                 type: 'info',
-                text: `노드 ${nodeId} 교차로 connection 재생성 완료` + (clearedCount > 0 ? ` — 신호 ${clearedCount}개의 커넥션 참조 초기화` : ''),
+                text: `노드 ${nodeId} 커넥션 재생성 완료(도로 형상은 그대로)` + (clearedCount > 0 ? ` — 신호 ${clearedCount}개의 커넥션 참조 초기화` : ''),
             });
         };
 
@@ -696,14 +729,70 @@ const NetworkEditToolbar: React.FC = () => {
             useNetworkToolbarStore.getState().hide();
         };
 
+        // "이 교차로 전체" 신호 생성/삭제 — 편집 > 신호 > 신호등 패널(SignalGroupedEditor)의
+        // "자동 생성"/"전체 삭제"와 동일한 generateSignalsForNode/deleteSignalsForNodes를
+        // 공유해, 별도 패널을 열지 않고 지도에서 노드 클릭만으로 신호를 통째로 다룰 수 있게 한다.
+        // ⚠️ 신호는 항상 서버 타일(GET /signal/{versionId}/tiles)에서 렌더링되고(SignalDataSourceLayer/
+        // SignalFeatureLayer 둘 다 SIGNAL_TILING.ENABLED일 때 로컬 스토어를 아예 안 봄), 네트워크
+        // 편집과 달리 로컬 편집을 지도에 바로 얹어 보여주는 diff 오버레이가 아직 없다 — 그래서
+        // 여기서 만든/지운 변경은 "편집 > 신호 > 신호등" 패널에서 저장해야 지도에 반영된다.
+        // 실사용 혼란 발견(2026-07-29): 생성 직후 지도에 안 보여 버그로 오인 — 안내 문구로 고지.
+        const SAVE_HINT = ' (지도에 반영하려면 편집 > 신호 > 신호등 패널에서 저장 필요)';
+        const handleGenerateSignals = () => {
+            const cur = useNetworkStore.getState().currentJsonData;
+            if (!cur) return;
+            const run = () => {
+                const count = generateSignalsForNode(cur, nodeId);
+                useMessageStore.getState().setMessage(count == null
+                    ? { type: 'warn', text: `노드 ${nodeId}는 신호 생성 조건(접근로 2개 이상 등)을 충족하지 않습니다.` }
+                    : { type: 'info', text: `노드 ${nodeId} 신호 ${count}건 생성됨${SAVE_HINT}` });
+            };
+            if (nodeSignalCount > 0) {
+                useMessageStore.getState().setMessage({
+                    type: 'confirm',
+                    text: `노드 ${nodeId}의 기존 신호 ${nodeSignalCount}건을 삭제하고 새로 생성하시겠습니까?`,
+                    onConfirm: run,
+                });
+            } else {
+                run();
+            }
+        };
+        const handleDeleteSignals = () => {
+            if (nodeSignalCount === 0) return;
+            useMessageStore.getState().setMessage({
+                type: 'confirm',
+                text: `노드 ${nodeId}의 신호 ${nodeSignalCount}건을 모두 삭제하시겠습니까?`,
+                onConfirm: () => {
+                    deleteSignalsForNodes([nodeId]);
+                    useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${nodeId} 신호 ${nodeSignalCount}건 삭제됨${SAVE_HINT}` });
+                },
+            });
+        };
+
+        // "🔗 링크 연결" — Alt+빈 지형 클릭으로 놓은 고립 노드(또는 기존 노드)에 실제 도로를
+        // 물리적으로 이어붙이는 모드로 전환(도로 형상이 바뀜 — 선택한 링크를 이 노드 위치에서
+        // 분할). 자동으로 "가장 가까운 도로"를 추측해 붙이지 않고, 사용자가 Shift+클릭/
+        // 멀티셀렉트로 링크를 고른 뒤 그 선택 상태에서 뜨는 "✅ 연결 생성" 버튼으로 확정한다
+        // (connectTargetNodeId, handleConnectToTarget 참고). 도로 형상은 안 바꾸고 커넥션(회전
+        // 규칙)만 필요하다면 — 이 노드가 이미 도로에 물려있는 경우 — 왼쪽 "⬡ 커넥션 생성"을
+        // 대신 쓴다. (2026-07-29 실사용 피드백: 원래 버튼명 "도로 연결"이 이 둘을 안 구분해 헷갈림)
+        const handleStartConnectRoads = () => {
+            useNetworkDrawStore.getState().startConnectTarget(nodeId);
+            useNetworkToolbarStore.getState().hide();
+        };
+
         return (
             <div style={{ position: 'fixed', left, top, zIndex: 4000 }}>
                 <div style={barStyle}>
-                    <Btn onClick={handleCreateIntersection} disabled={!canCreateIntersection} title={canCreateIntersection ? 'S/L/R 커넥션 자동 생성' : `in:${inCount} out:${outCount} — 포트 부족`}>⬡ 교차로</Btn>
+                    <Btn onClick={handleCreateIntersection} disabled={!canCreateIntersection} title={canCreateIntersection ? '도로 형상은 그대로, 이미 연결된 도로들로 커넥션만 재생성' : `in:${inCount} out:${outCount} — 포트 부족(먼저 🔗 링크 연결 필요)`}>⬡ 커넥션 생성</Btn>
                     <Btn onClick={handleEditConnections} disabled={!canCreateIntersection} title={canCreateIntersection ? '커넥션(회전 동선) 수동 편집으로 진입' : `in:${inCount} out:${outCount} — 포트 부족`}>🔀 커넥션 편집</Btn>
+                    <Btn onClick={handleStartConnectRoads} title="선택한 도로를 이 노드 위치에서 분할해 실제로 연결(도로 형상이 바뀜)">🔗 링크 연결</Btn>
                     <Btn onClick={() => setCoordOpen((v) => !v)} title="좌표 직접 입력">✏ 좌표</Btn>
                     <Btn onClick={handleMerge} disabled={!canMerge} title={canMerge ? `노드 ${String(nearestNode!.id)}에 병합 (${Math.round(nearestDist)}m)` : '30m 이내 인접 노드 없음'}>⊕ 병합</Btn>
                     <Btn danger onClick={handleDelete} title="노드 삭제 (Delete)">🗑 삭제</Btn>
+                    <VDivider />
+                    <Btn onClick={handleGenerateSignals} title="이 교차로의 신호를 토폴로지 기준으로 통째로 생성/재생성">⚡ 신호 생성</Btn>
+                    <Btn danger onClick={handleDeleteSignals} disabled={nodeSignalCount === 0} title={nodeSignalCount === 0 ? '이 교차로에 신호 없음' : '이 교차로의 신호를 한 번에 전부 삭제'}>🗑 신호 삭제</Btn>
                 </div>
                 {coordOpen && (
                     <div style={expandPanelStyle}>

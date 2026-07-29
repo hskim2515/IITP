@@ -2,6 +2,8 @@ package com.iitp.iitp_rest.service.network;
 
 import com.iitp.iitp_rest.model.network.NetworkXml;
 import com.iitp.iitp_rest.model.network.link.LinkXml;
+import com.iitp.iitp_rest.model.network.node.NodeType;
+import com.iitp.iitp_rest.model.network.node.NodeXml;
 import com.iitp.iitp_rest.model.osm.OsmNode;
 import com.iitp.iitp_rest.model.osm.OsmWay;
 import com.iitp.iitp_rest.model.publicTransit.StationType;
@@ -67,6 +69,14 @@ public class OsmFacilityConverter {
     // 링크 shape 파싱 결과 캐시 — 같은 링크가 여러 그리드 셀/여러 쿼리 점의 후보로 반복
     // 등장하므로 parseShape() 재파싱을 피한다.
     private final Map<Long, List<double[]>> linkShapeCache = new HashMap<>();
+    // 링크 위상(from_node/to_node) 인덱스 — snapRouteToLinks가 "이전에 스냅된 링크의
+    // to_node에서 출발하는 링크"를 다음 스냅 후보로 우선시하는 데 쓴다(아래 snapToLink 참고).
+    private final Map<Long, LinkXml> linkById = new HashMap<>();
+    private final Map<Long, List<LinkXml>> outLinksByNode = new HashMap<>();
+    private final Map<Long, List<LinkXml>> inLinksByNode = new HashMap<>();
+    // 터미널(type="terminal") 노드 id 집합 — convertBusRoutes가 노선 양끝을 터미널까지
+    // 연장하는 데 사용(아래 extendToTerminal 참고).
+    private final Set<Long> terminalNodeIds = new HashSet<>();
 
     /**
      * @param facilities Overpass에서 조회한 시설물 원시 데이터
@@ -102,6 +112,13 @@ public class OsmFacilityConverter {
 
         List<LinkXml> links = networkXml.getLinks() != null ? networkXml.getLinks() : List.of();
         buildLinkGrid(links);
+
+        terminalNodeIds.clear();
+        if (networkXml.getNodes() != null) {
+            for (NodeXml n : networkXml.getNodes()) {
+                if (n.getType() == NodeType.Terminal && n.getId() != null) terminalNodeIds.add(n.getId());
+            }
+        }
 
         // 전체 노드/way 캐시 구성
         osmNodeWgs84.clear();
@@ -162,18 +179,22 @@ public class OsmFacilityConverter {
             double ly = (stop.getLat() - baseLat) * SCALE_Y;
 
             SnapResult snap = snapToLink(lx, ly);
+            // ⚠️ 실측 크래시: NextSim RouteGenerator는 <station> 엘리먼트에 link_ref가
+            // 없으면 "Element should have 'link_ref' attribute" 예외를 던지며 죽는다(터미널
+            // 조합과 무관하게 항상 재현 — 크래시 복구 이분탐색이 절대 수렴하지 못하는 원인이었음).
+            // 철도역(convertRailStations)은 Exit 서브엘리먼트가 없으면 그만이라 스냅 실패해도
+            // 역 자체는 표시 가능하지만, 버스정류장은 link_ref가 station 태그 자체의 필수
+            // 속성이라 스냅 실패 시 아예 제외해야 한다(50m 밖 정류장은 네트워크에 없는 것으로 간주).
+            if (snap == null) continue;
 
             BusStationResponse station = new BusStationResponse();
             station.setId(String.valueOf(idGen.getAndIncrement()));
             station.setTransitMode(TransitMode.bus);
             station.setCenter(fmt3(lx) + " " + fmt3(ly));
             station.setType(StationType.side);
-
-            if (snap != null) {
-                station.setLinkRef(snap.linkId());
-                station.setLaneRef((long) snap.laneId());
-                station.setOffset(round2(snap.offset()));
-            }
+            station.setLinkRef(snap.linkId());
+            station.setLaneRef((long) snap.laneId());
+            station.setOffset(round2(snap.offset()));
 
             String name = stop.getTag("name");
             if (name != null) station.setAddress(name);
@@ -229,7 +250,14 @@ public class OsmFacilityConverter {
             // 출입구: 링크 스냅이 있으면 exit 생성, 없어도 역 자체는 표시
             if (snap != null) {
                 ExitResponse exit = new ExitResponse();
-                exit.setId(String.valueOf(idGen.get()));
+                // ⚠️ 실측 크래시: idGen.get()은 카운터를 소비하지 않고 "다음 값을 훔쳐보기만"
+                // 해서, 바로 다음 루프의 station.setId()가 같은 값을 또 쓰게 돼 station id와
+                // exit id가 충돌했다(실측: railStation.xml의 exit 85개 전부가 다른 역의 id와
+                // 겹침). NextSim RouteGenerator의 PT Route Generation 단계가 이 id를 키로
+                // 맵을 구성하는데, 충돌로 항목이 덮어써지며 std::out_of_range(_Map_base::at)로
+                // 크래시했다(scenario2_1, 터미널 조합과 무관하게 항상 재현). getAndIncrement()로
+                // 고유 id를 소비하도록 수정.
+                exit.setId(String.valueOf(idGen.getAndIncrement()));
                 exit.setLinkRef(String.valueOf(snap.linkId()));
                 exit.setOffset(round2(snap.offset()));
                 exit.setAccessTime("30");
@@ -269,11 +297,19 @@ public class OsmFacilityConverter {
             List<LinkXml> links, double baseLat, double baseLon,
             List<BusStationResponse> busStations, int defaultIntervalMin) {
         List<Map<String, Object>> lines = new ArrayList<>();
+        Map<String, BusStationResponse> stationById = new HashMap<>();
+        for (BusStationResponse st : busStations) stationById.put(st.getId(), st);
         int idSeq = 1;
         for (OsmOverpassService.OsmRelation rel : routes) {
             String name   = rel.getTag("name");
             String ref    = rel.getTag("ref");
-            String lineId = ref != null ? ref : String.valueOf(idSeq);
+            // ⚠️ 실측 크래시: ref(버스 노선 번호, 예: "9202")를 id로 썼더니 같은 번호를 공유하는
+            // 상행/하행 등 별도 relation이 <Line id="9202">를 중복 생성했다(실측: roadPTline.xml
+            // 67개 Line 중 13개 id 중복). NextSim RouteGenerator의 PT Route Generation이 이 id를
+            // 키로 맵을 구성하는데 중복 삽입으로 std::out_of_range(_Map_base::at) 크래시가 났다
+            // (scenario2_1, 터미널 조합과 무관하게 항상 재현). id는 항상 고유한 순번만 쓰고,
+            // 사람이 읽는 노선 번호는 name(비어있으면 ref)으로만 노출한다.
+            String lineId = String.valueOf(idSeq);
 
             // way 노드 순서를 따라 실제 도로 형상 좌표 수집 (bbox 내부만, gap은 null 구분자)
             List<Map<String, Double>> coords = buildRouteCoords(rel.memberWayIds(), bbox);
@@ -295,16 +331,45 @@ public class OsmFacilityConverter {
                 }
             }
 
-            List<Long> linkSeq = snapRouteToLinks(coords, links, baseLat, baseLon);
+            // ⚠️ 실측 확인: extendToTerminal의 BFS 연장 구간이 원래 노선이 이미 지나온 링크를
+            // 다시 통과하는 경로를 고르는 경우가 있어(scenario2_1 노선 37/42/51/79) 중복이
+            // 재발생했다 — 연장 후에도 다시 한번 루프 제거를 적용해야 한다.
+            List<Long> linkSeq = removeDuplicateLinkLoops(
+                    extendToTerminal(snapRouteToLinks(coords, links, baseLat, baseLon)));
+            // 안전장치: BFS로도 터미널에 못 닿으면(고립된 서브그래프 등) 이 노선은 NextSim에서
+            // 항상 크래시하므로 아예 제외한다 — 빈 노선이 아니라 "만들 수 없는" 노선으로 취급.
+            if (!linkSeq.isEmpty() && !touchesTerminalAtBothEnds(linkSeq)) continue;
             List<String> stationSeq = orderStationsAlongRoute(linkSeq, busStations);
+            // ⚠️ 실측 크래시: 정류장이 하나도 안 걸린 노선(station.seq 빈 문자열)을 그대로
+            // 두면 nextsim 시뮬레이션 시작 직전 "Cannot build OD map for line N. RoadLinks or
+            // RoadStations is empty."로 SIGSEGV 크래시한다(scenario2_1 실측, 142개 노선 중
+            // 9개가 원인). 정류장 없는 버스노선은 대중교통 시뮬레이션에 의미가 없기도 하므로
+            // 터미널 미도달 노선과 동일하게 제외한다.
+            if (stationSeq.isEmpty()) continue;
+            // ⚠️ 실측 크래시 후보: 레퍼런스 데이터(network_xml_bucheon/roadStation.xml)를 보면
+            // <station>의 line.list가 자신을 지나는 노선 id를 역으로 나열한다(양방향 참조) —
+            // roadPTline.xml의 station.seq → station id 방향 참조만 만들고 이 역방향은 항상
+            // 빈 문자열로 뒀었다. NextSim이 station.line.list로 노선을 찾는 경로가 있다면
+            // 이 누락도 PT Route Generation std::out_of_range의 원인일 수 있다.
+            for (String stId : stationSeq) {
+                BusStationResponse st = stationById.get(stId);
+                if (st == null || st.getLine() == null) continue;
+                String existing = st.getLine().getList();
+                st.getLine().setList(existing == null || existing.isBlank() ? lineId : existing + " " + lineId);
+            }
 
             Map<String, Object> line = new LinkedHashMap<>();
             line.put("id",       lineId);
-            line.put("name",     name != null ? name : lineId);
+            line.put("name",     name != null ? name : (ref != null ? ref : lineId));
             line.put("interval", defaultIntervalMin);
             line.put("coords",   coords);
             line.put("link",     Map.of("seq", linkSeq.stream().map(String::valueOf).reduce((a,b) -> a + " " + b).orElse("")));
-            line.put("node",     Map.of("seq", ""));
+            // ⚠️ 실측 크래시: node.seq를 항상 빈 문자열로 뒀더니 NextSim RouteGenerator의 PT
+            // Route Generation이 std::out_of_range(_Map_base::at)로 죽었다(scenario2_1, 터미널
+            // 조합과 무관하게 항상 재현). 실제 KAIST 검증 데이터(network_xml_bucheon/roadPTline.xml)
+            // 확인 결과 node.seq는 항상 링크 개수+1개의 노드 체인(from_node → to_node → ... →
+            // 마지막 to_node)으로 채워져 있어야 하는 필수 필드였다.
+            line.put("node",     Map.of("seq", buildNodeSeq(linkSeq)));
             line.put("station",  Map.of("seq", String.join(" ", stationSeq)));
             line.put("garage",   Map.of("seq", ""));
 
@@ -313,6 +378,24 @@ public class OsmFacilityConverter {
         }
         log.info("버스 노선 변환: {}개 (coords 포함)", lines.size());
         return Map.of("lines", lines);
+    }
+
+    /** link.seq(연속 링크 체인)로부터 node.seq(from_node → to_node → ... 노드 체인, 링크
+     *  개수+1개)를 만든다. 링크 위상 연속성은 이미 {@link #snapRouteToLinks}가 보장한다. */
+    private String buildNodeSeq(List<Long> linkSeq) {
+        if (linkSeq.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        LinkXml first = linkById.get(linkSeq.get(0));
+        if (first != null && first.getFromNode() != null) {
+            sb.append(first.getFromNode());
+        }
+        for (Long linkId : linkSeq) {
+            LinkXml link = linkById.get(linkId);
+            if (link == null || link.getToNode() == null) continue;
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(link.getToNode());
+        }
+        return sb.toString();
     }
 
     // ── 철도 노선 ─────────────────────────────────────────────────────────────
@@ -340,7 +423,13 @@ public class OsmFacilityConverter {
             List<OsmOverpassService.OsmRelation> routes, double[] bbox,
             Map<Long, String> railStationIdByOsmNode, Map<String, String> railStationIdByName) {
         List<Map<String, Object>> routeList = new ArrayList<>();
-        int idSeq = 1;
+        // ⚠️ 실측 확인(사용자 지적): 버스 Line id와 철도 Route id가 둘 다 1부터 시작해 완전히
+        // 겹쳤다(scenario2_1: 버스 92개 전부 철도 id와 충돌). NextSim의 PTVertexArr/PTArcArr는
+        // 버스+철도 노선을 함께 받아 하나의 PT 그래프를 구성하는데(바이너리 심볼로 확인), 이
+        // id 충돌이 내부 자료구조를 오염시켜 시뮬레이션 중 std::out_of_range/vector 크래시로
+        // 이어졌을 가능성이 있다. 철도 Route id를 버스 Line id와 절대 겹치지 않는 범위(10000+)
+        // 로 옮겨 분리한다.
+        int idSeq = 10_000;
         for (OsmOverpassService.OsmRelation rel : routes) {
             String name = rel.getTag("name");
 
@@ -474,6 +563,7 @@ public class OsmFacilityConverter {
             List<Map<String, Double>> coords, List<LinkXml> links, double baseLat, double baseLon) {
         List<Long> result = new ArrayList<>();
         double[] prevXy = null;
+        Long prevLinkId = null;
         for (Map<String, Double> pt : coords) {
             if (pt == null) { prevXy = null; continue; } // gap — 방향 연속성 끊음
             double lx = (pt.get("lng") - baseLon) * SCALE_X;
@@ -482,15 +572,238 @@ public class OsmFacilityConverter {
             if (prevXy != null) {
                 double dx = lx - prevXy[0], dy = ly - prevXy[1];
                 if (dx != 0 || dy != 0) {
-                    SnapResult snap = snapToLink(lx, ly, new double[]{dx, dy});
-                    if (snap != null && (result.isEmpty() || result.get(result.size() - 1) != snap.linkId())) {
-                        result.add(snap.linkId());
+                    SnapResult snap = snapToLink(lx, ly, new double[]{dx, dy}, topologicalCandidates(prevLinkId));
+                    if (snap != null) {
+                        if (result.isEmpty() || result.get(result.size() - 1) != snap.linkId()) {
+                            result.add(snap.linkId());
+                        }
+                        prevLinkId = snap.linkId();
                     }
                 }
             }
             prevXy = new double[]{lx, ly};
         }
+        return removeDuplicateLinkLoops(repairTopologyGaps(result));
+    }
+
+    /**
+     * ⚠️ 실측 확인(scenario2_1, 노선 81): 같은 링크 3개(A,B,C)가 시퀀스에 통째로 두 번
+     * 나타나는 "루프" 패턴이 남아있었다(...,A,B,C,A,B,C,...) — GPS 노이즈로 잠깐 앞으로 갔다가
+     * 다시 그 지점으로 돌아온 경우로 추정. 정류장이 이 반복 구간의 링크 위에 있으면 NextSim이
+     * "Invalid distance for X -> X" 경고와 함께 이후 시뮬레이션 단계에서 불안정해졌다. 어떤
+     * 링크가 이미 등장한 적이 있으면 그 지점 이후(=돌아오기 전까지의 우회 구간)를 통째로
+     * 잘라내 항상 각 링크가 시퀀스에 한 번만 나오도록 정리한다.
+     */
+    private List<Long> removeDuplicateLinkLoops(List<Long> linkSeq) {
+        List<Long> result = new ArrayList<>();
+        Map<Long, Integer> indexInResult = new HashMap<>();
+        for (Long id : linkSeq) {
+            Integer pos = indexInResult.get(id);
+            if (pos != null) {
+                while (result.size() > pos + 1) {
+                    Long removed = result.remove(result.size() - 1);
+                    indexInResult.remove(removed);
+                }
+                continue;
+            }
+            indexInResult.put(id, result.size());
+            result.add(id);
+        }
         return result;
+    }
+
+    private static final int MAX_REPAIR_HOPS = 6;
+
+    /**
+     * ⚠️ 실측 크래시: topologicalCandidates가 50m 이내에 위상상 이어지는 링크가 없으면(교차로
+     * 간격이 넓거나 GPS 포인트가 성긴 구간) 전체 최근접으로 폴백하는데, 그 최근접 링크가
+     * 실제로는 이전 링크와 안 이어진(from_node≠직전 링크의 to_node) 링크일 수 있다 —
+     * scenario2_1의 노선 하나(link.seq 25개 중 6개)에서 실측 확인. NextSim RouteGenerator의
+     * PT Route Generation이 이 끊긴 지점에서 존재하지 않는 그래프 arc를 조회해
+     * std::out_of_range로 크래시했다. 최종 링크 시퀀스에서 인접 링크 간 위상이 끊긴 곳을
+     * BFS로 실제 연결 링크를 찾아 끼워 넣어 항상 연속된 시퀀스가 되도록 보정한다.
+     */
+    private List<Long> repairTopologyGaps(List<Long> raw) {
+        if (raw.size() < 2) return raw;
+        List<Long> repaired = new ArrayList<>();
+        repaired.add(raw.get(0));
+        for (int i = 1; i < raw.size(); i++) {
+            Long prevId = repaired.get(repaired.size() - 1);
+            Long curId = raw.get(i);
+            LinkXml prev = linkById.get(prevId);
+            LinkXml cur = linkById.get(curId);
+            if (prev == null || cur == null || prevId.equals(curId)) {
+                repaired.add(curId);
+                continue;
+            }
+            if (prev.getToNode() != null && prev.getToNode().equals(cur.getFromNode())) {
+                repaired.add(curId);
+                continue;
+            }
+            List<Long> bridge = findLinkPath(prev.getToNode(), cur.getFromNode(), MAX_REPAIR_HOPS);
+            if (bridge != null) repaired.addAll(bridge);
+            repaired.add(curId);
+        }
+        return repaired;
+    }
+
+    /** fromNode→toNode로 이어지는 링크 경로를 BFS로 찾는다(최대 maxHops 홉). 못 찾으면 null. */
+    private List<Long> findLinkPath(Long fromNode, Long toNode, int maxHops) {
+        if (fromNode == null || toNode == null || fromNode.equals(toNode)) return List.of();
+        Map<Long, Long> cameFromLink = new HashMap<>();
+        Map<Long, Long> cameFromNode = new HashMap<>();
+        Set<Long> visited = new HashSet<>();
+        visited.add(fromNode);
+        List<Long> currentLevel = new ArrayList<>();
+        currentLevel.add(fromNode);
+        for (int depth = 0; depth < maxHops && !currentLevel.isEmpty(); depth++) {
+            List<Long> nextLevel = new ArrayList<>();
+            for (Long node : currentLevel) {
+                List<LinkXml> outs = outLinksByNode.get(node);
+                if (outs == null) continue;
+                for (LinkXml l : outs) {
+                    Long nxt = l.getToNode();
+                    if (nxt == null || visited.contains(nxt)) continue;
+                    visited.add(nxt);
+                    cameFromLink.put(nxt, l.getId());
+                    cameFromNode.put(nxt, node);
+                    if (nxt.equals(toNode)) {
+                        List<Long> path = new ArrayList<>();
+                        Long cur = nxt;
+                        while (!cur.equals(fromNode)) {
+                            path.add(cameFromLink.get(cur));
+                            cur = cameFromNode.get(cur);
+                        }
+                        Collections.reverse(path);
+                        return path;
+                    }
+                    nextLevel.add(nxt);
+                }
+            }
+            currentLevel = nextLevel;
+        }
+        return null;
+    }
+
+    /**
+     * ⚠️ 실측 확인된 NextSim 바이너리 결함(NEXTSIM_DATA_STRUCTURE.md #roadptline-xml,
+     * 2026-07-27 scenario3_1로 최초 발견 — 이번 세션 scenario2_1에서 재확인): 노선의
+     * 시작/끝 링크가 실제 네트워크 터미널 노드(type="terminal")에 닿아있지 않으면
+     * route-generator가 PT Route Generation 단계에서 std::out_of_range(_Map_base::at)로
+     * 크래시한다. 우리 XML 변환 코드 문제가 아니라 NextSim 자체 결함으로 판단되어(문서 참고)
+     * 우회책으로 노선 시작/끝을 가장 가까운 터미널까지 BFS로 연장한다.
+     */
+    private List<Long> extendToTerminal(List<Long> linkSeq) {
+        if (linkSeq.isEmpty() || terminalNodeIds.isEmpty()) return linkSeq;
+        List<Long> result = new ArrayList<>(linkSeq);
+
+        LinkXml first = linkById.get(result.get(0));
+        if (first != null && first.getFromNode() != null && !terminalNodeIds.contains(first.getFromNode())) {
+            List<Long> prefix = findPathToTerminal(first.getFromNode(), false);
+            if (prefix != null) result.addAll(0, prefix);
+        }
+
+        LinkXml last = linkById.get(result.get(result.size() - 1));
+        if (last != null && last.getToNode() != null && !terminalNodeIds.contains(last.getToNode())) {
+            List<Long> suffix = findPathToTerminal(last.getToNode(), true);
+            if (suffix != null) result.addAll(suffix);
+        }
+        return result;
+    }
+
+    /**
+     * startNode에서 가장 가까운 터미널 노드까지의 링크 경로를 BFS로 찾는다.
+     * forward=true면 출발 방향(outLinksByNode)으로, false면 역방향(inLinksByNode)으로 탐색한다
+     * — 역방향 탐색 결과는 "터미널 → startNode" 순서(=extendToTerminal의 prefix)로 반환된다.
+     * 못 찾으면 null.
+     */
+    // 터미널은 보통 네트워크 경계에만 있어서(교차로 안쪽 깊숙한 노선일수록) 위상 보정
+    // (MAX_REPAIR_HOPS=6, 지엽적 끊김 전용)보다 훨씬 더 많은 홉이 필요할 수 있다.
+    private static final int MAX_TERMINAL_SEARCH_HOPS = 300;
+
+    private List<Long> findPathToTerminal(Long startNode, boolean forward) {
+        if (startNode == null || terminalNodeIds.contains(startNode)) return List.of();
+        Map<Long, List<LinkXml>> graph = forward ? outLinksByNode : inLinksByNode;
+        Map<Long, Long> parent = new HashMap<>();
+        Set<Long> visited = new HashSet<>();
+        visited.add(startNode);
+        List<Long> currentLevel = new ArrayList<>();
+        currentLevel.add(startNode);
+        Long terminal = null;
+        for (int depth = 0; depth < MAX_TERMINAL_SEARCH_HOPS && terminal == null && !currentLevel.isEmpty(); depth++) {
+            List<Long> nextLevel = new ArrayList<>();
+            for (Long node : currentLevel) {
+                List<LinkXml> edges = graph.get(node);
+                if (edges == null) continue;
+                for (LinkXml l : edges) {
+                    Long nxt = forward ? l.getToNode() : l.getFromNode();
+                    if (nxt == null || visited.contains(nxt)) continue;
+                    visited.add(nxt);
+                    parent.put(nxt, node);
+                    if (terminalNodeIds.contains(nxt)) { terminal = nxt; break; }
+                    nextLevel.add(nxt);
+                }
+                if (terminal != null) break;
+            }
+            currentLevel = nextLevel;
+        }
+        if (terminal == null) return null;
+
+        List<Long> chain = new ArrayList<>();
+        Long cur = terminal;
+        while (cur != null) {
+            chain.add(cur);
+            if (cur.equals(startNode)) break;
+            cur = parent.get(cur);
+        }
+        Collections.reverse(chain); // 탐색 진행 순서: forward면 startNode→terminal
+        if (!forward) Collections.reverse(chain); // backward 탐색의 실제 진행방향은 terminal→startNode
+
+        List<Long> linkPath = new ArrayList<>();
+        for (int i = 0; i < chain.size() - 1; i++) {
+            Long linkId = findLinkBetween(chain.get(i), chain.get(i + 1));
+            if (linkId == null) return null; // 방어: 이론상 항상 존재
+            linkPath.add(linkId);
+        }
+        return linkPath;
+    }
+
+    private boolean touchesTerminalAtBothEnds(List<Long> linkSeq) {
+        LinkXml first = linkById.get(linkSeq.get(0));
+        LinkXml last = linkById.get(linkSeq.get(linkSeq.size() - 1));
+        return first != null && last != null
+                && terminalNodeIds.contains(first.getFromNode())
+                && terminalNodeIds.contains(last.getToNode());
+    }
+
+    private Long findLinkBetween(Long fromNode, Long toNode) {
+        List<LinkXml> outs = outLinksByNode.get(fromNode);
+        if (outs == null) return null;
+        for (LinkXml l : outs) {
+            if (toNode.equals(l.getToNode())) return l.getId();
+        }
+        return null;
+    }
+
+    /**
+     * 직전에 스냅된 링크의 to_node에서 이어지는 링크(+직전 링크 자신, 저속/정차 구간에서
+     * 같은 링크에 여러 점이 찍히는 경우)만 "다음 스냅 후보"로 인정한다.
+     *
+     * <p>⚠️ 실측 버그: 위상 연속성 없이 순수 최근접 거리로만 스냅하면(교차로 부근에 진행방향이
+     * 비슷한 링크가 여러 개 몰려 있을 때) 노선이 엉뚱한 링크로 튀었다가 되돌아오길 반복해
+     * 지도에서 노선이 서로 교차/역주행하는 것처럼 "꼬여 보이는" 현상이 났다(사용자 실측 리포트).
+     * null을 반환하면(직전 링크 정보 없음/위상 후보 전무) {@link #snapToLink}가 기존처럼
+     * 순수 최근접으로 폴백한다.
+     */
+    private Set<Long> topologicalCandidates(Long prevLinkId) {
+        if (prevLinkId == null) return null;
+        LinkXml prev = linkById.get(prevLinkId);
+        if (prev == null || prev.getToNode() == null) return null;
+        Set<Long> allowed = new HashSet<>();
+        allowed.add(prevLinkId);
+        List<LinkXml> next = outLinksByNode.get(prev.getToNode());
+        if (next != null) for (LinkXml l : next) allowed.add(l.getId());
+        return allowed;
     }
 
     /**
@@ -526,11 +839,21 @@ public class OsmFacilityConverter {
     private void buildLinkGrid(List<LinkXml> links) {
         linkGrid.clear();
         linkShapeCache.clear();
+        linkById.clear();
+        outLinksByNode.clear();
+        inLinksByNode.clear();
         for (LinkXml link : links) {
             if (link.getShape() == null || link.getShape().isBlank()) continue;
             List<double[]> pts = parseShape(link.getShape());
             if (pts.size() < 2) continue;
             linkShapeCache.put(link.getId(), pts);
+            linkById.put(link.getId(), link);
+            if (link.getFromNode() != null) {
+                outLinksByNode.computeIfAbsent(link.getFromNode(), k -> new ArrayList<>()).add(link);
+            }
+            if (link.getToNode() != null) {
+                inLinksByNode.computeIfAbsent(link.getToNode(), k -> new ArrayList<>()).add(link);
+            }
 
             double minX = Double.MAX_VALUE, minY = Double.MAX_VALUE;
             double maxX = -Double.MAX_VALUE, maxY = -Double.MAX_VALUE;
@@ -562,10 +885,24 @@ public class OsmFacilityConverter {
      *            잘못된 방향으로 스냅되는 것을 막는다.
      */
     private SnapResult snapToLink(double lx, double ly, double[] dir) {
+        return snapToLink(lx, ly, dir, null);
+    }
+
+    /**
+     * @param preferredLinkIds null이 아니면 이 집합에 속한 링크를 최우선으로 찾는다(→
+     *                          {@link #topologicalCandidates}). 집합 내에 임계거리 이내 후보가
+     *                          있으면 전체 최근접 링크보다 그쪽을 택해 위상 연속성을 지킨다.
+     *                          집합이 비어있거나(위상 정보 없음) 그 안에 임계거리 이내 후보가
+     *                          없으면(경로가 실제로 다른 도로로 갈아탄 경우 등) 기존처럼 전체
+     *                          최근접으로 폴백한다.
+     */
+    private SnapResult snapToLink(double lx, double ly, double[] dir, Set<Long> preferredLinkIds) {
         int gx = (int) Math.floor(lx / GRID_CELL_M), gy = (int) Math.floor(ly / GRID_CELL_M);
         Set<Long> seen = new HashSet<>();
         double bestDist = Double.MAX_VALUE;
         SnapResult best = null;
+        double bestPreferredDist = Double.MAX_VALUE;
+        SnapResult bestPreferred = null;
 
         for (int dx = -1; dx <= 1; dx++) {
             for (int dy = -1; dy <= 1; dy++) {
@@ -576,6 +913,7 @@ public class OsmFacilityConverter {
 
                     List<double[]> pts = linkShapeCache.get(link.getId());
                     if (pts == null || pts.size() < 2) continue;
+                    boolean isPreferred = preferredLinkIds != null && preferredLinkIds.contains(link.getId());
 
                     double cumLen = 0.0;
                     for (int i = 0; i < pts.size() - 1; i++) {
@@ -592,12 +930,16 @@ public class OsmFacilityConverter {
                         // 점→선분 투영
                         double[] proj = projectPointOnSegment(lx, ly, ax, ay, bx, by);
                         double d = dist(lx, ly, proj[0], proj[1]);
+                        double t = segLen > 0 ? dist(ax, ay, proj[0], proj[1]) / segLen : 0;
+                        double offset = cumLen + t * segLen;
 
                         if (d < bestDist) {
                             bestDist = d;
-                            double t = segLen > 0 ? dist(ax, ay, proj[0], proj[1]) / segLen : 0;
-                            double offset = cumLen + t * segLen;
                             best = new SnapResult(link.getId(), 0, offset);
+                        }
+                        if (isPreferred && d < bestPreferredDist) {
+                            bestPreferredDist = d;
+                            bestPreferred = new SnapResult(link.getId(), 0, offset);
                         }
                         cumLen += segLen;
                     }
@@ -605,6 +947,15 @@ public class OsmFacilityConverter {
             }
         }
 
+        if (bestPreferred != null && bestPreferredDist <= MAX_SNAP_DIST_M) return bestPreferred;
+        // ⚠️ 실측 크래시: preferredLinkIds가 있다는 건 이미 직전 링크가 확정된 상태라는 뜻인데,
+        // 그 위상 후보 중 임계거리 이내가 없다고 전체 최근접(위상 무관)으로 폴백하면 실제로는
+        // 안 이어진 링크를 골라버릴 수 있다(scenario2_1 실측: 링크 25개 중 6곳에서 발생, 뒤이어
+        // NextSim RouteGenerator의 PT Route Generation이 존재하지 않는 그래프 arc를 조회해
+        // std::out_of_range로 크래시). repairTopologyGaps의 BFS 보정도 애초에 "틀린 링크"가
+        // 골라진 경우엔 이어붙일 경로가 없어 못 고친다 — 근본적으로 이 폴백 자체를 하지 말아야
+        // 한다. preferredLinkIds가 없는(경로 시작점) 경우에만 전체 최근접 폴백을 허용한다.
+        if (preferredLinkIds != null) return null;
         if (best == null || bestDist > MAX_SNAP_DIST_M) return null;
         return best;
     }

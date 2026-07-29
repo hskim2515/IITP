@@ -2,8 +2,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useSignalStore, useSignalHistoryStore } from "@stores/useSignalStore";
 import { useNetworkStore } from "@stores/useNetworkStore";
 import { useSelectionStore } from "@stores/useSelectionStore";
+import { useMessageStore } from "@stores/useMessageStore";
 import { featureUpdateLogs } from "@utils/history";
 import { checkManualSignalEditConflicts, SignalPhaseConflict } from "@utils/signal";
+import { extractFeatureTypeFromGuid } from "@utils/guid";
+import { deleteSignalsForNodes, generateSignalsForNode } from "@hooks/useNetworkSelect";
 
 /** 상충 경고를 사용자에게 보여주고 계속 저장할지 확인받는다. */
 function confirmSignalConflicts(conflicts: SignalPhaseConflict[]): boolean {
@@ -196,6 +199,7 @@ const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ container
 
     // 지도 선택 sync
     const selectedGuid = useSelectionStore(s => s.selectedGuid[0] as string | undefined);
+    const network = useNetworkStore(s => s.currentJsonData);
     const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
 
     /* 노드 그룹 */
@@ -216,25 +220,32 @@ const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ container
         return map;
     }, [signals]);
 
-    const nodeIds = useMemo(() => {
-        const ids = Array.from(nodeGroups.keys());
-        const q = search.trim().toLowerCase();
-        return q ? ids.filter(id => id.toLowerCase().includes(q)) : ids;
-    }, [nodeGroups, search]);
-
-    /* 지도 클릭으로 선택된 신호의 nodeId (state 변경 없이 파생) */
-    const guidNodeId = useMemo(() => {
+    /* 지도에서 클릭된 게 기존 신호면 그 신호의 nodeId, 교차로(노드)면 그 노드의 id —
+     * 신호가 아직 하나도 없는 교차로도 노드 클릭만으로 바로 탭을 열 수 있어야
+     * "교차로를 통째로 선택해서 신호를 추가/삭제"가 가능해진다(신호 마커가 없으면
+     * 지도에서 골라낼 방법이 없었던 기존 공백 보완). */
+    const mapNodeId = useMemo(() => {
         if (!selectedGuid) return null;
         const sig = signals.find(s => s.__guid === selectedGuid);
-        return sig ? String(sig.nodeId ?? "?") : null;
-    }, [selectedGuid, signals]);
+        if (sig) return String(sig.nodeId ?? "?");
+        if (extractFeatureTypeFromGuid(selectedGuid) !== "nodes") return null;
+        const node = (network?.nodes ?? []).find((n: any) => n.__guid === selectedGuid);
+        return node?.id != null ? String(node.id) : null;
+    }, [selectedGuid, signals, network]);
 
-    /* activeId: 지도 클릭 > 탭 직접 클릭 > 첫 번째 노드 순서로 결정 */
+    const nodeIds = useMemo(() => {
+        const ids = Array.from(nodeGroups.keys());
+        if (mapNodeId && !ids.includes(mapNodeId)) ids.unshift(mapNodeId);
+        const q = search.trim().toLowerCase();
+        return q ? ids.filter(id => id.toLowerCase().includes(q)) : ids;
+    }, [nodeGroups, search, mapNodeId]);
+
+    /* activeId: 지도 클릭(신호든 노드든) > 탭 직접 클릭 > 첫 번째 노드 순서로 결정 */
     const activeId = useMemo(() => {
-        if (guidNodeId && nodeGroups.has(guidNodeId)) return guidNodeId;
+        if (mapNodeId) return mapNodeId;
         if (manualNodeId && nodeGroups.has(manualNodeId)) return manualNodeId;
         return nodeIds[0] ?? null;
-    }, [guidNodeId, manualNodeId, nodeGroups, nodeIds]);
+    }, [mapNodeId, manualNodeId, nodeGroups, nodeIds]);
 
     const activeSignals: SignalRecord[] = activeId ? (nodeGroups.get(activeId) ?? []) : [];
 
@@ -264,15 +275,60 @@ const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ container
         setAddingTo(null);
     }, [rawData]);
 
+    /* "전체 삭제" — 이 교차로의 신호를 한 번에 전부 지운다. 지도 편집(NetworkEditToolbar)의
+     * 노드 컨텍스트 바 "🗑 신호 삭제"와 동일한 deleteSignalsForNodes를 공유 — 신호 TOD의
+     * 관련 노드 항목도 함께 정리된다. window.confirm 대신 앱 공통 모달(MessagePopup)을 쓴다
+     * (네이티브 브라우저 다이얼로그는 이 앱의 다른 삭제 확인들과 스타일이 어긋난다). */
+    const deleteAllForNode = useCallback((nodeId: string) => {
+        const count = (nodeGroups.get(nodeId) ?? []).length;
+        if (!count) return;
+        useMessageStore.getState().setMessage({
+            type: "confirm",
+            text: `이 교차로(#${nodeId})의 신호 ${count}건을 모두 삭제하시겠습니까?`,
+            onConfirm: () => deleteSignalsForNodes([nodeId]),
+        });
+    }, [nodeGroups]);
+
+    /* "자동 생성" — 네트워크 토폴로지(접근로/방위각) 기준으로 이 교차로의 신호 세트를
+     * 통째로 (재)생성한다. 지도 편집(NetworkEditToolbar)의 "⚡ 신호 생성"과 동일한
+     * generateSignalsForNode를 공유(iitp-rest DummySignalGenerator와도 같은 판정) —
+     * 조건 미충족(접근로 2개 미만 등)이면 null이라 알림만 띄우고 아무것도 만들지 않는다.
+     * 기존 신호가 있으면 확인 후 전부 지우고 새로 채운다(부분 병합이 아니라 항상
+     * "이 교차로의 완전한 신호 세트로 교체"가 목표). */
+    const autoGenerateForNode = useCallback((nodeId: string) => {
+        if (!network) return;
+        const existing = nodeGroups.get(nodeId) ?? [];
+        const run = () => {
+            const count = generateSignalsForNode(network, nodeId);
+            if (count == null) {
+                useMessageStore.getState().setMessage({
+                    type: "alert",
+                    text: "이 교차로는 신호 생성 조건(접근로 2개 이상 등)을 충족하지 않습니다.",
+                    onClose: () => {},
+                });
+            }
+        };
+        if (existing.length > 0) {
+            useMessageStore.getState().setMessage({
+                type: "confirm",
+                text: `이 교차로(#${nodeId})의 기존 신호 ${existing.length}건을 삭제하고 새로 생성하시겠습니까?`,
+                onConfirm: run,
+            });
+        } else {
+            run();
+        }
+    }, [network, nodeGroups]);
+
     /* 양방향 사고 위험(상충) 검사 — 현재 노드의 신호 목록 + 네트워크 방위각 기준 */
     const validateConflicts = useCallback((candidate: SignalRecord): SignalPhaseConflict[] => {
-        const network = useNetworkStore.getState().currentJsonData;
         if (!network) return [];
         return checkManualSignalEditConflicts(network, activeSignals as any, candidate as any);
-    }, [activeSignals]);
+    }, [activeSignals, network]);
 
-    if (!signals.length) {
-        return <div style={{ color: "#445", padding: 40, textAlign: "center", fontSize: 13 }}>신호 데이터가 없습니다.</div>;
+    if (!signals.length && !mapNodeId) {
+        return <div style={{ color: "#445", padding: 40, textAlign: "center", fontSize: 13 }}>
+            신호 데이터가 없습니다. 지도에서 교차로(노드)를 클릭하면 여기서 바로 신호를 추가할 수 있습니다.
+        </div>;
     }
 
     const bodyH = containerHeight - 56;
@@ -304,7 +360,9 @@ const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ container
                 <div style={{ flex: 1, display: "flex", alignItems: "stretch", overflowX: "auto", scrollbarWidth: "none" }}>
                     {nodeIds.map(nid => {
                         const isActive = nid === activeId;
-                        const nodeSigs = nodeGroups.get(nid)!;
+                        // 지도에서 방금 클릭한 노드가 아직 신호 0건이면 nodeGroups에 없을 수 있다
+                        // (mapNodeId를 nodeIds에 강제로 끼워 넣는 케이스) — ?? []로 안전 처리.
+                        const nodeSigs = nodeGroups.get(nid) ?? [];
                         const dirDots = DIR.filter(d => nodeSigs.some(s => s.turning === d.key));
                         return (
                             <button
@@ -332,25 +390,47 @@ const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ container
                                         }} />
                                     ))}
                                 </span>
-                                <span style={{ fontSize: 10, color: isActive ? "#4f8ef799" : "#2a3050" }}>
-                                    {nodeSigs.length}
-                                </span>
                             </button>
                         );
                     })}
                 </div>
 
-                {/* + 추가 버튼 */}
+                {/* 교차로 단위 일괄 조작 */}
                 {activeId && (
-                    <button
-                        onClick={() => setAddingTo(activeId)}
-                        style={{
-                            flexShrink: 0, padding: "0 12px",
-                            background: "none", border: "none",
-                            borderLeft: "1px solid #1a1e30",
-                            color: "#4fc97a", cursor: "pointer", fontSize: 12,
-                        }}
-                    >+ 추가</button>
+                    <>
+                        <button
+                            onClick={() => autoGenerateForNode(activeId)}
+                            title="이 교차로의 신호를 토폴로지 기준으로 통째로 생성/재생성"
+                            style={{
+                                flexShrink: 0, padding: "0 12px",
+                                background: "none", border: "none",
+                                borderLeft: "1px solid #1a1e30",
+                                color: "#4f8ef7", cursor: "pointer", fontSize: 12, whiteSpace: "nowrap",
+                            }}
+                        >⚡ 자동 생성</button>
+                        <button
+                            onClick={() => deleteAllForNode(activeId)}
+                            disabled={activeSignals.length === 0}
+                            title="이 교차로의 신호를 한 번에 전부 삭제"
+                            style={{
+                                flexShrink: 0, padding: "0 12px",
+                                background: "none", border: "none",
+                                borderLeft: "1px solid #1a1e30",
+                                color: activeSignals.length === 0 ? "#334" : "#c0392b",
+                                cursor: activeSignals.length === 0 ? "default" : "pointer",
+                                fontSize: 12, whiteSpace: "nowrap",
+                            }}
+                        >🗑 전체 삭제</button>
+                        <button
+                            onClick={() => setAddingTo(activeId)}
+                            style={{
+                                flexShrink: 0, padding: "0 12px",
+                                background: "none", border: "none",
+                                borderLeft: "1px solid #1a1e30",
+                                color: "#4fc97a", cursor: "pointer", fontSize: 12,
+                            }}
+                        >+ 추가</button>
+                    </>
                 )}
             </div>
 

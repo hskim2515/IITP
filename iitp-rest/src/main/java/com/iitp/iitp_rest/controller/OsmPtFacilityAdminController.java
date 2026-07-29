@@ -3,6 +3,8 @@ package com.iitp.iitp_rest.controller;
 import com.iitp.iitp_rest.service.network.OsmPtFacilityImporter;
 import com.iitp.iitp_rest.service.network.OsmTrafficSignalImporter;
 import com.iitp.iitp_rest.service.network.OsmTurnRestrictionImporter;
+import com.iitp.iitp_rest.service.network.PublicTrafficLightImporter;
+import com.iitp.iitp_rest.service.network.CrossRoadInfoImporter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -28,6 +30,8 @@ public class OsmPtFacilityAdminController {
     private final OsmPtFacilityImporter importer;
     private final OsmTurnRestrictionImporter turnRestrictionImporter;
     private final OsmTrafficSignalImporter trafficSignalImporter;
+    private final PublicTrafficLightImporter publicTrafficLightImporter;
+    private final CrossRoadInfoImporter crossRoadInfoImporter;
 
     @PostMapping("/import")
     public ResponseEntity<?> importFromFile(@RequestParam String path) {
@@ -87,6 +91,39 @@ public class OsmPtFacilityAdminController {
             ));
         } catch (Exception e) {
             log.error("[OsmPtFacilityAdminController] 신호등 임포트 실패", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    /** 공공데이터포털 전국 교통신호기표준데이터 전량 수집(약 9.9만건, REST API 페이지네이션).
+     *  경로 파라미터 없음 — 파일이 아니라 API에서 직접 가져온다. */
+    @PostMapping("/import-public-traffic-lights")
+    public ResponseEntity<?> importPublicTrafficLights() {
+        try {
+            PublicTrafficLightImporter.ImportResult result = publicTrafficLightImporter.importAll();
+            return ResponseEntity.ok(Map.of(
+                    "totalCount", result.totalCount(),
+                    "elapsedMs", result.elapsedMs()
+            ));
+        } catch (Exception e) {
+            log.error("[OsmPtFacilityAdminController] 공공 신호기 임포트 실패", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    /** 공공데이터포털 교차로정보서비스(CrossRoadInfoService) 전량 수집(서울 전역 약 400건). */
+    @PostMapping("/import-crossroad-info")
+    public ResponseEntity<?> importCrossRoadInfo() {
+        try {
+            CrossRoadInfoImporter.ImportResult result = crossRoadInfoImporter.importAll();
+            return ResponseEntity.ok(Map.of(
+                    "totalCount", result.totalCount(),
+                    "elapsedMs", result.elapsedMs()
+            ));
+        } catch (Exception e) {
+            log.error("[OsmPtFacilityAdminController] 교차로정보서비스 임포트 실패", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("message", e.getMessage()));
         }

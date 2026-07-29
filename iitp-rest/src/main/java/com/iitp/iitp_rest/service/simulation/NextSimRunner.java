@@ -472,8 +472,6 @@ public class NextSimRunner {
             Files.writeString(networkDir.resolve("passenger.xml"),
                     xml("<Passenger>\n\t<od_pax>\n\t</od_pax>\n</Passenger>"), StandardCharsets.UTF_8);
         }
-        writeIfAbsent(networkDir, "footpathNetwork.xml", xml("<Network id=\"0\">\n    <nodes>\n    </nodes>\n    <links>\n    </links>\n</Network>"));
-
         // roadStation.xml: 우리 BusStationXml/PublicTransitXml 스키마(id/link_ref/lane_ref/
         // pos/center/parkingLots/line)가 NextSim이 기대하는 형식과 이미 거의 동일해서 변환
         // 없이 그대로 복사한다 — signal.xml과 동일한 copyOptional 패턴.
@@ -532,6 +530,65 @@ public class NextSimRunner {
                         " — 버전에 railPTline.xml 을 직접 추가하세요.");
             }
         }
+
+        // ⚠️ 실측 확인(scenario2_1, 2026-07-28): footpathNetwork.xml을 항상 빈 스텁으로 두면
+        // NextSim이 PT 정류장 위치에서 "가장 가까운 보행 네트워크 지점"을 못 찾아
+        // (Captain::footpath::FindNearestFootpathLinkPoint) "GetDistance Error: Could not
+        // find nearest link point for origin (...)"로 실패하고 시뮬레이션이 불안정해졌다.
+        // ⚠️ 게이팅 기준 정정: PT 정류장 존재 여부가 아니라 승객 OD 수요(hasPassengerDemand,
+        // PaxRoute.json 실제 생성 여부와 동일 조건 — 아래 route-generator 단계 참고) 기준이어야
+        // 한다 — footpathNetwork.xml은 PaxRoute.json을 만들 때만 있어야 함. 정류장은 있어도
+        // 승객 수요가 없으면 pax-route-generator 자체가 안 돌아 footpath 조회가 발생하지 않고,
+        // 반대로 파일이 불필요하게 남아있으면 안 된다는 걸 확인했다. 위에서 이미 확정된
+        // roadStation.xml/railStation.xml 존재 여부가 아니라 passenger.xml을 검사한다.
+        // NEXTSIM_DATA_STRUCTURE.md 문서화된 footpathNetwork.xml 스키마(node: id/type/
+        // x_coord/y_coord/v2x/num_port/num_connection)는 network.xml의 노드를 그대로
+        // 미러링한 형태다.
+        if (!copyOptional(versionId, "footpathNetwork.xml", networkDir)) {
+            if (hasPassengerDemand(networkDir.resolve("passenger.xml"))) {
+                Files.writeString(networkDir.resolve("footpathNetwork.xml"),
+                        buildFootpathNetworkFromNodes(networkDir.resolve("network.xml")), StandardCharsets.UTF_8);
+            } else {
+                Files.deleteIfExists(networkDir.resolve("footpathNetwork.xml"));
+            }
+        }
+    }
+
+    /**
+     * footpathNetwork.xml: network.xml의 모든 노드를 그대로 미러링한다(같은 id, center의
+     * "x y"를 x_coord/y_coord로 분리). NEXTSIM_DATA_STRUCTURE.md 예시(node id="10000507"가
+     * 실제 network.xml 노드 id와 동일)에 따른 구조.
+     */
+    private String buildFootpathNetworkFromNodes(Path networkXml) throws IOException {
+        StringBuilder sb = new StringBuilder(xml("<Network id=\"0\">\n    <nodes>\n"));
+        Pattern p = Pattern.compile(
+                "<node id=\"([^\"]+)\" type=\"([^\"]+)\" num_port=\"([^\"]+)\" num_connection=\"([^\"]+)\"[^>]*center=\"([^\"]+)\"");
+        try (var reader = Files.newBufferedReader(networkXml, StandardCharsets.UTF_8)) {
+            char[] buf = new char[1 << 22];
+            String carry = "";
+            int n;
+            int count = 0;
+            while ((n = reader.read(buf)) > 0) {
+                String chunk = carry + new String(buf, 0, n);
+                Matcher m = p.matcher(chunk);
+                while (m.find()) {
+                    String[] xy = m.group(5).trim().split("\\s+");
+                    if (xy.length < 2) continue;
+                    sb.append("        <node id=\"").append(m.group(1))
+                      .append("\" type=\"").append(m.group(2))
+                      .append("\" x_coord=\"").append(xy[0])
+                      .append("\" y_coord=\"").append(xy[1])
+                      .append("\" v2x=\"\" num_port=\"").append(m.group(3))
+                      .append("\" num_connection=\"").append(m.group(4))
+                      .append("\"/>\n");
+                    count++;
+                }
+                carry = chunk.length() > 512 ? chunk.substring(chunk.length() - 512) : chunk;
+            }
+            log.info("[NextSimRunner] footpathNetwork.xml 생성: 노드 {}개(전체 network.xml 노드 미러링)", count);
+        }
+        sb.append("    </nodes>\n    <links>\n    </links>\n</Network>");
+        return sb.toString();
     }
 
     /** scenario.xml 내용을 config_scenario.json 으로 미러링 (배포판이 양쪽을 두는 관례 준수) */
