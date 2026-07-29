@@ -23,7 +23,7 @@ import { showConfirm } from '@utils/dialog';
 import { NETWORK_TILING } from '@utils/lodConstants';
 import { generateDummySignals } from '@utils/signal';
 import { pollKtdbScaffoldStatus } from '@utils/ktdbScaffold';
-import { runAutoDummyGeneration } from '@utils/dummyGeneration';
+import { runAutoDummyGeneration, generateAndSaveDummyPavementMarking } from '@utils/dummyGeneration';
 import { parseBoundaryFile } from '@utils/boundaryFile';
 import { useVehicleStore } from '@stores/useVehicleStore';
 import { useSimulationStore } from '@stores/useSimulationStore';
@@ -1122,6 +1122,14 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
                 // 지도 상단 스피너로 노출한다. 안 그러면 "가져오기 완료"로 보이는 이 시점과
                 // 실제 더미 데이터가 준비되는 시점이 어긋나 "아무리 기다려도 안 생기네"가 된다.
                 if (versionId) pollKtdbScaffoldStatus(versionId);
+
+                // 백엔드 스캐폴딩은 신호/OD/TOD만 재생성한다 — 노면표시는 시각화 보조
+                // 자료라 백엔드 스캐폴딩 대상이 아니라서(NextSimRunner/NextSimInputScaffolder
+                // 어디에도 없음), OSM 경로처럼 여기서 직접 재생성하지 않으면 재임포트 직전
+                // backupAndResetDependentLayers가 지운 노면표시가 빈 채로 남는다.
+                if (useAppSettingsStore.getState().autoGeneration.pavementMarkingEnabled) {
+                    void generateAndSaveDummyPavementMarking();
+                }
             }
 
             if (versionId) {

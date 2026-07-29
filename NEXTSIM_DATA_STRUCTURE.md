@@ -212,7 +212,7 @@ KTDB 원본 `node_id`/`link_id`(문자열)는 위 규칙으로 재채번되며 �
 - `odmatrix.xml`: source/sink — `OdTerminalIdBandService`가 자동으로 재정합하고, 노드 삭제 시 해당 demand를 자동 삭제(prune)
 - `signal.xml`/`signalTOD.xml`: node id, connectionId — 참조가 안 맞으면 `NextSimInputScaffolder`가 signal.xml 전체를 재생성하거나 connectionId만 null로 초기화
 - 버스/철도 정류장(`roadStation.xml`/`railStation.xml`)·PT 노선(`roadPTline.xml`/`railPTline.xml`): KTDB 재임포트 확인 시 앱 설정의 `busFacilityEnabled`/`railFacilityEnabled`가 켜져 있으면 OSM에서 새로 가져와 새 네트워크에 재스냅한 뒤 **자동 저장(기존 데이터 덮어쓰기)**된다(`OsmFacilityConverter` → `FileImportModal.tsx`의 `injectAll`+`autoSaveChangedLayers`) — link_ref/lane_ref/link seq/node seq/railStationSeq는 이 과정에서 자동으로 맞춰진다. **단, 수동으로 추가·편집한 정류장/노선도 이때 통째로 덮어써져 사라진다** — 보존하려면 이 토글을 꺼야 한다. 토글을 꺼서 재임포트해도 기존 데이터가 유지되는 경우엔, 새 네트워크와의 정합은 `PtLineValidation.java`가 검증만 하고 자동 재매핑은 안 하므로 안 맞으면 수동으로 재작업해야 함
-- 포장 노면표시(`linkRef`/`laneRef`/`cellId`): **검증·재매핑 로직이 아예 없다** — id가 재할당되면 조용히 끊어질 수 있는, 아직 안 고쳐진 알려진 갭
+- 포장 노면표시(`linkRef`/`laneRef`/`cellId`): NextSim 시뮬레이션 입력이 아니라 시각화 보조 데이터라 검증·재매핑 로직 자체가 없다. **네트워크 재임포트 시엔 문제없음** — `backupAndResetDependentLayers`가 재임포트 직전 기존 노면표시를 서버에서 통째로 삭제하고(끊어진 참조가 남는 게 아니라 데이터가 사라짐), OSM/KTDB 둘 다 이후 `generateAndSaveDummyPavementMarking`으로 새 네트워크 기준 재생성한다(앱 설정 `pavementMarkingEnabled` 토글). 진짜 갭은 **재임포트가 아니라 세션 중 네트워크 편집**(Link/Lane 삭제 등) 시 — 이때는 사라진 링크/레인을 참조하는 노면표시가 정리되지 않고 그대로 남는, 아직 안 고쳐진 갭
 - station/garage id는 재임포트로 안 바뀌는 별도 네임스페이스라 `PtLineValidation`의 검증 대상에서 제외됨(id 자체는 안정적, 위 링크 참조만 문제가 됨)
 
 ---
@@ -278,7 +278,8 @@ KTDB 원본 `node_id`/`link_id`(문자열)는 위 규칙으로 재채번되며 �
 
 | 대상 | 상황 | 대응 |
 |---|---|---|
-| 포장 노면표시(linkRef/laneRef/cellId) | 재임포트로 참조 id가 안 맞음 | 검증·재매핑 로직 자체가 없음 — id가 재할당되면 조용히 끊어질 수 있는, 아직 안 고쳐진 갭 |
+| 포장 노면표시(linkRef/laneRef/cellId) | 네트워크 재임포트(OSM/KTDB) | 재임포트 전 기존 데이터 전체 삭제(`backupAndResetDependentLayers`) 후 새 네트워크 기준으로 재생성(`generateAndSaveDummyPavementMarking`, `pavementMarkingEnabled` 토글) — 문제없음 | ✅ |
+| 포장 노면표시(linkRef/laneRef/cellId) | 세션 중 Link/Lane 삭제(지도 툴·그리드 무관) | 사라진 링크/레인을 참조하는 노면표시가 정리되지 않고 그대로 남음 | ❌ 아직 안 고쳐진 갭 |
 
 ---
 
