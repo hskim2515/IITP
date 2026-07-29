@@ -16,7 +16,7 @@ import {
     updateLinkInNetwork, reconcileSignalConnectionIds, applyNetworkUpdate, markRemovedForTileMask,
     batchDeleteOrMergeNodes, deleteLinkFromNetwork,
     countSignalsForNodes, deleteSignalsForNodes,
-    countStationsForNodes, countStationsForLinks, deleteStationsForLinks,
+    countStationsForNodes, countStationsForLinks, deleteStationsForLinks, deletePavementMarkingsForLinks,
     farNodeIdsForCascadeDelete,
 } from "@hooks/useNetworkSelect";
 import { GridToolbar } from "./GridToolbar";
@@ -278,9 +278,11 @@ const DrilldownGrid = ({
             const clearedCount = reconcileSignalConnectionIds(next, farIds);
             deleteSignalsForNodes(ids);
             const removedStationCount = deleteStationsForLinks(removedLinkIds(net, next));
+            const removedMarkingCount = deletePavementMarkingsForLinks(removedLinkIds(net, next));
             markRemovedForTileMask(net, next);
             extra = `${signalCount > 0 ? `, 신호 ${signalCount}개 삭제` : ""}`
                 + `${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ""}`
+                + `${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ""}`
                 + `${clearedCount > 0 ? `, 인접 신호 ${clearedCount}개 커넥션 참조 초기화` : ""}`;
         } else {
             const affectedNodeIds = new Set<string>();
@@ -293,8 +295,10 @@ const DrilldownGrid = ({
             applyNetworkUpdate(next);
             const clearedCount = reconcileSignalConnectionIds(next, [...affectedNodeIds]);
             const removedStationCount = deleteStationsForLinks(removedLinkIds(net, next));
+            const removedMarkingCount = deletePavementMarkingsForLinks(removedLinkIds(net, next));
             markRemovedForTileMask(net, next);
             extra = `${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ""}`
+                + `${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ""}`
                 + `${clearedCount > 0 ? `, 신호 ${clearedCount}개의 커넥션 참조 초기화` : ""}`;
         }
 
@@ -394,9 +398,11 @@ const DrilldownGrid = ({
                 applyNetworkUpdate(next);
                 const clearedCount = reconcileSignalConnectionIds(next, [...affectedNodeIds]);
                 const removedStationCount = deleteStationsForLinks(removedLinkIds(beforeNet, next));
+                const removedMarkingCount = deletePavementMarkingsForLinks(removedLinkIds(beforeNet, next));
                 markRemovedForTileMask(beforeNet, next);
                 extra = ` — 참조하던 링크 ${deletedLinkIds.length}개도 함께 삭제됨`
                     + `${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ""}`
+                    + `${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ""}`
                     + `${clearedCount > 0 ? `, 신호 ${clearedCount}개의 커넥션 참조 초기화` : ""}`;
             }
         }

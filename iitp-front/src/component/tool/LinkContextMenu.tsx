@@ -13,6 +13,7 @@ import {
     reconcileSignalConnectionIds,
     countStationsForLinks,
     deleteStationsForLinks,
+    deletePavementMarkingsForLinks,
 } from '@hooks/useNetworkSelect';
 
 const menuBtnStyle: React.CSSProperties = {
@@ -90,6 +91,7 @@ const LinkContextMenu: React.FC = () => {
             const clearedCount = reconcileSignalConnectionIds(next, [link.fromNode, link.toNode]);
             const removedLinks = [...beforeLinkIds].filter(id => !next.links.some(l => String(l.id) === id));
             const removedStationCount = deleteStationsForLinks(removedLinks);
+            const removedMarkingCount = deletePavementMarkingsForLinks(removedLinks);
             useNetworkEditStore.getState().addDeleted([String(linkId)]);
             useNetworkDrawStore.getState().clearSelection();
             // 우클릭 삭제 대상이 마침 맥락 툴바가 가리키던 그 링크라면(좌클릭으로 먼저 선택한
@@ -100,7 +102,7 @@ const LinkContextMenu: React.FC = () => {
             }
             useMessageStore.getState().setMessage({
                 type: 'info',
-                text: `링크 ${String(linkId)} 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}`,
+                text: `링크 ${String(linkId)} 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ''}`,
             });
         };
         const stationCount = countStationsForLinks([linkId]);

@@ -26,6 +26,7 @@ import { useSignalStore, useSignalHistoryStore } from '@stores/useSignalStore';
 import { useSignalTodStore, useSignalTodHistoryStore } from '@stores/useSignalTodStore';
 import { useBusStationStore, useBusStationHistoryStore } from '@stores/useBusStationStore';
 import { useRailStationStore, useRailStationHistoryStore } from '@stores/useRailStationStore';
+import { usePavementMarkingStore, usePavementMarkingHistoryStore } from '@stores/usePavementMarkingStore';
 import { assignPropertyToResponseData } from '@utils/guid';
 import { getNetworkLodTierByResolution } from '@utils/lodConstants';
 import { useModeStore } from '@stores/useModeStore';
@@ -467,6 +468,25 @@ export function deleteStationsForLinks(linkIds: (number | string)[]): number {
         count += railGuids.length;
     }
     return count;
+}
+
+// 노면표시(pavementMarking)도 linkRef로 특정 링크의 특정 레인/셀을 참조하는 별개
+// 스토어라 정류장과 동일한 문제 — 링크가 사라져도 자동으로는 안 지워진다. 위치가
+// 그 링크의 레인/셀 형상에 종속돼 "참조만 비우기"가 불가능하므로(남기면 좌표를 잃은
+// 고아 레코드) 정류장과 동일하게 삭제 대상으로 본다.
+export function deletePavementMarkingsForLinks(linkIds: (number | string)[]): number {
+    const ids = new Set(linkIds.map(String));
+    if (ids.size === 0) return 0;
+
+    const markings = (usePavementMarkingStore.getState().currentJsonData as { pavementMarkings?: any[] } | undefined)?.pavementMarkings ?? [];
+    const guids = markings
+        .filter(m => m.linkRef != null && ids.has(String(m.linkRef)))
+        .map(m => m.__guid)
+        .filter((g): g is string => !!g);
+    if (guids.length > 0) {
+        usePavementMarkingStore.getState().removeRecordsByGuid(guids, usePavementMarkingHistoryStore as any);
+    }
+    return guids.length;
 }
 
 // 커넥션 삭제/재생성(regenerateNodeConnections, deleteLinkFromNetwork, numLane 감소 등) 뒤
@@ -1813,8 +1833,9 @@ export const useNetworkSelect = () => {
                         const clearedCount = reconcileSignalConnectionIds(next, [...affectedNodeIds]);
                         const removedLinks = markDeleted();
                         const removedStationCount = deleteStationsForLinks(removedLinks);
+                        const removedMarkingCount = deletePavementMarkingsForLinks(removedLinks);
                         useNetworkDrawStore.getState().clearSelection();
-                        useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkIds.length}개 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}` });
+                        useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkIds.length}개 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ''}` });
                     };
                     if (stationCount > 0) {
                         useMessageStore.getState().setMessage({
@@ -1841,8 +1862,9 @@ export const useNetworkSelect = () => {
                         deleteSignalsForNodes(selectedNodeIds);
                         const removedLinks = markDeleted();
                         const removedStationCount = deleteStationsForLinks(removedLinks);
+                        const removedMarkingCount = deletePavementMarkingsForLinks(removedLinks);
                         useNetworkDrawStore.getState().clearSelection();
-                        useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${selectedNodeIds.length}개 삭제됨${mergeCount > 0 ? ` (통과 노드 ${mergeCount}개는 링크 자동 병합)` : ''}${signalCount > 0 ? `, 신호 ${signalCount}개 삭제` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}${clearedCount > 0 ? `, 인접 신호 ${clearedCount}개 커넥션 참조 초기화` : ''}` });
+                        useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${selectedNodeIds.length}개 삭제됨${mergeCount > 0 ? ` (통과 노드 ${mergeCount}개는 링크 자동 병합)` : ''}${signalCount > 0 ? `, 신호 ${signalCount}개 삭제` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ''}${clearedCount > 0 ? `, 인접 신호 ${clearedCount}개 커넥션 참조 초기화` : ''}` });
                     };
                     if (linkedCount > 0 || signalCount > 0 || stationCount > 0) {
                         useMessageStore.getState().setMessage({
@@ -1865,8 +1887,9 @@ export const useNetworkSelect = () => {
                         const clearedCount = delLink ? reconcileSignalConnectionIds(next, [delLink.fromNode, delLink.toNode]) : 0;
                         const removedLinks = markDeleted();
                         const removedStationCount = deleteStationsForLinks(removedLinks);
+                        const removedMarkingCount = deletePavementMarkingsForLinks(removedLinks);
                         useNetworkDrawStore.getState().clearSelection();
-                        useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${sl} 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}` });
+                        useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${sl} 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ''}` });
                     };
                     if (stationCount > 0) {
                         useMessageStore.getState().setMessage({
@@ -1893,6 +1916,7 @@ export const useNetworkSelect = () => {
                         deleteSignalsForNodes([sn]);
                         const removedLinks = markDeleted();
                         const removedStationCount = deleteStationsForLinks(removedLinks);
+                        const removedMarkingCount = deletePavementMarkingsForLinks(removedLinks);
                         useNetworkDrawStore.getState().clearSelection();
                         useMessageStore.getState().setMessage({
                             type: 'info',
@@ -1900,6 +1924,7 @@ export const useNetworkSelect = () => {
                                 ? `노드 ${sn} 삭제 및 인접 링크 자동 병합됨${signalCount > 0 ? ` (신호 ${signalCount}개 삭제)` : ''}`
                                 : `노드 ${sn} 및 연결 링크 ${linkedCount}개${signalCount > 0 ? `, 신호 ${signalCount}개` : ''} 삭제됨`)
                                 + (removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : '')
+                                + (removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : '')
                                 + (clearedCount > 0 ? `, 인접 신호 ${clearedCount}개 커넥션 참조 초기화` : ''),
                         });
                     };

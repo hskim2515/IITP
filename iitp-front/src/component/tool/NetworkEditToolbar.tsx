@@ -16,7 +16,7 @@ import {
     reconcileSignalConnectionIds, farNodeIdsForCascadeDelete,
     toggleSegmentBlock, splitSegmentInNetwork, mergeSegmentInNetwork,
     getEffectiveSegments,
-    countStationsForLinks, countStationsForNodes, deleteStationsForLinks,
+    countStationsForLinks, countStationsForNodes, deleteStationsForLinks, deletePavementMarkingsForLinks,
 } from '@hooks/useNetworkSelect';
 import { createIntersectionAtNode, regenerateNodeConnections, splitLinkInNetwork } from '@hooks/useNetworkDraw';
 import { segmentIndexAtFrac, cellIndexAtFrac } from '@utils/networkDrilldown';
@@ -244,10 +244,11 @@ const NetworkEditToolbar: React.FC = () => {
                     applyNetworkUpdate(next);
                     const clearedCount = reconcileSignalConnectionIds(next, [...affectedNodeIds]);
                     const removedStationCount = deleteStationsForLinks(removedLinkIds(net, next));
+                    const removedMarkingCount = deletePavementMarkingsForLinks(removedLinkIds(net, next));
                     markRemovedForTileMask(net, next);
                     useNetworkDrawStore.getState().clearSelection();
                     useNetworkToolbarStore.getState().hide();
-                    useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkIds.length}개 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}` });
+                    useMessageStore.getState().setMessage({ type: 'info', text: `링크 ${selectedLinkIds.length}개 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ''}` });
                 };
                 if (stationCount > 0) {
                     useMessageStore.getState().setMessage({
@@ -271,10 +272,11 @@ const NetworkEditToolbar: React.FC = () => {
                     const clearedCount = reconcileSignalConnectionIds(next, farIds);
                     deleteSignalsForNodes(selectedNodeIds);
                     const removedStationCount = deleteStationsForLinks(removedLinkIds(net, next));
+                    const removedMarkingCount = deletePavementMarkingsForLinks(removedLinkIds(net, next));
                     markRemovedForTileMask(net, next);
                     useNetworkDrawStore.getState().clearSelection();
                     useNetworkToolbarStore.getState().hide();
-                    useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${selectedNodeIds.length}개 삭제됨${mergeCount > 0 ? ` (통과 노드 ${mergeCount}개는 링크 자동 병합)` : ''}${signalCount > 0 ? `, 신호 ${signalCount}개 삭제` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}${clearedCount > 0 ? `, 인접 신호 ${clearedCount}개 커넥션 참조 초기화` : ''}` });
+                    useMessageStore.getState().setMessage({ type: 'info', text: `노드 ${selectedNodeIds.length}개 삭제됨${mergeCount > 0 ? ` (통과 노드 ${mergeCount}개는 링크 자동 병합)` : ''}${signalCount > 0 ? `, 신호 ${signalCount}개 삭제` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ''}${clearedCount > 0 ? `, 인접 신호 ${clearedCount}개 커넥션 참조 초기화` : ''}` });
                 };
                 if (stationCount > 0) {
                     useMessageStore.getState().setMessage({
@@ -479,12 +481,13 @@ const NetworkEditToolbar: React.FC = () => {
                 applyNetworkUpdate(next);
                 const clearedCount = reconcileSignalConnectionIds(next, [link.fromNode, link.toNode]);
                 const removedStationCount = deleteStationsForLinks(removedLinkIds(net, next));
+                const removedMarkingCount = deletePavementMarkingsForLinks(removedLinkIds(net, next));
                 markRemovedForTileMask(net, next);
                 useNetworkDrawStore.getState().clearSelection();
                 useNetworkToolbarStore.getState().hide();
                 useMessageStore.getState().setMessage({
                     type: 'info',
-                    text: `링크 ${linkId} 삭제됨${connCount > 0 ? ` (커넥션 ${connCount}개 함께 삭제)` : ''}${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}`,
+                    text: `링크 ${linkId} 삭제됨${connCount > 0 ? ` (커넥션 ${connCount}개 함께 삭제)` : ''}${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ''}${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ''}`,
                 });
             };
             if (stationCount > 0) {
@@ -606,6 +609,7 @@ const NetworkEditToolbar: React.FC = () => {
                 const clearedCount = reconcileSignalConnectionIds(next, farIds);
                 deleteSignalsForNodes([nodeId]);
                 const removedStationCount = deleteStationsForLinks(removedLinkIds(net, next));
+                const removedMarkingCount = deletePavementMarkingsForLinks(removedLinkIds(net, next));
                 markRemovedForTileMask(net, next);
                 useNetworkDrawStore.getState().clearSelection();
                 useNetworkToolbarStore.getState().hide();
@@ -615,6 +619,7 @@ const NetworkEditToolbar: React.FC = () => {
                         ? `노드 ${nodeId} 삭제 및 인접 링크 자동 병합됨${nodeSignalCount > 0 ? ` (신호 ${nodeSignalCount}개 삭제)` : ''}`
                         : `노드 ${nodeId}${nodeSignalCount > 0 ? ` (신호 ${nodeSignalCount}개 포함)` : ''} 삭제됨`)
                         + (removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : '')
+                        + (removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : '')
                         + (clearedCount > 0 ? `, 인접 신호 ${clearedCount}개 커넥션 참조 초기화` : ''),
                 });
             };
