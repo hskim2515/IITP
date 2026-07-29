@@ -223,6 +223,8 @@ public class SignalService {
                             phx.setId(ph.getId());
                             phx.setDuration(ph.getDuration());
                             phx.setTurnList(ph.getTurnList());
+                            phx.setMinGreenTime(ph.getMinGreenTime());
+                            phx.setMaxGreenTime(ph.getMaxGreenTime());
                             return phx;
                         }).collect(Collectors.toList()));
                     }
@@ -262,6 +264,8 @@ public class SignalService {
                             phd.setId(ph.getId());
                             phd.setDuration(ph.getDuration());
                             phd.setTurnList(ph.getTurnList());
+                            phd.setMinGreenTime(ph.getMinGreenTime());
+                            phd.setMaxGreenTime(ph.getMaxGreenTime());
                             return phd;
                         }).collect(Collectors.toList()));
                     }

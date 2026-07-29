@@ -32,6 +32,8 @@ public class SignalResponse {
         private String id;
         private String duration;
         private String turnList;
+        private String minGreenTime;
+        private String maxGreenTime;
     }
 }
 

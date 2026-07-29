@@ -11,6 +11,8 @@ export interface SignalPhase {
     id: string;
     duration: string;
     turnList: string;
+    minGreenTime?: string;
+    maxGreenTime?: string;
 }
 
 export interface SignalPlan {

@@ -675,17 +675,17 @@ Signal
 | `node` | `id` |
 | `turn` | `id`, `type`, `turning`, `connList` |
 | `plan` | `id`, `cycle`, `offset` |
-| `phase` | `id`, `duration`, `turnList` |
+| `phase` | `id`, `duration`, `turnList`, `minGreenTime`(옵셔널), `maxGreenTime`(옵셔널) |
 
 예시:
 
 ```xml
 <plan id="0" cycle="200" offset="0"/>
-<phase id="0" duration="34" turnList="11 12 0 4 6 10"/>
+<phase id="0" duration="34" turnList="11 12 0 4 6 10" minGreenTime="15" maxGreenTime="40"/>
 <turn id="0" turning="R" type="RTOR" connList="11"/>
 ```
 
-> ⚠️ **`minGreenTime`/`maxGreenTime`는 저장 스키마에 없다 — KTDB 재임포트 직후 딱 한 번만 존재**: `DummySignalGenerator.java`가 처음 생성하는 signal.xml에는 raw 문자열로 이 두 속성이 잠깐 포함되지만(더미 생성기 전용 로직), 실제 저장/편집 경로(`SignalController`의 `SignalXml`/`PhaseXml` JAXB 모델, `SignalService.toSignalXml`/`fromSignalXml`)는 `id`/`duration`/`turnList`만 다룬다. 즉 프론트 신호 그리드에서 한 번이라도 저장하면 그 값들은 조용히 사라진다(모델에 필드 자체가 없어 라운드트립 시 드롭됨) — 알려지지 않은 갭.
+`minGreenTime`/`maxGreenTime`는 `DummySignalGenerator.java`가 signal.xml을 생성할 때만 채워지고(더미 생성기 전용 로직), 수동으로 만든 phase에는 없을 수 있다(옵셔널). 과거엔 `SignalXml.PhaseXml`/`SignalResponse.PhaseData` 모델에 이 필드가 아예 없어 프론트 신호 그리드에서 한 번이라도 저장하면 조용히 드롭되는 갭이 있었는데, 두 모델 + `SignalService.toSignalXml`/`fromSignalXml` 라운드트립에 필드를 추가해 수정 완료.
 
 ---
 
