@@ -78,7 +78,7 @@ SimulationInput/
          │   ├─ vehicletypes.xml
          │   ├─ recordMode.xml
          │   └─ outputmetrics.xml
-         └─ network_xml_bucheon/
+         └─ network_xml_iitp/
              ├─ network.xml
              ├─ scenario.xml
              ├─ odmatrix.xml
@@ -89,17 +89,17 @@ SimulationInput/
              └─ ...
 ```
 
-`config.txt`는 실제 사용할 네트워크 폴더를 지정하는 파일이다.
+`config.txt`는 NextSim(외부 바이너리) 입장에서 실제 사용할 네트워크 폴더를 지정하는 파일이다.
 
 ```text
-network_name=bucheon
+network_name=iitp
 branch=mesopt
 ```
 
 위 설정은 다음 경로를 의미한다.
 
 ```text
-SimulationInput/datasets/mesopt/network_xml_bucheon/
+SimulationInput/datasets/mesopt/network_xml_iitp/
 ```
 
 즉 규칙은 다음과 같다.
@@ -108,22 +108,13 @@ SimulationInput/datasets/mesopt/network_xml_bucheon/
 SimulationInput/datasets/{branch}/network_xml_{network_name}/
 ```
 
-새 네트워크를 추가하려면 예를 들어 `network_name=seoul`, `branch=mesopt`로 설정하고, 입력 파일들은 아래 경로에 넣으면 된다.
-
-```text
-SimulationInput/datasets/mesopt/network_xml_seoul/
-```
+> ⚠️ **`network_name`/`branch`는 config.txt를 직접 편집해서 바꾸는 값이 아니다**: 우리 백엔드(`NextSimRunner.java`)가 매 실행마다 `network_name=iitp`/`branch=mesopt`를 하드코딩된 Java 상수(`NETWORK_NAME`/`BRANCH`)로 config.txt를 통째로 새로 써버린다(`stageInputs()`). 즉 config.txt는 NextSim 실행 시점에 우리 쪽에서 생성하는 산출물이지, 사용자가 편집해 다른 네트워크를 가리키게 하는 설정 파일이 아니다 — 현재 시스템은 항상 `network_xml_iitp/` 하나만 스테이징한다. (참고로 `network_xml_bucheon/`은 KAIST 부천 레퍼런스 데이터셋이 배포판에 참조용으로 남아있는 별개 고정 경로이며, railPTline.xml 등 일부 파일의 폴백 복사 원본으로만 쓰인다.) 실제로 새 네트워크(`network_name`)를 추가하려면 `NextSimRunner.java`의 `NETWORK_NAME`/`BRANCH` 상수를 고치고 백엔드를 다시 빌드/배포해야 한다.
 
 공통 파라미터 파일은 branch 아래의 `parameter_xml` 폴더를 사용한다.
 
 ```text
 SimulationInput/datasets/{branch}/parameter_xml/
 ```
-
-따라서 네트워크를 바꿀 때는 보통 다음 두 가지를 맞춰야 한다.
-
-1. `SimulationInput/config.txt`의 `network_name`, `branch` 수정
-2. `SimulationInput/datasets/{branch}/network_xml_{network_name}/` 안에 필수 입력 파일 배치
 
 단, `Route.json`, `PTRoute.json`, `PaxRoute.json`은 일반적으로 직접 작성해서 넣는 원천 데이터가 아니라, `network.xml`, `odmatrix.xml`, 대중교통/승객 관련 입력을 준비한 뒤 `generate_routes.sh`로 생성하는 파생 입력 파일이다.
 
@@ -364,7 +355,7 @@ SimulationInput/datasets/{branch}/network_xml_{network_name}/
 예:
 
 ```text
-SimulationInput/datasets/mesopt/network_xml_bucheon/
+SimulationInput/datasets/mesopt/network_xml_iitp/
 ```
 
 역할: 특정 네트워크에 대한 도로망, 수요, 신호, 시나리오, 대중교통, 승객, 경로 파일을 담는 폴더다.
@@ -390,12 +381,12 @@ Route.json
 
 필수
 
-역할: 사용할 네트워크 데이터셋을 지정한다.
+역할: NextSim(외부 바이너리) 입장에서 사용할 네트워크 데이터셋을 지정한다.
 
 구조:
 
 ```text
-network_name=bucheon
+network_name=iitp
 branch=mesopt
 ```
 
@@ -405,6 +396,8 @@ branch=mesopt
 |---|---|
 | `network_name` | 사용할 네트워크 이름 |
 | `branch` | 사용할 데이터셋/모델 분기 |
+
+> ⚠️ 이 파일은 사용자가 편집하는 설정 파일이 아니라 **매 실행마다 `NextSimRunner.java`가 하드코딩된 `NETWORK_NAME="iitp"`/`BRANCH="mesopt"` 상수로 새로 써버리는 산출물**이다. 자세한 내용은 [입력 경로와 설정 방법](#input-path)의 경고 참고.
 
 ---
 
@@ -437,14 +430,16 @@ Network
 | 요소 | 속성 |
 |---|---|
 | `Network` | `id` |
-| `node` | `id`, `type`, `v2x`, `x_coord`, `y_coord`, `num_port`, `num_connection`, `center` |
+| `node` | `id`, `type`, `v2x`, `num_port`, `num_connection`, `center`, `name`(옵셔널, 표준노드링크 NODE_NAME 유래) |
 | `port` | `type`, `direction`, `link_id` |
 | `connection` | `id`, `from_link`, `from_lane`, `to_link`, `to_lane`, `turning`, `length`, `width`, `ff_spd`, `shape` |
-| `link` | `id`, `from_node`, `to_node`, `num_lane`, `length`, `width`, `min_spd`, `max_spd`, `ff_spd`, `wave_spd`, `qmax`, `max_veh`, `sim_type`, `type`, `stop_line`, `shape` |
-| `lane` | `id`, `num_cell`, `left_lane_id`, `right_lane_id`, `shape` |
+| `link` | `id`, `from_node`, `to_node`, `num_lane`, `length`, `width`, `min_spd`, `max_spd`, `ff_spd`, `wave_spd`, `qmax`, `max_veh`, `sim_type`, `type`, `stop_line`, `shape`, `name`(옵셔널, 표준노드링크 ROAD_NAME 유래), `layer` |
+| `lane` | `id`, `num_cell`, `left_lane_id`, `right_lane_id`, `lane_access_type`, `right_lc`, `left_lc`, `shape` |
 | `cell` | `id`, `length`, `offset` |
 | `segment` | `id`, `block`, `init_point`, `end_point`, `left_lc`, `right_lc` |
 | `section` | `id`, `length`, `offset`, `slope`, `left_id`, `right_id` |
+
+> ⚠️ `node`에는 `x_coord`/`y_coord` 속성이 없다 — 좌표는 `center`(공백 구분 "lat lng" 문자열) 하나로만 표현되며, 백엔드 `NodeXml.java`의 `Coordinates coordinates` 필드는 `@XmlTransient`라 XML로 직렬화되지 않는다(예시의 `<node ... center="..."/>`가 실제 출력과 일치, x_coord/y_coord는 예전 표기가 잘못 남은 것).
 
 예시:
 
@@ -549,17 +544,26 @@ Scenarios[]
          └─ interval
 ```
 
-예시:
+이 파일은 사람이 직접 쓰는 게 아니라 `NextSimRunner.java`의 `writeConfigScenarioJson()`이 `scenario.xml`을 파싱해 그대로 미러링해서 생성한다. `signalControl.active`/`v2x.active`는 **현재 항상 `false`로 하드코딩**된다(scenario.xml에 해당 값이 없어서가 아니라 미러링 코드 자체가 고정값을 씀 — 시나리오별로 다르게 켜고 끄는 기능은 아직 없음).
+
+예시(실제 생성 결과):
 
 ```json
 {
-  "id": 0,
-  "startTime": "05:59:00",
-  "duration": 60,
-  "trafficCenter": {
-    "signalControl": { "active": false, "interval": 1.0 },
-    "v2x": { "active": true, "interval": 1.0 }
-  }
+    "Scenarios": [
+        {
+            "id": 0,
+            "startTime": "06:00:00",
+            "duration": 60,
+            "BGTduration": 0,
+            "odMatrixID": 0,
+            "todID": 0,
+            "trafficCenter": {
+                "signalControl": { "active": false, "interval": 1.0 },
+                "v2x": { "active": false, "interval": 1.0 }
+            }
+        }
+    ]
 }
 ```
 
@@ -591,6 +595,8 @@ Demands
 |---|---|
 | `odMatrix` | `id`, `startTime`, `duration` |
 | `demand` | `source`, `sink`, `flow`, `dist` |
+
+> `avodMatrix`는 현재 코드(`NextSimInputScaffolder.java`)에서 항상 빈 자기닫힘 태그(`<avodMatrix/>`)로만 써진다 — AV 전용 수요 등 실제 콘텐츠가 들어가는 경로는 아직 없다. 실제 수요 데이터는 전부 `nvodMatrix/demand`에만 들어간다.
 
 예시:
 
@@ -644,7 +650,9 @@ Route[]
 
 필수
 
-> ⚠️ **재임포트 시 id 정합 필수 + 자동생성 시 상충 검사**: `node`의 `id`는 참조 노드가 하나라도 새 네트워크 노드 집합에 없으면 낡은 것으로 보고 `NextSimInputScaffolder`가 전체 재생성한다(더미 신호 생성기 재사용). 더미 신호 자동생성은 마주보는 접근로끼리만 동시 녹색으로 묶는 방위각 기반 페어링을 쓰고(허용오차는 앱 설정에서 조정 가능), 수동으로 turn/connList를 편집할 때도 같은 기준으로 "마주보지 않는 접근로가 동시 녹색이 되는" 상충을 경고한다.
+> ⚠️ **재임포트 시 id 정합 필수 + 자동생성 시 상충 검사**: `node`의 `id`는 참조 노드가 하나라도 새 네트워크 노드 집합에 없으면 낡은 것으로 보고 `NextSimInputScaffolder`가 전체 재생성한다(더미 신호 생성기 재사용). 더미 신호 자동생성은 마주보는 접근로끼리만 동시 녹색으로 묶는 방위각 기반 페어링을 쓰고, 수동으로 turn/connList를 편집할 때도 같은 기준으로 "마주보지 않는 접근로가 동시 녹색이 되는" 상충을 경고한다.
+>
+> ⚠️ **허용오차(`signalOppositeBearingToleranceDeg`) 설정은 백엔드 자동생성에는 적용되지 않는다**: 앱 설정(⚙ → 자동생성 설정)의 이 값은 **프론트엔드**(`iitp-front/src/utils/signal.ts`의 `generateDummySignals`/화면 내 더미 신호 생성 버튼·OSM 임포트 경로, 그리고 수동 편집 상충 검사)에만 적용된다. **KTDB 재임포트 시 백엔드가 실제로 최종 저장하는 signal.xml**은 `NextSimInputScaffolder` → `DummySignalGenerator.java`의 `OPPOSITE_BEARING_TOLERANCE_DEG = 30`(하드코딩) 상수를 쓰며, 이 설정값을 전달받지 않는다 — 즉 설정을 바꿔도 KTDB로 재임포트한 네트워크의 최종 신호 페어링에는 반영되지 않는다.
 
 역할: 교차로 신호 plan, phase, turn 정보를 정의한다.
 
@@ -667,15 +675,17 @@ Signal
 | `node` | `id` |
 | `turn` | `id`, `type`, `turning`, `connList` |
 | `plan` | `id`, `cycle`, `offset` |
-| `phase` | `id`, `duration`, `minGreenTime`, `maxGreenTime`, `turnList` |
+| `phase` | `id`, `duration`, `turnList` |
 
 예시:
 
 ```xml
 <plan id="0" cycle="200" offset="0"/>
-<phase id="0" duration="34" turnList="11 12 0 4 6 10" minGreenTime="15" maxGreenTime="40"/>
+<phase id="0" duration="34" turnList="11 12 0 4 6 10"/>
 <turn id="0" turning="R" type="RTOR" connList="11"/>
 ```
+
+> ⚠️ **`minGreenTime`/`maxGreenTime`는 저장 스키마에 없다 — KTDB 재임포트 직후 딱 한 번만 존재**: `DummySignalGenerator.java`가 처음 생성하는 signal.xml에는 raw 문자열로 이 두 속성이 잠깐 포함되지만(더미 생성기 전용 로직), 실제 저장/편집 경로(`SignalController`의 `SignalXml`/`PhaseXml` JAXB 모델, `SignalService.toSignalXml`/`fromSignalXml`)는 `id`/`duration`/`turnList`만 다룬다. 즉 프론트 신호 그리드에서 한 번이라도 저장하면 그 값들은 조용히 사라진다(모델에 필드 자체가 없어 라운드트립 시 드롭됨) — 알려지지 않은 갭.
 
 ---
 
@@ -857,16 +867,25 @@ RecordModes
 |---|---|
 | 이벤트 요소 | `active` |
 
-예시:
+예시(`NextSimRunner.java`가 매 실행마다 덮어쓰는 실제 값 — 배포판 템플릿과 무관하게 항상 이 값으로 고정):
 
 ```xml
-<VehicleEvent>
-  <Debugging active="t" />
-  <Visualizer active="t" />
-  <Statistics active="t" />
-</VehicleEvent>
-<SignalEvent active="f" />
+<RecordModes>
+    <VehicleEvent>
+        <Debugging active="f" />
+        <Visualizer active="t" />
+        <Statistics active="t" />
+    </VehicleEvent>
+    <PassengerEvent active="t" />
+    <UniformEvent active="f" />
+    <StationEvent active="t" />
+    <SinkEvent active="t" />
+    <SignalEvent active="f" />
+    <SignalControlEvent active="f" />
+</RecordModes>
 ```
+
+> `Debugging`/`UniformEvent`는 백엔드가 소비하지 않는(미사용) 기록이라 항상 꺼둔다(대규모 네트워크에서 시뮬 쓰기 부하·결과 DB 크기 폭증 방지) — `param.xml`/`outputmetrics.xml`과 달리 이 파일은 배포판 템플릿을 그대로 복사하는 게 아니라 이 코드가 항상 덮어쓴다.
 
 ---
 
@@ -1176,7 +1195,7 @@ Mode
 선택  
 철도 사용 시 필요
 
-> ⚠️ **역과 출입구는 id 카운터를 공유**: `railStation.id`와 그 `exit.id`는 OSM 자동 스냅 시 하나의 카운터(`31,000,001`부터)를 나눠 쓴다 — 아래 예시의 `id="40000001"`은 부천 레퍼런스 데이터셋 값이니 착오하지 말 것([ID 네이밍/채번 규칙](#id-naming) 참고). 과거 이 카운터를 잘못 소비해(`.get()`만 하고 증가 안 함) 역 id와 출입구 id가 충돌해 크래시한 실측 사례가 있다.
+> ⚠️ **역과 출입구는 id 카운터를 공유**: `railStation.id`와 그 `exit.id`는 OSM 자동 스냅 시 하나의 카운터(`31,000,001`부터)를 나눠 쓴다 — 아래 예시의 `id="40000001"`은 부천 레퍼런스 데이터셋 값이니 착오하지 말 것([ID 네이밍/채번 규칙](#id-naming) 참고). 과거 `OsmFacilityConverter.convertRailStations()`의 exit id 채번이 `idGen.get()`만 하고 증가시키지 않아, 다음 역이 그 exit와 같은 id를 이어받는 충돌 버그가 있었다 — `idGen.getAndIncrement()`로 수정 완료됨(코드의 "실측 크래시" 주석 참고).
 
 역할: 철도역과 출입구 정보를 정의한다.
 
@@ -1261,11 +1280,13 @@ BackgroundTraffics
 |---|---|
 | `state` | `id`, `avgSpd`, `density` |
 
-예시:
+예시(값이 채워진 경우 — 실제 관측 데이터 기준):
 
 ```xml
 <state id="20000403" avgSpd="12.862653552" density="2.628161524"/>
 ```
+
+> `NextSimRunner.java`는 이 파일이 이미 없을 때만(`writeIfAbsent`) **빈 스텁**(`<BackgroundTraffics></BackgroundTraffics>`)을 써넣는다 — 위처럼 `state`가 채워진 배경교통 데이터를 우리 쪽 코드가 자동 생성하지는 않는다(재임포트 시 이전 파일이 남아있으면 그대로 보존됨).
 
 ---
 
@@ -1333,13 +1354,16 @@ Simulation_Data
 
 역할: 차량별 요약 결과를 저장한다.
 
-구조:
+> ⚠️ **현재 우리 백엔드/프론트엔드 코드 어디에서도 이 파일을 읽지 않는다**(레포 전체에 `Vehicle.json`/`VehicleID`/`CurrentLinkID`/`RouteVector` 등 참조가 전무함). 실제 시뮬레이션 결과 파이프라인은 `simulation_output.db`(SQLite) → `VehicleDataReader.java` → CZML(`czmlPositionWorker.ts`) 경로를 쓴다. 이 파일은 NextSim이 여전히 생성은 하지만(실측 확인) 우리 시스템은 소비하지 않는, 아마도 이전 파이프라인의 흔적으로 보인다. 스키마 자체(아래)는 실제 생성 파일과 대조 확인해 정확하다.
+
+구조(최상위는 배열이 아니라 `Vehicle` 키로 감싼 객체):
 
 ```text
-Vehicle[]
- ├─ Info
- ├─ State
- └─ Route
+{ "Vehicle": Vehicle[] }
+ └─ Vehicle[]
+     ├─ Info
+     ├─ State
+     └─ Route
 ```
 
 `Info` 필드:
