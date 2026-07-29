@@ -17,6 +17,7 @@ import {
     batchDeleteOrMergeNodes, deleteLinkFromNetwork,
     countSignalsForNodes, deleteSignalsForNodes,
     countStationsForNodes, countStationsForLinks, deleteStationsForLinks, deletePavementMarkingsForLinks,
+    deletePavementMarkingsForShrunkLanes,
     farNodeIdsForCascadeDelete,
 } from "@hooks/useNetworkSelect";
 import { GridToolbar } from "./GridToolbar";
@@ -170,10 +171,16 @@ const DrilldownGrid = ({
                     const updated = updateLinkInNetwork(cur, linkId, partial);
                     applyNetworkUpdate(updated);
                     const clearedCount = reconcileSignalConnectionIds(updated, [curLink.fromNode, curLink.toNode]);
-                    if (droppedConnCount > 0 || clearedCount > 0) {
+                    let removedMarkingCount = 0;
+                    if (newNumLane !== undefined && newNumLane < curLink.numLane) {
+                        const updatedLink = updated.links.find((l: any) => String(l.id) === String(linkId));
+                        const remainingLaneIds = new Set((updatedLink?.lanes ?? []).map((l: any) => l.id));
+                        removedMarkingCount = deletePavementMarkingsForShrunkLanes(linkId, remainingLaneIds);
+                    }
+                    if (droppedConnCount > 0 || clearedCount > 0 || removedMarkingCount > 0) {
                         setMessage({
                             type: "info",
-                            text: `차선 수 감소로 커넥션 ${droppedConnCount}개 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ""}`,
+                            text: `차선 수 감소로 커넥션 ${droppedConnCount}개 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ""}${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ""}`,
                         });
                     }
                     return;
@@ -355,7 +362,9 @@ const DrilldownGrid = ({
                 const afterNet = useNetworkStore.getState().currentJsonData;
                 const clearedCount = afterNet
                     ? reconcileSignalConnectionIds(afterNet, [curLink.fromNode, curLink.toNode]) : 0;
+                const removedMarkingCount = deletePavementMarkingsForShrunkLanes(parentRecord.id, remainingLaneIds);
                 extra = `${danglingConnGuids.length > 0 ? `, 커넥션 ${danglingConnGuids.length}개 삭제` : ""}`
+                    + `${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ""}`
                     + `${clearedCount > 0 ? `, 신호 ${clearedCount}개의 커넥션 참조 초기화` : ""}`;
             }
         } else if (isNetworkLayer && levelName === "connections" && parentRecord?.id != null) {

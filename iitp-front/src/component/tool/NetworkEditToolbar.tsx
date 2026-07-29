@@ -17,6 +17,7 @@ import {
     toggleSegmentBlock, splitSegmentInNetwork, mergeSegmentInNetwork,
     getEffectiveSegments,
     countStationsForLinks, countStationsForNodes, deleteStationsForLinks, deletePavementMarkingsForLinks,
+    deletePavementMarkingsForShrunkLanes,
 } from '@hooks/useNetworkSelect';
 import { createIntersectionAtNode, regenerateNodeConnections, splitLinkInNetwork } from '@hooks/useNetworkDraw';
 import { segmentIndexAtFrac, cellIndexAtFrac } from '@utils/networkDrilldown';
@@ -207,11 +208,17 @@ const NetworkEditToolbar: React.FC = () => {
             const updated = updateLinkInNetwork(cur, linkId, next);
             applyNetworkUpdate(updated);
             const clearedCount = curLink ? reconcileSignalConnectionIds(updated, [curLink.fromNode, curLink.toNode]) : 0;
+            let removedMarkingCount = 0;
+            if (curLink && next.numLane < curLink.numLane) {
+                const updatedLink = updated.links.find((l) => String(l.id) === linkId);
+                const remainingLaneIds = new Set((updatedLink?.lanes ?? []).map((l: any) => l.id));
+                removedMarkingCount = deletePavementMarkingsForShrunkLanes(linkId, remainingLaneIds);
+            }
             setSaving(false);
-            if (droppedConnCount > 0 || clearedCount > 0) {
+            if (droppedConnCount > 0 || clearedCount > 0 || removedMarkingCount > 0) {
                 useMessageStore.getState().setMessage({
                     type: 'info',
-                    text: `차선 수 감소로 커넥션 ${droppedConnCount}개 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}`,
+                    text: `차선 수 감소로 커넥션 ${droppedConnCount}개 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ''}`,
                 });
             }
         }, 400);
@@ -299,9 +306,17 @@ const NetworkEditToolbar: React.FC = () => {
             const next = batchUpdateLinksInNetwork(cur, selectedLinkIds, { numLane: batchNumLane, maxSpd: batchMaxSpd });
             applyNetworkUpdate(next);
             const clearedCount = reconcileSignalConnectionIds(next, [...affectedNodeIds]);
+            let removedMarkingCount = 0;
+            for (const id of selectedLinkIds) {
+                const before = cur.links.find((l) => String(l.id) === id);
+                if (!before || batchNumLane >= before.numLane) continue;
+                const after = next.links.find((l) => String(l.id) === id);
+                const remainingLaneIds = new Set((after?.lanes ?? []).map((l: any) => l.id));
+                removedMarkingCount += deletePavementMarkingsForShrunkLanes(id, remainingLaneIds);
+            }
             useMessageStore.getState().setMessage({
                 type: 'info',
-                text: `링크 ${selectedLinkIds.length}개 일괄 수정 (${batchNumLane}차선, ${batchMaxSpd}km/h)${clearedCount > 0 ? ` — 신호 ${clearedCount}개의 커넥션 참조 초기화` : ''}`,
+                text: `링크 ${selectedLinkIds.length}개 일괄 수정 (${batchNumLane}차선, ${batchMaxSpd}km/h)${clearedCount > 0 ? ` — 신호 ${clearedCount}개의 커넥션 참조 초기화` : ''}${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ''}`,
             });
         };
 

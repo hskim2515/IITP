@@ -489,6 +489,23 @@ export function deletePavementMarkingsForLinks(linkIds: (number | string)[]): nu
     return guids.length;
 }
 
+// Link는 안 지우고 numLane만 줄이는 경우(updateLinkInNetwork/batchUpdateLinksInNetwork,
+// 그리드 Lane 행 직접 삭제) — 링크 자체는 살아있어 deletePavementMarkingsForLinks 대상이
+// 아니지만, 사라진 레인(laneRef) 위 노면표시는 커넥션과 동일하게 고아가 된다. remainingLaneIds는
+// numLane 감소 "후" 남은 레인의 id(≈index) 집합.
+export function deletePavementMarkingsForShrunkLanes(linkId: number | string, remainingLaneIds: Set<number | string>): number {
+    const remaining = new Set([...remainingLaneIds].map(String));
+    const markings = (usePavementMarkingStore.getState().currentJsonData as { pavementMarkings?: any[] } | undefined)?.pavementMarkings ?? [];
+    const guids = markings
+        .filter(m => m.linkRef != null && String(m.linkRef) === String(linkId) && m.laneRef != null && !remaining.has(String(m.laneRef)))
+        .map(m => m.__guid)
+        .filter((g): g is string => !!g);
+    if (guids.length > 0) {
+        usePavementMarkingStore.getState().removeRecordsByGuid(guids, usePavementMarkingHistoryStore as any);
+    }
+    return guids.length;
+}
+
 // 커넥션 삭제/재생성(regenerateNodeConnections, deleteLinkFromNetwork, numLane 감소 등) 뒤
 // 더 이상 존재하지 않는 connectionId를 참조하는 신호를 찾아 정리한다.
 // 신호 자체(nodeId/turning/plans)는 살아있는 movement라 유지하고, 무효해진 connectionId만
