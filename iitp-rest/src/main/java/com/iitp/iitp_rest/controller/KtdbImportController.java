@@ -142,23 +142,27 @@ public class KtdbImportController {
             try {
                 var existing = busStationService.getBusStationsByVersionId(versionId).getBusStations();
                 if (existing != null && !existing.isEmpty()) {
-                    int resnapped = 0, dropped = 0;
-                    java.util.List<com.iitp.iitp_rest.model.publicTransit.bus.BusStationResponse> kept = new java.util.ArrayList<>();
+                    int resnapped = 0, unsnapped = 0;
                     for (var st : existing) {
                         var r = facilityConverter.resnapByLocalCoord(st.getCenter());
-                        if (r == null) { dropped++; continue; } // NextSim이 link_ref를 필수 속성으로 요구 — 스냅 실패면 유지 불가
+                        // 스냅 실패(50m 밖) 시 정류장 자체를 지우면 안 된다 — 이름/부가정보를 가진
+                        // 실제 레코드가 좌표 문제 하나로 통째로 사라지는 게 훨씬 나쁜 결과다.
+                        // 옛 link_ref를 그대로 두고 그대로 저장 — 여전히 낡았을 순 있지만
+                        // checkStaleRoutes/수동 확인으로 드러나는 편이, 조용히 삭제되는 것보다 안전하다.
+                        if (r == null) { unsnapped++; continue; }
                         st.setLinkRef(r.linkId());
                         st.setLaneRef((long) r.laneId());
                         st.setOffset((double) r.offset());
-                        kept.add(st);
                         resnapped++;
                     }
-                    if (resnapped > 0 || dropped > 0) {
+                    if (resnapped > 0) {
                         var req = new com.iitp.iitp_rest.model.publicTransit.bus.BusStationSaveRequest();
-                        req.setData(busStationService.toDataList(kept));
+                        req.setData(busStationService.toDataList(existing));
                         req.setLogs(new com.iitp.iitp_rest.model.LogsData());
                         busStationService.saveBusStationsByVersionId(req, versionId);
-                        log.info("[KTDB] 버스정류장 재스냅: {}개 갱신, {}개 스냅실패로 제외", resnapped, dropped);
+                        log.info("[KTDB] 버스정류장 재스냅: {}개 갱신, {}개 스냅실패(기존 값 유지)", resnapped, unsnapped);
+                    } else if (unsnapped > 0) {
+                        log.info("[KTDB] 버스정류장 재스냅 전부 실패({}개, 좌표가 새 네트워크에서 50m 밖) — 기존 값 유지", unsnapped);
                     }
                 }
             } catch (Exception e) {
@@ -170,26 +174,27 @@ public class KtdbImportController {
             try {
                 var existing = railStationService.getByVersionId(versionId).getData();
                 if (existing != null && !existing.isEmpty()) {
-                    int resnapped = 0, dropped = 0;
+                    int resnapped = 0, unsnapped = 0;
                     for (var st : existing) {
                         if (st.getExits() == null || st.getExits().isEmpty()) continue;
-                        java.util.List<com.iitp.iitp_rest.model.publicTransit.rail.ExitData> keptExits = new java.util.ArrayList<>();
                         for (var exit : st.getExits()) {
                             var r = facilityConverter.resnapByLocalCoord(exit.getCoord());
-                            if (r == null) { dropped++; continue; }
+                            // 스냅 실패해도 exit을 지우지 않고 옛 linkRef를 그대로 둔다 — 버스
+                            // 정류장과 동일 원칙(조용한 삭제보다 낡은 채로 남는 게 안전).
+                            if (r == null) { unsnapped++; continue; }
                             exit.setLinkRef((int) r.linkId());
                             exit.setOffset((double) r.offset());
-                            keptExits.add(exit);
                             resnapped++;
                         }
-                        st.setExits(keptExits);
                     }
-                    if (resnapped > 0 || dropped > 0) {
+                    if (resnapped > 0) {
                         var req = new com.iitp.iitp_rest.model.publicTransit.rail.RailStationSaveRequest();
                         req.setData(existing);
                         req.setLogs(new com.iitp.iitp_rest.model.LogsData());
                         railStationService.saveRailStationByVersionId(req, versionId);
-                        log.info("[KTDB] 철도역 출입구 재스냅: {}개 갱신, {}개 스냅실패로 제외", resnapped, dropped);
+                        log.info("[KTDB] 철도역 출입구 재스냅: {}개 갱신, {}개 스냅실패(기존 값 유지)", resnapped, unsnapped);
+                    } else if (unsnapped > 0) {
+                        log.info("[KTDB] 철도역 출입구 재스냅 전부 실패({}개, 좌표가 새 네트워크에서 50m 밖) — 기존 값 유지", unsnapped);
                     }
                 }
             } catch (Exception e) {
@@ -231,11 +236,11 @@ public class KtdbImportController {
 
         facilityConverter.prepareLinkIndex(links);
 
-        remapRouteFile(versionId, "roadPTline.xml", stationLinkRefById,
+        remapRouteFile(versionId, "roadPTline.xml", BusPtLineController.LAYER_KEY_DEFAULT, stationLinkRefById,
                 busPtLineService::getDefault, busPtLineService::saveDefault);
-        remapRouteFile(versionId, "roadPTline-weekday.xml", stationLinkRefById,
+        remapRouteFile(versionId, "roadPTline-weekday.xml", BusPtLineController.LAYER_KEY_WEEKDAY, stationLinkRefById,
                 busPtLineService::getWeekday, busPtLineService::saveWeekday);
-        remapRouteFile(versionId, "roadPTline-weekend.xml", stationLinkRefById,
+        remapRouteFile(versionId, "roadPTline-weekend.xml", BusPtLineController.LAYER_KEY_WEEKEND, stationLinkRefById,
                 busPtLineService::getWeekend, busPtLineService::saveWeekend);
     }
 
@@ -243,7 +248,7 @@ public class KtdbImportController {
     private interface RouteSaver { void save(String versionId, com.iitp.iitp_rest.model.publicTransit.bus.BusPtLinesXml data) throws Exception; }
 
     private void remapRouteFile(
-            String versionId, String fileName, java.util.Map<String, Long> stationLinkRefById,
+            String versionId, String fileName, String layerKey, java.util.Map<String, Long> stationLinkRefById,
             RouteFetcher fetcher, RouteSaver saver) {
         try {
             if (!fileStorage.exists(versionId + "/" + fileName)) return;
@@ -268,6 +273,12 @@ public class KtdbImportController {
             }
             if (remapped > 0) {
                 saver.save(versionId, data);
+                // saver.save()는 SFTP/로컬 파일만 갱신한다 — GET /public-transit/line/bus/*는
+                // XmlLayerVersionService의 DB 캐시(getLatest)를 먼저 보므로, 이걸 지우지 않으면
+                // 파일은 최신인데 API는 계속 재매핑 전 옛 데이터를 돌려주는 불일치가 생긴다
+                // (network.xml 재임포트 시 xmlLayerVersionService.deleteVersion("network", ...)를
+                // 부르는 것과 동일한 이유 — 실측으로 발견).
+                xmlLayerVersionService.deleteVersion(layerKey, versionId);
                 log.info("[KTDB] {} 노선 재매핑: {}개 갱신, {}개 실패(수동 재작업 필요)", fileName, remapped, failed);
             } else if (failed > 0) {
                 log.info("[KTDB] {} 노선 재매핑 시도했으나 전부 실패({}개) — 수동 재작업 필요", fileName, failed);
