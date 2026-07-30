@@ -202,7 +202,7 @@ KTDB 원본 `node_id`/`link_id`(문자열)는 위 규칙으로 재채번되며 �
 - `network.xml`: link/node id, from_node/to_node, port의 link_id, connection의 from_link/to_link
 - `odmatrix.xml`: source/sink — `OdTerminalIdBandService`가 자동으로 재정합하고, 노드 삭제 시 해당 demand를 자동 삭제(prune)
 - `signal.xml`/`signalTOD.xml`: node id, connectionId — 참조가 안 맞으면 `NextSimInputScaffolder`가 signal.xml 전체를 재생성하거나 connectionId만 null로 초기화
-- 버스/철도 정류장(`roadStation.xml`/`railStation.xml`)·PT 노선(`roadPTline.xml`/`railPTline.xml`): KTDB 재임포트 확인 시 앱 설정의 `busFacilityEnabled`/`railFacilityEnabled`가 켜져 있으면 OSM에서 새로 가져와 새 네트워크에 재스냅한 뒤 **자동 저장(기존 데이터 덮어쓰기)**된다(`OsmFacilityConverter` → `FileImportModal.tsx`의 `injectAll`+`autoSaveChangedLayers`) — link_ref/lane_ref/link seq/node seq/railStationSeq는 이 과정에서 자동으로 맞춰진다. **단, 수동으로 추가·편집한 정류장/노선도 이때 통째로 덮어써져 사라진다** — 보존하려면 이 토글을 꺼야 한다. 토글을 꺼서 재임포트해도 기존 데이터가 유지되는 경우엔, 새 네트워크와의 정합은 `PtLineValidation.java`가 검증만 하고 자동 재매핑은 안 하므로 안 맞으면 수동으로 재작업해야 함
+- 버스/철도 정류장(`roadStation.xml`/`railStation.xml`)·PT 노선(`roadPTline.xml`/`railPTline.xml`): KTDB 재임포트 확인 시 앱 설정의 `busFacilityEnabled`/`railFacilityEnabled`가 켜져 있으면 OSM에서 새로 가져와 새 네트워크에 재스냅한 뒤 **자동 저장(기존 데이터 덮어쓰기)**된다(`OsmFacilityConverter` → `FileImportModal.tsx`의 `injectAll`+`autoSaveChangedLayers`) — link_ref/lane_ref/link seq/node seq/railStationSeq는 이 과정에서 자동으로 맞춰진다. **단, 수동으로 추가·편집한 정류장/노선도 이때 통째로 덮어써져 사라진다** — 보존하려면 이 토글을 꺼야 한다. 토글을 꺼서 재임포트해도(또는 대형망 스트리밍 경로처럼 OSM 조회가 아예 없을 때도) **정류장/역의 link_ref/lane_ref는 저장된 좌표 기준으로 자동 재스냅된다**(`KtdbImportController.resnapExistingStationsIfNeeded` — id·이름 등은 그대로 유지). 다만 roadPTline.xml/railPTline.xml의 **노선 자체(link/node seq 전체 경로)**는 점 재스냅과 달리 자동 복구가 훨씬 어려워 `PtLineValidation.java`가 검증만 하고 자동 재매핑은 안 하므로 안 맞으면 노선을 수동으로 재작업해야 함(아직 안 고쳐진 갭)
 - 포장 노면표시(`linkRef`/`laneRef`/`cellId`): NextSim 시뮬레이션 입력이 아니라 시각화 보조 데이터라 백엔드 검증·재매핑 로직 자체가 없다. **네트워크 재임포트 시엔 문제없음** — `backupAndResetDependentLayers`가 재임포트 직전 기존 노면표시를 서버에서 통째로 삭제하고(끊어진 참조가 남는 게 아니라 데이터가 사라짐), OSM/KTDB 둘 다 이후 `generateAndSaveDummyPavementMarking`으로 새 네트워크 기준 재생성한다(앱 설정 `pavementMarkingEnabled` 토글). Link/Node/Port 삭제(지도 툴·그리드 공통)는 정류장과 동일하게 `deletePavementMarkingsForLinks`로, Link는 안 지우고 numLane만 줄이는 경우(필드 수정·그리드 Lane 행 삭제)는 `deletePavementMarkingsForShrunkLanes`로 cascade 정리된다.
 - station/garage id는 재임포트로 안 바뀌는 별도 네임스페이스라 `PtLineValidation`의 검증 대상에서 제외됨(id 자체는 안정적, 위 링크 참조만 문제가 됨)
 
@@ -262,8 +262,9 @@ KTDB 원본 `node_id`/`link_id`(문자열)는 위 규칙으로 재채번되며 �
 | 상황 | 연쇄되는 것 | 자동/수동 |
 |---|---|---|
 | KTDB 네트워크 재임포트(앱 설정 `busFacilityEnabled`/`railFacilityEnabled` 켜짐, 기본값) | OSM에서 새로 정류장/노선을 가져와 새 네트워크에 재스냅 후 자동 저장 — `roadStation.xml`/`railStation.xml`/`roadPTline.xml`/`railPTline.xml` 전부 **덮어쓰기** | ✅ (`OsmFacilityConverter` → `FileImportModal.tsx`) — 단 **수동으로 추가·편집한 정류장/노선도 이때 같이 사라짐** |
-| KTDB 네트워크 재임포트(위 토글 꺼짐) | 기존 정류장/노선 데이터는 보존되지만, 새 네트워크와의 link/node 참조 정합은 검증만 됨 | ⚠️ 검증만(`PtLineValidation`) — 안 맞으면 노선/정류장을 수동으로 재작업해야 함 |
-| OSM 재조회 실패(Overpass 타임아웃 등) | 신규 데이터가 비어 있어 `injectAll`이 주입을 건너뜀 → 기존 데이터 그대로 남되 새 네트워크와 안 맞을 수 있음 | ⚠️ 위와 동일하게 검증만, 수동 재작업 필요 |
+| KTDB 네트워크 재임포트(위 토글 꺼짐, 또는 대형망 스트리밍 경로처럼 OSM 조회 자체가 없는 경우) | 정류장/역 자체(id·이름·부가정보)는 그대로 두고, 저장돼 있던 좌표(center/exit.coord)를 새 네트워크에 재스냅해 `link_ref`/`lane_ref`만 자동 갱신 | ✅ (`OsmFacilityConverter.resnapByLocalCoord` → `KtdbImportController.resnapExistingStationsIfNeeded`) — 재스냅 실패(좌표가 새 네트워크에서 50m 밖)한 정류장은 NextSim이 link_ref를 필수로 요구해 유지가 불가능하므로 제외됨(로그로 개수 확인 가능) |
+| OSM 재조회 실패(Overpass 타임아웃 등) | 위와 동일한 재스냅 경로를 탄다(`fac`가 비어있는 것으로 취급) | ✅ 위와 동일 |
+| roadPTline.xml/railPTline.xml의 link/node seq(정류장 link_ref가 아니라 **노선 전체 경로**) | 재임포트로 안 맞으면 검증만 함 — 경로 전체를 새로 그려야 해서 점 재스냅과 달리 자동 복구가 훨씬 어려움 | ⚠️ 검증만(`PtLineValidation`/`checkStaleRoutes`) — 안 맞으면 노선을 수동으로 재작업해야 함(아직 안 고쳐진 갭) |
 
 ### 그 외 알려진 갭 (자동 처리 없음)
 
@@ -1122,7 +1123,7 @@ Lines
 선택  
 버스 사용 시 필요
 
-> ⚠️ **id는 30M 대역, 재임포트 시 기본적으로 자동 재생성(덮어쓰기)됨**: `station.id`는 OSM 자동 스냅 시 `30,000,001`부터 채번된다([ID 네이밍/채번 규칙](#id-naming) 참고). KTDB 네트워크를 재임포트하면 앱 설정의 `busFacilityEnabled`가 켜져 있는 한(기본값) `OsmFacilityConverter`가 OSM에서 정류장을 새로 가져와 새 네트워크에 맞게 `link_ref`/`lane_ref`를 다시 스냅하고, 그 결과가 자동으로 저장된다(`FileImportModal.tsx`의 `injectAll`+`autoSaveChangedLayers`) — 즉 link_ref/lane_ref는 수동 재스냅 없이 자동으로 맞춰진다. **다만 이 과정은 기존 `roadStation.xml`을 통째로 덮어쓰므로, 수동으로 추가·편집한 정류장은 재임포트할 때마다 조용히 사라진다.** 수동 편집분을 보존하려면 재임포트 전 `busFacilityEnabled`를 꺼야 하는데, 이 경우 기존 정류장의 `link_ref`/`lane_ref`는 새 네트워크와의 정합을 `PtLineValidation`이 검증만 하고 자동 재매핑은 하지 않으므로, 안 맞으면 수동으로 다시 스냅해야 한다.
+> ⚠️ **id는 30M 대역, 재임포트 시 기본적으로 자동 재생성(덮어쓰기)됨**: `station.id`는 OSM 자동 스냅 시 `30,000,001`부터 채번된다([ID 네이밍/채번 규칙](#id-naming) 참고). KTDB 네트워크를 재임포트하면 앱 설정의 `busFacilityEnabled`가 켜져 있는 한(기본값) `OsmFacilityConverter`가 OSM에서 정류장을 새로 가져와 새 네트워크에 맞게 `link_ref`/`lane_ref`를 다시 스냅하고, 그 결과가 자동으로 저장된다(`FileImportModal.tsx`의 `injectAll`+`autoSaveChangedLayers`) — 즉 link_ref/lane_ref는 수동 재스냅 없이 자동으로 맞춰진다. **다만 이 과정은 기존 `roadStation.xml`을 통째로 덮어쓰므로, 수동으로 추가·편집한 정류장은 재임포트할 때마다 조용히 사라진다.** 수동 편집분을 보존하려면 재임포트 전 `busFacilityEnabled`를 꺼야 하는데, 이 경우에도 기존 정류장(id·이름 등 유지)의 `link_ref`/`lane_ref`는 저장된 좌표를 새 네트워크에 재스냅해 자동으로 갱신된다(`KtdbImportController.resnapExistingStationsIfNeeded` → `OsmFacilityConverter.resnapByLocalCoord`) — 좌표가 새 네트워크에서 50m 밖으로 벗어난 경우에만(도로가 아예 없어진 경우) 재스냅이 실패해 그 정류장이 제외된다.
 
 역할: 버스 정류장을 정의한다.
 

@@ -63,6 +63,11 @@ public class KtdbImportController {
     // 아예 안 생긴다"는 문제가 있었음.
     private final com.iitp.iitp_rest.service.network.OsmOverpassService overpassService;
     private final com.iitp.iitp_rest.service.network.OsmFacilityConverter facilityConverter;
+    // 자동생성 토글이 꺼져 OSM에서 새로 안 가져온 경우(또는 대형망 스트리밍 경로처럼 애초에
+    // OSM 조회가 없는 경우) — 검증만 하고 방치하지 않고, 이미 저장된 정류장/역의 link_ref/
+    // lane_ref를 새 네트워크에 자동 재스냅한다(resnapExistingStationsIfNeeded 참고).
+    private final com.iitp.iitp_rest.service.publicTransit.station.BusStationService busStationService;
+    private final com.iitp.iitp_rest.service.publicTransit.station.RailStationService railStationService;
 
     // ── 백그라운드 스캐폴딩(더미 신호/OD/TOD 생성 + 타일 빌드) 진행 상태 ────────────
     // KTDB 저장 응답은 이 백그라운드 작업(CompletableFuture.runAsync)을 기다리지 않고 먼저
@@ -107,6 +112,86 @@ public class KtdbImportController {
         if (staleFiles.isEmpty()) return null;
         return "버스 노선(" + String.join(", ", staleFiles) + ")이 재임포트로 바뀐 링크/노드 id를 참조하고 있습니다 — "
                 + "대중교통 메뉴에서 확인·재작성이 필요할 수 있습니다.";
+    }
+
+    /**
+     * KTDB 재임포트 시 OSM에서 정류장/역을 새로 안 가져온 경우(자동생성 토글 꺼짐, OSM 재조회
+     * 실패, 또는 대형망 스트리밍 경로처럼 애초에 OSM 조회가 없는 경우) — 기존엔 검증만 하고
+     * 방치해 link_ref/lane_ref가 새 네트워크와 안 맞는 채로 남았다. 정류장/역 자체(id·이름·
+     * 부가정보)는 그대로 두고, 이미 저장된 좌표(center/exit.coord)만 OsmFacilityConverter의
+     * 스냅 로직으로 새 네트워크에 재매핑해 저장한다(OSM 노드 좌표 대신 저장된 좌표를 입력으로
+     * 재사용하는 것만 다르고 스냅 알고리즘은 동일).
+     *
+     * @param fac 이번 임포트에서 OSM으로 새로 가져온 결과 — null이거나 해당 교통수단이
+     *            비어있으면("자동생성 안 함") 그 교통수단만 재스냅 대상.
+     */
+    private void resnapExistingStationsIfNeeded(
+            String versionId, java.util.List<com.iitp.iitp_rest.model.network.link.LinkXml> links,
+            com.iitp.iitp_rest.service.network.OsmFacilityConverter.FacilityResult fac) {
+        boolean busFresh = fac != null && fac.busStations() != null && !fac.busStations().getBusStations().isEmpty();
+        boolean railFresh = fac != null && fac.railStations() != null && !fac.railStations().getRailStations().isEmpty();
+        if (busFresh && railFresh || links == null || links.isEmpty()) return;
+
+        facilityConverter.prepareLinkIndex(links);
+
+        if (!busFresh) {
+            try {
+                var existing = busStationService.getBusStationsByVersionId(versionId).getBusStations();
+                if (existing != null && !existing.isEmpty()) {
+                    int resnapped = 0, dropped = 0;
+                    java.util.List<com.iitp.iitp_rest.model.publicTransit.bus.BusStationResponse> kept = new java.util.ArrayList<>();
+                    for (var st : existing) {
+                        var r = facilityConverter.resnapByLocalCoord(st.getCenter());
+                        if (r == null) { dropped++; continue; } // NextSim이 link_ref를 필수 속성으로 요구 — 스냅 실패면 유지 불가
+                        st.setLinkRef(r.linkId());
+                        st.setLaneRef((long) r.laneId());
+                        st.setOffset((double) r.offset());
+                        kept.add(st);
+                        resnapped++;
+                    }
+                    if (resnapped > 0 || dropped > 0) {
+                        var req = new com.iitp.iitp_rest.model.publicTransit.bus.BusStationSaveRequest();
+                        req.setData(busStationService.toDataList(kept));
+                        req.setLogs(new com.iitp.iitp_rest.model.LogsData());
+                        busStationService.saveBusStationsByVersionId(req, versionId);
+                        log.info("[KTDB] 버스정류장 재스냅: {}개 갱신, {}개 스냅실패로 제외", resnapped, dropped);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[KTDB] 버스정류장 재스냅 실패(무시): {}", e.getMessage());
+            }
+        }
+
+        if (!railFresh) {
+            try {
+                var existing = railStationService.getByVersionId(versionId).getData();
+                if (existing != null && !existing.isEmpty()) {
+                    int resnapped = 0, dropped = 0;
+                    for (var st : existing) {
+                        if (st.getExits() == null || st.getExits().isEmpty()) continue;
+                        java.util.List<com.iitp.iitp_rest.model.publicTransit.rail.ExitData> keptExits = new java.util.ArrayList<>();
+                        for (var exit : st.getExits()) {
+                            var r = facilityConverter.resnapByLocalCoord(exit.getCoord());
+                            if (r == null) { dropped++; continue; }
+                            exit.setLinkRef((int) r.linkId());
+                            exit.setOffset((double) r.offset());
+                            keptExits.add(exit);
+                            resnapped++;
+                        }
+                        st.setExits(keptExits);
+                    }
+                    if (resnapped > 0 || dropped > 0) {
+                        var req = new com.iitp.iitp_rest.model.publicTransit.rail.RailStationSaveRequest();
+                        req.setData(existing);
+                        req.setLogs(new com.iitp.iitp_rest.model.LogsData());
+                        railStationService.saveRailStationByVersionId(req, versionId);
+                        log.info("[KTDB] 철도역 출입구 재스냅: {}개 갱신, {}개 스냅실패로 제외", resnapped, dropped);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[KTDB] 철도역 재스냅 실패(무시): {}", e.getMessage());
+            }
+        }
     }
 
     // ── 공통 변환 로직 ────────────────────────────────────────────────────────
@@ -312,6 +397,7 @@ public class KtdbImportController {
                             .filter(java.util.Objects::nonNull)
                             .map(String::valueOf)
                             .collect(java.util.stream.Collectors.toSet());
+                final com.iitp.iitp_rest.service.network.OsmFacilityConverter.FacilityResult finalFac = fac;
                 scaffoldInProgress.add(vid);
                 CompletableFuture.runAsync(() -> {
                     try {
@@ -319,6 +405,7 @@ public class KtdbImportController {
                                 finalTerminalCoords, finalNetworkXml, null, odParams);
                         try { networkTileService.ingest(vid, resp); }
                         catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
+                        resnapExistingStationsIfNeeded(vid, finalNetworkXml.getLinks(), finalFac);
                         String warning = checkStaleRoutes(vid, allLinkIds, allNodeIds);
                         if (warning != null) scaffoldWarnings.put(vid, warning);
                     } finally {
@@ -440,6 +527,18 @@ public class KtdbImportController {
                         catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
                         // 2차: SFTP XML 기반 완전 재빌드 — 1차 실패와 무관하게 항상 시도 (내부 예외 처리)
                         networkTileService.rebuildFromXml(vid);
+                        // 대형망 스트리밍 경로는 OSM 시설물 조회 자체가 없어(streamConvert가
+                        // 도로 geometry만 다룸) 기존 정류장/역이 항상 재스냅 대상이다 — LinkResponse
+                        // (id/fromNode/toNode/shape만 필요)를 스냅용 최소 LinkXml로 변환.
+                        var linksForSnap = sr.links().stream().map(lr -> {
+                            var lx = new com.iitp.iitp_rest.model.network.link.LinkXml();
+                            lx.setId(lr.getId());
+                            lx.setFromNode(lr.getFromNode());
+                            lx.setToNode(lr.getToNode());
+                            lx.setShape(lr.getShape());
+                            return lx;
+                        }).toList();
+                        resnapExistingStationsIfNeeded(vid, linksForSnap, null);
                         String staleWarning = checkStaleRoutes(vid, allLinkIds, allNodeIds);
                         String warning = java.util.stream.Stream.of(signalGenWarning, staleWarning)
                                 .filter(java.util.Objects::nonNull)

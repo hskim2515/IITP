@@ -960,6 +960,38 @@ public class OsmFacilityConverter {
         return best;
     }
 
+    // ── 기존 시설물 재스냅 (KTDB 재임포트, 자동생성 토글 꺼짐/OSM 재조회 실패) ──────────
+    // 새 OSM 조회 없이 새 네트워크에 맞춰야 하는 경우 — 정류장/역 자체는 그대로 유지하고
+    // (id/이름/부가정보 보존), 이미 저장된 좌표(center)만 새 네트워크의 링크에 다시 스냅한다.
+    // convert()가 OSM 노드 좌표로 하던 것과 동일한 snapToLink를 저장된 좌표에 대해 재사용.
+
+    public record ResnapResult(long linkId, int laneId, double offset) {}
+
+    /** 링크 인덱스를 주어진 네트워크로 재구성한다 — resnapByLocalCoord 호출 전에 한 번 필요. */
+    public void prepareLinkIndex(List<LinkXml> links) {
+        buildLinkGrid(links);
+    }
+
+    /** center 문자열("lx ly", 로컬좌표)을 prepareLinkIndex로 준비된 네트워크에 재스냅한다.
+     *  50m 밖이라 스냅 실패하거나 좌표 파싱 실패면 null. */
+    public ResnapResult resnapByLocalCoord(String center) {
+        double[] xy = parseLocalCoord(center);
+        if (xy == null) return null;
+        SnapResult snap = snapToLink(xy[0], xy[1]);
+        return snap == null ? null : new ResnapResult(snap.linkId(), snap.laneId(), round2(snap.offset()));
+    }
+
+    private static double[] parseLocalCoord(String center) {
+        if (center == null || center.isBlank()) return null;
+        String[] parts = center.trim().split("\\s+");
+        if (parts.length < 2) return null;
+        try {
+            return new double[]{Double.parseDouble(parts[0]), Double.parseDouble(parts[1])};
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     private double[] projectPointOnSegment(double px, double py,
                                              double ax, double ay,
                                              double bx, double by) {
