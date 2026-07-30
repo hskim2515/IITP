@@ -1162,7 +1162,7 @@ export const useNetworkSelect = () => {
             useEditGuideStore.getState().setGuide({
                 title: `링크 연결 — 노드 ${connectTargetNodeId}`,
                 steps: [
-                    { keys: ['Shift+클릭'], text: '연결할 링크(도로)를 하나 이상 선택하세요', em: true },
+                    { keys: ['Shift+클릭', 'Ctrl/Cmd+클릭'], text: '연결할 링크(도로)를 하나 이상 선택하세요', em: true },
                     { keys: ['맥락 툴바'], text: '"✅ 연결 생성" — 선택한 링크마다 이 노드 위치에서 분할해 도로 형상 자체를 연결(도로 형상 안 바꾸고 커넥션만 필요하면 ESC 후 "⬡ 커넥션 생성" 사용)' },
                     { keys: ['ESC'], text: '링크 연결 취소' },
                 ],
@@ -1194,7 +1194,7 @@ export const useNetworkSelect = () => {
             useEditGuideStore.getState().setGuide({
                 title: `선택·편집 — ${multiCount}개 선택됨`,
                 steps: [
-                    { keys: ['Shift+클릭'], text: '선택 추가/제외' },
+                    { keys: ['Shift+클릭', 'Ctrl/Cmd+클릭'], text: '선택 추가/제외' },
                     { keys: ['Delete'], text: '선택한 요소 모두 삭제', em: true },
                     { keys: ['ESC'], text: '선택 해제' },
                 ],
@@ -1204,7 +1204,7 @@ export const useNetworkSelect = () => {
                 title: '선택·편집',
                 steps: [
                     { keys: ['클릭'], text: '링크·노드·차선을 클릭해 선택하세요', em: true },
-                    { keys: ['Shift+클릭'], text: '여러 개 선택' },
+                    { keys: ['Shift+클릭', 'Ctrl/Cmd+클릭'], text: '여러 개 선택' },
                     { keys: ['Ctrl+드래그'], text: '빈 곳에서 끌면 박스로 범위 선택' },
                 ],
                 tip: '선택하면 이동·삭제·속성 편집을 할 수 있어요.',
@@ -1773,8 +1773,13 @@ export const useNetworkSelect = () => {
             const link = (!directNode && !lane) ? findNearestLink(network.links, coord, res * 15) : null;
             const node = directNode ?? ((!lane && !link) ? nodeCand : null); // 도로 요소 없을 때만 근접 폴백
 
-            if (e.shiftKey) {
-                // Shift+클릭: 멀티셀렉트 토글 (레인은 멀티셀렉트 미지원 → 링크로)
+            // Shift+클릭뿐 아니라 Ctrl(윈도우)/Cmd(맥)+클릭도 동일하게 멀티셀렉트 토글로
+            // 취급한다 — 보편적인 편집 툴 관례(Ctrl/Cmd+클릭=개별 항목 토글)에 맞추려는
+            // 실사용 요청. 빈 지형에서 Ctrl+드래그로 박스 선택을 시작하는 기존 동작(위
+            // pointerdown 핸들러)과는 충돌하지 않는다 — 그건 "빈 곳"에서만 발동하고, 여기는
+            // 노드/링크를 실제로 맞혔을 때만 발동하는 별개 경로다.
+            if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                // Shift/Ctrl/Cmd+클릭: 멀티셀렉트 토글 (레인은 멀티셀렉트 미지원 → 링크로)
                 // 맥락 툴바는 selectedLinkIds/selectedNodeIds 개수를 직접 보고 멀티선택 바를
                 // 그리므로, 여기선 위치만 갱신해두면(level은 무시됨) 계속 같은 지점에 뜬다.
                 if (node) {

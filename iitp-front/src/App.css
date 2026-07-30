@@ -551,10 +551,11 @@ body {
 
 /*timeline*/
 .timeline-container {
-  /* 헤더 전체 폭 기준 정중앙 고정 — 원래 디자인(진짜 중앙 정렬)을 유지한다.
-     대신 headerRight 쪽에 더 높은 z-index를 줘서(Header.module.css .headerRight)
-     겹치는 영역에서도 버튼이 항상 위에서 클릭되도록 한다 — 타임트랙을 밀어내는
-     대신 "겹칠 수 있지만 버튼이 항상 이긴다" 방식. */
+  /* 헤더 전체 폭 기준 정중앙 고정 — 사용자 요청: 버튼 그룹 폭과 무관하게 위치가 항상
+     고정돼야 한다(nav/headerRight 사이 여유 공간 기준으로 재중앙 정렬하는 방식을 시도했으나,
+     버튼이 늘어나면 중심점 자체가 움직여 "위치가 옮겨진다"는 문제로 되돌림). 겹치는 경우엔
+     headerRight 쪽 z-index로 버튼이 항상 위에서 클릭되도록 한다(겹칠 수 있지만 버튼이
+     항상 이기는 방식 — Header.module.css .headerRight 주석 참고). */
   position: absolute;
   left: 50%;
   top: 50%;

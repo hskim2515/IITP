@@ -572,6 +572,10 @@ const NetworkEditToolbar: React.FC = () => {
         return (
             <div style={{ position: 'fixed', left, top, zIndex: 4000 }}>
                 <div style={barStyle}>
+                    <span style={{ padding: '0 8px', fontSize: 12, color: '#7aa2ff', fontWeight: 600 }}>
+                        링크 #{linkId}
+                    </span>
+                    <VDivider />
                     <Btn onClick={handleReverse} title={`방향 반전 (${link.toNode} → ${link.fromNode})`}>⇄ 반전</Btn>
                     <Btn onClick={handleSplit} disabled={!toolbar.clickCoord} title="클릭 지점에서 분할">✂ 분할</Btn>
                     <Btn onClick={() => setPropsOpen((v) => !v)} title="차선 수 / 폭 / 속도">⚙ 속성{saving ? '…' : ''}</Btn>
@@ -681,15 +685,14 @@ const NetworkEditToolbar: React.FC = () => {
             const cur = useNetworkStore.getState().currentJsonData;
             if (!cur) return;
             const absorbedSignalCount = countSignalsForNodes([nearestNode.id]);
-            let net = mergeNodesInNetwork(cur, nodeId, nearestNode.id);
-            net = regenerateNodeConnections(net, nodeId);
+            const net = mergeNodesInNetwork(cur, nodeId, nearestNode.id);
             applyNetworkUpdate(net);
             const clearedCount = reconcileSignalConnectionIds(net, [nodeId]);
             deleteSignalsForNodes([nearestNode.id]);
             markRemovedForTileMask(cur, net);
             useMessageStore.getState().setMessage({
                 type: 'info',
-                text: `노드 ${nodeId}에 ${nearestNode.id} 병합 + 교차로 커넥션 재생성됨`
+                text: `노드 ${nodeId}에 ${nearestNode.id} 병합됨(기존 커넥션 유지)`
                     + (absorbedSignalCount > 0 ? `, 흡수된 노드의 신호 ${absorbedSignalCount}개 삭제` : '')
                     + (clearedCount > 0 ? `, 신호 ${clearedCount}개 커넥션 참조 초기화` : ''),
             });
@@ -714,17 +717,29 @@ const NetworkEditToolbar: React.FC = () => {
         // 명칭 정리) — 링크 연결=도로 형상 변경, 커넥션 생성=형상 안 건드리고 회전규칙만 갱신.
         const handleCreateIntersection = () => {
             if (!canCreateIntersection) return;
-            const clearedCount = createIntersectionAtNode(nodeId);
-            useMessageStore.getState().setMessage({
-                type: 'info',
-                text: `노드 ${nodeId} 커넥션 재생성 완료(도로 형상은 그대로)` + (clearedCount > 0 ? ` — 신호 ${clearedCount}개의 커넥션 참조 초기화` : ''),
-            });
+            const run = () => {
+                const clearedCount = createIntersectionAtNode(nodeId);
+                useMessageStore.getState().setMessage({
+                    type: 'info',
+                    text: `노드 ${nodeId} 커넥션 재생성 완료(도로 형상은 그대로)` + (clearedCount > 0 ? ` — 신호 ${clearedCount}개의 커넥션 참조 초기화` : ''),
+                });
+            };
+            const cur = useNetworkStore.getState().currentJsonData;
+            const existingConnCount = cur?.nodes.find((n) => String(n.id) === String(nodeId))?.connections?.length ?? 0;
+            if (existingConnCount > 0) {
+                useMessageStore.getState().setMessage({
+                    type: 'confirm',
+                    text: `기존 커넥션 ${existingConnCount}개를 지우고 다시 만들까요?`,
+                    onConfirm: run,
+                });
+            } else {
+                run();
+            }
         };
 
         // 이 노드로 곧장 진입한 채 커넥션 편집 모드 시작 — 지도에서 노드를 다시 클릭할 필요 없음.
         // 커넥션 편집 중엔 이 툴바 대신 커넥션 편집 자체 UI(차선 점 드래그)가 상호작용을 담당.
         const handleEditConnections = () => {
-            if (!canCreateIntersection) return;
             useNetworkDrawStore.getState().activateConnectionAndReset(nodeId);
             useNetworkToolbarStore.getState().hide();
         };
@@ -784,8 +799,12 @@ const NetworkEditToolbar: React.FC = () => {
         return (
             <div style={{ position: 'fixed', left, top, zIndex: 4000 }}>
                 <div style={barStyle}>
+                    <span style={{ padding: '0 8px', fontSize: 12, color: '#ffb347', fontWeight: 600 }}>
+                        노드 #{nodeId}
+                    </span>
+                    <VDivider />
                     <Btn onClick={handleCreateIntersection} disabled={!canCreateIntersection} title={canCreateIntersection ? '도로 형상은 그대로, 이미 연결된 도로들로 커넥션만 재생성' : `in:${inCount} out:${outCount} — 포트 부족(먼저 🔗 링크 연결 필요)`}>⬡ 커넥션 생성</Btn>
-                    <Btn onClick={handleEditConnections} disabled={!canCreateIntersection} title={canCreateIntersection ? '커넥션(회전 동선) 수동 편집으로 진입' : `in:${inCount} out:${outCount} — 포트 부족`}>🔀 커넥션 편집</Btn>
+                    <Btn onClick={handleEditConnections} title={canCreateIntersection ? '커넥션(회전 동선) 수동 편집으로 진입' : `in/out 포트가 없으면 편집할 커넥션이 아직 없습니다(먼저 🔗 링크 연결)`}>🔀 커넥션 편집</Btn>
                     <Btn onClick={handleStartConnectRoads} title="선택한 도로를 이 노드 위치에서 분할해 실제로 연결(도로 형상이 바뀜)">🔗 링크 연결</Btn>
                     <Btn onClick={() => setCoordOpen((v) => !v)} title="좌표 직접 입력">✏ 좌표</Btn>
                     <Btn onClick={handleMerge} disabled={!canMerge} title={canMerge ? `노드 ${String(nearestNode!.id)}에 병합 (${Math.round(nearestDist)}m)` : '30m 이내 인접 노드 없음'}>⊕ 병합</Btn>
