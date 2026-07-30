@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Lines>
+    <Line id="1" interval="10">
+        <link seq="20000467 20000465 20000468 20000470"/>
+        <node seq="11000467 10000466 10000469 11000470"/>
+        <station seq=""/>
+        <garage seq=""/>
+    </Line>
+</Lines>
