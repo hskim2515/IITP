@@ -33,6 +33,7 @@ function setDrawGuide(stage: 'start' | 'segment'): void {
         title: '도로 그리기',
         steps: [
             { keys: ['클릭'], text: '시작점을 클릭하세요 — 기존 노드·링크 위를 클릭하면 자동으로 이어집니다', em: true },
+            { keys: ['1', '~', '8'], text: '차선 수 즉시 지정' },
             { keys: ['우클릭'], text: '그리기 종료' },
         ],
         tip: '노드·링크 근처는 자동으로 달라붙습니다(스냅). Alt를 누르고 있으면 노드·링크 스냅은 꺼지고, 대신 각도(정렬) 스냅이 켜져요.',
@@ -41,6 +42,8 @@ function setDrawGuide(stage: 'start' | 'segment'): void {
         steps: [
             { keys: ['클릭'], text: '끝점을 클릭하면 도로가 만들어지고, 그 지점에서 이어서 계속 그립니다', em: true },
             { keys: ['더블클릭'], text: '이어 그리기 끝내기 (새 시작점 선택으로 돌아감)' },
+            { keys: ['1', '~', '8'], text: '다음 구간 차선 수 즉시 지정' },
+            { keys: ['[', ']'], text: '차선 수 1개씩 증감' },
             { keys: ['Shift'], text: '15° 단위 각도 잠금' },
             { keys: ['Alt'], text: '노드·링크 스냅 해제 + 각도(정렬) 스냅 켜기' },
             { keys: ['우클릭'], text: '지금 그리던 구간 취소' },
@@ -228,7 +231,7 @@ function findSnapNode(nodes: Node[], lonLat: number[], taggedIds?: Set<string>, 
 }
 
 // ── 링크 위 최근접점 스냅 ────────────────────────────────────────
-type LinkSnap = { link: Link; coord: Coordinate; wgs84: Coordinates };
+type LinkSnap = { link: Link; coord: Coordinate; wgs84: Coordinates; segIdx: number };
 
 function findSnapLink(links: Link[], cursor: Coordinate, nodeSnapped: boolean, baseRadiusM: number = SNAP_LINK_RADIUS_M): LinkSnap | null {
     if (nodeSnapped) return null; // 노드 스냅 우선
@@ -252,7 +255,7 @@ function findSnapLink(links: Link[], cursor: Coordinate, nodeSnapped: boolean, b
             const distM = getDistance(toLonLat(cursor), ll);
             if (distM < bestDist) {
                 bestDist = distM;
-                best = { link, coord: [px, py], wgs84: { lng: ll[0]!, lat: ll[1]! } };
+                best = { link, coord: [px, py], wgs84: { lng: ll[0]!, lat: ll[1]! }, segIdx: si };
             }
         }
     }
@@ -1096,12 +1099,14 @@ export const useNetworkDraw = () => {
     const startNodeIdRef = useRef<number | string | null>(null);
     const startWgs84Ref = useRef<Coordinates | null>(null);
     const snapNodeRef = useRef<Node | null>(null);
-    // 시작점을 기존 링크 위에 클릭하면 그 자리에서 즉시 링크를 분할해 노드를 만든다(끝점
-    // 클릭 전인데도 네트워크가 먼저 바뀜) — 그 상태에서 구간을 취소(우클릭/ESC)하면 이 분할이
-    // 그대로 남아 "그리다 만 도로에 노드만 남는" 문제가 된다(2026-07-30 사용자 발견). 취소 시
-    // 되돌릴 수 있도록 분할 직전 스냅샷 + 되살릴 원본 링크 id를 잠깐 들고 있다가, 구간이
-    // 정상적으로 완성되면(finishSegment) 비운다.
-    const pendingStartSplitRef = useRef<{ networkBeforeSplit: Network; removedLinkId: string } | null>(null);
+    // 시작점을 기존 링크 위에 클릭했을 때 — 그 자리에서 즉시 분할하지 않고, 어느 링크의
+    // 어느 지점(+세그먼트, 곡선 보존용)인지만 기억해둔다. 실제 분할은 구간이 완성될 때
+    // (finishSegment)만 일어난다 — 클릭만으로는 데이터를 전혀 바꾸지 않으므로, 그리다가
+    // 취소해도 되돌릴 게 아예 없다(2026-07-30 사용자 결정: 즉시분할 폐지 — "그때만 분할이
+    // 일어나면 되고 분할 버튼은 필요없다"; 이전엔 즉시 분할 후 취소 시 되돌리는 방식이었으나
+    // 더블클릭으로 이어그리기를 끝내는 경로 등 되돌리기 호출이 누락된 경로가 계속 발견돼
+    // 근본적으로 "애초에 완성 전엔 아무것도 안 바꾼다"로 단순화했다).
+    const startLinkAnchorRef = useRef<{ linkId: number | string; segIdx: number } | null>(null);
     const shiftRef = useRef(false);  // Shift 키 각도 스냅 활성 여부
     const altRef = useRef(false);    // Alt 키: 스냅 임시 해제(노드/링크/정렬 스냅 무시)
 
@@ -1406,6 +1411,7 @@ export const useNetworkDraw = () => {
         startOlCoordRef.current = null;
         startNodeIdRef.current  = null;
         startWgs84Ref.current   = null;
+        startLinkAnchorRef.current = null;
         snapNodeRef.current = null;
         lastOlCursorRef.current = null;
 
@@ -1681,8 +1687,13 @@ export const useNetworkDraw = () => {
         // — 완료 메시지에서 "기존 노드 스냅"이 아니라 "링크 분할로 생성된 노드"임을 구분해 안내한다.
         // junctionConfirmed: 아래 교차로 형성 confirm에서 사용자가 확인한 뒤 재진입할 때 true.
         function finishSegment(endOlCoord: Coordinate, endWgs84: Coordinates, snapEnd: Node | null, splitEndFromLink?: boolean, junctionConfirmed?: boolean) {
-            const network = useNetworkStore.getState().currentJsonData;
-            if (!network) return;
+            const originalNetwork = useNetworkStore.getState().currentJsonData;
+            if (!originalNetwork) return;
+            // 시작점이 기존 링크 위(startLinkAnchorRef)였다면 여기서 처음 분할한다 — 그 결과가
+            // 아래에서 store에 실제로 저장되는 건 이 함수가 끝까지 통과했을 때뿐이다. 자기루프/
+            // 중복 링크/길이<1m 등으로 조기 return 하면 이 분할은 로컬 network 변수에만
+            // 있다가 그냥 버려져 store엔 전혀 반영되지 않는다 — 취소와 완전히 동일한 효과.
+            let network = originalNetwork;
 
             const ts = Date.now();
             const startWgs84 = startWgs84Ref.current!;
@@ -1691,8 +1702,24 @@ export const useNetworkDraw = () => {
             // ── fromNode 처리 ──────────────────────────────────
             let fromNodeId: number | string;
             let isNewFromNode = false;
+            let splitAwayLinkId: string | null = null;
             if (startNodeIdRef.current != null) {
                 fromNodeId = startNodeIdRef.current;
+            } else if (startLinkAnchorRef.current) {
+                const anchor = startLinkAnchorRef.current;
+                const anchorLink = network.links.find(l => String(l.id) === String(anchor.linkId));
+                if (anchorLink) {
+                    const { updatedNetwork, newNodeId: splitNodeId } = splitLinkInNetwork(
+                        network, anchorLink, startWgs84, ts, anchor.segIdx
+                    );
+                    network = updatedNetwork;
+                    splitAwayLinkId = String(anchor.linkId);
+                    fromNodeId = splitNodeId;
+                } else {
+                    // 앵커 링크가 그 사이 사라진 드문 경우 — 고립 노드로 대체.
+                    fromNodeId = ts;
+                    isNewFromNode = true;
+                }
             } else {
                 fromNodeId = ts;
                 isNewFromNode = true;
@@ -1766,10 +1793,16 @@ export const useNetworkDraw = () => {
                 }
             }
 
-            useNetworkUndoStore.getState().push(network);
-            // 여기까지 왔으면 실제로 구간이 완성된다 — 시작점이 링크 분할로 만들어졌더라도
-            // 이제는 완성된 도로의 일부이므로 취소 시 되돌릴 대상에서 뺀다.
-            pendingStartSplitRef.current = null;
+            // undo는 분할 이전(originalNetwork)으로 되돌아가도록 — 분할+구간추가를 Ctrl+Z
+            // 한 번에 함께 되돌린다(둘이 사실상 하나의 조작이므로).
+            useNetworkUndoStore.getState().push(originalNetwork);
+            // 여기까지 왔으면 실제로 구간이 완성된다 — 앵커를 소비했으니 지운다(조기 return한
+            // 경우엔 앵커가 그대로 남아 재시도 가능하도록 여기까지 안 온다).
+            startLinkAnchorRef.current = null;
+            if (splitAwayLinkId) {
+                // 분할로 사라진 원본 링크 — 타일 모드에서 MVT 잔상 마스킹
+                useNetworkEditStore.getState().addDeleted([splitAwayLinkId]);
+            }
 
             // O(links) 1회 빌드 → 이후 모든 find()를 O(1) Map 룩업으로 대체
             const linkMap = new Map<string, Link>(
@@ -2149,6 +2182,7 @@ export const useNetworkDraw = () => {
                 startOlCoordRef.current = null;
                 startNodeIdRef.current  = null;
                 startWgs84Ref.current   = null;
+                startLinkAnchorRef.current = null;
                 snapNodeRef.current     = null;
                 source.clear();
                 useNetworkDrawStore.getState().clearChainEndpoint();
@@ -2204,29 +2238,18 @@ export const useNetworkDraw = () => {
             // (useNaverPanorama가 구독 — 지도 pan 임계값과 무관하게 즉시 이동).
             useNetworkDrawStore.getState().setLastDrawnPoint(chosenWgs84);
 
-            // ── 링크 스냅: 기존 링크를 분할하고 교차 노드 생성 ──
+            // ── 링크 스냅: 시작점을 기존 링크 위에 지정(분할은 구간 완성 시점으로 지연) ──
+            // 여기서는 어떤 링크의 어느 세그먼트인지만 기억해두고 데이터는 전혀 바꾸지
+            // 않는다 — 실제 분할은 finishSegment가 구간을 완성할 때 수행한다. 클릭만으로
+            // 네트워크가 바뀌지 않으므로 이후 취소해도 되돌릴 것 자체가 없다.
             if (!snapNode && snapLink && !startOlCoordRef.current) {
-                // 시작점 클릭 시 링크 분할
-                const network = useNetworkStore.getState().currentJsonData;
-                if (!network) return;
-                useNetworkUndoStore.getState().push(network);
-                const ts = Date.now();
-                const { updatedNetwork, newNodeId } = splitLinkInNetwork(
-                    network, snapLink.link, chosenWgs84, ts
-                );
-                useNetworkStore.getState().setCurrentJsonData(updatedNetwork);
-                useNetworkStore.getState().setChange(true);
-                // 분할된 원본 링크 — 타일 모드에서 MVT 잔상 마스킹
-                useNetworkEditStore.getState().addDeleted([String(snapLink.link.id)]);
-                // 구간을 완성하지 않고 취소하면 이 분할을 되돌리기 위해 기억해둔다.
-                pendingStartSplitRef.current = { networkBeforeSplit: network, removedLinkId: String(snapLink.link.id) };
-
+                startLinkAnchorRef.current = { linkId: snapLink.link.id, segIdx: snapLink.segIdx };
                 startOlCoordRef.current  = chosenOl;
-                startNodeIdRef.current   = newNodeId;
+                startNodeIdRef.current   = null;
                 startWgs84Ref.current    = chosenWgs84;
                 useMessageStore.getState().setMessage({
                     type: 'info',
-                    text: '기존 링크를 분할해 시작점을 만들었습니다.',
+                    text: '시작점을 지정했습니다. 끝점을 클릭하면 이 도로를 분할해 연결합니다.',
                 });
                 setDrawGuide('segment');
                 return;
@@ -2262,19 +2285,6 @@ export const useNetworkDraw = () => {
             }
         };
 
-        // 시작점을 기존 링크 위에 클릭해 즉시 분할해둔 상태에서 구간을 완성하지 않고
-        // 취소하면, 그 분할(새 노드 + 잘린 링크 2개)만 조용히 되돌린다 — 안 그러면 "링크를
-        // 그리다 말면 노드가 그대로 남는" 문제가 된다(2026-07-30 사용자 발견). 분할 직전
-        // 스냅샷으로 되돌리고 MVT 삭제 마스킹도 해제한다(마스킹 해제 안 하면 되살아난
-        // 원본 링크가 타일 모드에서 계속 숨겨진 채로 남는다).
-        const revertPendingStartSplit = () => {
-            const pending = pendingStartSplitRef.current;
-            if (!pending) return;
-            pendingStartSplitRef.current = null;
-            useNetworkStore.getState().setCurrentJsonData(pending.networkBeforeSplit);
-            useNetworkEditStore.getState().removeDeleted([pending.removedLinkId]);
-        };
-
         const onContextMenu = (e: Event) => {
             e.preventDefault();
             e.stopImmediatePropagation(); // 동일 요소의 다른 리스너(always handler) 중복 실행 방지
@@ -2282,20 +2292,21 @@ export const useNetworkDraw = () => {
             const me = e as MouseEvent;
             const network = useNetworkStore.getState().currentJsonData;
             if (network) {
-                const node = findNearestNodeForContextMenu(olMap, me, network);
-                if (node) {
-                    revertPendingStartSplit();
-                    selectNodeAndShowToolbar(node, { x: me.clientX, y: me.clientY });
+                const hitNode = findNearestNodeForContextMenu(olMap, me, network);
+                if (hitNode) {
+                    selectNodeAndShowToolbar(hitNode, { x: me.clientX, y: me.clientY });
                     return; // 취소 동작 하지 않음
                 }
             }
 
-            // 노드 없음 → 구간 취소 / 그리기 종료
+            // 노드 없음 → 구간 취소 / 그리기 종료. 시작점이 기존 링크 위였어도 실제 분할은
+            // 아직 안 일어난 상태(finishSegment에서만 일어남)라 되돌릴 데이터가 없다 —
+            // 참조만 비우면 끝.
             if (startOlCoordRef.current) {
-                revertPendingStartSplit();
                 startOlCoordRef.current = null;
                 startNodeIdRef.current = null;
                 startWgs84Ref.current = null;
+                startLinkAnchorRef.current = null;
                 source.clear();
                 useMessageStore.getState().setMessage({ type: 'info', text: '구간을 취소했습니다.' });
                 setDrawGuide('start');
@@ -2318,8 +2329,29 @@ export const useNetworkDraw = () => {
             }
             // ESC = 그리기 완전 종료 → 선택 모드로 복귀(모드 버튼이 없으므로 필수).
             if (e.key === 'Escape') {
-                revertPendingStartSplit();
                 useNetworkDrawStore.getState().exitToSelect();
+            }
+            // 숫자 1~8 = 차선 수 즉시 지정, [·] = 1개씩 증감 — 그리는 중 마우스를 상단
+            // 설정바까지 옮기지 않고 손 위치 그대로 바꿀 수 있게(2026-07-30 실사용 요청:
+            // "링크를 그리다가 손쉽게 차선의 수를 변경하고 싶음"). 이미 그려둔 링크는 안
+            // 건드리고, 지금부터 이어 그릴 다음 구간부터 새 값이 적용된다(laneCountRef가
+            // 이 store를 실시간 구독). 프리뷰 라벨("…m · …° · N차선")이 바로 갱신되어
+            // 마우스를 움직이지 않아도 바뀐 값이 즉시 보인다.
+            // 단, 설정바의 "폭" 숫자 입력 등 텍스트 입력에 포커스가 있을 때는 그 입력을
+            // 방해하면 안 되므로(타이핑한 숫자가 엉뚱하게 차선 수도 바꿔버림) 건너뛴다.
+            const activeEl = document.activeElement as HTMLElement | null;
+            const typingInField = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable);
+            if (!typingInField && /^[1-8]$/.test(e.key)) {
+                useNetworkDrawStore.getState().setLaneCount(Number(e.key));
+                if (lastOlCursorRef.current) renderOlPreview(lastOlCursorRef.current);
+            }
+            if (!typingInField && e.key === '[') {
+                useNetworkDrawStore.getState().setLaneCount(Math.max(1, laneCountRef.current - 1));
+                if (lastOlCursorRef.current) renderOlPreview(lastOlCursorRef.current);
+            }
+            if (!typingInField && e.key === ']') {
+                useNetworkDrawStore.getState().setLaneCount(Math.min(8, laneCountRef.current + 1));
+                if (lastOlCursorRef.current) renderOlPreview(lastOlCursorRef.current);
             }
         };
         const onKeyUp = (e: KeyboardEvent) => {
@@ -2367,9 +2399,6 @@ export const useNetworkDraw = () => {
             lastOlCursorRef.current = null;
             olMap.getTargetElement().style.cursor = '';
             useEditGuideStore.getState().clear();
-            // 안전망: 우클릭/ESC 경로를 거치지 않고(다른 버튼으로 모드 전환 등) 이 그리기
-            // 세션이 끝나는 모든 경우를 포괄 — 완성 못 한 시작점 분할이 새 나가지 않게 한다.
-            revertPendingStartSplit();
         };
     }, [olMap, isActive, drawResetKey]);
 

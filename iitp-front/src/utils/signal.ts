@@ -648,3 +648,49 @@ export const findOverlappingTodPlans = (
         return start < pEnd && pStart < end;
     });
 };
+
+/** nodeId별 신호 레코드 집합의 내용 서명 — guid+내용을 정렬해 이어붙여, 순서 차이는 무시하고
+ *  실제 내용(플랜/커넥션 등) 변화만 잡는다. */
+function signalNodeSignature(sigs: any[]): string {
+    return sigs
+        .map((s) => `${s?.__guid}:${JSON.stringify(s)}`)
+        .sort()
+        .join('|');
+}
+
+/**
+ * 신호는 항상 서버 타일에서만 렌더링되고(SIGNAL_TILING.ENABLED) 네트워크와 달리 로컬 편집을
+ * 지도에 바로 보여주는 오버레이가 없었다 — "신호 생성을 눌러도 지도에 안 보임"(2026-07-30
+ * 실사용 지적)의 원인. 네트워크 편집 오버레이(NetworkFeatureLayer.updateEditDeltas)와 동일한
+ * 발상으로, 마운트 시점 서버 원본(originData.signals)과 지금 store의 currentJsonData.signals를
+ * nodeId 단위로 비교해 "이 노드는 로컬에서 새로 생기거나 바뀌었다/전부 지워졌다"를 계산한다.
+ * 신호 렌더링(SignalFeatureLayer/SignalDataSourceLayer 둘 다)이 nodeId 단위로만 존재 여부와
+ * 대표 레코드를 쓰므로(진입 링크별로 아이콘 하나씩), 이 nodeId 단위 diff만으로 충분하다 —
+ * 개별 mutation 호출부(generateSignalsForNode, SignalGroupedEditor의 직접 편집 등)를 전부
+ * 계측할 필요 없이 자동으로 모든 편집 경로를 잡아낸다.
+ */
+export function diffSignalEditsByNode(
+    originSignals: any[] | undefined,
+    currentSignals: any[] | undefined,
+): { editedNodeIds: Set<string>; deletedNodeIds: Set<string> } {
+    const origByNode = new Map<string, any[]>();
+    for (const s of originSignals ?? []) {
+        const k = String(s?.nodeId ?? '');
+        (origByNode.get(k) ?? origByNode.set(k, []).get(k)!).push(s);
+    }
+    const curByNode = new Map<string, any[]>();
+    for (const s of currentSignals ?? []) {
+        const k = String(s?.nodeId ?? '');
+        (curByNode.get(k) ?? curByNode.set(k, []).get(k)!).push(s);
+    }
+    const editedNodeIds = new Set<string>();
+    for (const [nodeId, curSigs] of curByNode) {
+        const origSigs = origByNode.get(nodeId) ?? [];
+        if (signalNodeSignature(origSigs) !== signalNodeSignature(curSigs)) editedNodeIds.add(nodeId);
+    }
+    const deletedNodeIds = new Set<string>();
+    for (const [nodeId, origSigs] of origByNode) {
+        if (origSigs.length > 0 && !curByNode.has(nodeId)) deletedNodeIds.add(nodeId);
+    }
+    return { editedNodeIds, deletedNodeIds };
+}

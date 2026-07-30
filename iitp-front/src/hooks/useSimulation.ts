@@ -617,7 +617,7 @@ const useSimulation = () => {
                     .then((r) => (r.ok ? r.json() : null))
                     .then((data) => {
                         if (cancelled) return; // 세션이 이미 정리됨 — 새 세션 상태를 낡은 데이터로 덮어쓰지 않음
-                        if (!data) { console.warn('[진단] viewport 응답 없음(!data) — bbox=', bboxKey); return; }
+                        if (!data) return;
                         simMin = Array.isArray(data.simRange) ? (data.simRange[0] ?? 0) : 0;
                         simMax = Array.isArray(data.simRange) ? (data.simRange[1] ?? Infinity) : Infinity;
                         // ⚠️ simMinRef는 여기서 갱신하지 않는다! computeElapsedSec = simMinRef +
@@ -641,7 +641,6 @@ const useSimulation = () => {
                         // 경계값 부근에서 팬마다 왕복 진동 방지 + 최소 전환 간격으로 깜빡임 억제.
                         const total = Number(data.totalVehicles ?? 0);
                         const shown = Array.isArray(data.positions) ? data.positions.length : 0;
-                        console.log('[진단] viewport 응답:', { bbox: bboxKey, total, shown, truncated: data.truncated, positions: data.positions?.length, czml: data.czml?.length });
                         const wasDense = (useVehicleStore.getState() as any).denseViewport === true;
                         const exitThreshold = VEHICLE_STREAMING.MAX_VEHICLES * VEHICLE_STREAMING.DENSE_EXIT_RATIO;
                         let dense = wasDense ? total >= exitThreshold : data.truncated === true;
@@ -653,7 +652,6 @@ const useSimulation = () => {
                                 lastModeSwitchAt = nowMs;
                             }
                         }
-                        console.log('[진단] dense 판정:', { wasDense, dense, total, exitThreshold, truncated: data.truncated });
                         (useVehicleStore.getState() as any).setDenseViewport(dense);
                         (useVehicleStore.getState() as any).setViewportVehicleInfo(
                             { shown: dense ? 0 : shown, total, dense });
@@ -817,7 +815,6 @@ const useSimulation = () => {
             // 계속 켜져 있어야 할 heatmap/trip이 몇 초~수십 초마다 파괴→재생성을 반복해 깜빡였다.
             // heatmap/trip/odFlow는 개별 차량과 무관하게 자체(VehicleAggregationFeeder)의 zoom/dense
             // 감지로 표시 여부를 결정하는 독립 레이어이므로, 여기서는 건드리지 않고 "없을 때만" 만든다.
-            console.warn('[진단] vehicleRoute 0대 — 개별 차량 레이어만 제거');
             vehicleRouteStartEndRef.current = [];
             lastPositionsRef.current = [];
             czmlPositionWorkerRef.current?.postMessage({ type: 'init', czmlPackets: [], currentTime: 0 });
@@ -955,7 +952,6 @@ const useSimulation = () => {
     const setSimulation = async () => {
         if (!viewer || !czml || vehicleRoute.length === 0 || !layerManager) return;
         const myGen = ++simGenRef.current;
-        console.log('[진단] setSimulation 시작 gen=', myGen, 'vehicleRoute.length=', vehicleRoute.length);
 
         // 스토어가 비어있으면 먼저 fetch
         let { models, vehicleTypes, setModels, setVehicleTypes } = useVehicleModelStore.getState();
@@ -980,13 +976,11 @@ const useSimulation = () => {
 
         loadCzmlDataSource(czml, myGen).then((czmlSource) => {
             if (!czmlSource || myGen !== simGenRef.current) {
-                console.warn('[진단] setSimulation gen=', myGen, '— stale로 중단 (czmlSource=', !!czmlSource, ', current gen=', simGenRef.current, ')');
                 // stale이면 더 새 세대가 전환을 이어받아 해제하지만, czml 로드 실패(현재 세대)면
                 // 여기서 해제하지 않을 시 tick이 영구 정지된다 — 실패 시에도 반드시 해제.
                 if (myGen === simGenRef.current) streamTransitionRef.current = false;
                 return;
             }
-            console.log('[진단] setSimulation gen=', myGen, '— 레이어 재구성 진행');
 
             viewer.clock.shouldAnimate = isRunningRef.current;
 
@@ -1220,11 +1214,10 @@ const useSimulation = () => {
             layerManager?.showLayer("analyze", "default");
             const { activeLayerName } = useLayerStore.getState();
             (activeLayerName ?? []).forEach(name => layerManager?.showLayer("analyze", name));
-            console.log('[진단] setSimulation gen=', myGen, '— 레이어 재구성 완료');
         }).catch((e) => {
             // 이전엔 여기서 에러가 나면 조용히 삼켜져서(catch 없음) preRender 리스너 재등록까지
             // 끊긴 채 "시간은 가는데 차량은 안 보임" 상태로 영원히 멈췄다 — 최소한 콘솔에 남긴다.
-            console.error('[진단][setSimulation] gen=', myGen, '차량 레이어 재구성 실패 — 차량이 안 보일 수 있음:', e);
+            console.error('[setSimulation] gen=', myGen, '차량 레이어 재구성 실패 — 차량이 안 보일 수 있음:', e);
             if (myGen === simGenRef.current) streamTransitionRef.current = false; // tick 영구 정지 방지
         });
     };

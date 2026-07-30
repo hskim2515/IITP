@@ -3,8 +3,12 @@ import { Color, Entity, CustomDataSource, Viewer } from "cesium";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { FEATURE_TYPE, RailPublicStationResponse, TRANSIT_MODE } from "@type/Station";
 import { computePositionAtOffsetCesium } from "@utils/offset";
-import { LOD_ALT } from "@utils/lodConstants";
+import { LOD_ALT, RAIL_STATION_TILING } from "@utils/lodConstants";
 import { CesiumFacilityCluster } from "@datasource/cesiumFacilityCluster";
+import { getActiveVersionId } from "@utils/versionId";
+import { RailStationTileManager } from "@managers/RailStationTileManager";
+import { RailStationTileMembership } from "@managers/railStationTileMembership";
+import { diffRecordEditsById } from "@utils/tileEditDiff";
 
 /* ── 치수 ── */
 const POLE_HEIGHT    = 5.5;
@@ -90,6 +94,11 @@ export default class RailStationDataSourceLayer {
     private cullTimer:     ReturnType<typeof setTimeout> | null = null;
     private onCameraChanged = () => this.scheduleCull();
 
+    // ── 철도정류장 타일링 (RAIL_STATION_TILING.ENABLED 일 때만; 읽기 전용) ──
+    private tileManager: RailStationTileManager | null = null;
+    private tileVersionId: string | null = null;
+    private membership = new RailStationTileMembership();
+
     constructor(private viewer: Viewer) {
         this.dataSource      = new CustomDataSource(this.LAYER_NAME);
         this.stationMarkers  = new Cesium.BillboardCollection();
@@ -105,6 +114,7 @@ export default class RailStationDataSourceLayer {
         this.viewer.scene.camera.changed.addEventListener(this.onCameraChanged);
 
         this.load();
+        if (RAIL_STATION_TILING.ENABLED) this.updateTiles(); // 첫 화면 정류장 타일 로드
 
         const store = layerNameToStoreMap[this.LAYER_NAME];
         if (store) {
@@ -112,6 +122,19 @@ export default class RailStationDataSourceLayer {
                 (state: any) => state.currentJsonData,
                 () => this.load(),
                 { equalityFn: (a: any, b: any) => a === b }
+            ));
+            // 저장 완료(isChanged: true → false) — BusStationDataSourceLayer/SignalDataSourceLayer와 동일 조치.
+            this.unsubscribes.push((store as any).subscribe(
+                (s: any) => s.isChanged,
+                (isChanged: boolean, prevIsChanged: boolean) => {
+                    if (!prevIsChanged || isChanged) return;
+                    const cur = store.getState().currentJsonData;
+                    if (cur) store.getState().setOriginData(cur);
+                    if (RAIL_STATION_TILING.ENABLED) {
+                        this.tileManager?.clear();
+                        this.updateTiles();
+                    }
+                },
             ));
         }
         const networkStore = layerNameToStoreMap["network"];
@@ -122,6 +145,31 @@ export default class RailStationDataSourceLayer {
                 { equalityFn: (a: any, b: any) => a === b }
             ));
         }
+    }
+
+    private updateTiles(): void {
+        if (!RAIL_STATION_TILING.ENABLED) return;
+        const rect = this.viewer.camera.computeViewRectangle(this.viewer.scene.globe.ellipsoid);
+        if (!rect) return;
+        const west = Cesium.Math.toDegrees(rect.west);
+        const south = Cesium.Math.toDegrees(rect.south);
+        const east = Cesium.Math.toDegrees(rect.east);
+        const north = Cesium.Math.toDegrees(rect.north);
+        const versionId = getActiveVersionId();
+        if (!versionId) return;
+        // 버전 전환 감지 — 이전 버전 정류장 타일/멤버십 폐기 후 재생성(network/signal과 동일 패턴)
+        if (this.tileManager && this.tileVersionId !== String(versionId)) {
+            try { this.tileManager.clear(); } catch (_) { /* noop */ }
+            this.tileManager = null;
+        }
+        this.tileVersionId = String(versionId);
+        if (!this.tileManager) {
+            this.tileManager = new RailStationTileManager(String(versionId), {
+                onTileLoaded: (_k, payload) => { if (this.membership.add(payload)) this.load(); },
+                onTileEvicted: (_k, payload) => { if (this.membership.remove(payload)) this.load(); },
+            });
+        }
+        this.tileManager.updateForBbox(west, south, east, north);
     }
 
     public setVisible(visible: boolean): void {
@@ -149,7 +197,30 @@ export default class RailStationDataSourceLayer {
         if (!store || !networkStore) return;
 
         const response: RailPublicStationResponse | undefined = store.getState().currentJsonData;
-        if (!response?.railStations?.length) return;
+        if (!response) return;
+
+        // 타일 모드: viewport 정류장(서버 최신) + 로컬 미저장 편집을 id 단위로 병합
+        //   (2D RailStationFeatureLayer와 동일 조치 — diffRecordEditsById 참고).
+        // 비-타일 모드: store 전체 정류장 그대로 사용.
+        let railStationsAll: any[];
+        if (RAIL_STATION_TILING.ENABLED) {
+            const originData = store.getState().originData as any;
+            const { editedIds, deletedIds } = diffRecordEditsById(originData?.railStations, response.railStations, 'id');
+            const merged = new Map<string, any>();
+            for (const s of this.membership.values()) {
+                const id = String(s?.id ?? '');
+                if (deletedIds.has(id)) continue;
+                merged.set(id, s);
+            }
+            for (const s of (response.railStations ?? [])) {
+                const id = String(s?.id ?? '');
+                if (editedIds.has(id)) merged.set(id, s);
+            }
+            railStationsAll = [...merged.values()];
+        } else {
+            railStationsAll = response.railStations ?? [];
+        }
+        if (!railStationsAll.length) return;
 
         const networkData: any = networkStore.getState().currentJsonData;
         if (!networkData?.links) return;
@@ -171,7 +242,7 @@ export default class RailStationDataSourceLayer {
         /* ── 역별 exit 위치 계산 ── */
         const rawEntries: Omit<RailStationEntry, 'centroidH' | 'cartesian'>[] = [];
 
-        for (const station of response.railStations) {
+        for (const station of railStationsAll) {
             const rawExits = station.exits ?? [];
             const resolved: Omit<ExitData, 'exitH'>[] = [];
 
@@ -257,6 +328,7 @@ export default class RailStationDataSourceLayer {
         this.cullTimer = setTimeout(() => {
             this.cullTimer = null;
             this.updateVisibleStations();
+            if (RAIL_STATION_TILING.ENABLED) this.updateTiles();
         }, 200);
     }
 
@@ -466,6 +538,8 @@ export default class RailStationDataSourceLayer {
         this.viewer.scene.camera.changed.removeEventListener(this.onCameraChanged);
         this.unsubscribes.forEach(u => u());
         this.unsubscribes = [];
+        this.tileManager?.clear();
+        this.tileManager = null;
         this.viewer.dataSources.remove(this.dataSource, true);
         this.viewer.scene.primitives.remove(this.stationMarkers);
         this.viewer.scene.primitives.remove(this.exitMarkers);

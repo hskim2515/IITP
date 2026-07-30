@@ -10,18 +10,23 @@ import {
     SNAP_FEATURE_TYPE,
     SNAP_LAYER
 } from "@type/PavementMarking";
-import { useLayerStore } from "@stores/useLayerStore";
 import {
-    findFeatureByProperties, getAngleByCoordinate, getCellOffsetRelativeToCell,
-    getCoordinateByOffset,
+    getAngleByCoordinate, getCellOffsetRelativeToCell,
 } from "@utils/feature";
-import { fromLonLat, toLonLat } from "ol/proj";
+import { toLonLat } from "ol/proj";
 import { Point } from "ol/geom";
 import { Coordinate } from "ol/coordinate";
 import { generateGUIDWithType } from "@utils/guid";
-import {interpolateByOffset, interpolateFeatureByOffset} from "@utils/interpolateByOffset";
+import {interpolateByOffset} from "@utils/interpolateByOffset";
 import Geometry from "ol/geom/Geometry";
-import deepEqual from "deep-equal";
+import type OLMap from "ol/Map";
+import { getActiveVersionId } from "@utils/versionId";
+import { PAVEMENT_MARKING_TILING } from "@utils/lodConstants";
+import { PavementMarkingTileManager } from "@managers/PavementMarkingTileManager";
+import { PavementMarkingTileMembership } from "@managers/pavementMarkingTileMembership";
+import { diffRecordEditsById } from "@utils/tileEditDiff";
+import { unByKey } from "ol/Observable";
+import type { EventsKey } from "ol/events";
 
 export class PavementMarkingFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -30,9 +35,13 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
     private networkUnsubscribe: (() => void) | null = null;
     private reinterpolateTimer: ReturnType<typeof setTimeout> | null = null;
 
+    // ── 노면표시 타일링 (PAVEMENT_MARKING_TILING.ENABLED 일 때만; 읽기 전용) ──
+    private tileManager: PavementMarkingTileManager | null = null;
+    private membership = new PavementMarkingTileMembership();
+    private moveEndKey: EventsKey | null = null;
+
     constructor() {
         const source = new VectorSource();
-        const layerManager = useLayerStore.getState().layerManager
         super({
             source,
             visible: true,
@@ -67,115 +76,26 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
 
         const store = layerNameToStoreMap[this.LAYER_NAME];
 
-        const listener = (
-            updated: Record<string, Array<Record<string, unknown>>>,
-            origin: Record<string, Array<Record<string, unknown>>>
-        ) => {
-            if (!updated) return;
-            Object.keys(updated).forEach((objectName) => {
-                const updatedList = updated[objectName] ?? [];
-                const originList = origin?.[objectName] ?? [];
-
-                const updatedMap = new Map<string, Record<string, unknown>>();
-                const originMap = new Map<string, Record<string, unknown>>();
-
-                updatedList.forEach((item) => {
-                    const guid = item?.__guid as string;
-                    if (guid) updatedMap.set(guid, item);
-                });
-
-                originList.forEach((item) => {
-                    const guid = item?.__guid as string;
-                    if (guid) originMap.set(guid, item);
-                });
-
-                const added: Record<string, unknown>[] = [];
-                const removed: Record<string, unknown>[] = [];
-                const changed: Record<string, unknown>[] = [];
-
-                originMap.forEach((originItem, guid) => {
-                    const updatedItem = updatedMap.get(guid);
-                    if (!updatedItem) {
-                        removed.push(originItem);
-                    } else if (!deepEqual(originItem, updatedItem)) {
-                        changed.push(updatedItem);
-                    }
-                });
-
-                updatedMap.forEach((updatedItem, guid) => {
-                    if (!originMap.has(guid)) {
-                        added.push(updatedItem);
-                    }
-                });
-
-                const src = this.source;
-                const existing = src.getFeatures();
-
-                removed.forEach((item) => {
-                    const guid = item.__guid;
-                    const feature = existing.find(f => f.get("__guid") === guid);
-                    if (feature) {
-                        src.removeFeature(feature);
-                    }
-                });
-
-                // changed.forEach((item) => {
-                //     const dto = this.recordToDto(item);
-                //
-                //     const feature = existing.find(f => f.get("__guid") === dto.__guid);
-                //     if (feature) {
-                //         const baseLayer = layerManager?.getLayerByName(this.getSnapLayerKey())
-                //         const baseFeature = findFeatureByProperties(baseLayer, {
-                //             featureType: this.getSnapFeatureType(),
-                //             linkRef: item.linkRef,
-                //             laneRef: item.laneRef ?? 0,
-                //         })
-                //
-                //         const offset = item.offset ?? 0
-                //         const coord = getCoordinateByOffset(baseFeature, offset)
-                //         if (coord) {
-                //             const [ lng, lat ] = toLonLat(coord)
-                //             dto.angle = feature.get('angle'); //angle
-                //
-                //             feature.setGeometry(new Point(fromLonLat([ lng, lat ])));
-                //         }
-                //
-                //         feature.setProperties(dto);
-                //     }
-                // });
-                changed.forEach((item) => {
-                    const dto = this.recordToDto(item);
-
-                    const feature = existing.find(f => f.get("__guid") === dto.__guid);
-                    if (feature) {
-                        // 기존 feature 제거
-                        this.source.removeFeature(feature);
-
-                        // DTO 속성 업데이트
-                        feature.setProperties(dto);
-
-                        // offset 계산 + geometry 보정
-                        const mergedFeature = interpolateFeatureByOffset(feature);
-
-                        // 다시 source에 추가
-                        this.source.addFeature(mergedFeature);
-                    }
-                });
-
-                added.forEach((item) => {
-                    const dto = this.recordToDto(item);
-                    const feature = this.createFeature(dto);
-                    const mergeFeature = interpolateFeatureByOffset(feature);
-                    src.addFeature(mergeFeature);
-                });
-            });
-        };
+        this.load();
 
         this.unsubscribe = store.subscribe(
-            // 구독할 값: currentJsonData 배열
-            state => state.currentJsonData,
-            listener,
-            { fireImmediately: true }
+            (state: any) => state.currentJsonData,
+            () => this.load(),
+            { equalityFn: (a: any, b: any) => a === b }
+        );
+        // 저장 완료(isChanged: true → false) — Bus/RailStationFeatureLayer와 동일 조치.
+        (store as any).subscribe(
+            (s: any) => s.isChanged,
+            (isChanged: boolean, prevIsChanged: boolean) => {
+                if (!prevIsChanged || isChanged) return;
+                const cur = store.getState().currentJsonData;
+                if (cur) store.getState().setOriginData(cur);
+                if (PAVEMENT_MARKING_TILING.ENABLED) {
+                    this.tileManager?.clear();
+                    const map = this.getMapInternal() as OLMap | null;
+                    if (map) this.updateTiles(map);
+                }
+            },
         );
 
         // 타일 모드: lane-edit 피처는 detail LOD viewport 타일에만 존재해 마킹 로드 시점에
@@ -186,6 +106,36 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
             (state: any) => state.currentJsonData,
             () => this.scheduleReinterpolate(),
         ) ?? null;
+    }
+
+    override setMapInternal(map: OLMap | null): void {
+        if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
+        super.setMapInternal(map);
+        if (map) {
+            if (PAVEMENT_MARKING_TILING.ENABLED) {
+                this.moveEndKey = map.on('moveend', () => this.updateTiles(map));
+                this.updateTiles(map);
+            }
+        } else {
+            this.tileManager?.clear();
+            this.tileManager = null;
+        }
+    }
+
+    private updateTiles(map: OLMap): void {
+        const view = map.getView();
+        const size = map.getSize();
+        const resolution = view.getResolution();
+        if (!size || resolution == null) return;
+        if (!this.tileManager) {
+            const versionId = getActiveVersionId();
+            if (!versionId) return;
+            this.tileManager = new PavementMarkingTileManager(String(versionId), {
+                onTileLoaded: (_k, payload) => { if (this.membership.add(payload)) this.load(); },
+                onTileEvicted: (_k, payload) => { if (this.membership.remove(payload)) this.load(); },
+            });
+        }
+        this.tileManager.update(view.calculateExtent(size), resolution);
     }
 
     /** 보간 실패([0,0]) 상태로 남은 마킹을 차선 타일 로드 후 재보간 (debounce) */
@@ -209,16 +159,35 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
         if (!currentJsonData) return;
         const { pavementMarkings } = currentJsonData;
 
+        // 타일 모드: viewport 노면표시(서버 최신) + 로컬 미저장 편집을 id 단위로 병합
+        //   (Bus/RailStationFeatureLayer와 동일 조치 — diffRecordEditsById 참고).
+        // 비-타일 모드: store 전체 노면표시 그대로 사용.
+        let markingsAll: PavementMarkingData[];
+        if (PAVEMENT_MARKING_TILING.ENABLED) {
+            const originData = store.getState().originData as any;
+            const { editedIds, deletedIds } = diffRecordEditsById(originData?.pavementMarkings, pavementMarkings, 'id');
+            const merged = new Map<string, any>();
+            for (const m of this.membership.values()) {
+                const id = String(m?.id ?? '');
+                if (deletedIds.has(id)) continue;
+                merged.set(id, m);
+            }
+            for (const m of (pavementMarkings ?? [])) {
+                const id = String(m?.id ?? '');
+                if (editedIds.has(id)) merged.set(id, m);
+            }
+            markingsAll = [...merged.values()];
+        } else {
+            markingsAll = pavementMarkings ?? [];
+        }
+
         const source = this.source;
         source.clear();
 
-        const features = pavementMarkings
-            .map((data) => this.createFeature(data))
-            //.filter((f): f is Feature<Point> => !!f); // undefined 필터링
+        const features = markingsAll.map((data) => this.createFeature(data));
 
         const mergedFeatures = interpolateByOffset(features);
         source.addFeatures(mergedFeatures);
-
     }
 
     /**
@@ -370,5 +339,8 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
             clearTimeout(this.reinterpolateTimer);
             this.reinterpolateTimer = null;
         }
+        if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
+        this.tileManager?.clear();
+        this.tileManager = null;
     }
 }

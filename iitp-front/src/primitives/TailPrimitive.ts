@@ -294,22 +294,7 @@ export default class TailPrimitive {
     // ──────────────────────────────────────────
     private static readonly DRAIN_INTERVAL = 50;
 
-    private _lastStateLogAt = 0;
-
     update(frameState: any): void {
-        // ── 진단 상태 로그 (2초 스로틀, early return 이전!) — "줌아웃 시 trip 사라짐" 판별용:
-        //   update 로그 자체가 안 찍히면 → primitive가 컬렉션에서 빠짐/destroy됨
-        //   show=false → 누군가 숨김 / visible=0 → 데이터(feed) 문제 / visible>0인데 안 보임 → 렌더 문제
-        {
-            const nowLog = performance.now();
-            if (nowLog - this._lastStateLogAt > 2000) {
-                this._lastStateLogAt = nowLog;
-                let visible = 0;
-                for (const t of this.trails) if (t.buffer.count >= 2) visible++;
-                const camH = Math.round(frameState.camera?.positionCartographic?.height ?? -1);
-                console.log(`[진단][TailPrimitive] 상태: slots=${this.trails.length} show=${this.show} destroyed=${this.destroyed} stopped=${this._stopped} visibleTrails=${visible} camH=${camH} heightCut=${camH > TailPrimitive.MAX_VISIBLE_HEIGHT}`);
-            }
-        }
         if (this.destroyed || !this.show) return;
 
         // buffer push는 setLatestPositions()(feed 시점)에서 이미 수행됨 — 여기서는 dirty trail의
@@ -336,42 +321,6 @@ export default class TailPrimitive {
             }
         }
 
-        // ── 진단 스캐너 (1초 스로틀): 렌더 직전, 실제로 그려질 버퍼 창(count개)을 전수 검사 —
-        // (a) 지구 중심 근처 점(|p|<1e6 — 더미 초기값 (0,0,0) 혼입 가설), (b) 500m 초과 세그먼트.
-        // 그물이 보이는 순간 이 로그에 아무것도 안 찍히면 CPU 버퍼는 결백 = 렌더(GPU/uniform) 문제 확정.
-        {
-            const nowScan = performance.now();
-            if (nowScan - TailPrimitive._lastScanAt > 1000) {
-                TailPrimitive._lastScanAt = nowScan;
-                const anomalies: string[] = [];
-                for (let t = 0; t < this.trails.length && anomalies.length < 5; t++) {
-                    const buf = this.trails[t]!.buffer;
-                    const N = this.MAX_TRAIL_LENGTH;
-                    let prev: Cartesian3 | null = null;
-                    for (let i = 0; i < buf.count; i++) {
-                        const p = buf.positions[(buf.head - buf.count + i + N) % N]!;
-                        const mag2 = p.x * p.x + p.y * p.y + p.z * p.z;
-                        if (mag2 < 1e12) { // |p| < 1000km — 정상 ECEF(~6371km)에서 불가능
-                            anomalies.push(`idx=${t} pt${i} 지구중심근처(|p|=${Math.round(Math.sqrt(mag2))}m)`);
-                            break;
-                        }
-                        if (prev) {
-                            const dx = p.x - prev.x, dy = p.y - prev.y, dz = p.z - prev.z;
-                            const d2 = dx * dx + dy * dy + dz * dz;
-                            if (d2 > 500 * 500) {
-                                anomalies.push(`idx=${t} seg${i}=${Math.round(Math.sqrt(d2))}m (count=${buf.count})`);
-                                break;
-                            }
-                        }
-                        prev = p;
-                    }
-                }
-                if (anomalies.length > 0) {
-                    console.log(`[진단][TailPrimitive] 버퍼 이상 ${anomalies.length}건:`, anomalies.join(' | '));
-                }
-            }
-        }
-
         // 멀리(줌아웃)서는 trail(차량 꼬리)이 sub-pixel이라 안 보이는데도 5024개 draw command를
         // 매 프레임 push해 줌아웃 시 부하 폭증(차량 trail은 culling 없음). 카메라 고도가 높으면 생략.
         const camHeight = frameState.camera?.positionCartographic?.height ?? 0;
@@ -383,8 +332,6 @@ export default class TailPrimitive {
             }
         }
     }
-
-    private static _lastScanAt = 0;
 
     /**
      * 이 카메라 고도(m) 초과 시 trail 숨김. 원래 3000m로 낮게 잡혀 있었는데, 이는 개별 차량이
@@ -416,13 +363,9 @@ export default class TailPrimitive {
      */
     private static readonly GAP_RESET_MS = 1000;
 
-    /** 점프-리셋 진단 카운터 (1초 스로틀 로그) — 그물 무늬가 이 primitive에서 나오는지 확정용 */
-    private static _jumpResetCount = 0;
-    private static _lastJumpLogAt = 0;
-
     /** feed 시점 CPU push — 공백/순간이동 가드 후 circular buffer에 1점 추가, dirty 마킹.
      *  GPU 업로드는 하지 않는다(update()의 _rebuildAndUpload가 담당). */
-    private _pushPoint(trail: TrailResources, pos: number[], index: number): void {
+    private _pushPoint(trail: TrailResources, pos: number[]): void {
         const N   = this.MAX_TRAIL_LENGTH;
         const buf = trail.buffer;
 
@@ -453,12 +396,6 @@ export default class TailPrimitive {
             if (distSq > maxDist * maxDist) {
                 buf.head = 0;
                 buf.count = 0;
-                TailPrimitive._jumpResetCount++;
-                if (now - TailPrimitive._lastJumpLogAt > 1000) {
-                    TailPrimitive._lastJumpLogAt = now;
-                    console.log(`[진단][TailPrimitive] 점프 리셋 ${TailPrimitive._jumpResetCount}건 — 마지막: idx=${index}, dist=${Math.round(Math.sqrt(distSq))}m, dt=${Math.round(dtMs)}ms, 허용=${Math.round(maxDist)}m`);
-                    TailPrimitive._jumpResetCount = 0;
-                }
             }
         }
 
@@ -699,7 +636,7 @@ export default class TailPrimitive {
                 }
             }
             this._drainingSet.delete(i);
-            this._pushPoint(trail, pos, i);
+            this._pushPoint(trail, pos);
         }
         this._hasNewPositions = true;
     }

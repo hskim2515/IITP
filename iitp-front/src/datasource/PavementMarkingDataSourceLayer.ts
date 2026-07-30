@@ -7,6 +7,11 @@ import {Point} from "ol/geom";
 import {fromLonLat} from "ol/proj";
 import {convertFeatureToRecord} from "@utils/feature";
 import * as Cesium from "cesium";
+import { getActiveVersionId } from "@utils/versionId";
+import { PAVEMENT_MARKING_TILING } from "@utils/lodConstants";
+import { PavementMarkingTileManager } from "@managers/PavementMarkingTileManager";
+import { PavementMarkingTileMembership } from "@managers/pavementMarkingTileMembership";
+import { diffRecordEditsById } from "@utils/tileEditDiff";
 
 
 export default class PavementMarkingDataSourceLayer {
@@ -20,6 +25,13 @@ export default class PavementMarkingDataSourceLayer {
     /** load() 재진입 가드 — rotateImage await 중 겹친 이전 로드가 stale dataSource 를 add 하는 것 방지 */
     private loadSeq = 0;
 
+    // ── 노면표시 타일링 (PAVEMENT_MARKING_TILING.ENABLED 일 때만; 읽기 전용) ──
+    private tileManager: PavementMarkingTileManager | null = null;
+    private tileVersionId: string | null = null;
+    private membership = new PavementMarkingTileMembership();
+    private cullTimer: ReturnType<typeof setTimeout> | null = null;
+    private onCameraChanged = () => this.scheduleCull();
+
     constructor(private viewer: Viewer) {
         this.dataSource = new GeoJsonDataSource(this.LAYER_NAME);
         const store = layerNameToStoreMap[this.LAYER_NAME];
@@ -28,13 +40,29 @@ export default class PavementMarkingDataSourceLayer {
             async (currentJsonData) => {
                 if (!currentJsonData?.pavementMarkings) return;
                 try {
-                    await this.load(currentJsonData.pavementMarkings);
+                    await this.load(this.computeMergedMarkings());
                 } catch (error) {
                     console.error("[PavementMarkingDataSourceLayer] GeoJSON 로드 실패:", error);
                 }
             },
             { fireImmediately: true }
         );
+        // 저장 완료(isChanged: true → false) — Bus/RailStationDataSourceLayer와 동일 조치.
+        (store as any).subscribe(
+            (s: any) => s.isChanged,
+            (isChanged: boolean, prevIsChanged: boolean) => {
+                if (!prevIsChanged || isChanged) return;
+                const cur = store.getState().currentJsonData;
+                if (cur) store.getState().setOriginData(cur);
+                if (PAVEMENT_MARKING_TILING.ENABLED) {
+                    this.tileManager?.clear();
+                    this.updateTiles();
+                }
+            },
+        );
+
+        this.viewer.scene.camera.changed.addEventListener(this.onCameraChanged);
+        if (PAVEMENT_MARKING_TILING.ENABLED) this.updateTiles();
 
         // 타일 모드: 마킹 좌표는 OL network 레이어의 lane-edit 피처(=detail LOD viewport 타일)에서
         // 보간되므로, 로드 시점에 차선이 없던 마킹은 스킵됨. 타일 로드 후 네트워크 store 동기화를
@@ -49,11 +77,74 @@ export default class PavementMarkingDataSourceLayer {
         ) ?? null;
     }
 
+    /** viewport 마킹(서버 최신, 타일) + 로컬 미저장 편집을 id 단위로 병합 (2D 레이어와 동일 조치). */
+    private computeMergedMarkings(): any[] {
+        const store = layerNameToStoreMap[this.LAYER_NAME];
+        const currentJsonData = store?.getState().currentJsonData;
+        const pavementMarkings = currentJsonData?.pavementMarkings ?? [];
+        if (!PAVEMENT_MARKING_TILING.ENABLED) return pavementMarkings;
+
+        const originData = store?.getState().originData as any;
+        const { editedIds, deletedIds } = diffRecordEditsById(originData?.pavementMarkings, pavementMarkings, 'id');
+        const merged = new Map<string, any>();
+        for (const m of this.membership.values()) {
+            const id = String(m?.id ?? '');
+            if (deletedIds.has(id)) continue;
+            merged.set(id, m);
+        }
+        for (const m of pavementMarkings) {
+            const id = String(m?.id ?? '');
+            if (editedIds.has(id)) merged.set(id, m);
+        }
+        return [...merged.values()];
+    }
+
+    private scheduleCull(): void {
+        if (this.cullTimer) return;
+        this.cullTimer = setTimeout(() => {
+            this.cullTimer = null;
+            if (PAVEMENT_MARKING_TILING.ENABLED) this.updateTiles();
+        }, 200);
+    }
+
+    private updateTiles(): void {
+        if (!PAVEMENT_MARKING_TILING.ENABLED) return;
+        const rect = this.viewer.camera.computeViewRectangle(this.viewer.scene.globe.ellipsoid);
+        if (!rect) return;
+        const west = Cesium.Math.toDegrees(rect.west);
+        const south = Cesium.Math.toDegrees(rect.south);
+        const east = Cesium.Math.toDegrees(rect.east);
+        const north = Cesium.Math.toDegrees(rect.north);
+        const versionId = getActiveVersionId();
+        if (!versionId) return;
+        // 버전 전환 감지 — 이전 버전 노면표시 타일/멤버십 폐기 후 재생성(bus/rail station과 동일 패턴)
+        if (this.tileManager && this.tileVersionId !== String(versionId)) {
+            try { this.tileManager.clear(); } catch (_) { /* noop */ }
+            this.tileManager = null;
+        }
+        this.tileVersionId = String(versionId);
+        if (!this.tileManager) {
+            this.tileManager = new PavementMarkingTileManager(String(versionId), {
+                onTileLoaded: (_k, payload) => {
+                    if (this.membership.add(payload)) {
+                        this.load(this.computeMergedMarkings()).catch(e => console.error("[PavementMarkingDataSourceLayer] 타일 병합 로드 실패:", e));
+                    }
+                },
+                onTileEvicted: (_k, payload) => {
+                    if (this.membership.remove(payload)) {
+                        this.load(this.computeMergedMarkings()).catch(e => console.error("[PavementMarkingDataSourceLayer] 타일 병합 로드 실패:", e));
+                    }
+                },
+            });
+        }
+        this.tileManager.updateForBbox(west, south, east, north);
+    }
+
     private scheduleReload(): void {
         if (this.reloadTimer) return;
         this.reloadTimer = setTimeout(async () => {
             this.reloadTimer = null;
-            const markings = (layerNameToStoreMap[this.LAYER_NAME] as any)?.getState().currentJsonData?.pavementMarkings;
+            const markings = this.computeMergedMarkings();
             if (!markings?.length) return;
             try {
                 await this.load(markings);
@@ -129,6 +220,10 @@ export default class PavementMarkingDataSourceLayer {
             clearTimeout(this.reloadTimer);
             this.reloadTimer = null;
         }
+        if (this.cullTimer) { clearTimeout(this.cullTimer); this.cullTimer = null; }
+        this.viewer.scene.camera.changed.removeEventListener(this.onCameraChanged);
+        this.tileManager?.clear();
+        this.tileManager = null;
         this.viewer.dataSources.remove(this.dataSource, true);
     }
 

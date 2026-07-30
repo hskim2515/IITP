@@ -29,6 +29,8 @@ import useNetworkStationModify from "@hooks/useNetworkStationModify";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import NetworkEditToolbar from "@component/tool/NetworkEditToolbar";
 import RouteDrawToolbar from "@component/tool/RouteDrawToolbar";
+import StationRouteContextBar from "@component/tool/StationRouteContextBar";
+import FacilityPlacementQuickBar from "@component/tool/FacilityPlacementQuickBar";
 import NetworkDrawSettingsBar from "@component/tool/NetworkDrawSettingsBar";
 import { useCoordPick } from "@hooks/useCoordPick";
 import { useOsmBboxStore } from "@stores/useOsmBboxStore";
@@ -305,7 +307,9 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
             )}
             <ToolsPanel/>
             <NetworkEditToolbar/>
+            <FacilityPlacementQuickBar/>
             <RouteDrawToolbar/>
+            <StationRouteContextBar/>
             <NetworkDrawSettingsBar/>
 
             {!ONLY_3D && (

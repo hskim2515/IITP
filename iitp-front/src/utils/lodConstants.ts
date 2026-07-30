@@ -205,6 +205,28 @@ export const SIGNAL_TILING = {
 } as const;
 
 /**
+ * 버스정류장 BBox 타일링 (신호와 동일 격자/패턴). 정류장은 네트워크 링크에 종속(linkRef) →
+ * 같은 TILE_DEG 격자. 서울+경기 등 광역권 규모에서 정류장 수가 네트워크와 비슷한 자릿수로
+ * 늘어날 수 있어 신호와 동일하게 미리 대비(2026-07-30 결정). 자세한 설계: docs/data-scaling-strategy.md
+ */
+export const BUS_STATION_TILING = {
+    ENABLED: true,
+    MIN_TIER: 'near' as NetworkLodTier,
+} as const;
+
+/** 철도정류장 BBox 타일링 — 정류장 자체 좌표(coordinates) 또는 출입구(exit)의 linkRef 기반. */
+export const RAIL_STATION_TILING = {
+    ENABLED: true,
+    MIN_TIER: 'near' as NetworkLodTier,
+} as const;
+
+/** 노면표시 BBox 타일링 — 자체 좌표(coordinates)를 가지므로 네트워크 join 없이 바로 인덱싱 가능. */
+export const PAVEMENT_MARKING_TILING = {
+    ENABLED: true,
+    MIN_TIER: 'near' as NetworkLodTier,
+} as const;
+
+/**
  * 차량 줌 티어(개별 3D / 집계 기반 heatmap+trip / OD흐름) 경계값 — pixelSizeM(m/px,
  * computeViewportMetrics 기준) 단일 단위로 통일한 단일 소스. 이전엔 개별 차량은 bbox "도"
  * 단위(MAX_BBOX_DEG), 집계 쪽은 pixelSizeM 단위로 서로 달라서 경계를 맞추려면 감으로 환산해야

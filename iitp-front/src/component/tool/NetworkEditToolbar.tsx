@@ -1,8 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { getDistance } from 'ol/sphere';
+import { fromLonLat } from 'ol/proj';
 import { useNetworkDrawStore } from '@stores/useNetworkDrawStore';
 import { useNetworkStore } from '@stores/useNetworkStore';
 import { useNetworkToolbarStore } from '@stores/useNetworkToolbarStore';
+import { useOpenLayersStore } from '@stores/useOpenLayersStore';
 import { useNetworkEditStore } from '@stores/useNetworkEditStore';
 import { useMessageStore } from '@stores/useMessageStore';
 import {
@@ -19,7 +21,7 @@ import {
     countStationsForLinks, countStationsForNodes, deleteStationsForLinks, deletePavementMarkingsForLinks,
     deletePavementMarkingsForShrunkLanes,
 } from '@hooks/useNetworkSelect';
-import { connectNodeToLinks, countFlushLinksAtNode, createIntersectionAtNode, junctionFormationPreview, regenerateNodeConnections, setbackLinksAtNode, splitLinkInNetwork } from '@hooks/useNetworkDraw';
+import { connectNodeToLinks, countFlushLinksAtNode, createIntersectionAtNode, junctionFormationPreview, regenerateNodeConnections, setbackLinksAtNode } from '@hooks/useNetworkDraw';
 import { segmentIndexAtFrac, cellIndexAtFrac } from '@utils/networkDrilldown';
 import styles from '@css/ToolsPanel.module.css';
 
@@ -177,12 +179,59 @@ const NetworkEditToolbar: React.FC = () => {
 
     useEffect(() => () => { if (applyTimerRef.current) clearTimeout(applyTimerRef.current); }, []);
 
+    // ── 지도 경위도 기준 위치 추적 ──────────────────────────────────
+    // toolbar.x/y는 클릭한 "화면 픽셀" 좌표를 그 순간에 한 번만 저장한다 — 그 뒤 지도를
+    // 팬/줌하면 실제 노드·링크는 화면상 다른 자리로 옮겨가는데 툴바만 원래 픽셀 위치에
+    // 고정된 채 남아 있었다(2026-07-30 실사용 지적: "버튼들이 그 위치에 따라다녀야함
+    // 경위도위에"). 대신 대상의 경위도 좌표(anchor)를 구해두고, 지도 뷰가 바뀔 때마다
+    // (postrender — OL 자체 Overlay 클래스가 좌표 추종에 쓰는 것과 동일한 이벤트) 화면
+    // 픽셀로 다시 투영해 항상 그 지점 위에 떠 있게 한다.
+    const olMap = useOpenLayersStore((s) => s.map);
+    const anchorLngLat = useMemo(() => {
+        if (nodeId != null) {
+            const n = network?.nodes.find((nn) => String(nn.id) === nodeId);
+            if (n) return n.coordinates;
+        }
+        if (linkId != null) {
+            if (toolbar.clickCoord) return toolbar.clickCoord;
+            const l = network?.links.find((ll) => String(ll.id) === linkId);
+            if (l?.coordinates?.length) return l.coordinates[Math.floor(l.coordinates.length / 2)]!;
+        }
+        if (selectedNodeIds.length > 0) {
+            const n = network?.nodes.find((nn) => String(nn.id) === selectedNodeIds[selectedNodeIds.length - 1]);
+            if (n) return n.coordinates;
+        }
+        if (selectedLinkIds.length > 0) {
+            const l = network?.links.find((ll) => String(ll.id) === selectedLinkIds[selectedLinkIds.length - 1]);
+            if (l?.coordinates?.length) return l.coordinates[Math.floor(l.coordinates.length / 2)]!;
+        }
+        return null;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [nodeId, linkId, network, selectedNodeIds, selectedLinkIds, toolbar.clickCoord]);
+
+    const [livePos, setLivePos] = useState<{ x: number; y: number } | null>(null);
+    useEffect(() => {
+        if (!olMap || !anchorLngLat) { setLivePos(null); return; }
+        const compute = () => {
+            const px = olMap.getPixelFromCoordinate(fromLonLat([anchorLngLat.lng, anchorLngLat.lat]));
+            if (!px) return;
+            const rect = olMap.getTargetElement()?.getBoundingClientRect();
+            if (!rect) return;
+            setLivePos({ x: rect.left + px[0]!, y: rect.top + px[1]! });
+        };
+        compute();
+        olMap.on('postrender', compute);
+        return () => { olMap.un('postrender', compute); };
+    }, [olMap, anchorLngLat?.lng, anchorLngLat?.lat]);
+
     const hasBaseSelection = selectedLinkId !== null || selectedNodeId !== null || selectedLinkIds.length > 0 || selectedNodeIds.length > 0;
     if (!toolbar.visible || !toolbar.level || !hasBaseSelection || !network) return null;
 
     const menuW = 320;
-    const left = Math.min(toolbar.x, window.innerWidth  - menuW - 8);
-    const top  = Math.min(toolbar.y + 8, window.innerHeight - 260);
+    const posX = livePos?.x ?? toolbar.x;
+    const posY = livePos?.y ?? toolbar.y;
+    const left = Math.min(posX, window.innerWidth  - menuW - 8);
+    const top  = Math.min(posY + 8, window.innerHeight - 260);
 
     // ── 링크 차선수/폭/속도 자동 저장(400ms debounce) — 링크 레벨 전용 ──────
     const scheduleApply = (patch: Partial<{ numLane: number; width: number; maxSpd: number }>) => {
@@ -343,7 +392,7 @@ const NetworkEditToolbar: React.FC = () => {
                 useNetworkDrawStore.getState().clearConnectTarget();
                 useNetworkDrawStore.getState().clearMultiSelection();
                 useNetworkDrawStore.getState().setSelectedNode(connectTargetNodeId);
-                useNetworkToolbarStore.getState().show({ x: toolbar.x, y: toolbar.y }, 'node', { nodeId: connectTargetNodeId });
+                useNetworkToolbarStore.getState().show({ x: posX, y: posY }, 'node', { nodeId: connectTargetNodeId });
                 useMessageStore.getState().setMessage({
                     type: 'info',
                     text: `노드 ${connectTargetNodeId}에 도로 ${selectedLinkIds.length}개 연결됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}`,
@@ -577,18 +626,6 @@ const NetworkEditToolbar: React.FC = () => {
             });
         };
 
-        const handleSplit = () => {
-            if (!toolbar.clickCoord) return;
-            const cur = useNetworkStore.getState().currentJsonData;
-            if (!cur) return;
-            const { updatedNetwork, newNodeId } = splitLinkInNetwork(cur, link, toolbar.clickCoord, Date.now());
-            applyNetworkUpdate(updatedNetwork);
-            useNetworkEditStore.getState().addDeleted([String(linkId)]);
-            useNetworkDrawStore.getState().setSelectedNode(newNodeId);
-            useNetworkToolbarStore.getState().show({ x: toolbar.x, y: toolbar.y }, 'node', { nodeId: String(newNodeId) });
-            useMessageStore.getState().setMessage({ type: 'info', text: `링크를 분할했습니다 — 새 노드 ${String(newNodeId)} (통과 커넥션 자동 생성)` });
-        };
-
         return (
             <div style={{ position: 'fixed', left, top, zIndex: 4000 }}>
                 <div style={barStyle}>
@@ -597,7 +634,6 @@ const NetworkEditToolbar: React.FC = () => {
                     </span>
                     <VDivider />
                     <Btn onClick={handleReverse} title={`방향 반전 (${link.toNode} → ${link.fromNode})`}>⇄ 반전</Btn>
-                    <Btn onClick={handleSplit} disabled={!toolbar.clickCoord} title="클릭 지점에서 분할">✂ 분할</Btn>
                     <Btn onClick={() => setPropsOpen((v) => !v)} title="차선 수 / 폭 / 속도">⚙ 속성{saving ? '…' : ''}</Btn>
                     <Btn danger onClick={handleDelete} title="링크 삭제 (Delete)">🗑 삭제</Btn>
                     <VDivider />

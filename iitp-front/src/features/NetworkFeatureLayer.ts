@@ -608,6 +608,12 @@ export default class NetworkFeatureLayer extends VectorLayer {
             }
             return styles;
         }
+        // 차선 경계선 — 근접 줌에서만(멀리서는 도로 몸체 폭만 보여도 충분하고, 여러 개
+        // 그리면 오히려 지저분함).
+        if (ft === "lane-divider") {
+            if (!zoomedIn) return [];
+            return [new Style({ stroke: new Stroke({ color: "rgba(255,255,255,0.55)", width: 1, lineDash: [4, 4] }), zIndex: 122 })];
+        }
         return [];
     }
 
@@ -738,7 +744,23 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 left.push([p[0] + nx * half, p[1] + ny * half]);
                 right.push([p[0] - nx * half, p[1] - ny * half]);
             }
-            const ring = [...left, ...right.reverse(), left[0]!];
+            // 차선 경계선 — 몸체 폴리곤은 width만 반영하고 차선 "개수"는 시각적으로 전혀
+            // 드러내지 않았다(실사용 발견: "폭은 바뀌는데 차선수가 안 바뀜"). 저장 전
+            // 임시 오버레이라 실제 레인 폴리곤(buildLinkFeatures)까지 복제할 필요는 없고,
+            // 좌/우 경계 사이를 차선 수만큼 균등 분할한 얇은 구분선만 그려도 "차선이
+            // 몇 개로 바뀌었는지"는 즉시 확인 가능하다.
+            const laneCount = link.numLane ?? link.lanes?.length ?? 1;
+            for (let li = 1; li < laneCount; li++) {
+                const frac = li / laneCount;
+                const dividerPts = pts.map((_, j) => {
+                    const r = right[j]!, l = left[j]!;
+                    return [r[0]! + (l[0]! - r[0]!) * frac, r[1]! + (l[1]! - r[1]!) * frac];
+                });
+                const divider = new Feature(new LineString(dividerPts));
+                divider.setProperties({ featureType: "lane-divider", linkRef: link.id });
+                buf.push(divider);
+            }
+            const ring = [...left, ...[...right].reverse(), left[0]!];
             const poly = new Feature(new Polygon([ring]));
             poly.setProperties({ featureType: "links", linkRef: link.id });
             buf.push(poly);

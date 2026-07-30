@@ -713,7 +713,6 @@ export default class VehiclePrimitive {
         // (곧바로 이어지는 worker 'init' 응답이 즉시 채워준다 — czmlPositionWorker 참고)
         this.latestPositions = undefined;
         this.latestHeadings  = undefined;
-        console.log(`[진단][VehiclePrimitive] updateInstances 완료 type=${this.vehicleType} instanceCount=${this.instanceCount} show=${this.show} destroyed=${this.destroyed}`);
     }
 
     // ─── GLB 파싱 유틸 ────────────────────────────────────────────────────

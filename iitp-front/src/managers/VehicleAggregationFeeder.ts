@@ -82,9 +82,6 @@ export default class VehicleAggregationFeeder {
     /** heatmap용 정적 스냅샷(rebuildSyntheticVehicles에서만 갱신) — tick()이 계속 재공급해 decay로
      *  서서히 꺼지는 것을 막는다. 아래 rebuildSyntheticVehicles/tick 주석 참고. */
     private staticHeatPositions: number[][] = [];
-    private _lastLoggedDense = false;
-    private _lastHeatmapCount = -1;
-    private _lastTripCount = -1;
 
     private lastAggregateAt = 0;
     private lastTickAt = performance.now();
@@ -158,13 +155,6 @@ export default class VehicleAggregationFeeder {
         const zoomOff = normalizedPixelSizeM <  VEHICLE_AGG_FEED.MIN_RESOLUTION * 0.8;
         const zoomActive = this.active ? !zoomOff : zoomOn;
         const active = dense || zoomActive;
-        if (dense !== this._lastLoggedDense || active !== this.active) {
-            console.log(`[진단][VehicleAggregationFeeder] active 판정: ${JSON.stringify({
-                dense, normalizedPixelSizeM: Math.round(normalizedPixelSizeM), active, wasActive: this.active,
-                MIN: VEHICLE_AGG_FEED.MIN_RESOLUTION,
-            })}`);
-            this._lastLoggedDense = dense;
-        }
         this.setActive(active);
         if (!active) return;
 
@@ -329,7 +319,6 @@ export default class VehicleAggregationFeeder {
         // 덮여 관측되지 못하는 경쟁이 있었음 — 특히 초기 로딩 중 무더기 재배정에서 그물 발생.)
         const newIndices: number[] = [];
         let free = 0;
-        let occupied = 0;
         infos.forEach((info, id) => {
             const tgt = target.get(id) ?? 0;
             const k = kept.get(id) ?? 0;
@@ -343,7 +332,6 @@ export default class VehicleAggregationFeeder {
                 newIndices.push(free);
             }
         });
-        for (const v of this.slots) if (v) occupied++;
         if (newIndices.length > 0) this.resetTripTrails(newIndices);
 
         // heatmap(밀도)은 trip(흐름)과 달리 움직일 필요가 없다 — 여러 합성 차량이 같은 속도로
@@ -352,10 +340,6 @@ export default class VehicleAggregationFeeder {
         // 시점의 정지 스냅샷으로 고정하고(tick()이 계속 재공급), trip만 이동 위치를 받는다.
         this.staticHeatPositions = [];
         for (const v of this.slots) if (v) this.staticHeatPositions.push(this.positionAt(v));
-
-        console.log(`[진단][VehicleAggregationFeeder] rebuild: ${JSON.stringify({
-            linksIn: links.length, validLinks: infos.size, vehicles: occupied, scale,
-        })}`);
     }
 
     /** trip(TailPrimitive)에 특정 슬롯의 trail 초기화를 동기적으로 지시 — 재배정/순환 등
@@ -420,15 +404,6 @@ export default class VehicleAggregationFeeder {
         if (wrapped.length > 0) this.resetTripTrails(wrapped);
 
         const group = this.layerManager?.getLayerGroup?.("analyze") ?? [];
-        const heatmapCount = group.filter((l: any) => l?.layer === "heatmap").length;
-        const tripCount = group.filter((l: any) => l?.layer === "trip").length;
-        if (heatmapCount !== this._lastHeatmapCount || tripCount !== this._lastTripCount) {
-            const showState = group.filter((l: any) => l?.layer === "heatmap" || l?.layer === "trip")
-                .map((l: any) => ({ layer: l.layer, show: l.show, destroyed: l.destroyed }));
-            console.log(`[진단][VehicleAggregationFeeder] analyze 그룹 내 인스턴스 수: ${JSON.stringify({ heatmapCount, tripCount, showState })}`);
-            this._lastHeatmapCount = heatmapCount;
-            this._lastTripCount = tripCount;
-        }
         for (const layer of group) {
             if (!layer || typeof layer.setLatestPositions !== "function") continue;
             try {
