@@ -203,6 +203,8 @@ export default class NetworkFeatureLayer extends VectorLayer {
             const base = import.meta.env.VITE_API_URL ?? "";
             if (versionId) {
                 this.mvtLayer = new NetworkMvtLayer(String(versionId), String(base));
+                // 2D 클릭/호버 픽킹에서 이 레이어를 식별하기 위한 키 (defaultEventHandler)
+                this.mvtLayer.set("layer", "network-mvt");
                 this.mvtLayer.setVisible(this.getVisible());
                 map.addLayer(this.mvtLayer);
                 if (!this.visChangeKey) {

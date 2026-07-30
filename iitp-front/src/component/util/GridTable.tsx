@@ -233,7 +233,8 @@ export const GridTable = ({
 
     const onSelectionChanged = useCallback(() => {
         const selected = gridRef.current?.api?.getSelectedRows() ?? [];
-        setSelectedGuid(selected.map((r: any) => r.__guid).filter(Boolean));
+        // 'grid' 소스 — 그리드 행 선택만 지도 fly-to/줌을 동반 (지도 클릭 선택은 카메라 고정)
+        setSelectedGuid(selected.map((r: any) => r.__guid).filter(Boolean), 'grid');
     }, [setSelectedGuid]);
 
     const fieldToggleBarHeight = hasMoreFields ? 28 : 0;

@@ -3,11 +3,16 @@ import React from "react";
 
 type SelectionGroup = Record<string, (string | React.Key)[]>;
 
+/** 선택이 어디서 발생했는지 — 'grid'(그리드/에디터 행 선택)만 카메라 fly-to/줌을 동반한다.
+ *  'map'(지도 클릭)은 하이라이트만 하고 카메라를 움직이지 않는다. */
+export type SelectionSource = 'map' | 'grid';
+
 type SelectionStore = {
     selectedGuid: (string | React.Key)[];
     groupedByType: SelectionGroup;
+    selectionSource: SelectionSource;
 
-    setSelectedGuid: (guids: (string | React.Key)[]) => void;
+    setSelectedGuid: (guids: (string | React.Key)[], source?: SelectionSource) => void;
     addSelectionId: (guid: string | React.Key) => void;
     removeSelectionId: (guid: string | React.Key) => void;
     clearSelected: () => void;
@@ -32,11 +37,13 @@ function groupGuidsByType(guids: (string | React.Key)[]): SelectionGroup {
 export const useSelectionStore = create<SelectionStore>((set, get) => ({
     selectedGuid: [],
     groupedByType: {},
+    selectionSource: 'map',
 
-    setSelectedGuid: (guids) => {
+    setSelectedGuid: (guids, source = 'map') => {
         set({
             selectedGuid: guids,
             groupedByType: groupGuidsByType(guids),
+            selectionSource: source,
         });
     },
 

@@ -15,9 +15,16 @@ import { normalizeTurning } from "@utils/turning";
 import { useNetworkEditStore } from "@stores/useNetworkEditStore";
 
 // --- 이벤트 핸들러에서 Primitive 피킹/하이라이트에 사용 ---
-export const networkPrimitivePropertiesMap = new Map<string, any>();
+// map/상수는 의존성 없는 공유 리프 모듈(networkPrimitiveShared)에 있다 — UI 유틸이 이 파일을
+// 직접 import 하면 LayerManager 의 eager glob(@datasource/*)과 모듈 평가 사이클이 생기기 때문.
+// (LayerManager 는 default export 우선으로 클래스를 등록하므로 보조 export 추가는 안전)
+import { networkPrimitivePropertiesMap, NETWORK_HIGHLIGHT_DURATION_MS } from "@utils/networkPrimitiveShared";
 // guid=링크 guid. laneIdx 지정 시 그 레인만(부모 링크 전체 아님) 하이라이트.
+/** hover 전용 하이라이트 — 선택 슬롯(setNetworkSelectionHighlight)은 건드리지 않는다 */
 export let highlightNetworkPrimitive: ((guid: string | null, laneIdx?: number) => void) | null = null;
+/** 선택(그리드/클릭) 하이라이트 — hover 가 덮지 못하는 별도 슬롯, 5초 후 자동 만료 */
+export let setNetworkSelectionHighlight: ((guid: string, laneIdx?: number) => void) | null = null;
+export let clearNetworkSelectionHighlight: (() => void) | null = null;
 
 /** 커서 지면점 (타원체 표면 height 0 으로 정규화 — 측방향 오프셋 계산용).
  *
@@ -360,8 +367,13 @@ export default class NetworkDataSourceLayer {
 
 
     // 하이라이트 상태 — 인스턴스 색 변조 대신 전용 오버레이 primitive (highlightInstance 참고)
+    // hover 슬롯 (mousemove 마다 갱신)
     private highlightedGuid: string | null = null;
     private highlightPrimitive: Cesium.GroundPrimitive | null = null;
+    // 선택 슬롯 (그리드/클릭 선택) — hover 가 덮지 않으며 NETWORK_HIGHLIGHT_DURATION_MS 후 자동 만료
+    private selectionHighlightedGuid: string | null = null;
+    private selectionHighlightPrimitive: Cesium.GroundPrimitive | null = null;
+    private selectionHighlightTimer: ReturnType<typeof setTimeout> | null = null;
 
     /** overview 도로망 폴리라인 색/굵기 */
     private static readonly COLOR_ROAD_OVERVIEW = Cesium.Color.fromBytes(236, 238, 245, 255);
@@ -371,6 +383,8 @@ export default class NetworkDataSourceLayer {
         this.viewer.dataSources.add(this.dataSource);
 
         highlightNetworkPrimitive = this.highlightInstance.bind(this);
+        setNetworkSelectionHighlight = this.selectionHighlightInstance.bind(this);
+        clearNetworkSelectionHighlight = this.clearSelectionHighlightInstance.bind(this);
 
         this.load();
         const store = layerNameToStoreMap[this.LAYER_NAME];
@@ -1089,8 +1103,59 @@ export default class NetworkDataSourceLayer {
      *  위에 그려지는지가 카메라 이동(청크 재빌드/스왑)마다 바뀌어 **노란 영역이 도로 안에서
      *  움직이는** 문제를 만들었다. 링크 좌표에서 렌더와 동일한 corridor 를 즉석 생성해
      *  최상위에 얹으면 청크 생명주기와 완전히 분리된다 (색 복원 부기도 불필요). */
+    /** 링크/레인 하이라이트 corridor primitive 빌드 (추가는 호출측). 빌드 불가 시 null. */
+    private buildHighlightPrimitive(cacheKey: string, guid: string, laneIdx?: number): Cesium.GroundPrimitive | null {
+        const props = networkPrimitivePropertiesMap.get(guid);
+        const coords = props?.featureType === 'links'
+            ? (props.coordinates ?? []).filter((c: any) => c && isFinite(c.lng) && isFinite(c.lat))
+            : [];
+        if (coords.length < 2) return null;
+        const roadWidth = props.width ?? 7;
+        const laneCount = props.lanes?.length || props.numLane || 1;
+        // 레인 지정 시: 그 레인만(폭=laneWidth, 중심 오프셋). 아니면 링크 전체(폭=roadWidth, 우측 반폭).
+        //   렌더 규약(중앙정렬, (i - (laneCount-1)/2)*laneWidth, 차선0=최좌측)과 정합.
+        const isLane = laneIdx != null && laneIdx >= 0 && laneIdx < laneCount;
+        const laneWidth = roadWidth / laneCount;
+        const width = isLane ? laneWidth : roadWidth;
+        const offset = isLane
+            ? (laneIdx! - (laneCount - 1) / 2) * laneWidth
+            : 0;
+        const shifted = this.computeOffsetPositions(coords, offset);
+        return new Cesium.GroundPrimitive({
+            geometryInstances: new Cesium.GeometryInstance({
+                id: `${cacheKey}_highlight`,
+                geometry: new Cesium.CorridorGeometry({
+                    positions: shifted,
+                    width,
+                    cornerType: Cesium.CornerType.MITERED,
+                    vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
+                }),
+                attributes: {
+                    // 알파 1.0 — 불투명(translucent:false) 패스와 정합 (반투명은 분류 렌더 오동작 유발)
+                    color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.YELLOW),
+                },
+            }),
+            appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: false }),
+            asynchronous: false, // 단일 corridor — 동기 빌드로 hover 즉시 표시 (ready 펌프 불필요)
+            classificationType: Cesium.ClassificationType.BOTH,
+        });
+    }
+
+    /** hover 하이라이트 (hover 슬롯 전용) — 선택 슬롯은 절대 건드리지 않는다. */
     private highlightInstance(guid: string | null, laneIdx?: number): void {
         const cacheKey = guid == null ? null : (laneIdx != null ? `${guid}#${laneIdx}` : guid);
+
+        // 선택 슬롯과 동일 대상이면 hover 오버레이 불필요 — 선택 강조가 이미 표시 중
+        if (cacheKey != null && cacheKey === this.selectionHighlightedGuid) {
+            if (this.highlightPrimitive) {
+                try { this.viewer.scene.groundPrimitives.remove(this.highlightPrimitive); } catch (_) {}
+                this.highlightPrimitive = null;
+                this.highlightedGuid = null;
+                try { this.viewer.scene.requestRender(); } catch (_) {}
+            }
+            return;
+        }
+
         if (this.highlightedGuid === cacheKey) return; // hover 마다 재호출 — 동일 대상이면 no-op
         this.highlightedGuid = cacheKey;
 
@@ -1099,42 +1164,72 @@ export default class NetworkDataSourceLayer {
             this.highlightPrimitive = null;
         }
 
-        const props = guid ? networkPrimitivePropertiesMap.get(guid) : null;
-        const coords = props?.featureType === 'links'
-            ? (props.coordinates ?? []).filter((c: any) => c && isFinite(c.lng) && isFinite(c.lat))
-            : [];
-        if (coords.length >= 2) {
-            const roadWidth = props.width ?? 7;
-            const laneCount = props.lanes?.length || props.numLane || 1;
-            // 레인 지정 시: 그 레인만(폭=laneWidth, 중심 오프셋). 아니면 링크 전체(폭=roadWidth, 우측 반폭).
-            //   렌더 규약(중앙정렬, (i - (laneCount-1)/2)*laneWidth, 차선0=최좌측)과 정합.
-            const isLane = laneIdx != null && laneIdx >= 0 && laneIdx < laneCount;
-            const laneWidth = roadWidth / laneCount;
-            const width = isLane ? laneWidth : roadWidth;
-            const offset = isLane
-                ? (laneIdx! - (laneCount - 1) / 2) * laneWidth
-                : 0;
-            const shifted = this.computeOffsetPositions(coords, offset);
-            this.highlightPrimitive = new Cesium.GroundPrimitive({
-                geometryInstances: new Cesium.GeometryInstance({
-                    id: `${cacheKey}_highlight`,
-                    geometry: new Cesium.CorridorGeometry({
-                        positions: shifted,
-                        width,
-                        cornerType: Cesium.CornerType.MITERED,
-                        vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
-                    }),
-                    attributes: {
-                        // 알파 1.0 — 불투명(translucent:false) 패스와 정합 (반투명은 분류 렌더 오동작 유발)
-                        color: Cesium.ColorGeometryInstanceAttribute.fromColor(Cesium.Color.YELLOW),
-                    },
-                }),
-                appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: false }),
-                asynchronous: false, // 단일 corridor — 동기 빌드로 hover 즉시 표시 (ready 펌프 불필요)
-                classificationType: Cesium.ClassificationType.BOTH,
-            });
-            this.viewer.scene.groundPrimitives.add(this.highlightPrimitive);
+        if (guid && cacheKey) {
+            this.highlightPrimitive = this.buildHighlightPrimitive(cacheKey, guid, laneIdx);
+            if (this.highlightPrimitive) this.viewer.scene.groundPrimitives.add(this.highlightPrimitive);
         }
+        this.pumpHighlightRender(this.highlightPrimitive);
+    }
+
+    /**
+     * 하이라이트 corridor 즉시 표시용 렌더 펌프.
+     * requestRenderMode 에서 GroundPrimitive 는 (asynchronous:false 여도) 첫 update 프레임에
+     * 리소스 준비만 되고 실제 드로우는 이후 프레임이라, 렌더를 1회만 요청하면 같은 객체 위에
+     * 머무는 동안 추가 프레임이 없어 **다음 호버 대상이 바뀔 때에야 이전 하이라이트가
+     * 나타나는** off-by-one 이 된다. ready 될 때까지 + 드로우 여유 2프레임을 연속 요청한다
+     * (상한 10프레임 — 호버 1회당 수 프레임 수준의 미미한 비용).
+     */
+    private pumpHighlightRender(prim: Cesium.GroundPrimitive | null): void {
+        try { this.viewer.scene.requestRender(); } catch (_) {}
+        if (!prim) return; // 제거만 한 경우 — 1프레임이면 충분
+        let extra = 2, frames = 0;
+        const step = () => {
+            if (this.destroyed) return;
+            try { if ((prim as any).isDestroyed?.()) return; } catch (_) { return; }
+            try { this.viewer.scene.requestRender(); } catch (_) {}
+            if (++frames >= 10) return;
+            if (prim.ready && --extra < 0) return;
+            requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+    }
+
+    /** 선택 하이라이트 (그리드/클릭) — hover 가 덮지 못하며 일정 시간 후 자동 만료. */
+    private selectionHighlightInstance(guid: string, laneIdx?: number): void {
+        const cacheKey = laneIdx != null ? `${guid}#${laneIdx}` : guid;
+        if (this.selectionHighlightTimer) { clearTimeout(this.selectionHighlightTimer); this.selectionHighlightTimer = null; }
+
+        if (this.selectionHighlightedGuid !== cacheKey) {
+            if (this.selectionHighlightPrimitive) {
+                try { this.viewer.scene.groundPrimitives.remove(this.selectionHighlightPrimitive); } catch (_) {}
+                this.selectionHighlightPrimitive = null;
+            }
+            this.selectionHighlightedGuid = cacheKey;
+            this.selectionHighlightPrimitive = this.buildHighlightPrimitive(`${cacheKey}_sel`, guid, laneIdx);
+            if (this.selectionHighlightPrimitive) this.viewer.scene.groundPrimitives.add(this.selectionHighlightPrimitive);
+            // hover 슬롯이 같은 대상을 잡고 있으면 정리 (중복 오버레이 방지)
+            if (this.highlightedGuid === cacheKey && this.highlightPrimitive) {
+                try { this.viewer.scene.groundPrimitives.remove(this.highlightPrimitive); } catch (_) {}
+                this.highlightPrimitive = null;
+                this.highlightedGuid = null;
+            }
+        }
+        // 재선택마다 수명 연장 — 2D(showNetworkHighlight2D)와 동일 생명주기
+        this.selectionHighlightTimer = setTimeout(() => {
+            this.selectionHighlightTimer = null;
+            this.clearSelectionHighlightInstance();
+        }, NETWORK_HIGHLIGHT_DURATION_MS);
+        this.pumpHighlightRender(this.selectionHighlightPrimitive);
+    }
+
+    /** 선택 하이라이트 해제 (선택 슬롯 전용). */
+    private clearSelectionHighlightInstance(): void {
+        if (this.selectionHighlightTimer) { clearTimeout(this.selectionHighlightTimer); this.selectionHighlightTimer = null; }
+        if (this.selectionHighlightPrimitive) {
+            try { this.viewer.scene.groundPrimitives.remove(this.selectionHighlightPrimitive); } catch (_) {}
+            this.selectionHighlightPrimitive = null;
+        }
+        this.selectionHighlightedGuid = null;
         try { this.viewer.scene.requestRender(); } catch (_) {}
     }
 
@@ -2138,6 +2233,10 @@ export default class NetworkDataSourceLayer {
         if (highlightNetworkPrimitive === this.highlightInstance) {
             highlightNetworkPrimitive = null;
         }
+        // 선택 슬롯 정리 + 전역 API 해제
+        this.clearSelectionHighlightInstance();
+        setNetworkSelectionHighlight = null;
+        clearNetworkSelectionHighlight = null;
         networkPrimitivePropertiesMap.clear();
     }
 }

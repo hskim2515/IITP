@@ -73,7 +73,7 @@ const SignalRow: React.FC<RowProps> = ({ sig, isSelected, rowRef, onSave, onDele
         setDraft({ turning: sig.turning ?? DIR[0]!.key, type: sig.type ?? "", connectionId: sig.connectionId ?? "" });
         setEditing(true);
         // 렌더 후 지도 하이라이트 (외부 스토어가 React 배치보다 앞서 flush되지 않도록 setTimeout)
-        setTimeout(() => useSelectionStore.getState().setSelectedGuid([sig.__guid]), 0);
+        setTimeout(() => useSelectionStore.getState().setSelectedGuid([sig.__guid], 'grid'), 0);
     };
     const save = () => {
         const updated = { ...sig, turning: draft.turning || null, type: draft.type || null, connectionId: draft.connectionId || null };

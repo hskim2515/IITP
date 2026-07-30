@@ -12,7 +12,7 @@ import { useCesiumStore } from "@stores/useCesiumStore";
 import { useMapStore } from "@stores/useMapStore";
 import { useModeStore } from "@stores/useModeStore";
 import { useMessageStore } from "@stores/useMessageStore";
-import { networkPrimitivePropertiesMap } from "@datasource/NetworkDataSourceLayer";
+import { networkPrimitivePropertiesMap } from "@utils/networkPrimitiveShared";
 import { loadNaverMaps } from "@utils/naverMapLoader";
 import type { Link } from "@type/Network";
 import {
