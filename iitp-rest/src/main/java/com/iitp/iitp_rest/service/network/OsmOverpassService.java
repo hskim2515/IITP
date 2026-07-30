@@ -262,7 +262,12 @@ public class OsmOverpassService {
         List<OsmRelation> busRoutes,
         List<OsmRelation> railRoutes,
         List<OsmNode> allNodes,
-        List<OsmWay> allWays
+        List<OsmWay> allWays,
+        /** railway=subway_entrance — 역이 아니라 기존 역에 딸린 출입구. 별도 역으로 만들면
+         *  안 되고(⚠️ 실측 버그: 강남역 인근에서만 출입구 12개가 "강남역 10번 출구" 등
+         *  독립된 역으로 잘못 변환됨), 가장 가까운 진짜 역(railStations)에 매칭해 그 역의
+         *  exit로 붙여야 한다 — {@link com.iitp.iitp_rest.service.network.OsmFacilityConverter}. */
+        List<OsmNode> railExits
     ) {}
 
     public record OsmRelation(
@@ -284,11 +289,18 @@ public class OsmOverpassService {
 
         List<OsmNode> busStops    = new ArrayList<>();
         List<OsmNode> railStations = new ArrayList<>();
+        List<OsmNode> railExits   = new ArrayList<>();
         for (OsmNode n : allNodes) {
             String hw  = n.getTag("highway");
             String rwy = n.getTag("railway");
             if ("bus_stop".equals(hw)) busStops.add(n);
-            else if (rwy != null && rwy.matches("station|halt|tram_stop|subway_entrance")) railStations.add(n);
+            // ⚠️ subway_entrance(지하철 출입구)는 station|halt|tram_stop(진짜 역)과 완전히
+            // 다른 개념이다 — 역과 같은 리스트에 섞으면 출입구 하나하나가 독립된 "역"으로
+            // 변환된다(실측: 강남역 인근 bbox에서 "강남역 10번 출구" 등 12개 출입구가 별도
+            // 역으로 잘못 생성돼 42개 중 다수를 차지). 별도 리스트로 분리해 OsmFacilityConverter가
+            // 가장 가까운 진짜 역의 exit로 매칭하게 한다.
+            else if ("subway_entrance".equals(rwy)) railExits.add(n);
+            else if (rwy != null && rwy.matches("station|halt|tram_stop")) railStations.add(n);
         }
 
         List<OsmRelation> busRoutes  = new ArrayList<>();
@@ -300,12 +312,10 @@ public class OsmOverpassService {
             else if (route.matches("subway|train|tram|rail")) railRoutes.add(r);
         }
 
-        log.info("시설물 파싱: 버스정류장 {}개, 철도역 {}개, 버스노선 {}개, 철도노선 {}개",
-                busStops.size(), railStations.size(), busRoutes.size(), railRoutes.size());
         List<OsmWay> safeWays = allWays != null ? allWays : List.of();
-        log.info("시설물 파싱: 버스정류장 {}개, 철도역 {}개, 버스노선 {}개, 철도노선 {}개, 전체노드 {}개, way {}개",
-                busStops.size(), railStations.size(), busRoutes.size(), railRoutes.size(), allNodes.size(), safeWays.size());
-        return new FacilityQueryResult(busStops, railStations, busRoutes, railRoutes, allNodes, safeWays);
+        log.info("시설물 파싱: 버스정류장 {}개, 철도역 {}개, 철도출입구 {}개, 버스노선 {}개, 철도노선 {}개, 전체노드 {}개, way {}개",
+                busStops.size(), railStations.size(), railExits.size(), busRoutes.size(), railRoutes.size(), allNodes.size(), safeWays.size());
+        return new FacilityQueryResult(busStops, railStations, busRoutes, railRoutes, allNodes, safeWays, railExits);
     }
 
     private Map<String, Object> parse(String json) {

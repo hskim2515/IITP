@@ -1220,6 +1220,8 @@ Mode
 
 > ⚠️ **역과 출입구는 id 카운터를 공유**: `railStation.id`와 그 `exit.id`는 OSM 자동 스냅 시 하나의 카운터(`31,000,001`부터)를 나눠 쓴다 — 아래 예시의 `id="40000001"`은 부천 레퍼런스 데이터셋 값이니 착오하지 말 것([ID 네이밍/채번 규칙](#id-naming) 참고). 과거 `OsmFacilityConverter.convertRailStations()`의 exit id 채번이 `idGen.get()`만 하고 증가시키지 않아, 다음 역이 그 exit와 같은 id를 이어받는 충돌 버그가 있었다 — `idGen.getAndIncrement()`로 수정 완료됨(코드의 "실측 크래시" 주석 참고).
 
+> ⚠️ **실측 데이터 품질 버그(2026-07-30, scenario2_1 KTDB 재임포트) — `subway_entrance`가 독립된 역으로 오분류**: `OsmOverpassService.parseFacilities()`/`OsmPtFacilityRepository.queryFacilities()`가 OSM `railway=subway_entrance`(지하철 출입구) 노드를 `railway=station|halt|tram_stop`(진짜 역)과 같은 리스트에 섞어 반환하고 있었다. `OsmFacilityConverter.convertRailStations()`는 입력받은 노드 하나당 역 하나를 만들기 때문에, 강남역 인근 소규모 bbox에서 실제로는 몇 개뿐이어야 할 역이 **42개**로 부풀려졌다 — "강남역 10번 출구"·"강남역 11번 출구" 등 출입구가 각각 독립된 "역"으로 생성되고, 진짜 역("강남")도 서로 다른 id(31000073/31000079)로 중복 생성됨(사용자의 "철도역이 42개라고?" 의심 질문으로 발견). **수정**: `FacilityQueryResult`에 `railExits` 필드를 신설해 `subway_entrance` 노드를 `railStations`와 분리하고, `convertRailStations()`가 각 출입구를 가장 가까운 역(400m 이내, `MAX_EXIT_STATION_DIST_M`)에 매칭해 그 역의 `exit` 서브엘리먼트로 붙이도록 변경 — 매칭되는 출입구가 하나도 없는 역은 기존처럼 역 좌표 자체를 스냅한 폴백 exit 하나를 생성한다. `OsmOverpassService.java`/`OsmPtFacilityRepository.java`(Overpass 실시간 경로·로컬 DB 캐시 경로 둘 다 동일 버그였음)/`OsmFacilityConverter.java` 3개 파일 수정.
+
 역할: 철도역과 출입구 정보를 정의한다.
 
 계층구조:

@@ -35,6 +35,7 @@ public class OsmFacilityConverter {
     private static final double SCALE_X = 88000.0;
     private static final double SCALE_Y = 111000.0;
     private static final double MAX_SNAP_DIST_M = 50.0; // 링크 스냅 최대 거리(m)
+    private static final double MAX_EXIT_STATION_DIST_M = 400.0; // 출입구→역 매칭 최대 거리(m, 강남역처럼 큰 역은 출입구가 넓게 퍼짐)
     private static final double GRID_CELL_M = 100.0; // 링크 공간 그리드 셀 크기(m)
     /** OSM에는 배차간격 정보가 없어 변환된 모든 버스 노선에 일괄로 채우는 기본값(분) */
     private static final int DEFAULT_BUS_INTERVAL_MIN = 10;
@@ -154,7 +155,8 @@ public class OsmFacilityConverter {
             // 두 노드 모두 보통 동일한 name 태그를 갖고 있어 이름으로 재매칭한다.
             Map<String, String> railStationIdByName = new LinkedHashMap<>();
             railStations = convertRailStations(
-                    facilities.railStations(), links, baseLat, baseLon, railStationIdByOsmNode, railStationIdByName);
+                    facilities.railStations(), facilities.railExits(), links, baseLat, baseLon,
+                    railStationIdByOsmNode, railStationIdByName);
             railRoutes = convertRailRoutes(
                     facilities.railRoutes(), bbox, railStationIdByOsmNode, railStationIdByName);
         } else {
@@ -215,17 +217,46 @@ public class OsmFacilityConverter {
     // ── 철도 역 ────────────────────────────────────────────────────────────────
 
     private RailPublicTransitResponse convertRailStations(
-            List<OsmNode> stations, List<LinkXml> links, double baseLat, double baseLon,
+            List<OsmNode> stations, List<OsmNode> exits, List<LinkXml> links, double baseLat, double baseLon,
             Map<Long, String> railStationIdByOsmNode, Map<String, String> railStationIdByName) {
 
         AtomicLong idGen = new AtomicLong(31000001L);
         List<RailStationResponse> result = new ArrayList<>();
 
+        record StationLocal(OsmNode node, double lx, double ly) {}
+        List<StationLocal> stationLocals = new ArrayList<>();
         for (OsmNode st : stations) {
             double lx = (st.getLon() - baseLon) * SCALE_X;
             double ly = (st.getLat() - baseLat) * SCALE_Y;
+            stationLocals.add(new StationLocal(st, lx, ly));
+        }
 
-            SnapResult snap = snapToLink(lx, ly);
+        // railway=subway_entrance 노드(출입구)는 역이 아니라 역에 딸린 출구다 — 각 출입구를
+        // 가장 가까운 역(400m 이내)에 매칭한다(실측: 강남역처럼 큰 역은 출입구가 여러 개에 넓게
+        // 퍼져 있음). 매칭 안 되면(출입구 데이터가 없거나 너무 멀면) 버린다 — 아래에서 그 역은
+        // 자체 좌표를 스냅한 폴백 exit 하나로 대체한다.
+        Map<Long, List<OsmNode>> exitsByStationOsmId = new HashMap<>();
+        for (OsmNode exit : exits == null ? List.<OsmNode>of() : exits) {
+            double ex = (exit.getLon() - baseLon) * SCALE_X;
+            double ey = (exit.getLat() - baseLat) * SCALE_Y;
+            StationLocal best = null;
+            double bestDist = MAX_EXIT_STATION_DIST_M;
+            for (StationLocal sl : stationLocals) {
+                double d = Math.hypot(sl.lx() - ex, sl.ly() - ey);
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = sl;
+                }
+            }
+            if (best != null) {
+                exitsByStationOsmId.computeIfAbsent(best.node().getId(), k -> new ArrayList<>()).add(exit);
+            }
+        }
+
+        for (StationLocal sl : stationLocals) {
+            OsmNode st = sl.node();
+            double lx = sl.lx();
+            double ly = sl.ly();
 
             RailStationResponse station = new RailStationResponse();
             station.setId(String.valueOf(idGen.getAndIncrement()));
@@ -247,32 +278,52 @@ public class OsmFacilityConverter {
                 railStationIdByName.putIfAbsent(name, station.getId());
             }
 
-            // 출입구: 링크 스냅이 있으면 exit 생성, 없어도 역 자체는 표시
-            if (snap != null) {
+            // ⚠️ 실측 크래시(과거): idGen.get()은 카운터를 소비하지 않고 "다음 값을 훔쳐보기만"
+            // 해서, 바로 다음 루프의 station.setId()가 같은 값을 또 쓰게 돼 station id와
+            // exit id가 충돌했다(실측: railStation.xml의 exit 85개 전부가 다른 역의 id와
+            // 겹침). NextSim RouteGenerator의 PT Route Generation 단계가 이 id를 키로
+            // 맵을 구성하는데, 충돌로 항목이 덮어써지며 std::out_of_range(_Map_base::at)로
+            // 크래시했다(scenario2_1, 터미널 조합과 무관하게 항상 재현). getAndIncrement()로
+            // 고유 id를 소비하도록 수정됨 — 아래도 동일하게 유지.
+            List<OsmNode> myExits = exitsByStationOsmId.getOrDefault(st.getId(), List.of());
+            List<ExitResponse> exitList = new ArrayList<>();
+            for (OsmNode exitNode : myExits) {
+                double ex = (exitNode.getLon() - baseLon) * SCALE_X;
+                double ey = (exitNode.getLat() - baseLat) * SCALE_Y;
+                SnapResult exitSnap = snapToLink(ex, ey);
+                if (exitSnap == null) continue;
                 ExitResponse exit = new ExitResponse();
-                // ⚠️ 실측 크래시: idGen.get()은 카운터를 소비하지 않고 "다음 값을 훔쳐보기만"
-                // 해서, 바로 다음 루프의 station.setId()가 같은 값을 또 쓰게 돼 station id와
-                // exit id가 충돌했다(실측: railStation.xml의 exit 85개 전부가 다른 역의 id와
-                // 겹침). NextSim RouteGenerator의 PT Route Generation 단계가 이 id를 키로
-                // 맵을 구성하는데, 충돌로 항목이 덮어써지며 std::out_of_range(_Map_base::at)로
-                // 크래시했다(scenario2_1, 터미널 조합과 무관하게 항상 재현). getAndIncrement()로
-                // 고유 id를 소비하도록 수정.
                 exit.setId(String.valueOf(idGen.getAndIncrement()));
-                exit.setLinkRef(String.valueOf(snap.linkId()));
-                exit.setOffset(round2(snap.offset()));
+                exit.setLinkRef(String.valueOf(exitSnap.linkId()));
+                exit.setOffset(round2(exitSnap.offset()));
                 exit.setAccessTime("30");
-                exit.setCoord(fmt3(lx) + " " + fmt3(ly));
-                station.setExits(List.of(exit));
-            } else {
-                station.setExits(List.of());
+                exit.setCoord(fmt3(ex) + " " + fmt3(ey));
+                exitList.add(exit);
             }
+            // 매칭된 실제 출입구가 하나도 없으면(OSM에 출입구 데이터가 없거나 전부 스냅 실패)
+            // 기존 동작대로 역 좌표 자체를 스냅한 폴백 exit 하나를 생성한다.
+            if (exitList.isEmpty()) {
+                SnapResult snap = snapToLink(lx, ly);
+                if (snap != null) {
+                    ExitResponse exit = new ExitResponse();
+                    exit.setId(String.valueOf(idGen.getAndIncrement()));
+                    exit.setLinkRef(String.valueOf(snap.linkId()));
+                    exit.setOffset(round2(snap.offset()));
+                    exit.setAccessTime("30");
+                    exit.setCoord(fmt3(lx) + " " + fmt3(ly));
+                    exitList.add(exit);
+                }
+            }
+            station.setExits(exitList);
 
             result.add(station);
         }
 
         RailPublicTransitResponse resp = new RailPublicTransitResponse();
         resp.setRailStations(result);
-        log.info("철도역 변환: {}개", result.size());
+        int matchedExits = exitsByStationOsmId.values().stream().mapToInt(List::size).sum();
+        log.info("철도역 변환: {}개 (역-매칭 출입구 {}개, 미매칭 출입구 {}개)",
+                result.size(), matchedExits, (exits == null ? 0 : exits.size()) - matchedExits);
         return resp;
     }
 
