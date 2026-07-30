@@ -398,6 +398,56 @@ public class OsmFacilityConverter {
         return sb.toString();
     }
 
+    // ── 기존 버스 노선 재매핑(KTDB 재임포트로 link/node id가 낡아진 경우) ────────────
+    // 재임포트 후엔 옛 network.xml(옛 링크 shape)이 이미 사라져 노선 좌표를 그대로 재사용할
+    // 수 없다 — 대신 그 노선이 지나는 정류장들(station.seq, 이미 새 네트워크로 재스냅된
+    // linkRef 보유)을 waypoint 삼아, convertBusRoutes()가 OSM way 좌표로 새 노선을 만들 때
+    // 쓰는 것과 동일한 연결 파이프라인(findLinkPath 위상 보정 → extendToTerminal → 중복 루프
+    // 제거)을 재사용해 link/node seq를 다시 만든다. prepareLinkIndex(새 네트워크)를 먼저
+    // 호출해야 한다.
+    private static final int MAX_ROUTE_REMAP_HOPS = 60; // 정류장 간 거리는 위상보정(6홉)보다 훨씬 멀 수 있음
+
+    public record RemappedRoute(String linkSeq, String nodeSeq) {}
+
+    /**
+     * @param stationLinkRefsInOrder 노선이 지나는 정류장들의 (새 네트워크 기준) linkRef,
+     *                                station.seq 순서 그대로. 연속 중복은 자동으로 걸러진다.
+     * @return 실패(유효 앵커 2개 미만, 정류장 사이 경로 연결 불가, 터미널 미도달)하면
+     *         null — 그 노선은 수동 재작업이 필요하다는 뜻.
+     */
+    public RemappedRoute remapBusRouteByStationAnchors(List<Long> stationLinkRefsInOrder) {
+        if (stationLinkRefsInOrder == null) return null;
+        List<Long> anchors = new ArrayList<>();
+        for (Long id : stationLinkRefsInOrder) {
+            if (id == null || linkById.get(id) == null) continue;
+            if (!anchors.isEmpty() && anchors.get(anchors.size() - 1).equals(id)) continue;
+            anchors.add(id);
+        }
+        if (anchors.size() < 2) return null; // 방향/경로를 판단할 최소 앵커(정류장) 부족
+
+        List<Long> linkSeq = new ArrayList<>();
+        linkSeq.add(anchors.get(0));
+        for (int i = 1; i < anchors.size(); i++) {
+            LinkXml prev = linkById.get(anchors.get(i - 1));
+            LinkXml next = linkById.get(anchors.get(i));
+            if (prev.getToNode() == null || next.getFromNode() == null) return null; // 위상 판단 불가
+            if (prev.getToNode().equals(next.getFromNode())) {
+                linkSeq.add(anchors.get(i));
+                continue;
+            }
+            List<Long> bridge = findLinkPath(prev.getToNode(), next.getFromNode(), MAX_ROUTE_REMAP_HOPS);
+            if (bridge == null) return null; // 두 정류장 사이를 새 네트워크에서 못 이음(위상이 크게 바뀜)
+            linkSeq.addAll(bridge);
+            linkSeq.add(anchors.get(i));
+        }
+
+        linkSeq = removeDuplicateLinkLoops(extendToTerminal(linkSeq));
+        if (linkSeq.isEmpty() || !touchesTerminalAtBothEnds(linkSeq)) return null;
+
+        String linkSeqStr = linkSeq.stream().map(String::valueOf).reduce((a, b) -> a + " " + b).orElse("");
+        return new RemappedRoute(linkSeqStr, buildNodeSeq(linkSeq));
+    }
+
     // ── 철도 노선 ─────────────────────────────────────────────────────────────
 
     /**
