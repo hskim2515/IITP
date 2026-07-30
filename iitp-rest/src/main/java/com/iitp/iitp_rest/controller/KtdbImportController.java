@@ -63,6 +63,15 @@ public class KtdbImportController {
     // 아예 안 생긴다"는 문제가 있었음.
     private final com.iitp.iitp_rest.service.network.OsmOverpassService overpassService;
     private final com.iitp.iitp_rest.service.network.OsmFacilityConverter facilityConverter;
+    // 자동생성 토글이 꺼져 OSM에서 새로 안 가져온 경우(또는 대형망 스트리밍 경로처럼 애초에
+    // OSM 조회가 없는 경우) — 검증만 하고 방치하지 않고, 이미 저장된 정류장/역의 link_ref/
+    // lane_ref를 새 네트워크에 자동 재스냅한다(resnapExistingStationsIfNeeded 참고).
+    private final com.iitp.iitp_rest.service.publicTransit.station.BusStationService busStationService;
+    private final com.iitp.iitp_rest.service.publicTransit.station.RailStationService railStationService;
+    // roadPTline*.xml 노선의 link/node seq 자동 재매핑(remapStaleBusRoutes) 용 — 철도 노선은
+    // railStationSeq(정류장 id)만 참조하고 재임포트로도 안 바뀌는 안정적 네임스페이스라
+    // 재매핑이 필요 없음(PtLineValidation.java 클래스 주석 참고).
+    private final com.iitp.iitp_rest.service.publicTransit.line.BusPtLineService busPtLineService;
 
     // ── 백그라운드 스캐폴딩(더미 신호/OD/TOD 생성 + 타일 빌드) 진행 상태 ────────────
     // KTDB 저장 응답은 이 백그라운드 작업(CompletableFuture.runAsync)을 기다리지 않고 먼저
@@ -107,6 +116,176 @@ public class KtdbImportController {
         if (staleFiles.isEmpty()) return null;
         return "버스 노선(" + String.join(", ", staleFiles) + ")이 재임포트로 바뀐 링크/노드 id를 참조하고 있습니다 — "
                 + "대중교통 메뉴에서 확인·재작성이 필요할 수 있습니다.";
+    }
+
+    /**
+     * KTDB 재임포트 시 OSM에서 정류장/역을 새로 안 가져온 경우(자동생성 토글 꺼짐, OSM 재조회
+     * 실패, 또는 대형망 스트리밍 경로처럼 애초에 OSM 조회가 없는 경우) — 기존엔 검증만 하고
+     * 방치해 link_ref/lane_ref가 새 네트워크와 안 맞는 채로 남았다. 정류장/역 자체(id·이름·
+     * 부가정보)는 그대로 두고, 이미 저장된 좌표(center/exit.coord)만 OsmFacilityConverter의
+     * 스냅 로직으로 새 네트워크에 재매핑해 저장한다(OSM 노드 좌표 대신 저장된 좌표를 입력으로
+     * 재사용하는 것만 다르고 스냅 알고리즘은 동일).
+     *
+     * @param fac 이번 임포트에서 OSM으로 새로 가져온 결과 — null이거나 해당 교통수단이
+     *            비어있으면("자동생성 안 함") 그 교통수단만 재스냅 대상.
+     */
+    private void resnapExistingStationsIfNeeded(
+            String versionId, java.util.List<com.iitp.iitp_rest.model.network.link.LinkXml> links,
+            com.iitp.iitp_rest.service.network.OsmFacilityConverter.FacilityResult fac) {
+        boolean busFresh = fac != null && fac.busStations() != null && !fac.busStations().getBusStations().isEmpty();
+        boolean railFresh = fac != null && fac.railStations() != null && !fac.railStations().getRailStations().isEmpty();
+        if (busFresh && railFresh || links == null || links.isEmpty()) return;
+
+        facilityConverter.prepareLinkIndex(links);
+
+        if (!busFresh) {
+            try {
+                var existing = busStationService.getBusStationsByVersionId(versionId).getBusStations();
+                if (existing != null && !existing.isEmpty()) {
+                    int resnapped = 0, unsnapped = 0;
+                    for (var st : existing) {
+                        var r = facilityConverter.resnapByLocalCoord(st.getCenter());
+                        // 스냅 실패(50m 밖) 시 정류장 자체를 지우면 안 된다 — 이름/부가정보를 가진
+                        // 실제 레코드가 좌표 문제 하나로 통째로 사라지는 게 훨씬 나쁜 결과다.
+                        // 옛 link_ref를 그대로 두고 그대로 저장 — 여전히 낡았을 순 있지만
+                        // checkStaleRoutes/수동 확인으로 드러나는 편이, 조용히 삭제되는 것보다 안전하다.
+                        if (r == null) { unsnapped++; continue; }
+                        st.setLinkRef(r.linkId());
+                        st.setLaneRef((long) r.laneId());
+                        st.setOffset((double) r.offset());
+                        resnapped++;
+                    }
+                    if (resnapped > 0) {
+                        var req = new com.iitp.iitp_rest.model.publicTransit.bus.BusStationSaveRequest();
+                        req.setData(busStationService.toDataList(existing));
+                        req.setLogs(new com.iitp.iitp_rest.model.LogsData());
+                        busStationService.saveBusStationsByVersionId(req, versionId);
+                        log.info("[KTDB] 버스정류장 재스냅: {}개 갱신, {}개 스냅실패(기존 값 유지)", resnapped, unsnapped);
+                    } else if (unsnapped > 0) {
+                        log.info("[KTDB] 버스정류장 재스냅 전부 실패({}개, 좌표가 새 네트워크에서 50m 밖) — 기존 값 유지", unsnapped);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[KTDB] 버스정류장 재스냅 실패(무시): {}", e.getMessage());
+            }
+        }
+
+        if (!railFresh) {
+            try {
+                var existing = railStationService.getByVersionId(versionId).getData();
+                if (existing != null && !existing.isEmpty()) {
+                    int resnapped = 0, unsnapped = 0;
+                    for (var st : existing) {
+                        if (st.getExits() == null || st.getExits().isEmpty()) continue;
+                        for (var exit : st.getExits()) {
+                            var r = facilityConverter.resnapByLocalCoord(exit.getCoord());
+                            // 스냅 실패해도 exit을 지우지 않고 옛 linkRef를 그대로 둔다 — 버스
+                            // 정류장과 동일 원칙(조용한 삭제보다 낡은 채로 남는 게 안전).
+                            if (r == null) { unsnapped++; continue; }
+                            exit.setLinkRef((int) r.linkId());
+                            exit.setOffset((double) r.offset());
+                            resnapped++;
+                        }
+                    }
+                    if (resnapped > 0) {
+                        var req = new com.iitp.iitp_rest.model.publicTransit.rail.RailStationSaveRequest();
+                        req.setData(existing);
+                        req.setLogs(new com.iitp.iitp_rest.model.LogsData());
+                        railStationService.saveRailStationByVersionId(req, versionId);
+                        log.info("[KTDB] 철도역 출입구 재스냅: {}개 갱신, {}개 스냅실패(기존 값 유지)", resnapped, unsnapped);
+                    } else if (unsnapped > 0) {
+                        log.info("[KTDB] 철도역 출입구 재스냅 전부 실패({}개, 좌표가 새 네트워크에서 50m 밖) — 기존 값 유지", unsnapped);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[KTDB] 철도역 재스냅 실패(무시): {}", e.getMessage());
+            }
+        }
+    }
+
+    /**
+     * roadPTline*.xml의 기존 노선이 새 네트워크와 안 맞으면(link/node id가 재임포트로
+     * 낡아짐) — resnapExistingStationsIfNeeded로 이미 새 네트워크에 재스냅된 정류장들의
+     * linkRef를 waypoint 삼아 link/node seq를 자동으로 다시 만든다(정류장은 그대로 두고
+     * 경로만 재구성 — {@link com.iitp.iitp_rest.service.network.OsmFacilityConverter#remapBusRouteByStationAnchors}).
+     * 노선별로 독립 처리하므로 일부 노선이 재매핑 불가(위상이 크게 바뀜)여도 나머지는
+     * 정상 갱신된다 — 반드시 resnapExistingStationsIfNeeded 이후에 호출해야 정류장 linkRef가
+     * 최신 상태다. 정류장 정보가 아예 없는 버전은 조용히 건너뛴다(재매핑할 앵커가 없음).
+     *
+     * ⚠️ 이번 요청에서 OSM으로 노선을 새로 가져왔으면(busFacilityEnabled 켜짐, fac 이 신선함)
+     * 절대 호출하면 안 된다 — 프론트가 이 백그라운드 작업과 별개로 곧 fresh 데이터를
+     * injectAll+saveRoute로 저장할 예정인데, 그 사이 이 함수가 "옛(stale) 데이터 기준 재매핑
+     * 결과"로 SFTP를 먼저 덮어써버리면 타이밍에 따라 fresh 저장을 되돌리는 회귀가 될 수 있다
+     * — resnapExistingStationsIfNeeded와 동일한 fac 기준 게이팅을 호출부에서 먼저 적용한다.
+     */
+    private void remapStaleBusRoutes(String versionId, java.util.List<com.iitp.iitp_rest.model.network.link.LinkXml> links) {
+        if (links == null || links.isEmpty()) return;
+        java.util.Map<String, Long> stationLinkRefById;
+        try {
+            var stations = busStationService.getBusStationsByVersionId(versionId).getBusStations();
+            if (stations == null || stations.isEmpty()) return;
+            stationLinkRefById = new java.util.HashMap<>();
+            for (var s : stations) {
+                if (s.getId() != null && s.getLinkRef() != null) stationLinkRefById.put(s.getId(), s.getLinkRef());
+            }
+        } catch (Exception e) {
+            log.warn("[KTDB] 노선 재매핑용 정류장 조회 실패(무시): {}", e.getMessage());
+            return;
+        }
+        if (stationLinkRefById.isEmpty()) return;
+
+        facilityConverter.prepareLinkIndex(links);
+
+        remapRouteFile(versionId, "roadPTline.xml", BusPtLineController.LAYER_KEY_DEFAULT, stationLinkRefById,
+                busPtLineService::getDefault, busPtLineService::saveDefault);
+        remapRouteFile(versionId, "roadPTline-weekday.xml", BusPtLineController.LAYER_KEY_WEEKDAY, stationLinkRefById,
+                busPtLineService::getWeekday, busPtLineService::saveWeekday);
+        remapRouteFile(versionId, "roadPTline-weekend.xml", BusPtLineController.LAYER_KEY_WEEKEND, stationLinkRefById,
+                busPtLineService::getWeekend, busPtLineService::saveWeekend);
+    }
+
+    private interface RouteFetcher { com.iitp.iitp_rest.model.publicTransit.bus.BusPtLinesXml get(String versionId) throws java.io.IOException; }
+    private interface RouteSaver { void save(String versionId, com.iitp.iitp_rest.model.publicTransit.bus.BusPtLinesXml data) throws Exception; }
+
+    private void remapRouteFile(
+            String versionId, String fileName, String layerKey, java.util.Map<String, Long> stationLinkRefById,
+            RouteFetcher fetcher, RouteSaver saver) {
+        try {
+            if (!fileStorage.exists(versionId + "/" + fileName)) return;
+            var data = fetcher.get(versionId);
+            if (data.getLines() == null || data.getLines().isEmpty()) return;
+            int remapped = 0, failed = 0;
+            for (var line : data.getLines()) {
+                String stationSeqStr = line.getStation() != null ? line.getStation().getSeq() : null;
+                if (stationSeqStr == null || stationSeqStr.isBlank()) continue;
+                java.util.List<Long> anchors = new java.util.ArrayList<>();
+                for (String stId : stationSeqStr.trim().split("\\s+")) {
+                    Long ref = stationLinkRefById.get(stId);
+                    if (ref != null) anchors.add(ref);
+                }
+                var remap = facilityConverter.remapBusRouteByStationAnchors(anchors);
+                if (remap == null) { failed++; continue; }
+                if (line.getLink() == null) line.setLink(new com.iitp.iitp_rest.model.publicTransit.bus.BusPtLinesXml.SeqXml());
+                if (line.getNode() == null) line.setNode(new com.iitp.iitp_rest.model.publicTransit.bus.BusPtLinesXml.SeqXml());
+                line.getLink().setSeq(remap.linkSeq());
+                line.getNode().setSeq(remap.nodeSeq());
+                remapped++;
+            }
+            if (remapped > 0) {
+                saver.save(versionId, data);
+                // saver.save()는 SFTP/로컬 파일만 갱신한다 — GET /public-transit/line/bus/*는
+                // XmlLayerVersionService의 DB 캐시(getLatest)를 먼저 보므로, 이걸 지우지 않으면
+                // 파일은 최신인데 API는 계속 재매핑 전 옛 데이터를 돌려주는 불일치가 생긴다
+                // (network.xml 재임포트 시 xmlLayerVersionService.deleteVersion("network", ...)를
+                // 부르는 것과 동일한 이유 — 실측으로 발견).
+                xmlLayerVersionService.deleteVersion(layerKey, versionId);
+                log.info("[KTDB] {} 노선 재매핑: {}개 갱신, {}개 실패(수동 재작업 필요)", fileName, remapped, failed);
+            } else if (failed > 0) {
+                log.info("[KTDB] {} 노선 재매핑 시도했으나 전부 실패({}개) — 수동 재작업 필요", fileName, failed);
+            }
+        } catch (Exception e) {
+            log.warn("[KTDB] {} 노선 재매핑 실패(무시): {}", fileName, e.getMessage());
+        }
     }
 
     // ── 공통 변환 로직 ────────────────────────────────────────────────────────
@@ -312,6 +491,7 @@ public class KtdbImportController {
                             .filter(java.util.Objects::nonNull)
                             .map(String::valueOf)
                             .collect(java.util.stream.Collectors.toSet());
+                final com.iitp.iitp_rest.service.network.OsmFacilityConverter.FacilityResult finalFac = fac;
                 scaffoldInProgress.add(vid);
                 CompletableFuture.runAsync(() -> {
                     try {
@@ -319,6 +499,10 @@ public class KtdbImportController {
                                 finalTerminalCoords, finalNetworkXml, null, odParams);
                         try { networkTileService.ingest(vid, resp); }
                         catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
+                        resnapExistingStationsIfNeeded(vid, finalNetworkXml.getLinks(), finalFac);
+                        boolean busRoutesFresh = finalFac != null && finalFac.busRoutes() != null
+                                && !((List<?>) finalFac.busRoutes().getOrDefault("lines", List.of())).isEmpty();
+                        if (!busRoutesFresh) remapStaleBusRoutes(vid, finalNetworkXml.getLinks());
                         String warning = checkStaleRoutes(vid, allLinkIds, allNodeIds);
                         if (warning != null) scaffoldWarnings.put(vid, warning);
                     } finally {
@@ -440,6 +624,19 @@ public class KtdbImportController {
                         catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
                         // 2차: SFTP XML 기반 완전 재빌드 — 1차 실패와 무관하게 항상 시도 (내부 예외 처리)
                         networkTileService.rebuildFromXml(vid);
+                        // 대형망 스트리밍 경로는 OSM 시설물 조회 자체가 없어(streamConvert가
+                        // 도로 geometry만 다룸) 기존 정류장/역이 항상 재스냅 대상이다 — LinkResponse
+                        // (id/fromNode/toNode/shape만 필요)를 스냅용 최소 LinkXml로 변환.
+                        var linksForSnap = sr.links().stream().map(lr -> {
+                            var lx = new com.iitp.iitp_rest.model.network.link.LinkXml();
+                            lx.setId(lr.getId());
+                            lx.setFromNode(lr.getFromNode());
+                            lx.setToNode(lr.getToNode());
+                            lx.setShape(lr.getShape());
+                            return lx;
+                        }).toList();
+                        resnapExistingStationsIfNeeded(vid, linksForSnap, null);
+                        remapStaleBusRoutes(vid, linksForSnap);
                         String staleWarning = checkStaleRoutes(vid, allLinkIds, allNodeIds);
                         String warning = java.util.stream.Stream.of(signalGenWarning, staleWarning)
                                 .filter(java.util.Objects::nonNull)

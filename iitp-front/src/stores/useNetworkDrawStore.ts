@@ -34,6 +34,16 @@ interface NetworkDrawState {
     // 노드 선택 맥락 툴바의 "커넥션 편집" 버튼으로 진입할 때, connection effect가 마운트 시
     // 바로 이 노드의 phase='edit'로 점프하기 위해 읽는 값 — 소비 후 비운다.
     pendingConnNodeId: number | string | null;
+    // 선택 모드에서 Alt+빈 지형 클릭("도로는 안 그리고 노드만 놓고 싶다") — useNetworkDraw.ts의
+    // 전용 effect가 이 좌표에 고립 노드를 생성한다(자동 스냅 없음 — 어떤 도로에 연결할지는
+    // 노드를 놓은 뒤 "🔗 도로 연결"로 명시적으로 고른다). beginDrawAt과 동일한 "결정은 클릭
+    // 핸들러, 실행은 draw effect" 분업 — 소비 후 비운다.
+    pendingNodePlacement: { coord: Coordinates; screenPos: { x: number; y: number } } | null;
+    // "🔗 도로 연결" 버튼으로 진입 — 이 노드에 연결할 링크를 Shift+클릭/멀티셀렉트로 고르는 중.
+    // 링크 멀티셀렉트 자체는 기존 selectedLinkIds를 그대로 쓰고, 이 필드는 "지금 그 선택이
+    // 어느 노드에 연결될 것인지"만 기억한다(멀티셀렉트는 보통 단독 삭제·속성 변경용이라 대상
+    // 노드 개념이 없었음). ESC 또는 연결 생성 완료 시 비운다.
+    connectTargetNodeId: string | null;
     // 마지막으로 그린 구간의 끝점(체인 끝) — "그리기 중지" 후 화면 밖으로 팬했다가 다시
     // "그리기 시작"을 누르면 이 지점에서 자동으로 이어 그리기를 재개한다(타일 그리기 모드는
     // isActive 중 팬이 동결되므로, 넓은 지역을 이어 그릴 땐 중지→팬→재시작이 불가피한데
@@ -67,6 +77,12 @@ interface NetworkDrawState {
     activateAndReset: (startNodeId?: string) => void;
     /** 빈 지형 클릭 좌표에서 그리기 시작(재클릭 불필요) — activateAndReset의 좌표 버전. */
     beginDrawAt: (coord: Coordinates) => void;
+    /** Alt+빈 지형 클릭 — 도로를 그리지 않고 고립 노드만 배치(자동 스냅 없음). */
+    placeNodeAt: (coord: Coordinates, screenPos: { x: number; y: number }) => void;
+    clearPendingNodePlacement: () => void;
+    /** "🔗 도로 연결" 버튼 — 이 노드에 연결할 링크를 고르는 선택 모드로 진입. */
+    startConnectTarget: (nodeId: string) => void;
+    clearConnectTarget: () => void;
     /** 노드 선택 툴바의 "커넥션 편집" 버튼 — 그 노드로 바로 진입한 채 커넥션 편집 모드 시작. */
     activateConnectionAndReset: (nodeId: number | string) => void;
     clearPendingStart: () => void;
@@ -113,6 +129,8 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
     pendingStartNodeId: null,
     pendingStartCoord: null,
     pendingConnNodeId: null,
+    pendingNodePlacement: null,
+    connectTargetNodeId: null,
     chainEndpoint: null,
     selectedLinkId: null,
     selectedNodeId: null,
@@ -165,6 +183,16 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
         pendingStartCoord: coord,
         isBidirectional: false,
     })),
+    placeNodeAt: (coord, screenPos) => set({
+        pendingNodePlacement: { coord, screenPos },
+    }),
+    clearPendingNodePlacement: () => set({ pendingNodePlacement: null }),
+    startConnectTarget: (nodeId) => set({
+        connectTargetNodeId: nodeId,
+        selectedNodeId: null, selectedLinkId: null, selectedLaneId: null, selectedSegmentId: null,
+        selectedLinkIds: [], selectedNodeIds: [],
+    }),
+    clearConnectTarget: () => set({ connectTargetNodeId: null }),
     activateConnectionAndReset: (nodeId) => set({
         isConnectionActive: true,
         isActive: false,
@@ -230,5 +258,5 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
     setSelectedNodeIds: (ids) => set({ selectedNodeIds: ids, selectedLinkIds: [], selectedLinkId: null, selectedNodeId: null }),
     clearMultiSelection: () => set({ selectedLinkIds: [], selectedNodeIds: [] }),
     setLastDrawnPoint: (point) => set({ lastDrawnPoint: point }),
-    reset: () => set({ isActive: false, isConnectionActive: false, isSelectActive: false, placementMode: 'none', startNodeId: null, startNodeCoord: null, connSelectedNodeId: null, pendingStartCoord: null, pendingConnNodeId: null, pendingStartNodeId: null, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedSegmentId: null, selectedLinkIds: [], selectedNodeIds: [], chainEndpoint: null }),
+    reset: () => set({ isActive: false, isConnectionActive: false, isSelectActive: false, placementMode: 'none', startNodeId: null, startNodeCoord: null, connSelectedNodeId: null, pendingStartCoord: null, pendingConnNodeId: null, pendingStartNodeId: null, pendingNodePlacement: null, connectTargetNodeId: null, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedSegmentId: null, selectedLinkIds: [], selectedNodeIds: [], chainEndpoint: null }),
 }));

@@ -12,7 +12,14 @@ import { generateGuidWithParentGuid } from "@utils/guid";
 import { generateTemplate } from "@utils/schema";
 import { createEventHandlers } from "@handler/createEventHandlers";
 import { useNetworkStore } from "@stores/useNetworkStore";
-import { updateLinkInNetwork, reconcileSignalConnectionIds, applyNetworkUpdate } from "@hooks/useNetworkSelect";
+import {
+    updateLinkInNetwork, reconcileSignalConnectionIds, applyNetworkUpdate, markRemovedForTileMask,
+    batchDeleteOrMergeNodes, deleteLinkFromNetwork,
+    countSignalsForNodes, deleteSignalsForNodes,
+    countStationsForNodes, countStationsForLinks, deleteStationsForLinks, deletePavementMarkingsForLinks,
+    deletePavementMarkingsForShrunkLanes,
+    farNodeIdsForCascadeDelete,
+} from "@hooks/useNetworkSelect";
 import { GridToolbar } from "./GridToolbar";
 import { GridTable } from "./GridTable";
 
@@ -30,6 +37,14 @@ function guidBelongsToRows(rows: any[], targetGuid: string): boolean {
     return rows.some(
         (row) => targetGuid === row.__guid || targetGuid.startsWith(`${row.__guid}.`)
     );
+}
+
+// 삭제 전/후 네트워크를 비교해 실제로 사라진 링크 id를 뽑는다 — busStation/railStation은
+// linkRef로 특정 링크를 참조하는 별개 스토어라 링크가 없어져도 자동으로는 안 지워지므로
+// (NetworkEditToolbar.tsx의 removedLinkIds와 동일한 목적) deleteStationsForLinks에 넘긴다.
+function removedLinkIds(before: { links: { id: string | number }[] }, after: { links: { id: string | number }[] }): string[] {
+    const afterIds = new Set(after.links.map((l) => String(l.id)));
+    return before.links.filter((l) => !afterIds.has(String(l.id))).map((l) => String(l.id));
 }
 
 const DrilldownGrid = ({
@@ -156,10 +171,16 @@ const DrilldownGrid = ({
                     const updated = updateLinkInNetwork(cur, linkId, partial);
                     applyNetworkUpdate(updated);
                     const clearedCount = reconcileSignalConnectionIds(updated, [curLink.fromNode, curLink.toNode]);
-                    if (droppedConnCount > 0 || clearedCount > 0) {
+                    let removedMarkingCount = 0;
+                    if (newNumLane !== undefined && newNumLane < curLink.numLane) {
+                        const updatedLink = updated.links.find((l: any) => String(l.id) === String(linkId));
+                        const remainingLaneIds = new Set((updatedLink?.lanes ?? []).map((l: any) => l.id));
+                        removedMarkingCount = deletePavementMarkingsForShrunkLanes(linkId, remainingLaneIds);
+                    }
+                    if (droppedConnCount > 0 || clearedCount > 0 || removedMarkingCount > 0) {
                         setMessage({
                             type: "info",
-                            text: `차선 수 감소로 커넥션 ${droppedConnCount}개 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ""}`,
+                            text: `차선 수 감소로 커넥션 ${droppedConnCount}개 삭제됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ""}${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ""}`,
                         });
                     }
                     return;
@@ -241,6 +262,57 @@ const DrilldownGrid = ({
     // 된다. handleCellUpdate의 numLane 필드 편집 캐스케이드와 동일한 결과를 "행 삭제"
     // 경로에서도 보장하기 위해, 삭제 직후 부모 레코드(useNavigationStore의 parentRecord —
     // 지금 드릴다운한 프레임의 실제 부모 객체)를 기준으로 카운트를 재동기화한다.
+    // 그리드 최상위 레벨(nodes/links)에서 직접 삭제하면 지도 툴(NetworkEditToolbar.tsx)이
+    // 제공하는 캐스케이드(연결 Link/Signal/정류장 정리, 통과 노드 병합)가 전혀 없이 참조
+    // 무결성이 깨진 채로 저장되는 문제가 있었다 — 지도 툴이 쓰는 것과 동일한
+    // useNetworkSelect.ts의 순수 함수들을 그대로 재사용해 같은 캐스케이드를 보장한다.
+    const handleRootNetworkDelete = useCallback((levelName: "nodes" | "links", rows: any[], guids: (string | React.Key)[]) => {
+        const net = useNetworkStore.getState().currentJsonData;
+        const ids = guids
+            .map((g) => rows.find((r: any) => r.__guid === g)?.id)
+            .filter((id): id is number | string => id != null);
+        if (!net || ids.length === 0) {
+            clearSelected();
+            return;
+        }
+
+        let extra = "";
+        if (levelName === "nodes") {
+            const signalCount = countSignalsForNodes(ids);
+            const farIds = farNodeIdsForCascadeDelete(net, ids);
+            const next = batchDeleteOrMergeNodes(net, ids);
+            applyNetworkUpdate(next);
+            const clearedCount = reconcileSignalConnectionIds(next, farIds);
+            deleteSignalsForNodes(ids);
+            const removedStationCount = deleteStationsForLinks(removedLinkIds(net, next));
+            const removedMarkingCount = deletePavementMarkingsForLinks(removedLinkIds(net, next));
+            markRemovedForTileMask(net, next);
+            extra = `${signalCount > 0 ? `, 신호 ${signalCount}개 삭제` : ""}`
+                + `${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ""}`
+                + `${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ""}`
+                + `${clearedCount > 0 ? `, 인접 신호 ${clearedCount}개 커넥션 참조 초기화` : ""}`;
+        } else {
+            const affectedNodeIds = new Set<string>();
+            for (const linkId of ids) {
+                const link = net.links.find((l: any) => String(l.id) === String(linkId));
+                if (link) { affectedNodeIds.add(String(link.fromNode)); affectedNodeIds.add(String(link.toNode)); }
+            }
+            let next = net;
+            for (const linkId of ids) next = deleteLinkFromNetwork(next, linkId);
+            applyNetworkUpdate(next);
+            const clearedCount = reconcileSignalConnectionIds(next, [...affectedNodeIds]);
+            const removedStationCount = deleteStationsForLinks(removedLinkIds(net, next));
+            const removedMarkingCount = deletePavementMarkingsForLinks(removedLinkIds(net, next));
+            markRemovedForTileMask(net, next);
+            extra = `${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ""}`
+                + `${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ""}`
+                + `${clearedCount > 0 ? `, 신호 ${clearedCount}개의 커넥션 참조 초기화` : ""}`;
+        }
+
+        setMessage({ type: "info", text: `${ids.length}개 항목이 삭제되었습니다.${extra}` });
+        clearSelected();
+    }, [clearSelected, setMessage]);
+
     const handleDelete = useCallback(() => {
         const currentSelectedGuid = useSelectionStore.getState().selectedGuid;
         if (!currentSelectedGuid || currentSelectedGuid.length === 0) {
@@ -252,6 +324,11 @@ const DrilldownGrid = ({
         const levelName = currentFrame?.levelName;
         const parentRecord = currentFrame?.parentRecord;
         const isNetworkLayer = layerName === "network";
+
+        if (isNetworkLayer && !parentRecord && (levelName === "nodes" || levelName === "links")) {
+            handleRootNetworkDelete(levelName, currentFrame?.rows ?? [], currentSelectedGuid);
+            return;
+        }
 
         dataStore.getState().removeRecordsByGuid(currentSelectedGuid, historyStore);
 
@@ -285,7 +362,9 @@ const DrilldownGrid = ({
                 const afterNet = useNetworkStore.getState().currentJsonData;
                 const clearedCount = afterNet
                     ? reconcileSignalConnectionIds(afterNet, [curLink.fromNode, curLink.toNode]) : 0;
+                const removedMarkingCount = deletePavementMarkingsForShrunkLanes(parentRecord.id, remainingLaneIds);
                 extra = `${danglingConnGuids.length > 0 ? `, 커넥션 ${danglingConnGuids.length}개 삭제` : ""}`
+                    + `${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ""}`
                     + `${clearedCount > 0 ? `, 신호 ${clearedCount}개의 커넥션 참조 초기화` : ""}`;
             }
         } else if (isNetworkLayer && levelName === "connections" && parentRecord?.id != null) {
@@ -304,25 +383,42 @@ const DrilldownGrid = ({
                 extra = clearedCount > 0 ? `, 신호 ${clearedCount}개의 커넥션 참조 초기화` : "";
             }
         } else if (isNetworkLayer && levelName === "ports" && parentRecord?.id != null) {
-            // 포트는 링크와 1:1로 대응 — 포트만 지우고 링크는 안 지우면 그 링크가 이
-            // 노드를 여전히 가리키는 구조적으로 잘못된 상태가 된다. 여기서 자동으로
-            // 링크까지 지우는 건 과한 개입이라 카운트만 맞추고 사용자에게 알린다.
-            const cur = useNetworkStore.getState().currentJsonData;
-            const curNode = cur?.nodes?.find((n: any) => String(n.id) === String(parentRecord.id));
-            if (cur && curNode) {
-                const actualNumPort = curNode.ports?.length ?? 0;
-                if (actualNumPort !== curNode.numPort) {
-                    useNetworkStore.getState().updateCurrentJsonData(
-                        { __guid: curNode.__guid, numPort: actualNumPort } as any, historyStore,
-                    );
+            // 포트는 링크가 이 노드에 연결된다는 사실 자체를 나타내는 파생 레코드라
+            // 포트만 지우고 링크는 남기면 그 링크가 존재하지 않는 연결을 계속 참조하는
+            // 구조적으로 잘못된 상태가 된다 — 지도 툴의 링크 삭제와 동일하게, 포트가
+            // 가리키던 링크를 통째로 deleteLinkFromNetwork로 cascade 삭제한다
+            // (반대편 노드의 ports/connections 정리까지 포함).
+            const preRows = currentFrame?.rows ?? [];
+            const deletedLinkIds = [...new Set(
+                currentSelectedGuid
+                    .map((g) => preRows.find((r: any) => r.__guid === g)?.linkId)
+                    .filter((id: any) => id != null)
+                    .map((id: any) => String(id))
+            )];
+            const beforeNet = useNetworkStore.getState().currentJsonData;
+            if (beforeNet && deletedLinkIds.length > 0) {
+                let next = beforeNet;
+                const affectedNodeIds = new Set<string>();
+                for (const linkId of deletedLinkIds) {
+                    const link = next.links.find((l: any) => String(l.id) === linkId);
+                    if (link) { affectedNodeIds.add(String(link.fromNode)); affectedNodeIds.add(String(link.toNode)); }
+                    next = deleteLinkFromNetwork(next, linkId);
                 }
-                extra = " ⚠ 포트만 삭제되었습니다 — 해당 링크는 이 노드를 계속 참조하니 링크도 함께 정리하세요.";
+                applyNetworkUpdate(next);
+                const clearedCount = reconcileSignalConnectionIds(next, [...affectedNodeIds]);
+                const removedStationCount = deleteStationsForLinks(removedLinkIds(beforeNet, next));
+                const removedMarkingCount = deletePavementMarkingsForLinks(removedLinkIds(beforeNet, next));
+                markRemovedForTileMask(beforeNet, next);
+                extra = ` — 참조하던 링크 ${deletedLinkIds.length}개도 함께 삭제됨`
+                    + `${removedStationCount > 0 ? `, 정류장 ${removedStationCount}개 삭제` : ""}`
+                    + `${removedMarkingCount > 0 ? `, 노면표시 ${removedMarkingCount}개 삭제` : ""}`
+                    + `${clearedCount > 0 ? `, 신호 ${clearedCount}개의 커넥션 참조 초기화` : ""}`;
             }
         }
 
         setMessage({ type: "info", text: `${currentSelectedGuid.length}개 항목이 삭제되었습니다.${extra}` });
         clearSelected();
-    }, [dataStore, historyStore, clearSelected, setMessage, layerName]);
+    }, [dataStore, historyStore, clearSelected, setMessage, layerName, handleRootNetworkDelete]);
 
     const handleSave = useCallback(() => {
         dataStore.getState().save?.();

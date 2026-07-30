@@ -887,7 +887,12 @@ public class KtdbNetworkConverter {
                     // NextSim 이 이런 축퇴 지오메트리 근처에서 불안정하게 동작하는 경향이 관측되어
                     // (out-link 진행 방향으로 connLen 만큼 밀어낸) 실제 길이를 가진 shape 로 대체.
                     double[] shapeTo = to;
-                    if (rawLen < 1e-6) {
+                    // ⚠️ 실측 크래시: shape는 fmt5(소수점 5자리 반올림)로 문자열화되는데, 이
+                    // 축퇴 판정 임계값(1e-6)이 그보다 더 미세해서 rawLen이 1e-6~5e-6 사이면
+                    // "축퇴 아님"으로 통과하고도 반올림하면 좌표 문자열이 똑같아져 결과적으로
+                    // 시작=끝점인 축퇴 shape가 만들어졌다(scenario2_1 실측, node 10000246/10000522).
+                    // fmt5 반올림 단위(5e-6)보다 확실히 큰 임계값(1e-4)으로 교체.
+                    if (rawLen < 1e-4) {
                         double[] dir = departureUnit(outCoords);
                         shapeTo = new double[]{from[0] + dir[0] * connLen, from[1] + dir[1] * connLen};
                     }

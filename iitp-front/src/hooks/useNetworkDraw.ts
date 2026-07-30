@@ -14,11 +14,12 @@ import { useNetworkUndoStore } from '@stores/useNetworkUndoStore';
 import { useNodeContextMenuStore } from '@stores/useNodeContextMenuStore';
 import { useEditGuideStore } from '@stores/useEditGuideStore';
 import { useNetworkEditStore } from '@stores/useNetworkEditStore';
-import { markRemovedForTileMask, reconcileSignalConnectionIds } from '@hooks/useNetworkSelect';
+import { applyNetworkUpdate, markRemovedForTileMask, mergeNodesInNetwork, projectOnSegments, reconcileSignalConnectionIds } from '@hooks/useNetworkSelect';
 import { useOpenLayersStore } from '@stores/useOpenLayersStore';
 import { useCesiumStore } from '@stores/useCesiumStore';
 import { useMapStore } from '@stores/useMapStore';
 import { useMessageStore } from '@stores/useMessageStore';
+import { useNetworkToolbarStore } from '@stores/useNetworkToolbarStore';
 import { generateGUID, assignPropertyToResponseData } from '@utils/guid';
 import { normalizeTurning } from '@utils/turning';
 import { Network, Node, Link, Lane, Cell, Segment, Port, Connection, Coordinates } from '@type/Network';
@@ -405,12 +406,24 @@ function mergeNodes(
 }
 
 // ── 링크 분할 (T/Y 교차로 생성) ─────────────────────────────────
-/** 링크를 지정 좌표에서 분할 — 새 노드 + 통과 커넥션 자동 생성, 양끝 노드 포트/커넥션 재연결 */
+/**
+ * 링크를 지정 좌표에서 분할 — 새 노드 + 통과 커넥션 자동 생성, 양끝 노드 포트/커넥션 재연결.
+ *
+ * @param segIdx 분할 지점이 원래 링크의 몇 번째 세그먼트(coordinates[segIdx]~[segIdx+1]) 위에
+ *   있는지(예: useNetworkSelect.ts의 projectOnSegments가 반환하는 segIdx). 주어지면 분할
+ *   지점 앞/뒤의 원래 꺾인 정점을 그대로 보존한다(곡선 도로가 3점 이상이면 중요 — 안 그러면
+ *   fromCoord/toCoord만 남기고 중간 정점이 통째로 사라져 직선으로 뭉개진다, 즉 실제로는
+ *   존재하는 굽은 구간을 건너뛰는 엉뚱한 직선이 그려짐). 생략하면(기존 호출부 호환) 예전과
+ *   동일하게 양끝 2점만으로 처리 — 클릭 시점에 세그먼트 인덱스를 모르는 호출부를 위한 폴백.
+ *   ⚠️ 2026-07-29 실사용 피드백("연결된 링크 시작 위치가 노드와 무관한 엉뚱한 지점") 원인 —
+ *   connectNodeToLinks가 도입되며 곡선 링크 중간 지점에서 분할하는 경우가 처음 생겨 드러남.
+ */
 export function splitLinkInNetwork(
     network: Network,
     link: Link,
     splitCoord: Coordinates,
     ts: number,
+    segIdx?: number,
 ): { updatedNetwork: Network; newNodeId: number | string } {
     const l1Id = ts + 10;
     const l2Id = ts + 11;
@@ -419,11 +432,14 @@ export function splitLinkInNetwork(
     const fromCoord = link.coordinates[0]!;
     const toCoord   = link.coordinates[link.coordinates.length - 1]!;
 
+    const coords1 = segIdx != null ? [...link.coordinates.slice(0, segIdx + 1), splitCoord] : [fromCoord, splitCoord];
+    const coords2 = segIdx != null ? [splitCoord, ...link.coordinates.slice(segIdx + 1)] : [splitCoord, toCoord];
+
     // L1: 기존 fromNode → 새 노드 M
-    const linkL1 = makeLink(l1Id, link.fromNode, mId, fromCoord, splitCoord,
+    const linkL1 = makeLinkFromCoords(l1Id, link.fromNode, mId, coords1,
         link.numLane, link.width, link.maxSpd);
     // L2: 새 노드 M → 기존 toNode
-    const linkL2 = makeLink(l2Id, mId, link.toNode, splitCoord, toCoord,
+    const linkL2 = makeLinkFromCoords(l2Id, mId, link.toNode, coords2,
         link.numLane, link.width, link.maxSpd);
 
     // 노드 M: L1 in-port, L2 out-port, 직진 커넥션
@@ -464,6 +480,61 @@ export function splitLinkInNetwork(
         updatedNetwork: { ...network, nodes: updatedNodes, links: updatedLinks },
         newNodeId: mId,
     };
+}
+
+/** 포트·커넥션 없는 고립 노드 하나를 추가한다 — Alt+빈 지형 클릭(useNetworkSelect.ts
+ *  placeNodeAt)으로 "도로는 안 그리고 노드만" 놓을 때 쓴다. 어떤 도로에 연결할지는 자동
+ *  추측하지 않고, 이후 사용자가 노드 컨텍스트 툴바의 "🔗 링크 연결"로 명시적으로 고른다
+ *  (connectNodeToLinks 참고). 그때까지는 나중에 도로 그리기로 수동 연결하거나 "커넥션 편집"
+ *  으로 다룰 수 있게 노드만 우선 놓아둔 상태다. */
+export function createStandaloneNodeInNetwork(network: Network, coord: Coordinates, id: number | string): Network {
+    return { ...network, nodes: [...network.nodes, makeNode(id, coord, [])] };
+}
+
+/**
+ * 노드 하나를 사용자가 명시적으로 고른 링크들에 연결한다 — NetworkEditToolbar의
+ * "🔗 링크 연결" 흐름(connectTargetNodeId + Shift+클릭 멀티셀렉트) 전용. 자동으로 "가장
+ * 가까운 도로"를 추측해 스냅하던 이전 방식은 실사용 피드백으로 폐기 — 사용자가 노드/링크를
+ * 선택하는 모드로 직접 고른 것만 연결한다.
+ *
+ * 선택된 링크마다: 그 노드 좌표에 가장 가까운 지점에서 링크를 분할(splitLinkInNetwork)한 뒤,
+ * 새로 생긴 분할 노드를 대상 노드(targetNodeId)에 병합(mergeNodesInNetwork)한다 — 이렇게
+ * 하면 여러 링크를 골라도 전부 같은 하나의 노드로 모이고(다중 접근로 교차로), 대상 노드
+ * 자체의 좌표는 그대로 유지된다(mergeNodesInNetwork는 keep 쪽 좌표를 보존하고 링크
+ * 끝점만 그 위치로 당겨 붙인다). 마지막에 regenerateNodeConnections로 새로 모인
+ * in/out 포트 조합 전체에 대해 S/L/R 커넥션을 다시 만든다.
+ */
+export function connectNodeToLinks(
+    network: Network,
+    targetNodeId: number | string,
+    linkIds: (number | string)[],
+    tsBase: number,
+): Network {
+    let net = network;
+    let ts = tsBase;
+    for (const linkId of linkIds) {
+        const link = net.links.find(l => String(l.id) === String(linkId));
+        const targetNode = net.nodes.find(n => String(n.id) === String(targetNodeId));
+        if (!link || !targetNode) continue;
+
+        const targetOl = fromLonLat([targetNode.coordinates.lng, targetNode.coordinates.lat]);
+        const proj = projectOnSegments(link.coordinates, targetOl, Infinity);
+        const splitCoord = proj ? (() => {
+            const ll = toLonLat(proj.point);
+            return { lng: ll[0]!, lat: ll[1]! };
+        })() : targetNode.coordinates;
+
+        // segIdx를 함께 넘겨 분할 지점 앞/뒤의 원래 굴곡 정점을 보존한다 — 안 그러면(곡선
+        // 링크의 중간 세그먼트에서 분할될 때) fromCoord/toCoord 2점만 남아 중간 굴곡이
+        // 사라진 직선이 생긴다(2026-07-29 실사용 피드백: "연결된 링크가 노드와 무관한
+        // 엉뚱한 지점에서 시작함"의 원인 — splitLinkInNetwork 주석 참고).
+        // splitLinkInNetwork는 ts+10/+11/+12를 새 id로 쓰므로, 반복 호출 시 ts를 100씩
+        // 띄워야 이전 반복에서 만든 id와 겹치지 않는다(+1씩만 늘리면 즉시 충돌).
+        const { updatedNetwork, newNodeId: splitNodeId } = splitLinkInNetwork(net, link, splitCoord, ts, proj?.segIdx);
+        ts += 100;
+        net = mergeNodesInNetwork(updatedNetwork, targetNodeId, splitNodeId);
+    }
+    return regenerateNodeConnections(net, targetNodeId);
 }
 
 function makePort(linkId: number | string, type: 'in' | 'out'): Port {
@@ -648,6 +719,59 @@ function makeLink(
         qmax: 1800, maxVeh: 60, simType: 0, type: 'car',
         layer: '0', stopLine: 0, shape: '',
         coordinates: [from, to], lanes,
+    } as Link;
+}
+
+/** makeLink의 다중 정점 버전 — splitLinkInNetwork가 곡선 링크(3점 이상)를 분할할 때, 분할
+ *  지점 앞/뒤의 원래 꺾인 정점을 그대로 살려서 새 링크 2개를 만드는 데 쓴다(makeLink처럼
+ *  양끝 2점만 남기면 중간 굴곡이 사라져 실제 도로와 무관한 직선이 생긴다). 렌더러
+ *  (NetworkFeatureLayer.buildLinkFeatures)는 link.coordinates 전체를 따라 그리므로 이 배열이
+ *  실제 시각적 모양을 결정한다 — lane.coordinates는 기존 관례대로 양끝 2점만 유지(렌더링에는
+ *  안 쓰이고 mergeNodesInNetwork의 shiftEndpoint 등 형상 이동 계산에만 쓰임). */
+function makeLinkFromCoords(
+    id: number | string,
+    fromNodeId: number | string,
+    toNodeId: number | string,
+    coords: Coordinates[],
+    laneCount: number,
+    linkWidth: number,
+    maxSpd: number,
+): Link {
+    let length = 0;
+    for (let i = 0; i < coords.length - 1; i++) {
+        length += getDistance([coords[i]!.lng, coords[i]!.lat], [coords[i + 1]!.lng, coords[i + 1]!.lat]);
+    }
+    const numCells = Math.max(1, Math.ceil(length / DEFAULT_CELL_LENGTH));
+    const from = coords[0]!;
+    const to   = coords[coords.length - 1]!;
+
+    const lanes: Lane[] = Array.from({ length: laneCount }, (_, i) => {
+        const cells: Cell[] = [];
+        const segments: Segment[] = [{
+            featureType: 'segments',
+            id: 0,
+            block: false,
+            initPoint: 0,
+            endPoint: length,
+        } as unknown as Segment];
+        return {
+            featureType: 'lanes' as any,
+            id: i, linkRef: id as number,
+            leftLaneId: i > 0 ? i - 1 : -1,
+            rightLaneId: i < laneCount - 1 ? i + 1 : -1,
+            numCell: numCells, rightLC: true, leftLC: true, laneAccessType: null,
+            shape: '', coordinates: [from, to], segments, cells,
+            laneSource: null as any, laneTarget: null as any,
+        };
+    });
+    return {
+        featureType: 'links',
+        id, fromNode: fromNodeId, toNode: toNodeId,
+        numLane: laneCount, length, width: linkWidth,
+        maxSpd, minSpd: 0, ffSpd: maxSpd, waveSpd: 20,
+        qmax: 1800, maxVeh: 60, simType: 0, type: 'car',
+        layer: '0', stopLine: 0, shape: '',
+        coordinates: coords, lanes,
     } as Link;
 }
 
@@ -959,6 +1083,29 @@ export const useNetworkDraw = () => {
         viewport.addEventListener('contextmenu', onContextMenuAlways);
         return () => viewport.removeEventListener('contextmenu', onContextMenuAlways);
     }, [olMap]);
+
+    // ── 항상 활성: Alt+빈 지형 클릭으로 놓은 고립 노드 실제 배치 ─────────
+    // useNetworkSelect.ts의 클릭 핸들러가 좌표를 pendingNodePlacement에 담아둔다 — 여기서는
+    // 그 결정을 실행만 한다(beginDrawAt/pendingStartCoord와 동일한 "판단은 select, 실행은
+    // draw" 분업). isActive 여부와 무관하게 항상 구독 — 이 배치 자체는 그리기 모드로 전환하지
+    // 않는다(선택 모드 유지). 어떤 도로에 연결할지는 자동 추측하지 않음 — 노드 컨텍스트
+    // 툴바의 "🔗 링크 연결"로 나중에 명시적으로 고른다(connectNodeToLinks).
+    const pendingNodePlacement = useNetworkDrawStore((s) => s.pendingNodePlacement);
+    useEffect(() => {
+        if (!pendingNodePlacement) return;
+        const { coord, screenPos } = pendingNodePlacement;
+        useNetworkDrawStore.getState().clearPendingNodePlacement();
+
+        const network = useNetworkStore.getState().currentJsonData;
+        if (!network) return;
+        const newNodeId = Date.now();
+
+        const updatedNetwork = createStandaloneNodeInNetwork(network, coord, newNodeId);
+        applyNetworkUpdate(updatedNetwork);
+        useNetworkDrawStore.getState().setSelectedNode(newNodeId);
+        useNetworkToolbarStore.getState().show(screenPos, 'node', { nodeId: String(newNodeId) });
+        useMessageStore.getState().setMessage({ type: 'info', text: '노드를 추가했습니다 — 도로에 연결하려면 "🔗 링크 연결"을 누르세요' });
+    }, [pendingNodePlacement]);
 
     // ── Cesium 우클릭 → 노드 컨텍스트 메뉴 (2D 전용 모드에선 비활성) ────────────
     useEffect(() => {

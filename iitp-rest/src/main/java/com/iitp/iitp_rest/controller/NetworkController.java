@@ -86,6 +86,8 @@ public class NetworkController {
     private final VehicleRouteRepository vehicleRouteRepository;
     private final VehicleDataReader vehicleDataReader;
     private final com.iitp.iitp_rest.service.network.OsmTrafficSignalRepository osmTrafficSignalRepository;
+    private final com.iitp.iitp_rest.service.network.PublicTrafficLightRepository publicTrafficLightRepository;
+    private final com.iitp.iitp_rest.service.network.CrossRoadInfoRepository crossRoadInfoRepository;
 
     /** DB 우선, 없으면 XML fallback → NetworkResponse 반환 */
     @GetMapping("/{versionId}")
@@ -182,6 +184,71 @@ public class NetworkController {
             return ResponseEntity.badRequest().build();
         } catch (Exception e) {
             log.error("[NetworkController] OSM 신호등 조회 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * 공공데이터포털(경찰청) 전국 교통신호기표준데이터 — /osm-traffic-signals와 동일 규약,
+     * 더 신뢰도 높은 출처(OSM 태깅 공백 문제 실측 확인 후 도입, 2026-07-29).
+     *
+     * @param bbox "west,south,east,north" (WGS84 경위도)
+     */
+    @GetMapping("/public-traffic-lights")
+    public ResponseEntity<List<Map<String, Object>>> getPublicTrafficLights(@RequestParam String bbox) {
+        try {
+            String[] p = bbox.split(",");
+            if (p.length != 4) return ResponseEntity.badRequest().build();
+            double west  = Double.parseDouble(p[0].trim());
+            double south = Double.parseDouble(p[1].trim());
+            double east  = Double.parseDouble(p[2].trim());
+            double north = Double.parseDouble(p[3].trim());
+
+            if (!publicTrafficLightRepository.hasData()) return ResponseEntity.ok(List.of());
+
+            List<Map<String, Object>> result = publicTrafficLightRepository.findInBbox(south, west, north, east)
+                    .stream()
+                    .map(s -> Map.<String, Object>of("id", s.id(), "lat", s.lat(), "lon", s.lon()))
+                    .toList();
+            return ResponseEntity.ok(result);
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().build();
+        } catch (Exception e) {
+            log.error("[NetworkController] 공공 신호기 조회 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * 공공데이터포털 교차로정보서비스(CrossRoadInfoService) — 서울 전역 약 400건, 좌표 정밀도는
+     * 최고 수준(실측: 강남역사거리 등 오차 0m)이나 커버리지가 주간선도로급으로 좁다(실측: 3차선
+     * 이상/50km 이상 도로 교차로 104개 중 3~7개만 매칭) — 게이팅(생성 차단)에는 부적합, "여기는
+     * 확실히 신호교차로다"라는 고신뢰 참고/시각화 정보로만 노출한다.
+     *
+     * @param bbox "west,south,east,north" (WGS84 경위도)
+     */
+    @GetMapping("/crossroad-info")
+    public ResponseEntity<List<Map<String, Object>>> getCrossRoadInfo(@RequestParam String bbox) {
+        try {
+            String[] p = bbox.split(",");
+            if (p.length != 4) return ResponseEntity.badRequest().build();
+            double west  = Double.parseDouble(p[0].trim());
+            double south = Double.parseDouble(p[1].trim());
+            double east  = Double.parseDouble(p[2].trim());
+            double north = Double.parseDouble(p[3].trim());
+
+            if (!crossRoadInfoRepository.hasData()) return ResponseEntity.ok(List.of());
+
+            List<Map<String, Object>> result = crossRoadInfoRepository.findInBbox(south, west, north, east)
+                    .stream()
+                    .map(c -> Map.<String, Object>of("id", c.id(), "name", c.name() == null ? "" : c.name(),
+                            "lat", c.lat(), "lon", c.lon()))
+                    .toList();
+            return ResponseEntity.ok(result);
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().build();
+        } catch (Exception e) {
+            log.error("[NetworkController] 교차로정보서비스 조회 오류", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }

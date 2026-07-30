@@ -614,7 +614,12 @@ public class KtdbStreamingConverter {
                             sb.append(' ').append(fmt5(to[0])).append(',').append(fmt5(to[1]));
                         }
                         double connLenFinal = Math.max(1.0, cLen);
-                        if (cLen < 1e-6) {
+                        // ⚠️ 실측 크래시: shape는 fmt5(소수점 5자리 반올림)로 문자열화되는데, 이
+                        // 축퇴 판정 임계값(1e-6)이 그보다 더 미세해서 cLen이 1e-6~5e-6 사이면
+                        // "축퇴 아님"으로 통과하고도 반올림하면 좌표 문자열이 똑같아져 결과적으로
+                        // 시작=끝점인 축퇴 shape가 만들어졌다(scenario2_1 실측 — 일반 변환기
+                        // KtdbNetworkConverter.buildPassthroughConnections와 동일 원인·동일 수정).
+                        if (cLen < 1e-4) {
                             // from/via/to 가 전부 사실상 같은 지점 — shape 가 점 1개로 뭉개지면
                             // length=1.0 과 불일치하는 축퇴 지오메트리가 된다(일반 변환기의
                             // buildConnectionsFromInternalLinks 와 동일 문제). out-link 진행 방향으로

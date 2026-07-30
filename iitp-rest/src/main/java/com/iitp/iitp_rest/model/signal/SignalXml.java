@@ -65,5 +65,9 @@ public class SignalXml {
         private String duration;
         @XmlAttribute
         private String turnList;
+        @XmlAttribute(name = "minGreenTime")
+        private String minGreenTime;
+        @XmlAttribute(name = "maxGreenTime")
+        private String maxGreenTime;
     }
 }

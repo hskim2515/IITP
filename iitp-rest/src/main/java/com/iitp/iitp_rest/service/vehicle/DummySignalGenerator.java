@@ -4,9 +4,8 @@ import com.iitp.iitp_rest.model.network.NetworkXml;
 import com.iitp.iitp_rest.model.network.connection.ConnectionXml;
 import com.iitp.iitp_rest.model.network.connection.Turning;
 import com.iitp.iitp_rest.model.network.link.LinkXml;
+import com.iitp.iitp_rest.model.network.node.NodeType;
 import com.iitp.iitp_rest.model.network.node.NodeXml;
-import com.iitp.iitp_rest.service.network.OsmTrafficSignalMatcher;
-import com.iitp.iitp_rest.service.network.OsmTrafficSignalRepository;
 import jakarta.xml.bind.JAXBContext;
 import jakarta.xml.bind.Unmarshaller;
 import lombok.RequiredArgsConstructor;
@@ -31,7 +30,16 @@ import java.util.regex.Pattern;
  * 네트워크 XML의 교차로 구조를 분석해 더미 신호 컨텍스트를 생성한다.
  *
  * <ul>
- *   <li>접근 방향(fromLink)이 2개 이상인 노드만 신호 노드로 처리</li>
+ *   <li>접근 방향(fromLink)이 2개 이상인 노드만 신호 후보로 처리</li>
+ *   <li>후보 중에서도 (a) node type이 Merging/Diverging(램프 합류·분기부)이거나
+ *       (b) 접근로가 정확히 2개이고 전부 직진(S)이며 서로 거의 마주보는(≈180도, 곡선
+ *       도로 등에서 생기는 KTDB 합성 경유점) 경우는 실제 회전 충돌이 없는 통과 노드로
+ *       보고 제외 — 자세한 배경은 아래 isRampNode/isPureThroughPassNode 주석 참고.
+ *       ⚠️ 2026-07-29: NCP Static Map/네이버 위성 배경/로드뷰 세 경로 모두 실측 검토했으나
+ *       (1) Static Map REST는 벡터/위성 둘 다 도로면 텍스처 자체를 렌더링하지 않고,
+ *       (2) 이 앱에 이미 붙어있는 네이버 위성 배경(라이브 타일)도 최대 줌에서 해상도 부족으로
+ *       줄무늬 식별 불가, (3) 로드뷰는 애초에 각도/가림 문제로 보류 — 이미지 기반 횡단보도
+ *       검증은 전부 기각하고 토폴로지 판정만 쓴다.</li>
  *   <li>우회전(R)은 RTOR(상시허용) → 언제나 통과</li>
  *   <li>직진/좌회전은 접근로의 실제 좌표(node의 center, link의 from/to_node)로 방위각을
  *       계산해, 서로 마주보는(≈180도) 접근로끼리 묶어 동시 녹색을 주는 표준 2페이즈로
@@ -46,13 +54,16 @@ public class DummySignalGenerator {
 
     private static final Logger log = LoggerFactory.getLogger(DummySignalGenerator.class);
 
-    // 실측(부천 참조 데이터): 커넥션이 있는 노드 104개 중 실제 신호가 있는 노드는 18개뿐 —
-    // 나머지 86개는 무신호 우선순위 교차로다("접근로 2개 이상"이라는 조건만으로는 신호
-    // 필요 여부를 못 가른다). OSM의 실제 highway=traffic_signals 태그로 "여기 진짜 신호등이
-    // 있다"를 확인해, 그 위치 근처에서만 신호를 생성하도록 게이팅한다. 데이터가 아직
-    // 임포트 안 됐으면(hasData()==false) 이 게이트를 건너뛰고 기존 동작(접근로 2개 이상이면
-    // 생성) 그대로 — 회귀 방지.
-    private final OsmTrafficSignalRepository osmTrafficSignalRepository;
+    // ⚠️ 실측(부천 참조데이터: 커넥션노드 104개 중 신호 18개)를 근거로 한때 OSM
+    // highway=traffic_signals 근처(40m)에서만 신호를 생성하는 하드 게이트를 뒀었으나,
+    // 2026-07-29 강남 지역 실측에서 OSM 신호등 태깅 자체가 성긴 지역(유명 교차로도 300~900m
+    // 이내에 OSM 신호 태그가 없는 경우 다수, 좌표/임포트 완전성은 랜드마크 대조·Overpass
+    // 실시간 비교로 검증 확인)에서는 이 게이트가 대량 과소생성을 유발함을 확인해 제거했다.
+    // 외부 데이터(OSM/공공 교통신호기/교차로정보서비스 전부 검토·기각 — 지역별 커버리지
+    // 편차가 커서 게이팅 기준으로 못 씀)로 차단하는 대신, 우리 스스로 갖고 있는 토폴로지
+    // 정보(접근로 수·node type·회전 종류·방위각)만으로 판정을 더 정교하게 다듬는 방향으로
+    // 전환 — "접근로 2개 이상"(approachMap.size()>1) 기본 조건에 isRampNode/
+    // isPureThroughPassNode 두 제외 조건을 추가했다(각 메서드 주석 참고).
 
     private static final int CYCLE         = 120; // 기본 사이클 (초) — generate()(차량 CZML용)가 사용
     private static final int YELLOW        = 3;   // 황색 신호 (초)
@@ -92,7 +103,6 @@ public class DummySignalGenerator {
         }
 
         Geometry geo = Geometry.fromNetwork(network);
-        OsmTrafficSignalMatcher osmMatcher = buildOsmMatcher();
         int signalNodeCount = 0;
 
         for (NodeXml node : network.getNodes()) {
@@ -109,14 +119,8 @@ public class DummySignalGenerator {
 
             // 접근 방향이 1개 이하면 신호 불필요 (통과 노드)
             if (approachMap.size() <= 1) continue;
-
-            // OSM 신호등 게이트 — buildNodeSignalBlockOrNull과 동일 근거(실측: 부천 참조데이터
-            // 커넥션노드 104개 중 신호 18개뿐). 이 메서드는 signal.xml 파싱 실패 시의 CZML
-            // 폴백이라 buildNodeSignalBlockOrNull과 별개 코드경로이므로 동일 게이트를 중복 적용.
-            if (osmMatcher != null && node.getId() != null) {
-                double[] wgs = geo.nodeWgs84(node.getId());
-                if (wgs != null && !osmMatcher.hasSignalNear(wgs[0], wgs[1])) continue;
-            }
+            if (isRampNode(node)) continue;
+            if (isPureThroughPassNode(approachMap, geo, node.getId())) continue;
 
             List<Long> approaches = new ArrayList<>(approachMap.keySet());
 
@@ -201,7 +205,6 @@ public class DummySignalGenerator {
      */
     public String generateSignalXml(NetworkXml network) {
         Geometry geo = Geometry.fromNetwork(network);
-        OsmTrafficSignalMatcher osmMatcher = buildOsmMatcher();
         StringBuilder body = new StringBuilder();
         int signalNodeCount = 0;
         int skippedNodeCount = 0;
@@ -211,7 +214,7 @@ public class DummySignalGenerator {
                 // 노드 하나의 결함(예상 못 한 데이터 값 등)이 나머지 전체 신호 생성을 죽이지
                 // 않도록 격리 — generateSignalXmlStreaming과 동일 원칙(아래 주석 참고).
                 try {
-                    String block = buildNodeSignalBlockOrNull(node, geo, osmMatcher);
+                    String block = buildNodeSignalBlockOrNull(node, geo);
                     if (block == null) continue;
                     body.append(block);
                     signalNodeCount++;
@@ -245,7 +248,6 @@ public class DummySignalGenerator {
      */
     public String generateSignalXmlStreaming(byte[] networkXmlBytes) throws Exception {
         Geometry geo = scanGeometry(new ByteArrayInputStream(networkXmlBytes));
-        OsmTrafficSignalMatcher osmMatcher = buildOsmMatcher();
 
         StringBuilder body = new StringBuilder();
         int[] signalNodeCount = {0};
@@ -279,7 +281,7 @@ public class DummySignalGenerator {
                     // 노드 단위로 격리해 실패한 노드만 건너뛴다.
                     try {
                         NodeXml node = unmarshalNodeFragment(jaxb, block);
-                        String nodeBlock = buildNodeSignalBlockOrNull(node, geo, osmMatcher);
+                        String nodeBlock = buildNodeSignalBlockOrNull(node, geo);
                         if (nodeBlock != null) { body.append(nodeBlock); signalNodeCount[0]++; }
                     } catch (Exception e) {
                         skippedNodeCount[0]++;
@@ -426,15 +428,6 @@ public class DummySignalGenerator {
             return new Geometry(nodeCoords, linkEndpoints, network.getBaseLat(), network.getBaseLon());
         }
 
-        /** 노드의 로컬 좌표를 WGS84(lat, lon)로 역변환. base_lat/base_lon이나 노드 좌표가
-         *  없으면 null — 호출부가 "확인 불가"로 안전 처리(OSM 게이트를 건너뛰고 기존 동작 유지). */
-        double[] nodeWgs84(long nodeId) {
-            if (baseLat == null || baseLon == null) return null;
-            double[] xy = nodeCoords.get(nodeId);
-            if (xy == null) return null;
-            return new double[]{ xy[1] / SCALE_Y + baseLat, xy[0] / SCALE_X + baseLon };
-        }
-
         /**
          * approachLinkId가 intersectionNodeId로 들어오는 방위각(도, 0~360). 좌표를
          * 못 찾으면(스트리밍 경로에서 상류 노드가 이번 스캔 범위 밖이거나, center/좌표
@@ -455,14 +448,6 @@ public class DummySignalGenerator {
         }
     }
 
-    /** OSM 신호등 데이터가 임포트돼 있으면 매처를 만들고, 없으면 null(호출부가 게이트를
-     *  건너뛰고 기존 동작 유지 — OsmPtFacilityRepository/OsmTurnRestrictionRepository와 동일 관례). */
-    private OsmTrafficSignalMatcher buildOsmMatcher() {
-        return osmTrafficSignalRepository.hasData()
-                ? new OsmTrafficSignalMatcher(osmTrafficSignalRepository.loadAll())
-                : null;
-    }
-
     private static String wrapSignalXml(CharSequence body) {
         return "<?xml version='1.0' encoding='UTF-8'?>\n" +
                 "<!-- 네트워크 가져오기 시 자동 생성된 샘플 신호입니다. 신호 메뉴에서 수정하세요. -->\n" +
@@ -470,7 +455,7 @@ public class DummySignalGenerator {
     }
 
     /** 노드 하나의 {@code <node>...</node>} 신호 블록, 신호가 불필요하면 null. */
-    private static String buildNodeSignalBlockOrNull(NodeXml node, Geometry geo, OsmTrafficSignalMatcher osmMatcher) {
+    private static String buildNodeSignalBlockOrNull(NodeXml node, Geometry geo) {
         if (node.getConnections() == null || node.getConnections().isEmpty()) return null;
 
         Map<Long, List<ConnectionXml>> approachMap = new LinkedHashMap<>();
@@ -479,16 +464,8 @@ public class DummySignalGenerator {
             approachMap.computeIfAbsent(conn.getFromLink(), k -> new ArrayList<>()).add(conn);
         }
         if (approachMap.size() <= 1) return null;
-
-        // OSM 신호등 게이트: 접근로가 2개 이상이라도(=분기가 있는 실제 교차로) 실측(부천
-        // 참조데이터, 커넥션노드 104개 중 신호 18개)상 대부분은 무신호 우선순위 교차로다.
-        // OSM에 실제 traffic_signals가 확인된 위치 근처(40m)에서만 신호를 생성한다.
-        // 노드 좌표를 WGS84로 못 되돌리면(base_lat/lon 누락 등) 판정 불가 — 과다생성보다
-        // 과소생성(실제 신호 누락)이 시뮬레이션에 더 나쁠 수 있어 이 경우는 기존 동작 유지.
-        if (osmMatcher != null && node.getId() != null) {
-            double[] wgs = geo.nodeWgs84(node.getId());
-            if (wgs != null && !osmMatcher.hasSignalNear(wgs[0], wgs[1])) return null;
-        }
+        if (isRampNode(node)) return null;
+        if (isPureThroughPassNode(approachMap, geo, node.getId())) return null;
 
         Map<Long, String> approachToTurnId = new LinkedHashMap<>();
         Map<String, List<String>> turnConnIds = new LinkedHashMap<>(); // turnId → connection id 목록
@@ -543,6 +520,48 @@ public class DummySignalGenerator {
                 + "    <turnList>\n" + turnsXml + "    </turnList>\n"
                 + "    <planList>\n" + plansXml + "    </planList>\n"
                 + "  </node>\n";
+    }
+
+    /**
+     * node type이 Merging/Diverging(램프 합류·분기부)이면 true. 이 타입은 KTDB/SUMO
+     * 변환기가 in-link/out-link 개수 불균형(ins≠outs)이거나 KTDB 원본이 실제로 평면교차로
+     * (NODE_TYPE=101)라고 표시하지 않은 경우에만 붙인다 — 즉 실측 기반으로 신뢰할 수 있는
+     * 표지이며, 손으로 그린 노드(NetworkIdNormalizer가 저장 시 재채번하는 노드)는 애초에
+     * Terminal/Normal만 받을 뿐 Merging/Diverging으로 잘못 표시될 일이 없어 이 조건으로
+     * 손그림 교차로를 실수로 걸러낼 위험은 없다. 고속도로 합류부처럼 도로가 갈라지거나
+     * 합쳐질 뿐인 지점은 실제로도 신호 대신 양보/가속차로로 운영되므로 신호 후보에서 제외.
+     */
+    private static boolean isRampNode(NodeXml node) {
+        NodeType t = node.getType();
+        return t == NodeType.Merging || t == NodeType.Diverging;
+    }
+
+    /**
+     * 접근로가 정확히 2개이고, 두 접근로의 커넥션이 전부 직진(S)뿐이며, 두 접근로가 서로
+     * 거의 마주보는(방위각差 180±{@link #OPPOSITE_BEARING_TOLERANCE_DEG} 이내) 경우 —
+     * 실제 교차 충돌이 없는 "양방향 통과부"로 보고 제외한다. 곡선 도로를 짧은 세그먼트로
+     * 쪼개면서 생기는 KTDB 합성 경유점(양방향 각각 1개 링크가 들어오고 나가되, 회전 없이
+     * 그대로 직진만 하는 지점)이 이 형태를 그대로 만족한다 — 실제로는 교차로가 아니라
+     * 도로 형상 데이터일 뿐인데, KTDB/SUMO 변환기의 degree 기반 분류(ins==outs>1 → 마지막
+     * 분기로 Intersection)가 이런 지점까지 Intersection으로 표시해버려 node type만으로는
+     * 걸러지지 않는다 — 그래서 회전 종류(Turning)와 방위각을 직접 봐서 보정한다. 좌회전/
+     * 우회전이 하나라도 있거나(=실제 분기), 접근로가 3개 이상이거나(=실제 교차로), 방위각을
+     * 계산할 좌표가 없으면(=판단 불가) 안전하게 "제외하지 않음"(신호 생성 유지) 쪽으로
+     * 폴백한다.
+     */
+    private static boolean isPureThroughPassNode(
+            Map<Long, List<ConnectionXml>> approachMap, Geometry geo, long nodeId) {
+        if (approachMap.size() != 2) return false;
+        for (List<ConnectionXml> conns : approachMap.values()) {
+            for (ConnectionXml c : conns) {
+                if (c.getTurning() != Turning.Straight) return false;
+            }
+        }
+        List<Long> approaches = new ArrayList<>(approachMap.keySet());
+        Double b1 = geo.approachBearingDeg(approaches.get(0), nodeId);
+        Double b2 = geo.approachBearingDeg(approaches.get(1), nodeId);
+        if (b1 == null || b2 == null) return false;
+        return angularDiffDeg(b1, b2) >= 180 - OPPOSITE_BEARING_TOLERANCE_DEG;
     }
 
     /**
