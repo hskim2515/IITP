@@ -452,10 +452,17 @@ export default class NetworkDataSourceLayer {
     }
 
     private onCameraChange(): void {
+        // ⚠️ camera.changed 는 줌/팬 애니메이션 중 렌더 루프 안에서 프레임마다 발화한다.
+        // applyVisibility() 는 로드된 모든 청크를 순회하는 O(N) 작업이라(위 scheduleApplyVisibility
+        // 주석 참고 — "타일마다 호출하면 O(N²) → 끊김"), 여기서 매 프레임 동기 호출하면 청크가
+        // 많이 쌓인 상태(여러 지역을 팬한 광역 시나리오)에서 줌 중 메인 스레드가 순간 막혀
+        // "줌인/줌아웃 시 갑자기 멈추는" 현상으로 체감된다(실측 보고) — 같은 파일의 다른 카메라
+        // 리스너(차량 집계 등)는 전부 이미 디바운스/setTimeout으로 감싸는데 이 경로만 빠져 있었다.
+        // LOD 값(currentLod) 자체는 계산이 가벼우니 즉시 갱신하고, 실제 순회/토글은 이미 있는
+        // 80ms 디바운스(scheduleApplyVisibility)로 미룬다.
         const newLod = this.calcLod();
         this.currentLod = newLod;
-        this.applyVisibility();
-        try { this.viewer.scene.requestRender(); } catch (_) {}
+        this.scheduleApplyVisibility();
 
         // 타일 모드: 카메라 정착 후(디바운스) viewport 타일 갱신.
         // 400ms — 줌 애니메이션 중간 레벨들의 타일까지 fetch 되어 요청 폭주하던 것 완화

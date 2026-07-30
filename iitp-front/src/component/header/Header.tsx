@@ -23,6 +23,44 @@ interface Props {
     dashboardMode?: boolean;
 }
 
+/**
+ * 버튼 아래에 고정 위치로 뜨는 드롭다운 패널 — 버전 전환/⋯ 메뉴가 공유하는 뼈대(백드롭
+ * +포탈+위치계산)만 여기 두고, 내용은 children으로 받는다. 예전엔 각 드롭다운이 이 보일러
+ * 플레이트를 통째로 복붙해 들고 있어서 코드도 늘어지고, 스타일이 하나씩 미묘하게 어긋나기
+ * 쉬웠다. anchorRef 버튼의 화면 좌표를 기준으로 뜨므로 부모가 overflow:hidden이어도 잘리지
+ * 않는다(document.body 포탈).
+ */
+function HeaderDropdown({
+    anchorRef, open, onClose, align = 'left', children,
+}: {
+    anchorRef: React.RefObject<HTMLButtonElement | null>;
+    open: boolean;
+    onClose: () => void;
+    align?: 'left' | 'right';
+    children: React.ReactNode;
+}) {
+    const [rect, setRect] = useState<{ top: number; left?: number; right?: number } | null>(null);
+
+    useEffect(() => {
+        if (!open || !anchorRef.current) { setRect(null); return; }
+        const r = anchorRef.current.getBoundingClientRect();
+        setRect(align === 'right'
+            ? { top: r.bottom + 4, right: window.innerWidth - r.right }
+            : { top: r.bottom + 4, left: r.left });
+    }, [open, anchorRef, align]);
+
+    if (!open || !rect) return null;
+    return createPortal(
+        <>
+            <div style={ddBackdropStyle} onClick={onClose} />
+            <div style={{ ...ddPanelStyle, top: rect.top, left: rect.left, right: rect.right }}>
+                {children}
+            </div>
+        </>,
+        document.body,
+    );
+}
+
 const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
     const appMode = useModeStore((s) => s.appMode);
     const toggleAppMode = useModeStore((s) => s.toggleAppMode);
@@ -36,26 +74,23 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
     const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
 
     // ── 버전 변경 드롭다운 — 같은 시나리오의 다른 버전으로 홈을 거치지 않고 즉시 전환 ──
-    // ⚠️ 드롭다운 목록은 document.body에 포탈로 그린다 — 버튼의 부모인 .hoverReveal이 헤더
-    // hover 시 폭만 넓어지는 애니메이션을 위해 overflow:hidden을 쓰는데, 그 자식으로 드롭다운을
-    // 그리면 목록이 그 박스 높이에서 그대로 잘려 "스크롤해도 안 내려가는" 것처럼 보였다(실측
-    // 보고 — overflowY:auto 자체는 정상, 조상의 overflow:hidden이 그 아래를 통째로 가린 것).
+    // ⚠️ 예전엔 이 버튼들이 헤더 hover 시에만 나열되는 영역(.hoverReveal) 안에 있었는데,
+    // (1) 펼쳐지는 도중 정확히 그 위치로 마우스를 옮겨 눌러야 해서 클릭하기 어려웠고
+    // (2) 버튼끼리 성격 구분도 없었다(사용자 지적). 그래서 hover-reveal을 완전히 없애고:
+    // 버전(상태 정보 겸 전환 버튼)은 상시 노출, 나머지 부차 동작(새 버전으로/데이터 초기화)은
+    // 클릭으로 여는 "⋯" 메뉴로 모아 명확히 구분한다.
     const [versionSwitcherOpen, setVersionSwitcherOpen] = useState(false);
-    const [versionButtonRect, setVersionButtonRect] = useState<{ top: number; left: number } | null>(null);
     const versionButtonRef = useRef<HTMLButtonElement>(null);
     const [versionList, setVersionList] = useState<ScenarioVersions[]>([]);
     const [versionListLoading, setVersionListLoading] = useState(false);
     const [resettingData, setResettingData] = useState(false);
 
+    // "⋯" 더보기 메뉴 — 새 버전으로 분기 / 모든 데이터 초기화 (가끔 쓰는 부차 동작)
+    const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+    const moreButtonRef = useRef<HTMLButtonElement>(null);
+
     const openVersionSwitcher = () => {
-        setVersionSwitcherOpen((v) => {
-            const next = !v;
-            if (next && versionButtonRef.current) {
-                const r = versionButtonRef.current.getBoundingClientRect();
-                setVersionButtonRect({ top: r.bottom + 4, left: r.left });
-            }
-            return next;
-        });
+        setVersionSwitcherOpen((v) => !v);
         if (!selectedScenario || versionList.length > 0) return;
         setVersionListLoading(true);
         fetch(`${import.meta.env.VITE_API_URL}/scenario/${selectedScenario.id}/versions`)
@@ -176,82 +211,63 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
                     <HeaderMenu/>
                 )}
             </nav>
+            {/* 헤더 전체 폭 기준 절대 중앙 고정 — 사용자 요청으로 위치 고정을 최우선으로 한다
+                (nav/headerRight 사이 여유 공간 기준 재중앙 정렬은 시도했으나, 버튼 그룹 폭에 따라
+                중심점 자체가 움직여 "위치가 옮겨진다"는 문제로 되돌림). App.css/.timeline-container,
+                아래 headerRight의 z-index 주석 참고. */}
             <TimelineTrack/>
+            {/* 우측 컨트롤을 3개 그룹으로 나누고 사이에 얇은 구분선을 둔다 — 예전엔 7개
+                컨트롤이 구분 없이 쭉 나열돼 있었다(사용자 지적: "구분이 없어 보기 안좋음").
+                [편집 상태: 모드전환/준비상태/미저장배지] | [버전 관리: 버전전환/⋯메뉴] |
+                [화면 전환: 대시보드/시뮬레이션 컨트롤]. */}
             <div className={styles['headerRight']}>
-                {/*<VehicleModelSelector />*/}
-                {/* 모드 전환은 자주 쓰는 핵심 동작이라 항상 노출(hover 뒤에 숨기면 또
-                    "어디 있는지 못 찾겠다"는 문제로 되돌아간다) — headerRight 자체의
-                    z-index로 타임트랙보다 항상 위에서 클릭되므로 더 이상 안 가려진다. */}
                 {!dashboardMode && (
-                    <button
-                        onClick={handleToggleMode}
-                        title={appMode === 'edit' ? '편집 모드 (클릭 시 보기 모드)' : '보기 모드 (클릭 시 편집 모드)'}
-                        style={{
-                            padding: '4px 12px', borderRadius: 4, cursor: 'pointer',
-                            border: '1px solid ' + (appMode === 'edit' ? '#ff8c1a' : '#888'),
-                            background: appMode === 'edit' ? '#ff8c1a' : 'transparent',
-                            color: appMode === 'edit' ? '#fff' : '#ccc', fontWeight: 600, fontSize: 13,
-                        }}
-                    >
-                        {appMode === 'edit' ? '● 편집' : '보기'}
-                    </button>
+                    <div style={groupStyle}>
+                        {/* 모드 전환은 자주 쓰는 핵심 동작이라 항상 노출(hover 뒤에 숨기면 또
+                            "어디 있는지 못 찾겠다"는 문제로 되돌아간다). */}
+                        <button
+                            onClick={handleToggleMode}
+                            title={appMode === 'edit' ? '편집 모드 (클릭 시 보기 모드)' : '보기 모드 (클릭 시 편집 모드)'}
+                            style={appMode === 'edit' ? pillBtnActiveStyle : pillBtnStyle}
+                        >
+                            {appMode === 'edit' ? '● 편집' : '보기'}
+                        </button>
+                        {/* 알림성 배지(NextSim 준비 상태/미저장 편집 경고)는 사용자가 보지 않아도
+                            눈치채야 하는 정보라 숨기지 않고 항상 노출한다. */}
+                        <NextSimReadinessBadge/>
+                        {netChanged && (
+                            <span title="저장되지 않은 네트워크 편집이 있습니다. 데이터 입출력 → 저장" style={unsavedBadgeStyle}>
+                                ● 미저장 편집
+                            </span>
+                        )}
+                    </div>
                 )}
-                {/* 알림성 배지(NextSim 준비 상태/미저장 편집 경고)는 사용자가 보지 않아도
-                    눈치채야 하는 정보라 hover 뒤에 숨기지 않고 항상 노출한다. */}
-                {!dashboardMode && <NextSimReadinessBadge/>}
-                {!dashboardMode && netChanged && (
-                    <span
-                        title="저장되지 않은 네트워크 편집이 있습니다. 데이터 입출력 → 저장"
-                        style={{
-                            display: 'inline-flex', alignItems: 'center', gap: 5,
-                            padding: '4px 10px', borderRadius: 4,
-                            background: 'rgba(255,140,26,0.15)', border: '1px solid #ff8c1a',
-                            color: '#ff8c1a', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap',
-                        }}
-                    >
-                        ● 미저장 편집
-                    </span>
-                )}
-                {/* "버전 변경"/"새 버전으로"/"데이터 초기화"는 가끔 쓰는 동작이라 평소엔 접어
-                    헤더를 덜 복잡해 보이게 하고, headerRight에 마우스를 올렸을 때만 펼친다. */}
-                <div className={styles['hoverReveal']} style={{ display: 'flex', gap: 6, alignItems: 'center', position: 'relative' }}>
-                    {!dashboardMode && selectedScenario && selectedScenarioVersion && (
-                        <div style={{ position: 'relative' }}>
-                            <button
-                                ref={versionButtonRef}
-                                onClick={openVersionSwitcher}
-                                title="같은 시나리오의 다른 버전으로 전환"
-                                style={{
-                                    padding: '4px 12px', borderRadius: 4, cursor: 'pointer',
-                                    border: '1px solid #888', background: versionSwitcherOpen ? 'rgba(255,255,255,0.08)' : 'transparent',
-                                    color: '#ccc', fontWeight: 600, fontSize: 13, flexShrink: 0,
-                                }}
-                            >
-                                버전: {selectedScenarioVersion.label} ▾
-                            </button>
-                            {versionSwitcherOpen && versionButtonRect && createPortal(
-                                <>
-                                    <div style={{ position: 'fixed', inset: 0, zIndex: 2900 }} onClick={() => setVersionSwitcherOpen(false)} />
-                                    <div style={{
-                                        position: 'fixed', top: versionButtonRect.top, left: versionButtonRect.left, zIndex: 2901,
-                                        background: 'rgba(20,22,36,0.98)', border: '1px solid rgba(255,255,255,0.14)',
-                                        borderRadius: 8, boxShadow: '0 12px 32px rgba(0,0,0,0.6)',
-                                        minWidth: 180, maxHeight: 280, overflowY: 'auto', padding: 4,
-                                    }}>
-                                        {versionListLoading && (
-                                            <div style={{ padding: '8px 10px', fontSize: 12, color: '#888' }}>불러오는 중...</div>
-                                        )}
-                                        {!versionListLoading && versionList.length === 0 && (
-                                            <div style={{ padding: '8px 10px', fontSize: 12, color: '#888' }}>버전 없음</div>
-                                        )}
+
+                {!dashboardMode && selectedScenarioVersion && <div style={dividerStyle} />}
+
+                {!dashboardMode && selectedScenarioVersion && (
+                    <div style={groupStyle}>
+                        {/* 현재 버전은 항상 있는 게 유용한 상태 정보라 상시 노출 + 클릭으로 즉시 전환. */}
+                        {selectedScenario && (
+                            <div style={{ position: 'relative' }}>
+                                <button
+                                    ref={versionButtonRef}
+                                    onClick={openVersionSwitcher}
+                                    title="같은 시나리오의 다른 버전으로 전환"
+                                    style={versionSwitcherOpen ? pillBtnActiveNeutralStyle : pillBtnStyle}
+                                >
+                                    버전: {selectedScenarioVersion.label} ▾
+                                </button>
+                                <HeaderDropdown anchorRef={versionButtonRef} open={versionSwitcherOpen} onClose={() => setVersionSwitcherOpen(false)}>
+                                    <div style={{ minWidth: 180, maxHeight: 280, overflowY: 'auto' }}>
+                                        {versionListLoading && <div style={ddHintStyle}>불러오는 중...</div>}
+                                        {!versionListLoading && versionList.length === 0 && <div style={ddHintStyle}>버전 없음</div>}
                                         {!versionListLoading && versionList.map((v) => (
                                             <button
                                                 key={v.key}
                                                 onClick={() => handleSwitchVersion(v)}
                                                 style={{
-                                                    display: 'block', width: '100%', textAlign: 'left',
-                                                    padding: '7px 10px', borderRadius: 5, fontSize: 12,
-                                                    border: 'none', cursor: 'pointer',
+                                                    ...ddItemStyle,
                                                     background: v.key === selectedScenarioVersion.key ? 'rgba(85,136,238,0.18)' : 'transparent',
                                                     color: v.key === selectedScenarioVersion.key ? '#7aa2ff' : '#ccc',
                                                     fontWeight: v.key === selectedScenarioVersion.key ? 700 : 400,
@@ -261,52 +277,112 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
                                             </button>
                                         ))}
                                     </div>
-                                </>,
-                                document.body
-                            )}
+                                </HeaderDropdown>
+                            </div>
+                        )}
+                        {/* "새 버전으로"/"데이터 초기화"는 가끔 쓰는 부차 동작이라 "⋯" 메뉴로 묶는다 —
+                            위험한 동작(초기화)은 구분선 아래 빨간색으로 시각적으로 분리된다. */}
+                        <div style={{ position: 'relative' }}>
+                            <button
+                                ref={moreButtonRef}
+                                onClick={() => setMoreMenuOpen((v) => !v)}
+                                title="버전 관리 (새 버전으로 분기 / 데이터 초기화)"
+                                style={moreMenuOpen ? { ...pillBtnActiveNeutralStyle, padding: '4px 9px' } : { ...pillBtnStyle, padding: '4px 9px' }}
+                            >
+                                ⋯
+                            </button>
+                            <HeaderDropdown anchorRef={moreButtonRef} open={moreMenuOpen} onClose={() => setMoreMenuOpen(false)} align="right">
+                                <div style={{ minWidth: 200 }}>
+                                    <button
+                                        onClick={() => { setMoreMenuOpen(false); setVersionModalPurpose('branch'); setVersionModalOpen(true); }}
+                                        title="지금 버전 전체(네트워크/신호/OD/승객/시나리오)를 복제해 새 버전으로 분기"
+                                        style={ddItemStyle}
+                                    >
+                                        새 버전으로 분기
+                                    </button>
+                                    <div style={ddDividerStyle} />
+                                    <button
+                                        onClick={() => { setMoreMenuOpen(false); void handleResetAllData(); }}
+                                        disabled={resettingData}
+                                        title="이 버전의 모든 데이터(도로/신호/OD/승객/차량 시뮬레이션)를 삭제하고 빈 상태로 시작 (버전은 유지)"
+                                        style={{
+                                            ...ddItemStyle, color: '#f07070', fontWeight: 600,
+                                            cursor: resettingData ? 'default' : 'pointer', opacity: resettingData ? 0.6 : 1,
+                                        }}
+                                    >
+                                        {resettingData ? '초기화 중...' : '모든 데이터 초기화'}
+                                    </button>
+                                </div>
+                            </HeaderDropdown>
                         </div>
-                    )}
-                    {!dashboardMode && selectedScenarioVersion && (
-                        <button
-                            onClick={() => { setVersionModalPurpose('branch'); setVersionModalOpen(true); }}
-                            title="지금 버전 전체(네트워크/신호/OD/승객/시나리오)를 복제해 새 버전으로 분기"
-                            style={{
-                                padding: '4px 12px', borderRadius: 4, cursor: 'pointer',
-                                border: '1px solid #888', background: 'transparent',
-                                color: '#ccc', fontWeight: 600, fontSize: 13, flexShrink: 0,
-                            }}
-                        >
-                            새 버전으로
-                        </button>
-                    )}
-                    {!dashboardMode && selectedScenarioVersion && (
-                        <button
-                            onClick={handleResetAllData}
-                            disabled={resettingData}
-                            title="이 버전의 모든 데이터(도로/신호/OD/승객/차량 시뮬레이션)를 삭제하고 빈 상태로 시작 (버전은 유지)"
-                            style={{
-                                padding: '4px 12px', borderRadius: 4, cursor: resettingData ? 'default' : 'pointer',
-                                border: '1px solid rgba(220,60,60,0.5)', background: 'rgba(220,60,60,0.1)',
-                                color: '#f07070', fontWeight: 600, fontSize: 13, flexShrink: 0,
-                                opacity: resettingData ? 0.6 : 1,
-                            }}
-                        >
-                            {resettingData ? '초기화 중...' : '모든 데이터 초기화'}
-                        </button>
-                    )}
+                    </div>
+                )}
+
+                <div style={dividerStyle} />
+
+                <div style={groupStyle}>
+                    <button
+                        className={isDashboardOpen ? styles['dashboardBtnActive'] : styles['dashboardBtn']}
+                        onClick={onDashboard}
+                        title="대시보드"
+                    >
+                        대시보드
+                    </button>
+                    <SimulationControls/>
                 </div>
-                <button
-                    className={isDashboardOpen ? styles['dashboardBtnActive'] : styles['dashboardBtn']}
-                    onClick={onDashboard}
-                    title="대시보드"
-                >
-                    대시보드
-                </button>
-                <SimulationControls/>
             </div>
         </header>
         </>
     );
+};
+
+// ── 우측 헤더 그룹 공용 스타일 ──────────────────────────────────
+const groupStyle: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', gap: 8,
+};
+const dividerStyle: React.CSSProperties = {
+    width: 1, alignSelf: 'stretch', margin: '0 2px',
+    background: 'rgba(255,255,255,0.1)',
+};
+const pillBtnStyle: React.CSSProperties = {
+    padding: '4px 12px', borderRadius: 4, cursor: 'pointer',
+    border: '1px solid #888', background: 'transparent',
+    color: '#ccc', fontWeight: 600, fontSize: 13, flexShrink: 0,
+};
+const pillBtnActiveStyle: React.CSSProperties = {
+    ...pillBtnStyle,
+    border: '1px solid #ff8c1a', background: '#ff8c1a', color: '#fff',
+};
+const pillBtnActiveNeutralStyle: React.CSSProperties = {
+    ...pillBtnStyle,
+    background: 'rgba(255,255,255,0.08)',
+};
+const unsavedBadgeStyle: React.CSSProperties = {
+    display: 'inline-flex', alignItems: 'center', gap: 5,
+    padding: '4px 10px', borderRadius: 4,
+    background: 'rgba(255,140,26,0.15)', border: '1px solid #ff8c1a',
+    color: '#ff8c1a', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap',
+};
+
+// ── HeaderDropdown 공용 스타일 ──────────────────────────────────
+const ddBackdropStyle: React.CSSProperties = {
+    position: 'fixed', inset: 0, zIndex: 2900,
+};
+const ddPanelStyle: React.CSSProperties = {
+    position: 'fixed', zIndex: 2901,
+    background: 'rgba(20,22,36,0.98)', border: '1px solid rgba(255,255,255,0.14)',
+    borderRadius: 8, boxShadow: '0 12px 32px rgba(0,0,0,0.6)', padding: 4,
+};
+const ddItemStyle: React.CSSProperties = {
+    display: 'block', width: '100%', textAlign: 'left',
+    padding: '8px 10px', borderRadius: 5, fontSize: 12,
+    border: 'none', cursor: 'pointer', background: 'transparent', color: '#ccc',
+};
+const ddHintStyle: React.CSSProperties = {
+    padding: '8px 10px', fontSize: 12, color: '#888',
+};
+const ddDividerStyle: React.CSSProperties = {
+    height: 1, background: 'rgba(255,255,255,0.1)', margin: '4px 2px',
 };
 
 const exitOverlayStyle: React.CSSProperties = {

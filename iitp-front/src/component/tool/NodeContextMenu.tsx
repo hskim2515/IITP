@@ -3,7 +3,6 @@ import { useNodeContextMenuStore } from '@stores/useNodeContextMenuStore';
 import { useNetworkStore } from '@stores/useNetworkStore';
 import { useNetworkDrawStore } from '@stores/useNetworkDrawStore';
 import { useNetworkToolbarStore } from '@stores/useNetworkToolbarStore';
-import { createIntersectionAtNode } from '@hooks/useNetworkDraw';
 import { useMessageStore } from '@stores/useMessageStore';
 
 const menuBtnStyle: React.CSSProperties = {
@@ -33,7 +32,6 @@ const NodeContextMenu: React.FC = () => {
     const node = network?.nodes.find(n => String(n.id) === String(nodeId));
     const inCount  = node?.ports?.filter((p: any) => p.type === 'in').length  ?? 0;
     const outCount = node?.ports?.filter((p: any) => p.type === 'out').length ?? 0;
-    const canCreate = inCount >= 1 && outCount >= 1;
     const connCount = node?.connections?.length ?? 0;
     const isTagged = String(nodeId) in useNetworkDrawStore.getState().intersectionNodes;
 
@@ -41,24 +39,6 @@ const NodeContextMenu: React.FC = () => {
     const menuH = 220;
     const left = Math.min(screenX + 4, window.innerWidth  - menuW - 8);
     const top  = Math.min(screenY + 4, window.innerHeight - menuH - 8);
-
-    const handleCreateIntersection = () => {
-        if (!canCreate) {
-            useMessageStore.getState().setMessage({
-                type: 'warn',
-                text: `in(${inCount})/out(${outCount}) 포트가 모두 있어야 교차로를 생성할 수 있습니다.`,
-            });
-            hide();
-            return;
-        }
-        const clearedCount = createIntersectionAtNode(nodeId);
-        useMessageStore.getState().setMessage({
-            type: 'info',
-            text: `교차로 생성 완료 (노드 ${String(nodeId)}, connection ${connCount > 0 ? '재' : ''}생성)`
-                + (clearedCount > 0 ? ` — 신호 ${clearedCount}개의 커넥션 참조 초기화` : ''),
-        });
-        hide();
-    };
 
     const handleSelectNode = () => {
         useNetworkDrawStore.getState().setSelectActive(true);
@@ -127,24 +107,6 @@ const NodeContextMenu: React.FC = () => {
                         {connCount > 0 && <span style={{ color: '#4caf50' }}>⬡ {connCount}개</span>}
                     </div>
                 </div>
-
-                {/* 교차로 생성/재생성 */}
-                <button
-                    style={menuBtnStyle}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'rgba(122,162,255,0.12)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'none')}
-                    onClick={handleCreateIntersection}
-                >
-                    <span style={{ fontSize: 15, color: canCreate ? '#7aa2ff' : '#555' }}>⬡</span>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        <span style={{ color: canCreate ? '#ddd' : '#555' }}>
-                            {connCount > 0 ? '교차로 재생성' : '교차로 생성'}
-                        </span>
-                        <span style={{ fontSize: 10, color: canCreate ? '#4caf50' : '#555' }}>
-                            {canCreate ? 'S/L/R 자동 생성' : `in:${inCount} out:${outCount} — 포트 부족`}
-                        </span>
-                    </div>
-                </button>
 
                 {/* 이 노드에서 도로 그리기 시작 */}
                 <button

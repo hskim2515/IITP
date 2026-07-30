@@ -501,8 +501,13 @@ export function createStandaloneNodeInNetwork(network: Network, coord: Coordinat
  * 새로 생긴 분할 노드를 대상 노드(targetNodeId)에 병합(mergeNodesInNetwork)한다 — 이렇게
  * 하면 여러 링크를 골라도 전부 같은 하나의 노드로 모이고(다중 접근로 교차로), 대상 노드
  * 자체의 좌표는 그대로 유지된다(mergeNodesInNetwork는 keep 쪽 좌표를 보존하고 링크
- * 끝점만 그 위치로 당겨 붙인다). 마지막에 regenerateNodeConnections로 새로 모인
- * in/out 포트 조합 전체에 대해 S/L/R 커넥션을 다시 만든다.
+ * 끝점만 그 위치로 당겨 붙인다).
+ *
+ * ⚠️ 2026-07-29: 예전엔 여기서 마지막에 regenerateNodeConnections로 모든 in/out 포트
+ * 조합에 S/L/R을 한꺼번에 자동 생성했으나, 실사용 피드백으로 제거 — 도로를 물리적으로
+ * 잇는 것(분할·병합)까지는 필요해도 회전 커넥션 자체는 사용자가 레인 단위로 직접 골라야
+ * 한다는 요청. 그래서 이 함수는 포트만 만들고 커넥션은 비운 채 반환한다 — 호출부가 곧바로
+ * 기존 수동 커넥션 편집(activateConnectionAndReset, in-레인→out-레인 클릭 흐름)으로 넘긴다.
  */
 export function connectNodeToLinks(
     network: Network,
@@ -534,7 +539,13 @@ export function connectNodeToLinks(
         ts += 100;
         net = mergeNodesInNetwork(updatedNetwork, targetNodeId, splitNodeId);
     }
-    return regenerateNodeConnections(net, targetNodeId);
+    // ⚠️ 2026-07-29 실사용 피드백: 도로를 물리적으로 잘라 붙이는 것(위 split+merge)까지는
+    // 필요하지만, 그 직후 모든 in/out 조합에 S/L/R을 한꺼번에 자동 생성(regenerateNodeConnections)
+    // 하는 건 원치 않음 — "레인별로 직접 찍어서" 만들고 싶다는 요청. 그래서 여기서는 포트만
+    // 만든 채 커넥션은 비워두고 반환한다 — 호출부(NetworkEditToolbar handleConnectToTarget)가
+    // 곧바로 "🔀 커넥션 편집"(activateConnectionAndReset)으로 넘겨서, 기존에 이미 있던
+    // in-레인 클릭 → out-레인 클릭 → 커넥션 1개 생성 흐름으로 사용자가 직접 만들게 한다.
+    return net;
 }
 
 function makePort(linkId: number | string, type: 'in' | 'out'): Port {
@@ -630,6 +641,12 @@ function makeConnections(
     const ffSpd = Math.min(fromLink.maxSpd, toLink.maxSpd);
     const fromEnd = fromLink.coordinates[fromLink.coordinates.length - 1]!;
     const toStart = toLink.coordinates[0]!;
+    // ⚠️ 실측 지적: 예전엔 length:0으로 고정 저장했다 — NextSim이 링크 셀 개수를
+    // Math.max(1, Math.ceil(length/CELL_LENGTH))처럼 length로 나누는 계산을 어딘가에서
+    // 한다면 0은 division-by-zero/0-size 배열 크래시로 이어질 수 있는 값이라(이 파일의
+    // makeLink가 링크에는 이미 이 위험을 알고 Math.max(1,...)로 방어해둔 것과 대비됨),
+    // 실제 커넥션 양끝 좌표 간 거리로 계산해 항상 양수 길이를 갖도록 한다.
+    const connLength = getDistance([fromEnd.lng, fromEnd.lat], [toStart.lng, toStart.lat]);
 
     const conn = (fromLane: number, toLane: number, idx: number): Connection => ({
         featureType: 'connections' as any,
@@ -639,7 +656,7 @@ function makeConnections(
         toLink: toLink.id, toLane,
         toLaneCoordinates: toStart,
         turning,
-        length: 0,
+        length: connLength,
         width: laneWidth,
         ffSpd,
         shape: '',
@@ -2232,14 +2249,20 @@ export const useNetworkDraw = () => {
                 const rawTurning = classifyTurning(linkArrivalBearing(p.fromLink), linkDepartureBearing(p.toLink));
                 const turning = rawTurning === 'U_Turn' ? 'Left_Turn' : rawTurning;
                 const laneWidth = p.toLink.width / p.toLink.numLane;
+                const fromLaneCoord = p.fromLink.coordinates[p.fromLink.coordinates.length - 1]!;
+                const toLaneCoord = p.toLink.coordinates[0]!;
+                // ⚠️ 실측 지적: length:0 고정은 division-by-zero/0-size 배열 계산이 있는
+                // 다운스트림(NextSim)에서 위험할 수 있다 — makeConnections와 동일하게 실제
+                // 좌표 거리로 계산.
+                const connLength = getDistance([fromLaneCoord.lng, fromLaneCoord.lat], [toLaneCoord.lng, toLaneCoord.lat]);
                 newConns.push({
                     featureType: 'connections' as any,
                     id: node.connections.length + newConns.length,
                     fromLink: p.fromLink.id, fromLane: p.fromLane,
-                    fromLaneCoordinates: p.fromLink.coordinates[p.fromLink.coordinates.length - 1]!,
+                    fromLaneCoordinates: fromLaneCoord,
                     toLink: p.toLink.id, toLane: p.toLane,
-                    toLaneCoordinates: p.toLink.coordinates[0]!,
-                    turning, length: 0, width: laneWidth,
+                    toLaneCoordinates: toLaneCoord,
+                    turning, length: connLength, width: laneWidth,
                     ffSpd: Math.min(p.fromLink.maxSpd, p.toLink.maxSpd),
                     shape: '', coordinates: [],
                 } as Connection);
