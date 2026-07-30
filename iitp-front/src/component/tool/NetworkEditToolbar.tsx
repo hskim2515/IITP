@@ -13,13 +13,13 @@ import {
     applyNetworkUpdate, markRemovedForTileMask,
     countSignalsForNodes, deleteSignalsForNodes, generateSignalsForNode,
     isPassThroughNode, mergeLinksAtNode, batchDeleteOrMergeNodes,
-    reconcileSignalConnectionIds, farNodeIdsForCascadeDelete,
+    reconcileSignalConnectionIds, farNodeIdsForCascadeDelete, cleanupOrphanNodes,
     toggleSegmentBlock, splitSegmentInNetwork, mergeSegmentInNetwork,
     getEffectiveSegments,
     countStationsForLinks, countStationsForNodes, deleteStationsForLinks, deletePavementMarkingsForLinks,
     deletePavementMarkingsForShrunkLanes,
 } from '@hooks/useNetworkSelect';
-import { connectNodeToLinks, createIntersectionAtNode, regenerateNodeConnections, splitLinkInNetwork } from '@hooks/useNetworkDraw';
+import { connectNodeToLinks, countFlushLinksAtNode, createIntersectionAtNode, junctionFormationPreview, regenerateNodeConnections, setbackLinksAtNode, splitLinkInNetwork } from '@hooks/useNetworkDraw';
 import { segmentIndexAtFrac, cellIndexAtFrac } from '@utils/networkDrilldown';
 import styles from '@css/ToolsPanel.module.css';
 
@@ -275,7 +275,10 @@ const NetworkEditToolbar: React.FC = () => {
                     const net = useNetworkStore.getState().currentJsonData;
                     if (!net) return;
                     const farIds = farNodeIdsForCascadeDelete(net, selectedNodeIds);
-                    const next = batchDeleteOrMergeNodes(net, selectedNodeIds);
+                    const deleted = batchDeleteOrMergeNodes(net, selectedNodeIds);
+                    // farIds 중 이번 삭제로 포트 0개(막다른 스텁의 끝점)가 된 노드는 함께 정리
+                    // — 안 하면 화면엔 안 보이지만 데이터엔 고아로 계속 남는다.
+                    const next = cleanupOrphanNodes(deleted, farIds);
                     applyNetworkUpdate(next);
                     const clearedCount = reconcileSignalConnectionIds(next, farIds);
                     deleteSignalsForNodes(selectedNodeIds);
@@ -328,20 +331,37 @@ const NetworkEditToolbar: React.FC = () => {
             if (!connectTargetNodeId) return;
             const cur = useNetworkStore.getState().currentJsonData;
             if (!cur) return;
-            const originalLinkIds = selectedLinkIds; // connectNodeToLinks가 분할·소거하기 전 원본 링크 id — tile mask용
-            const next = connectNodeToLinks(cur, connectTargetNodeId, selectedLinkIds, Date.now());
-            applyNetworkUpdate(next);
-            const clearedCount = reconcileSignalConnectionIds(next, [connectTargetNodeId]);
-            markRemovedForTileMask(cur, next);
-            useNetworkEditStore.getState().addDeleted(originalLinkIds);
-            useNetworkDrawStore.getState().clearConnectTarget();
-            useNetworkDrawStore.getState().clearMultiSelection();
-            useNetworkDrawStore.getState().setSelectedNode(connectTargetNodeId);
-            useNetworkToolbarStore.getState().show({ x: toolbar.x, y: toolbar.y }, 'node', { nodeId: connectTargetNodeId });
-            useMessageStore.getState().setMessage({
-                type: 'info',
-                text: `노드 ${connectTargetNodeId}에 도로 ${selectedLinkIds.length}개 연결 + 커넥션 생성됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}`,
-            });
+            const run = () => {
+                const net = useNetworkStore.getState().currentJsonData;
+                if (!net) return;
+                const originalLinkIds = selectedLinkIds; // connectNodeToLinks가 분할·소거하기 전 원본 링크 id — tile mask용
+                const next = connectNodeToLinks(net, connectTargetNodeId, selectedLinkIds, Date.now());
+                applyNetworkUpdate(next);
+                const clearedCount = reconcileSignalConnectionIds(next, [connectTargetNodeId]);
+                markRemovedForTileMask(net, next);
+                useNetworkEditStore.getState().addDeleted(originalLinkIds);
+                useNetworkDrawStore.getState().clearConnectTarget();
+                useNetworkDrawStore.getState().clearMultiSelection();
+                useNetworkDrawStore.getState().setSelectedNode(connectTargetNodeId);
+                useNetworkToolbarStore.getState().show({ x: toolbar.x, y: toolbar.y }, 'node', { nodeId: connectTargetNodeId });
+                useMessageStore.getState().setMessage({
+                    type: 'info',
+                    text: `노드 ${connectTargetNodeId}에 도로 ${selectedLinkIds.length}개 연결됨${clearedCount > 0 ? ` (신호 ${clearedCount}개의 커넥션 참조 초기화)` : ''}`,
+                });
+            };
+            // 교차로 형성 confirm — 그리기(finishSegment)와 동일 정책(2026-07-30). 선택한
+            // 링크는 각각 노드 위치에서 둘로 분할돼 붙으므로 노드에 링크가 2개씩 추가된다.
+            // 기존 도로 형상이 실제로 바뀔 때(끝점이 노드에 붙은 flush 링크가 있을 때)만 묻는다.
+            const preview = junctionFormationPreview(cur, connectTargetNodeId, selectedLinkIds.length * 2);
+            if (preview && preview.flushCount > 0) {
+                useMessageStore.getState().setMessage({
+                    type: 'confirm',
+                    text: `이 연결로 노드 ${connectTargetNodeId}이(가) ${preview.afterDegree}방향 교차로가 됩니다. 접속된 기존 도로 ${preview.flushCount}개의 끝을 교차로 진입 전에서 후퇴(setback)시킵니다. 계속할까요?`,
+                    onConfirm: run,
+                });
+            } else {
+                run();
+            }
         };
 
         return (
@@ -632,6 +652,7 @@ const NetworkEditToolbar: React.FC = () => {
         const nodeSignalCount = countSignalsForNodes([nodeId]);
         const nodePassThrough = isPassThroughNode(network, nodeId);
         const canCreateIntersection = inCount >= 1 && outCount >= 1;
+        const isTagged = nodeId in useNetworkDrawStore.getState().intersectionNodes;
 
         let nearestNode: typeof network.nodes[0] | null = null;
         let nearestDist = Infinity;
@@ -650,7 +671,12 @@ const NetworkEditToolbar: React.FC = () => {
                 if (!net) return;
                 const merged = mergeLinksAtNode(net, nodeId);
                 const farIds = merged ? [] : farNodeIdsForCascadeDelete(net, [nodeId]);
-                const next = merged ?? deleteNodeFromNetwork(net, nodeId);
+                const deleted = merged ?? deleteNodeFromNetwork(net, nodeId);
+                // farIds 중 이번 삭제로 포트 0개(막다른 스텁의 끝점)가 된 노드는 함께 정리
+                // — 안 하면 화면엔 안 보이지만 데이터엔 고아로 계속 남는다(실사용 보고:
+                // "노드를 지웠더니 연결 안 된 줄 알았던 옆 노드도 같이 사라짐" — 사실은
+                // 안 지워지고 안 보이게만 된 것이었다).
+                const next = cleanupOrphanNodes(deleted, farIds);
                 applyNetworkUpdate(next);
                 const clearedCount = reconcileSignalConnectionIds(next, farIds);
                 deleteSignalsForNodes([nodeId]);
@@ -796,6 +822,47 @@ const NetworkEditToolbar: React.FC = () => {
             useNetworkToolbarStore.getState().hide();
         };
 
+        // 우클릭 메뉴(NodeContextMenu)에만 있던 두 동작 — 좌/우클릭 어느 쪽으로 들어와도
+        // 결국 이 하나의 툴바를 보여주도록 통합하면서 함께 옮겨왔다(2026-07-30 실사용
+        // 피드백: "우클릭 내용과 좌클릭 내용이 합쳐져야할듯").
+        const handleStartDrawingHere = () => {
+            useNetworkDrawStore.getState().activateAndReset(nodeId);
+            useNetworkToolbarStore.getState().hide();
+        };
+        const handleToggleIntersectionTag = () => {
+            if (isTagged) {
+                useNetworkDrawStore.getState().removeIntersectionNode(nodeId);
+                useMessageStore.getState().setMessage({ type: 'info', text: `교차로 지정 해제 (노드 ${nodeId}) — 이미 후퇴된 도로 형상은 그대로 유지됩니다.` });
+                return;
+            }
+            // 지정 = "이 노드는 교차로다" 선언 — 이미 연결돼 있는 링크들도 그 시점에 즉시
+            // 후퇴(setback)시켜 교차로 형상을 선반영한다(2026-07-30 사용자 확정: 포트 2개
+            // 이하여도). 기존 도로 형상이 실제로 바뀔 때만 confirm을 받고, 바뀔 게 없으면
+            // (연결 링크 없음/전부 이미 후퇴됨) 조용히 태그만 단다.
+            const doTag = (withSetback: boolean) => {
+                if (withSetback) {
+                    const net = useNetworkStore.getState().currentJsonData;
+                    if (net) applyNetworkUpdate(setbackLinksAtNode(net, nodeId));
+                }
+                useNetworkDrawStore.getState().addIntersectionNode(nodeId, node.coordinates);
+                useMessageStore.getState().setMessage({
+                    type: 'info',
+                    text: `교차로로 지정했습니다 (노드 ${nodeId})${withSetback ? ' — 연결된 도로를 교차로 진입 전에서 후퇴시켰습니다.' : ''} 그리기 모드에서 항상 마커로 표시되며, 이 지점에 스냅해 도로를 연결하면 자동 완성됩니다.`,
+                });
+            };
+            const cur = useNetworkStore.getState().currentJsonData;
+            const flushCount = cur ? countFlushLinksAtNode(cur, nodeId) : 0;
+            if (flushCount > 0) {
+                useMessageStore.getState().setMessage({
+                    type: 'confirm',
+                    text: `교차로로 지정하면서 연결된 도로 ${flushCount}개의 끝을 교차로 진입 전에서 후퇴(setback)시킵니다. 계속할까요?`,
+                    onConfirm: () => doTag(true),
+                });
+            } else {
+                doTag(false);
+            }
+        };
+
         return (
             <div style={{ position: 'fixed', left, top, zIndex: 4000 }}>
                 <div style={barStyle}>
@@ -812,6 +879,9 @@ const NetworkEditToolbar: React.FC = () => {
                     <VDivider />
                     <Btn onClick={handleGenerateSignals} title="이 교차로의 신호를 토폴로지 기준으로 통째로 생성/재생성">⚡ 신호 생성</Btn>
                     <Btn danger onClick={handleDeleteSignals} disabled={nodeSignalCount === 0} title={nodeSignalCount === 0 ? '이 교차로에 신호 없음' : '이 교차로의 신호를 한 번에 전부 삭제'}>🗑 신호 삭제</Btn>
+                    <VDivider />
+                    <Btn onClick={handleStartDrawingHere} title="이 노드를 시작점으로 바로 이어 그리기">✏ 그리기 시작</Btn>
+                    <Btn onClick={handleToggleIntersectionTag} title={isTagged ? '지정 해제 — 넓은 스냅 반경/마커 표시 중단' : '그리기 중 항상 마커로 표시 + 넓은 스냅 반경(다른 지역 그리다 돌아와도 놓치지 않게)'}>{isTagged ? '★ 지정 해제' : '☆ 교차로 지정'}</Btn>
                 </div>
                 {coordOpen && (
                     <div style={expandPanelStyle}>

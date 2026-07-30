@@ -1,9 +1,12 @@
 package com.iitp.iitp_rest.controller;
 
 import com.iitp.iitp_rest.model.LogsData;
+import com.iitp.iitp_rest.model.network.NetworkXml;
 import com.iitp.iitp_rest.model.publicTransit.bus.BusPtLinesXml;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerLog;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerSaveRequest;
+import com.iitp.iitp_rest.service.network.NetworkService;
+import com.iitp.iitp_rest.service.network.OsmFacilityConverter;
 import com.iitp.iitp_rest.service.publicTransit.line.BusPtLineService;
 import com.iitp.iitp_rest.service.xmllayer.XmlLayerConverter;
 import com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService;
@@ -40,6 +43,8 @@ public class BusPtLineController {
 
     private final BusPtLineService busPtLineService;
     private final XmlLayerVersionService xmlLayerVersionService;
+    private final NetworkService networkService;
+    private final OsmFacilityConverter facilityConverter;
 
     // ── default ─────────────────────────────────────────────────────
     @GetMapping("/{scenarioKey}")
@@ -71,6 +76,37 @@ public class BusPtLineController {
     @PostMapping("/{scenarioKey}/import")
     public ResponseEntity<Map<String, Object>> importDefault(@PathVariable String scenarioKey, @RequestParam("file") MultipartFile file) {
         return importResp(LAYER_KEY_DEFAULT, scenarioKey, file, busPtLineService::saveDefault);
+    }
+
+    /**
+     * "노선 그리기" — 지도에서 정류장을 클릭한 순서(linkRef)로 실제 도로 경로(linkSeq/nodeSeq)를
+     * 자동 계산한다. KTDB 재임포트 시 낡은 노선을 재매핑하는 것과 동일한 파이프라인
+     * ({@link OsmFacilityConverter#prepareLinkIndex}/{@link OsmFacilityConverter#remapBusRouteByStationAnchors},
+     * {@code KtdbImportController.remapRouteFile} 참고)을 그대로 재사용한다.
+     */
+    @PostMapping("/{scenarioKey}/compute-path")
+    public ResponseEntity<Map<String, Object>> computePath(@PathVariable String scenarioKey, @RequestBody Map<String, Object> req) {
+        Object raw = req.get("stationLinkRefs");
+        if (!(raw instanceof List<?> rawList) || rawList.size() < 2) {
+            return ResponseEntity.badRequest().body(Map.of("message", "정류장을 2개 이상 순서대로 선택해야 합니다."));
+        }
+        List<Long> stationLinkRefs = rawList.stream().map(v -> ((Number) v).longValue()).toList();
+
+        NetworkXml xml;
+        try {
+            xml = networkService.getNetworkXmlByVersionId(scenarioKey);
+        } catch (java.io.IOException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("message", "저장된 도로망(network.xml)이 없습니다. 도로망을 먼저 저장하세요."));
+        }
+        facilityConverter.prepareLinkIndex(xml.getLinks());
+        facilityConverter.prepareTerminalNodes(xml.getNodes());
+        var remap = facilityConverter.remapBusRouteByStationAnchors(stationLinkRefs);
+        if (remap == null) {
+            return ResponseEntity.unprocessableEntity()
+                    .body(Map.of("message", "정류장 사이 경로를 네트워크에서 찾을 수 없습니다. 정류장 사이가 실제로 도로로 연결되어 있는지 확인하세요."));
+        }
+        return ResponseEntity.ok(Map.of("linkSeq", remap.linkSeq(), "nodeSeq", remap.nodeSeq()));
     }
 
     // ── weekday ──────────────────────────────────────────────────────

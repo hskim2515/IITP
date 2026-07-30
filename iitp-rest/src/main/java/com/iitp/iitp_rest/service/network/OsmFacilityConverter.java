@@ -1022,6 +1022,21 @@ public class OsmFacilityConverter {
         buildLinkGrid(links);
     }
 
+    /**
+     * 터미널 노드 집합(type=Terminal)을 주어진 네트워크로 갱신한다 — {@link #remapBusRouteByStationAnchors}가
+     * 내부적으로 쓰는 {@link #extendToTerminal}/{@link #touchesTerminalAtBothEnds}는 이 집합이
+     * 비어있으면 무조건 실패(null)로 판정하므로, prepareLinkIndex와 함께 반드시 호출해야 한다.
+     * convert()는 OSM 변환 중 이 집합을 함께 채우지만, remapBusRouteByStationAnchors만 단독으로
+     * 쓰는 경로(예: "노선 그리기")는 convert()를 거치지 않으므로 별도 진입점이 필요하다.
+     */
+    public void prepareTerminalNodes(List<NodeXml> nodes) {
+        terminalNodeIds.clear();
+        if (nodes == null) return;
+        for (NodeXml n : nodes) {
+            if (n.getType() == NodeType.Terminal && n.getId() != null) terminalNodeIds.add(n.getId());
+        }
+    }
+
     /** center 문자열("lx ly", 로컬좌표)을 prepareLinkIndex로 준비된 네트워크에 재스냅한다.
      *  50m 밖이라 스냅 실패하거나 좌표 파싱 실패면 null. */
     public ResnapResult resnapByLocalCoord(String center) {

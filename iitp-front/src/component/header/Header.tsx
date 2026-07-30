@@ -71,6 +71,7 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
     // SaveVersionModal은 두 가지 목적으로 재사용된다: 'branch'(새 버전으로 분기, 기존 동작) /
     // 'saveExit'(편집모드 이탈 전 저장 — 확인 후 버전을 만들며 그 버전에 저장하고 보기모드로 전환).
     const [versionModalPurpose, setVersionModalPurpose] = useState<'branch' | 'saveExit'>('branch');
+    const [savingAll, setSavingAll] = useState(false);
     const [exitConfirmOpen, setExitConfirmOpen] = useState(false);
 
     // ── 버전 변경 드롭다운 — 같은 시나리오의 다른 버전으로 홈을 거치지 않고 즉시 전환 ──
@@ -163,6 +164,44 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
         toggleAppMode();
     };
 
+    // 편집 모드에서는 헤더의 다른 컨트롤을 전부 가리고 "보기 모드로 전환"/"저장" 버튼만
+    // 남긴다(사용자 요청) — 편집 중엔 지도 위 도구(NetworkDrawSettingsBar 등)가 이미 화면
+    // 상단을 쓰고 있어, 헤더의 다른 컨트롤(버전 전환/⋯메뉴/시뮬레이션 컨트롤 등)이 실질적으로
+    // 편집과 무관한 데다 혼란만 준다는 판단. dashboardMode(대시보드 화면)와는 별개 개념이라
+    // 그 조합까지 가리지는 않는다(대시보드는 이미 자체적으로 대부분의 헤더 컨트롤을 숨김).
+    const editMinimal = appMode === 'edit' && !dashboardMode;
+
+    // editMinimal 진입 시 헤더는 JSX에서 조건부로 안 그려질 뿐, 버전전환/⋯ 드롭다운을 열어
+    // 두던 state(versionSwitcherOpen/moreMenuOpen)는 Header 자체가 언마운트되지 않아 그대로
+    // true로 남는다 — 그 상태로 나중에 보기 모드로 돌아가면 두 드롭다운이 사용자가 다시 열지도
+    // 않았는데 열려 있는 채로 나타난다. editMinimal이 될 때 명시적으로 닫아 비활성화한다.
+    useEffect(() => {
+        if (editMinimal) {
+            setVersionSwitcherOpen(false);
+            setMoreMenuOpen(false);
+        }
+    }, [editMinimal]);
+
+    // 저장 — SaveVersionModal(항상 새 버전 분기)과 달리 지금 편집 중인 버전에 그대로
+    // 저장한다(PropertyPanel.doSave의 "제자리 저장"과 동일한 원칙: OD매트릭스/승객처럼 새
+    // 버전을 만들지 않음). saveAllChangedLayers가 실패 시 레이어별 에러 토스트를 이미
+    // 띄우므로 여기서 추가로 알릴 필요는 없다.
+    const handleSaveNow = async () => {
+        if (!selectedScenarioVersion) return;
+        if (!hasUnsavedLayerChanges()) {
+            useMessageStore.getState().setMessage({ type: 'info', text: '저장할 변경사항이 없습니다.' });
+            return;
+        }
+        setSavingAll(true);
+        try {
+            await saveAllChangedLayers(selectedScenarioVersion.key);
+        } catch (_) {
+            // 실패 토스트는 saveAllChangedLayers 내부(레이어별)에서 이미 표시됨
+        } finally {
+            setSavingAll(false);
+        }
+    };
+
     return (
         <>
         <SaveVersionModal
@@ -190,41 +229,58 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
         )}
         <header className={styles['header']}>
             <nav className={styles['nav']}>
-                <div className={styles['container']} onClick={goHome} title="홈 (시나리오 선택)">
-                    <span className={styles['title']} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-                            <polyline points="9 22 9 12 15 12 15 22"/>
-                        </svg>
-                        홈
-                    </span>
-                </div>
-                {dashboardMode ? (
-                    <div className={styles['dashboardModeTag']}>
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-                            <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
-                        </svg>
-                        대시보드 모드
-                    </div>
-                ) : (
-                    <HeaderMenu/>
+                {/* 편집 모드 진입 시에는 지도 위 편집 도구가 이미 화면을 쓰고 있어, 홈/파일메뉴/
+                    대시보드 같은 탐색용 컨트롤이 혼란만 준다는 요청 — 모드전환/저장 버튼만 남기고
+                    나머지 헤더 컨트롤은 전부 숨긴다(editMinimal). */}
+                {!editMinimal && (
+                    <>
+                        <div className={styles['container']} onClick={goHome} title="홈 (시나리오 선택)">
+                            <span className={styles['title']} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                                    <polyline points="9 22 9 12 15 12 15 22"/>
+                                </svg>
+                                홈
+                            </span>
+                        </div>
+                        {dashboardMode ? (
+                            <div className={styles['dashboardModeTag']}>
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                                    <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+                                </svg>
+                                대시보드 모드
+                            </div>
+                        ) : (
+                            <HeaderMenu/>
+                        )}
+                        {/* 홈/파일메뉴 옆으로 이동 — 화면 전환(대시보드↔맵) 동작이라 우측 시뮬레이션
+                            컨트롤 그룹보다 좌측 nav(탐색용 컨트롤들) 쪽이 더 어울린다는 요청. */}
+                        <button
+                            className={isDashboardOpen ? styles['dashboardBtnActive'] : styles['dashboardBtn']}
+                            onClick={onDashboard}
+                            title="대시보드"
+                        >
+                            대시보드
+                        </button>
+                    </>
                 )}
             </nav>
-            {/* 헤더 전체 폭 기준 절대 중앙 고정 — 사용자 요청으로 위치 고정을 최우선으로 한다
-                (nav/headerRight 사이 여유 공간 기준 재중앙 정렬은 시도했으나, 버튼 그룹 폭에 따라
-                중심점 자체가 움직여 "위치가 옮겨진다"는 문제로 되돌림). App.css/.timeline-container,
-                아래 headerRight의 z-index 주석 참고. */}
-            <TimelineTrack/>
-            {/* 우측 컨트롤을 3개 그룹으로 나누고 사이에 얇은 구분선을 둔다 — 예전엔 7개
-                컨트롤이 구분 없이 쭉 나열돼 있었다(사용자 지적: "구분이 없어 보기 안좋음").
+            {/* .header가 3열 그리드(1fr auto 1fr)라 이 자리는 항상 헤더 진짜 중앙에 고정되고,
+                동시에 좌우 버튼 컬럼과 트랙 자체가 겹치지 않는다 — App.css/.timeline-container 참고.
+                편집모드 최소화(editMinimal)에서는 타임트랙도 숨긴다(요청: 모드전환/저장 버튼만 남김). */}
+            {!editMinimal && <TimelineTrack/>}
+            {/* 우측 컨트롤을 그룹으로 나누고 사이에 얇은 구분선을 둔다 — 예전엔 여러 컨트롤이
+                구분 없이 쭉 나열돼 있었다(사용자 지적: "구분이 없어 보기 안좋음").
                 [편집 상태: 모드전환/준비상태/미저장배지] | [버전 관리: 버전전환/⋯메뉴] |
-                [화면 전환: 대시보드/시뮬레이션 컨트롤]. */}
+                [시뮬레이션 컨트롤]. 대시보드 버튼은 화면 탐색 동작이라 좌측 nav(홈/파일메뉴
+                옆)로 옮겨졌다. */}
             <div className={styles['headerRight']}>
                 {!dashboardMode && (
                     <div style={groupStyle}>
                         {/* 모드 전환은 자주 쓰는 핵심 동작이라 항상 노출(hover 뒤에 숨기면 또
-                            "어디 있는지 못 찾겠다"는 문제로 되돌아간다). */}
+                            "어디 있는지 못 찾겠다"는 문제로 되돌아간다). editMinimal에서도 이 버튼은
+                            남겨둔다 — 보기 모드로 되돌아갈 유일한 경로이기 때문. */}
                         <button
                             onClick={handleToggleMode}
                             title={appMode === 'edit' ? '편집 모드 (클릭 시 보기 모드)' : '보기 모드 (클릭 시 편집 모드)'}
@@ -232,10 +288,21 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
                         >
                             {appMode === 'edit' ? '● 편집' : '보기'}
                         </button>
+                        {editMinimal && (
+                            <button
+                                onClick={handleSaveNow}
+                                disabled={savingAll}
+                                title="지금 버전에 바로 저장 (새 버전을 만들지 않음)"
+                                style={{ ...pillBtnActiveStyle, opacity: savingAll ? 0.6 : 1, cursor: savingAll ? 'default' : 'pointer' }}
+                            >
+                                {savingAll ? '저장 중...' : '저장'}
+                            </button>
+                        )}
                         {/* 알림성 배지(NextSim 준비 상태/미저장 편집 경고)는 사용자가 보지 않아도
-                            눈치채야 하는 정보라 숨기지 않고 항상 노출한다. */}
-                        <NextSimReadinessBadge/>
-                        {netChanged && (
+                            눈치채야 하는 정보라 숨기지 않고 항상 노출한다(단, editMinimal에서는
+                            헤더를 최소화하는 취지에 맞춰 함께 숨김). */}
+                        {!editMinimal && <NextSimReadinessBadge/>}
+                        {!editMinimal && netChanged && (
                             <span title="저장되지 않은 네트워크 편집이 있습니다. 데이터 입출력 → 저장" style={unsavedBadgeStyle}>
                                 ● 미저장 편집
                             </span>
@@ -243,9 +310,9 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
                     </div>
                 )}
 
-                {!dashboardMode && selectedScenarioVersion && <div style={dividerStyle} />}
+                {!dashboardMode && !editMinimal && selectedScenarioVersion && <div style={dividerStyle} />}
 
-                {!dashboardMode && selectedScenarioVersion && (
+                {!dashboardMode && !editMinimal && selectedScenarioVersion && (
                     <div style={groupStyle}>
                         {/* 현재 버전은 항상 있는 게 유용한 상태 정보라 상시 노출 + 클릭으로 즉시 전환. */}
                         {selectedScenario && (
@@ -253,10 +320,10 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
                                 <button
                                     ref={versionButtonRef}
                                     onClick={openVersionSwitcher}
-                                    title="같은 시나리오의 다른 버전으로 전환"
-                                    style={versionSwitcherOpen ? pillBtnActiveNeutralStyle : pillBtnStyle}
+                                    title={`버전: ${selectedScenarioVersion.label} (클릭 시 다른 버전으로 전환)`}
+                                    style={versionSwitcherOpen ? versionBtnActiveStyle : versionBtnStyle}
                                 >
-                                    버전: {selectedScenarioVersion.label} ▾
+                                    <span style={versionLabelStyle}>{selectedScenarioVersion.label}</span> ▾
                                 </button>
                                 <HeaderDropdown anchorRef={versionButtonRef} open={versionSwitcherOpen} onClose={() => setVersionSwitcherOpen(false)}>
                                     <div style={{ minWidth: 180, maxHeight: 280, overflowY: 'auto' }}>
@@ -318,18 +385,13 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
                     </div>
                 )}
 
-                <div style={dividerStyle} />
+                {!editMinimal && <div style={dividerStyle} />}
 
-                <div style={groupStyle}>
-                    <button
-                        className={isDashboardOpen ? styles['dashboardBtnActive'] : styles['dashboardBtn']}
-                        onClick={onDashboard}
-                        title="대시보드"
-                    >
-                        대시보드
-                    </button>
-                    <SimulationControls/>
-                </div>
+                {!editMinimal && (
+                    <div style={groupStyle}>
+                        <SimulationControls/>
+                    </div>
+                )}
             </div>
         </header>
         </>
@@ -356,6 +418,19 @@ const pillBtnActiveStyle: React.CSSProperties = {
 const pillBtnActiveNeutralStyle: React.CSSProperties = {
     ...pillBtnStyle,
     background: 'rgba(255,255,255,0.08)',
+};
+// 버전 버튼 전용 — "버전:" 접두어를 없애 글자수를 줄이고(title 속성에 전체 의미는 그대로
+// 남김), label이 긴 시나리오에서도 버튼이 무한정 늘어나지 않도록 최대 폭 + 말줄임을 둔다.
+const versionBtnStyle: React.CSSProperties = {
+    ...pillBtnStyle,
+    display: 'inline-flex', alignItems: 'center', gap: 3, maxWidth: 160,
+};
+const versionBtnActiveStyle: React.CSSProperties = {
+    ...pillBtnActiveNeutralStyle,
+    display: 'inline-flex', alignItems: 'center', gap: 3, maxWidth: 160,
+};
+const versionLabelStyle: React.CSSProperties = {
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
 };
 const unsavedBadgeStyle: React.CSSProperties = {
     display: 'inline-flex', alignItems: 'center', gap: 5,

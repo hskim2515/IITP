@@ -29,6 +29,7 @@ import { useBackgroundTaskStore } from "@stores/useBackgroundTaskStore";
 import { runAutoDummyGeneration } from "@utils/dummyGeneration";
 import { useNextSimRunStore, checkNextSimAvailable, startNextSimRun, cancelNextSimRun, resumeNextSimPollingIfRunning, formatElapsed } from "@utils/nextsim";
 import { consumePendingScenario } from "@utils/scenarioBootstrap";
+import { useModeStore } from "@stores/useModeStore";
 
 function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const step = useOnboardingStore((s) => s.step);
@@ -259,6 +260,7 @@ function App() {
         activeSubmenu,
         activeDropdownMenu,
         setActiveSubmenu,
+        setActiveDropdownMenu,
     } = useMenuStore();
 
     const activeSession = sessions.find(s => s.menuCode === activeMenuCode && !s.isMinimized);
@@ -269,6 +271,22 @@ function App() {
             usePropertyStore.getState().setSelectedProps(null);
         }
     }, [activeSubmenu]);
+
+    const appMode = useModeStore((s) => s.appMode);
+
+    // 편집 모드 진입 시 헤더의 파일/기타 메뉴(HeaderMenu)는 통째로 숨겨지는데, 그 메뉴로
+    // 열어뒀던 LeftPanel(activeDropdownMenu)이나 시설물 편집 그리드(activeSession/PropertyPanel
+    // 등)는 별도 전역 상태(useMenuStore/useWorkflowStore)라 헤더가 숨겨져도 화면에 그대로
+    // 남아 있었다(사용자 실측 지적: "안닫히고 그대로"). 헤더를 최소화하는 취지에 맞춰 이 화면도
+    // 함께 정리한다 — 세션은 파괴하지 않고 최소화만 해 편집 중이던 내용은 보존한다.
+    useEffect(() => {
+        if (appMode === 'edit' && !showDashboard) {
+            setActiveDropdownMenu(null);
+            setActiveSubmenu(null);
+            if (activeMenuCode) minimizeSession(activeMenuCode);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [appMode, showDashboard]);
 
     useEffect(() => {
         fetchSchema()

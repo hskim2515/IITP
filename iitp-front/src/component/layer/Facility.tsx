@@ -6,6 +6,7 @@ import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { useScenarioStore } from '@stores/useScenarioStore';
 import { useNetworkStore } from '@stores/useNetworkStore';
 import { useNetworkDrawStore, PlacementMode } from '@stores/useNetworkDrawStore';
+import { useRouteDrawStore, RouteDrawMode } from '@stores/useRouteDrawStore';
 import { useModeStore } from '@stores/useModeStore';
 import { useVehicleStore } from '@stores/useVehicleStore';
 import { useSimulationStore } from '@stores/useSimulationStore';
@@ -34,6 +35,17 @@ const PLACEMENT_LABELS: Partial<Record<string, PlacementMode>> = {
     busStation: 'busStation',
     railStation: 'railStation',
     signal: 'signal',
+};
+
+// 정류장/역이 2개 이상 있어야 노선(경유 순서)을 그릴 수 있다 — "노선 그리기" 진입 버튼과
+// 대상 스토어의 배열 키(currentJsonData 안의 필드명)를 함께 정의.
+const ROUTE_DRAW_MODES: Partial<Record<string, Exclude<RouteDrawMode, 'none'>>> = {
+    busStation: 'bus',
+    railStation: 'rail',
+};
+const ROUTE_DRAW_ARRAY_KEY: Partial<Record<string, string>> = {
+    busStation: 'busStations',
+    railStation: 'railStations',
 };
 
 // 더미 생성을 지원하는 레이어 키 → 생성 함수
@@ -82,6 +94,7 @@ const Facility = ({ fields }: FacilityProps) => {
     const nsAvailable = useNextSimRunStore((s) => s.available);
     useEffect(() => { void checkNextSimAvailable(); }, []);
     const placementMode = useNetworkDrawStore((s) => s.placementMode);
+    const routeDrawMode = useRouteDrawStore((s) => s.mode);
     // 보기 모드에선 지도 클릭이 아무 것도 편집하지 않아야 한다 — 배치는 편집 동작이므로
     // 편집 모드에서만 허용한다(버튼도 숨김). usePlacementMode 훅에도 동일 게이트가 있어
     // 이중 방어(모드를 전환하는 사이 남아있는 placementMode도 거기서 정리됨).
@@ -89,14 +102,32 @@ const Facility = ({ fields }: FacilityProps) => {
     // 배치 모드의 클릭 리스너/ESC 취소는 usePlacementMode(Maps.tsx, 항상 마운트)가 담당한다 —
     // 이 컴포넌트(레이어 팝업의 "시설물" 탭)는 팝업을 닫거나 다른 탭으로 넘어가면 언마운트되므로,
     // 여기 두면 배치 모드를 켠 채로 팝업을 닫는 순간 클릭이 먹통이 되는 문제가 있었다. 여기서는
-    // 버튼(상태 토글)만 담당한다.
+    // 버튼(상태 토글)만 담당한다. 노선 그리기(useRouteDrawMode)도 동일한 이유로 상시 마운트 훅.
 
     const handleTogglePlacement = (key: string) => {
         if (!isEditMode) return;
         const mode = PLACEMENT_LABELS[key];
         if (!mode) return;
+        // 배치와 노선 그리기는 상호 배타적 — 배치를 시작하면 그리던 노선 초안은 버린다.
+        useRouteDrawStore.getState().reset();
         if (placementMode === mode) useNetworkDrawStore.getState().exitToSelect();
         else useNetworkDrawStore.getState().setPlacementMode(mode);
+    };
+
+    const handleToggleRouteDraw = (key: string) => {
+        if (!isEditMode) return;
+        const mode = ROUTE_DRAW_MODES[key];
+        if (!mode) return;
+        if (routeDrawMode === mode) useRouteDrawStore.getState().reset();
+        else useRouteDrawStore.getState().start(mode);
+    };
+
+    // 노선(경유 순서)을 그리려면 정류장/역이 최소 2개는 있어야 의미가 있다.
+    const routeDrawEligible = (key: string): boolean => {
+        const arrayKey = ROUTE_DRAW_ARRAY_KEY[key];
+        if (!arrayKey) return false;
+        const data = layerNameToStoreMap[key]?.getState().currentJsonData as any;
+        return (data?.[arrayKey]?.length ?? 0) >= 2;
     };
 
     // store의 currentJsonData 변화를 감지해 visibleFields 재계산
@@ -330,6 +361,15 @@ const Facility = ({ fields }: FacilityProps) => {
                                     style={placementMode === PLACEMENT_LABELS[parentKey] ? placeBtnActiveStyle : placeBtnStyle}
                                 >
                                     {placementMode === PLACEMENT_LABELS[parentKey] ? '■ 배치 중' : '📍 배치'}
+                                </button>
+                            )}
+                            {isEditMode && ROUTE_DRAW_MODES[parentKey] && routeDrawEligible(parentKey) && (
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); handleToggleRouteDraw(parentKey); }}
+                                    title={routeDrawMode === ROUTE_DRAW_MODES[parentKey] ? '노선 그리기 종료 (ESC)' : `지도에서 ${field.label}을(를) 순서대로 클릭해 노선 만들기`}
+                                    style={routeDrawMode === ROUTE_DRAW_MODES[parentKey] ? placeBtnActiveStyle : placeBtnStyle}
+                                >
+                                    {routeDrawMode === ROUTE_DRAW_MODES[parentKey] ? '■ 그리는 중' : (ROUTE_DRAW_MODES[parentKey] === 'bus' ? '🚌 노선 그리기' : '🚆 노선 그리기')}
                                 </button>
                             )}
                             <button
