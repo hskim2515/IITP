@@ -30,6 +30,9 @@ type DrilldownGridProps = {
     layerName: string;
     layerGroupName: string;
     currentJsonData?: Record<string, any[]>;
+    /** true 면 currentJsonData prop 이 단일 데이터 소스 — feature store 구독으로 네비게이션을
+     *  덮어쓰지 않는다 (NETWORK 타일 모드 전체 그리드: store 는 viewport working set 이므로) */
+    externalData?: boolean;
     containerHeight?: number;
 };
 
@@ -51,6 +54,7 @@ const DrilldownGrid = ({
                            layerName,
                            layerGroupName,
                            currentJsonData,
+                           externalData = false,
                            containerHeight = 600,
                        }: DrilldownGridProps) => {
     const setMessage = useMessageStore.getState().setMessage;
@@ -125,14 +129,16 @@ const DrilldownGrid = ({
 
     // feature store를 직접 구독하여 currentJsonData 변경 시 즉시 네비게이션 동기화
     // (undo/redo 포함, React 렌더 사이클에 의존하지 않음)
+    // externalData 모드에서는 store 가 viewport working set 이라 구독하면 전체 목록을 덮어쓴다 — 스킵.
     useEffect(() => {
+        if (externalData) return;
         return dataStore.subscribe(
             (state: any) => state.currentJsonData,
             (newData: any) => {
                 syncNavigationFromData(newData as Record<string, any[]>);
             }
         );
-    }, [dataStore, syncNavigationFromData]);
+    }, [dataStore, syncNavigationFromData, externalData]);
 
     useEffect(() => {
         syncNavigationFromData(currentJsonData as Record<string, any[]>);

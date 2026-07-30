@@ -185,6 +185,72 @@ public class NetworkTileService {
     }
 
     /**
+     * 편집 그리드 전체 목록 조회 — viewport bbox 와 무관하게 versionId 의 전체 links/nodes 반환.
+     * 그리드 drilldown 에 필요한 lanes/ports/connections 와 lane.cells/lane.segments 는 보존한다
+     * (셀/세그먼트 뎁스까지 그리드 진입 지원). 가장 큰 문자열 payload 인 link/lane 의 shape 만
+     * 제거해 응답 크기를 억제한다 — cells 는 offset/length 숫자 위주 행이라 gzip 압축 효율이 높다.
+     */
+    public NetworkResponse queryForGrid(String versionId) throws IOException {
+        File db = ensureDb(versionId);
+        NetworkResponse out = new NetworkResponse();
+        List<LinkResponse> links = new ArrayList<>();
+        List<NodeResponse> nodes = new ArrayList<>();
+        String url = "jdbc:sqlite:" + db.getAbsolutePath();
+        try (Connection conn = DriverManager.getConnection(url)) {
+            try (Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT json FROM links")) {
+                while (rs.next()) {
+                    LinkResponse link = objectMapper.readValue(rs.getString(1), LinkResponse.class);
+                    if (link.getLanes() != null) {
+                        for (LaneResponse lane : link.getLanes()) {
+                            if (lane == null) continue;
+                            lane.setShape(null); // cells/segments 는 보존 — shape 문자열만 제거
+                        }
+                    }
+                    link.setShape(null);
+                    links.add(link);
+                }
+            }
+            try (Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT json FROM nodes")) {
+                while (rs.next()) {
+                    nodes.add(objectMapper.readValue(rs.getString(1), NodeResponse.class));
+                }
+            }
+        } catch (SQLException e) {
+            throw new IOException("grid 조회 실패: " + versionId, e);
+        }
+        out.setLinks(links);
+        out.setNodes(nodes);
+        log.info("[NetworkTileService] {} grid 전체 조회 → links={} nodes={}",
+                versionId, links.size(), nodes.size());
+        return out;
+    }
+
+    /**
+     * id 단건 조회 — 오프스크린 그리드 선택 이동 등에 좌표/원본 확보용.
+     * link/lane/cell/segment 는 링크 JSON(coordinates 포함), node/port/connection 은 노드 JSON 을
+     * 원본 그대로 반환한다 (하위 feature 는 부모 링크/노드 좌표로 충분). 없으면 null.
+     */
+    public Object findFeature(String versionId, String featureType, long id) throws IOException {
+        File db = ensureDb(versionId);
+        String ft = featureType == null ? "" : featureType.toLowerCase();
+        boolean isNodeSide = ft.startsWith("node") || ft.startsWith("port") || ft.startsWith("connection");
+        String table = isNodeSide ? "nodes" : "links";
+        String url = "jdbc:sqlite:" + db.getAbsolutePath();
+        try (Connection conn = DriverManager.getConnection(url);
+             PreparedStatement ps = conn.prepareStatement("SELECT json FROM " + table + " WHERE id = ?")) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return objectMapper.readValue(rs.getString(1), Object.class);
+            }
+        } catch (SQLException e) {
+            throw new IOException("feature 조회 실패: " + versionId, e);
+        }
+        return null;
+    }
+
+    /**
      * 네트워크 전체 bbox [west, south, east, north] (링크 RTree 집계).
      * 타일 모드에서 클라이언트가 전체 데이터를 안 갖고도 카메라를 네트워크 위치로 이동시키는 용도.
      * 네트워크 없으면 null.

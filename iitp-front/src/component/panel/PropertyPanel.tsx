@@ -19,13 +19,13 @@ import { FeatureLayerAPI, isFeatureLayer } from "@features/FeatureLayerAPI";
 import { matchesCustomKeyValue } from "@utils/olLayer";
 import { useMessageStore } from "@stores/useMessageStore";
 import { useShallow } from "zustand/react/shallow";
-import { useEventStore } from "@stores/useEventStore";
 import { modifyFeatureEventHandlers } from "@handler/modifyFeatureEventHandlers";
 import { extractFeatureTypeFromGuid } from "@utils/guid";
 import { saveNetworkDiffTileAware } from "@utils/networkDiff";
 import { reconcileNetworkHistoryTileState } from "@utils/networkHistory";
 import { NETWORK_TILING } from "@utils/lodConstants";
 import { useNetworkTileStore } from "@stores/useNetworkTileStore";
+import { useNetworkGridStore } from "@stores/useNetworkGridStore";
 import { MenuTreeResponse } from "@type/openapi.gen";
 import styles from "@css/PropertyPanel.module.css";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
@@ -56,6 +56,13 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     const isNetworkMenu = activeSubmenu.menuCode === "NETWORK";
     const gridDataFrozen = useNetworkTileStore((s) => s.gridDataFrozen);
     const gridDataOutOfRange = useNetworkTileStore((s) => s.gridDataOutOfRange);
+    const tileMode = useNetworkTileStore((s) => s.tileMode);
+    // 네트워크 타일 모드: currentJsonData 는 viewport working set 이라 그리드 전체 목록으로 쓸 수 없다.
+    // /network/{versionId}/grid 전체 조회(useNetworkGridStore)를 별도 소스로 사용하고,
+    // 조회 실패 시에만 기존 viewport 데이터 + 안내 배너로 폴백한다.
+    const useFullGrid = isNetworkMenu && (NETWORK_TILING.ENABLED || tileMode);
+    const networkGridData = useNetworkGridStore(useShallow((s) => s.data));
+    const networkGridLoading = useNetworkGridStore((s) => s.loading);
     const [isHistoryOpen, setIsHistoryOpen] = useState(false);
     const selectedScenario = useScenarioStore.getState().selectedScenario;
     const selectedScenarioVersion = useScenarioStore.getState().selectedScenarioVersion;
@@ -107,6 +114,13 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     }, [selectedGuid, submenu.item.layer]);
 
     useEffect(() => { clearSelected(); }, [activeSubmenu]);
+
+    // 타일 모드 NETWORK: 편집 그리드 진입 시 전체 목록 로드 (viewport 와 무관)
+    useEffect(() => {
+        if (!useFullGrid) return;
+        const versionKey = selectedScenarioVersion?.key;
+        if (versionKey != null) useNetworkGridStore.getState().load(String(versionKey));
+    }, [useFullGrid, selectedScenarioVersion?.key]);
 
     const handleMouseMove = useCallback((e: MouseEvent) => {
         if (rafRef.current !== null) return;
@@ -168,6 +182,11 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                 await axiosInstance({ method: api.method, url: api.url + '/' + versionKey, data: payload });
             }
             historyStore.getState().resetUpdateLogs();
+            if (activeSubmenu.menuCode === 'NETWORK') {
+                // 저장으로 서버 네트워크가 바뀌었으므로 전체 그리드 스냅샷 갱신
+                useNetworkGridStore.getState().invalidate();
+                if (useFullGrid) useNetworkGridStore.getState().load(String(versionKey), true);
+            }
             setReloadFlag(prev => !prev);
             setMessage({ type: 'info', text: '저장 완료' });
         } catch (error) {
@@ -289,7 +308,12 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                     )}
                     {submenu.item?.layer && (
                         <div className={styles.gridWrap}>
-                            {isNetworkMenu && gridDataFrozen && (
+                            {useFullGrid && !networkGridData && networkGridLoading && (
+                                <div className={styles.gridStaleBanner}>
+                                    ℹ 전체 도로 목록을 불러오는 중입니다…
+                                </div>
+                            )}
+                            {isNetworkMenu && gridDataFrozen && !(useFullGrid && networkGridData) && !networkGridLoading && (
                                 <div className={`${styles.gridStaleBanner} ${gridDataOutOfRange ? styles.outOfRange : ""}`}>
                                     {gridDataOutOfRange
                                         ? "⚠ 목록이 현재 지도 화면 범위와 다릅니다 — 이전에 불러온 위치의 도로 데이터입니다. 최신 목록을 보려면 해당 위치로 줌인하세요."
@@ -304,7 +328,8 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                                 <DrilldownGrid
                                     layerName={submenu.item.layer}
                                     layerGroupName={"facility"}
-                                    currentJsonData={currentJsonData}
+                                    currentJsonData={useFullGrid && networkGridData ? networkGridData : currentJsonData}
+                                    externalData={useFullGrid && !!networkGridData}
                                     containerHeight={height}
                                 />
                             )}
