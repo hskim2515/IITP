@@ -1042,6 +1042,31 @@ public class OsmFacilityConverter {
         }
     }
 
+    /**
+     * 로컬 좌표 문자열("x y")을 원점 이동만큼 평행이동한 새 문자열로 변환한다.
+     *
+     * <p>로컬 좌표는 시나리오 버전의 원점(위경도) 기준인데, KTDB 재임포트는 매번 원점을
+     * bbox 중심으로 새로 잡는다({@code KtdbImportController.build()}가 versionId로 Scenario를
+     * 못 찾아 기존 좌표 재사용 분기를 타지 않음 — 실측: 다른 bbox로 재임포트하자 저장된
+     * 정류장 좌표가 일괄 ~700m 어긋나 재스냅이 전부 50m 밖 판정으로 실패). 재스냅 전에
+     * 이 함수로 옛 원점 기준 좌표를 새 원점 기준으로 옮겨야 한다.
+     *
+     * @param dxM (옛 원점 경도 - 새 원점 경도) × {@link #SCALE_X}
+     * @param dyM (옛 원점 위도 - 새 원점 위도) × {@link #SCALE_Y}
+     * @return 변환된 "x y" 문자열, 파싱 실패면 원본 그대로
+     */
+    public static String shiftLocalCoord(String center, double dxM, double dyM) {
+        double[] xy = parseLocalCoord(center);
+        if (xy == null) return center;
+        return String.format("%.3f %.3f", xy[0] + dxM, xy[1] + dyM);
+    }
+
+    /** 옛/새 원점 위경도로 로컬 좌표 평행이동량(dxM, dyM)을 계산한다. 옛 원점을 모르면 [0,0]. */
+    public static double[] originShiftMeters(Double oldLat, Double oldLon, double newLat, double newLon) {
+        if (oldLat == null || oldLon == null || (oldLat == 0.0 && oldLon == 0.0)) return new double[]{0, 0};
+        return new double[]{(oldLon - newLon) * SCALE_X, (oldLat - newLat) * SCALE_Y};
+    }
+
     private double[] projectPointOnSegment(double px, double py,
                                              double ax, double ay,
                                              double bx, double by) {
