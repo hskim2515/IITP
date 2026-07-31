@@ -21,5 +21,7 @@ public class LogsData {
         private Object oldValue;
         private String guid;
         private String timestamp;
+        private String scope;
+        private String transactionId;
     }
 }

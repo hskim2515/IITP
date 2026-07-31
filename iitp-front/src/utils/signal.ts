@@ -2,11 +2,15 @@ import * as Cesium from "cesium";
 import { Style } from "ol/style";
 import {getFeaturesByProperties} from "@utils/feature";
 import {SignalTimelineResponse} from "@stores/useSignalTimelineStore";
-import {LayerManager} from "@deck.gl/core";
+import {LayerManager} from "@managers/LayerManager";
 import {Feature} from "ol";
-import {SignalData} from "@type/Signal";
+import {SignalData, SignalPlan} from "@type/Signal";
 import {normalizeTurning} from "@utils/turning";
 import {useAppSettingsStore} from "@stores/useAppSettingsStore";
+import {
+    generateDefaultSignalPlans,
+    generateSignalTurns,
+} from "@utils/signalGenerationRules";
 
 export type SignalState = "green" | "yellow" | "red" | "default";
 
@@ -62,7 +66,7 @@ export const updateSignalStyles = (layerManager: LayerManager, viewer: Cesium.Vi
 
         const styleFunction = networkLayer.getStyleFunction();
         const features = getFeaturesByProperties(networkLayer, { featureType: "connections" });
-        features.forEach(f => {
+        features?.forEach(f => {
             const nodeId = f.get("nodeId");
             const connId = f.get("id");
             connectionFeatureMapRef.set(`${nodeId}_${connId}`, f);
@@ -155,11 +159,11 @@ export const getNetworkGuid = (layerManager: LayerManager | null, signalGuid: st
     const signalLayer = layerManager.getLayer("facility", "signal");
     if (!networkLayer || !signalLayer) return null;
 
-    const networkFeatures = networkLayer.getSource?.()?.getFeatures?.() || [];
-    const signalFeatures = signalLayer.getSource?.()?.getFeatures?.() || [];
+    const networkFeatures: Feature[] = networkLayer.getSource?.()?.getFeatures?.() || [];
+    const signalFeatures: Feature[] = signalLayer.getSource?.()?.getFeatures?.() || [];
 
     const connectionFeatures = networkFeatures.filter(
-        f => f.get('featureType') === 'connection'
+        f => ['connection', 'connections'].includes(String(f.get('featureType')))
     );
 
     const targetFeature = signalFeatures.find(
@@ -171,7 +175,7 @@ export const getNetworkGuid = (layerManager: LayerManager | null, signalGuid: st
     const connectionId = targetFeature.get("connectionId");
 
     const feature = connectionFeatures.find(
-        f => f.get('nodeId') === nodeId && f.get('id') === connectionId
+        f => String(f.get('nodeId')) === String(nodeId) && String(f.get('id')) === String(connectionId)
     );
 
     if (feature) {
@@ -188,8 +192,8 @@ export const getSignalGuid = (layerManager: LayerManager, connectionGuid: string
     const networkLayer = layerManager.getLayer("facility", "network")?.[0];
     const signalLayer = layerManager.getLayer("facility", "signal");
     if (!networkLayer || !signalLayer) return null;
-    const networkFeatures = networkLayer.getSource?.()?.getFeatures?.() || [];
-    const signalFeatures = signalLayer.getSource?.()?.getFeatures?.() || [];
+    const networkFeatures: Feature[] = networkLayer.getSource?.()?.getFeatures?.() || [];
+    const signalFeatures: Feature[] = signalLayer.getSource?.()?.getFeatures?.() || [];
 
     const connectionFeatures = networkFeatures.filter(
         f => f.get('featureType') === 'connection'
@@ -216,7 +220,6 @@ export const getSignalGuid = (layerManager: LayerManager, connectionGuid: string
 // (iitp-rest DummySignalGenerator.buildNodeSignalBlockOrNull 과 기본값 기준 동일 — 백엔드 KTDB
 // 대형망 임포트가 만드는 더미 신호와 프론트에서 수동으로 다시 생성하는 더미 신호가 같은
 // 품질(마주보는 접근로끼리만 동시 녹색)을 갖도록 일치시킨다. 단, 백엔드는 별도 설정 없이 고정값.)
-const getDummyPhaseDuration = () => useAppSettingsStore.getState().autoGeneration.signalPhaseDurationSec;
 const getOppositeBearingToleranceDeg = () => useAppSettingsStore.getState().autoGeneration.signalOppositeBearingToleranceDeg;
 
 const parseCenter = (center?: string): [number, number] | null => {
@@ -438,49 +441,43 @@ const buildSignalsForNode = (
     }
     if (isPureThroughPassNode(groups, String(node.id), linkEndpoints, nodeCoords, nodeLatLng)) return [];
 
-    const groupKeys = Array.from(groups.keys());
-    const turnIdOf = new Map(groupKeys.map((key, idx) => [key, String(idx)]));
+    const turnGeneration = generateSignalTurns(conns);
+    if (turnGeneration.regularApproachIds.length === 0) return [];
 
     const phaseGroups = groupApproachesByOppositeBearing(
-        groupKeys, String(node.id), linkEndpoints, nodeCoords, nodeLatLng,
+        turnGeneration.regularApproachIds,
+        String(node.id),
+        linkEndpoints,
+        nodeCoords,
+        nodeLatLng,
     );
+    const plans = generateDefaultSignalPlans({
+        nodeId: node.id,
+        phaseApproachGroups: phaseGroups,
+        turns: turnGeneration.turns,
+    });
+    const turnById = new Map(turnGeneration.turns.map(turn => [turn.id, turn]));
 
     const result: Omit<SignalData, "__guid" | "featureType" | "id">[] = [];
-    groupKeys.forEach((key, groupIdx) => {
-        const turnId = String(groupIdx);
-        groups.get(key)!.forEach((conn, i) => {
+    for (const approachConnections of groups.values()) {
+        for (const conn of approachConnections) {
             // conn.turning은 KTDB(짧은 코드 "S"/"L"/"R"/"U")와 직접 그리기 도구(전체 단어
-            // "Straight"/"Left_Turn"/...)가 섞여 들어온다 — 정규화 없이 그대로 저장/비교하면
-            // (1) SignalData.turning이 짧은 코드로 저장된 신호는 SignalGroupedEditor의 방향
-            // select(DIR, 전체 단어 기준)와 형식이 안 맞고, (2) RTOR(적신호 우회전) 판정도
-            // conn.turning === 'R' 비교라 직접 그린 우회전 커넥션은 항상 놓친다.
-            // SignalData.turning의 canonical 형식은 전체 단어(SignalGroupedEditor의 DIR/select
-            // 값 참고)이므로 그쪽으로 정규화.
-            const normalized = normalizeTurning(conn.turning);
+            // "Straight"/"Left_Turn"/...)가 섞여 들어오므로 SignalData에는 전체 단어를 저장한다.
+            const turnId = turnGeneration.turnIdByConnectionId.get(String(conn.id));
+            if (turnId == null) continue;
+            const generatedTurn = turnById.get(turnId);
             const entry: Omit<SignalData, "__guid" | "featureType" | "id"> = {
                 nodeId: String(node.id),
                 turnId,
-                turning: normalized,
-                type: normalized === 'Right_Turn' ? 'RTOR' : 'None',
+                turning: generatedTurn?.turning ?? normalizeTurning(conn.turning),
+                type: generatedTurn?.type ?? 'None',
                 connectionId: String(conn.id),
             };
-            // 노드의 첫 번째 레코드에만 planList 부착
-            if (groupIdx === 0 && i === 0) {
-                const phaseDuration = getDummyPhaseDuration();
-                entry.plans = [{
-                    id: '0',
-                    cycle: String(phaseGroups.length * phaseDuration),
-                    offset: '0',
-                    phases: phaseGroups.map((group, idx) => ({
-                        id: String(idx),
-                        duration: String(phaseDuration),
-                        turnList: group.map(fromLink => turnIdOf.get(fromLink)).join(' '),
-                    })),
-                }];
-            }
+            // node 하나의 평탄화 레코드 중 첫 항목에만 planList를 부착한다.
+            if (result.length === 0) entry.plans = plans;
             result.push(entry);
-        });
-    });
+        }
+    }
     return result;
 };
 
@@ -508,6 +505,14 @@ export const generateDummySignals = async (network: any): Promise<Omit<SignalDat
     return signals;
 };
 
+/** 현재 Network에서 신호 자동 생성 조건을 만족하는 교차로 ID를 한 번의 geometry 계산으로 찾는다. */
+export const findSignalCandidateNodeIds = (network: any): string[] => {
+    const geo = buildNetworkGeometry(network);
+    return (network?.nodes ?? [])
+        .filter((node: any) => buildSignalsForNode(node, geo).length > 0)
+        .map((node: any) => String(node.id));
+};
+
 /**
  * 교차로(노드) 하나에 대해서만 더미 신호 turnList/planList를 재생성한다 —
  * SignalGroupedEditor의 "이 교차로 자동 생성" 버튼 전용. 판정 기준은
@@ -519,6 +524,45 @@ export const generateDummySignalsForNode = (network: any, nodeId: string): Omit<
     if (!node) return [];
     const geo = buildNetworkGeometry(network);
     return buildSignalsForNode(node, geo);
+};
+
+/**
+ * 백엔드 DummySignalGenerator와 같은 평시 P0(20초)/혼잡 P1(30초) 템플릿을 만들되,
+ * 프런트에서 유지 중인 실제 Turn ID로 치환한다.
+ */
+export const buildDefaultSignalPlansForNode = (
+    network: any,
+    nodeId: string,
+    currentSignals: Array<{ connectionId?: string | number | null; turnId?: string | number | null }>,
+): SignalPlan[] => {
+    const generatedSignals = generateDummySignalsForNode(network, nodeId);
+    const templates = generatedSignals.find(signal => signal.plans?.length)?.plans ?? [];
+    const currentTurnByConnection = new Map(
+        currentSignals
+            .filter(signal => signal.connectionId != null && signal.turnId != null)
+            .map(signal => [String(signal.connectionId), String(signal.turnId)]),
+    );
+    const actualTurnByGeneratedTurn = new Map<string, string>();
+    for (const generated of generatedSignals) {
+        if (generated.connectionId == null || generated.turnId == null) continue;
+        const actualTurnId = currentTurnByConnection.get(String(generated.connectionId));
+        if (actualTurnId != null) {
+            actualTurnByGeneratedTurn.set(String(generated.turnId), actualTurnId);
+        }
+    }
+    return templates.map(plan => ({
+        ...plan,
+        phases: (plan.phases ?? []).map(phase => ({
+            ...phase,
+            turnList: String(phase.turnList ?? "")
+                .split(/\s+/)
+                .filter(Boolean)
+                .map(turnId => actualTurnByGeneratedTurn.get(turnId))
+                .filter((turnId): turnId is string => turnId != null)
+                .filter((turnId, index, values) => values.indexOf(turnId) === index)
+                .join(" "),
+        })),
+    }));
 };
 
 /* ──────────────────── 수동 편집 상충(양방향 사고위험) 검사 ────────────────── */

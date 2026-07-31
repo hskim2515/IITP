@@ -327,50 +327,59 @@ function App() {
                             flex: "1 1 auto",
                             minWidth: "0",
                             overflow: "hidden",
-                            position: "relative",
+                            display: "flex",
+                            flexDirection: "column",
                         }}
                     >
-                        <Maps
-                            singleMapMode={showDashboard}
-                        />
+                        <div
+                            style={{
+                                flex: "1 1 auto",
+                                minHeight: 0,
+                                overflow: "hidden",
+                                position: "relative",
+                            }}
+                        >
+                            <Maps
+                                singleMapMode={showDashboard}
+                            />
+
+                            {/* KTDB/OSM/NETWORK 임포트는 FileImportModal(헤더 파일>가져오기)로 통합 —
+                                구 메뉴 모달(KtdbImportModal 등)은 헤더가 FILE 메뉴 트리를 렌더하지 않아 도달 불가로 제거 */}
+                            {!showDashboard && activeSession && activeSession.menuCode === 'OD_MATRIX' && (
+                                <OdMatrixModal/>
+                            )}
+
+                            {!showDashboard && activeSession && activeSession.menuCode === 'PASSENGER' && (
+                                <PassengerModal/>
+                            )}
+
+                            {!showDashboard && activeSession && (
+                                isDescendantOf(menu, 'SCHEMA_SETTING', activeSession.menuCode) ? (
+                                    <SchemaSetting/>
+                                ) : activeSession.menuCode === 'VEHICLE_TYPE' ? (
+                                    <PropertyForm
+                                        activePopupMenu={activeSession.menu}
+                                        open={true}
+                                        config={propertyFormSchema['VEHICLE_TYPE']}
+                                        onClose={() => { closeSession('VEHICLE_TYPE'); setActiveSubmenu(null); }}
+                                    />
+                                ) : activeSession.menuCode === 'VEHICLE_MODEL' ? (
+                                    <PropertyForm
+                                        activePopupMenu={activeSession.menu}
+                                        open={true}
+                                        config={propertyFormSchema['VEHICLE_MODEL']}
+                                        onClose={() => { closeSession('VEHICLE_MODEL'); setActiveSubmenu(null); }}
+                                    />
+                                ) : menuCodeToStoreMap[activeSession.menuCode] ? (
+                                    <PropertyPanel
+                                        activeSubmenu={activeSession.menu}
+                                        onClose={() => minimizeSession(activeSession.menuCode)}
+                                    />
+                                ) : null
+                            )}
+                        </div>
 
                         {!showDashboard && <Taskbar/>}
-
-                        {/* KTDB/OSM/NETWORK 임포트는 FileImportModal(헤더 파일>가져오기)로 통합 —
-                            구 메뉴 모달(KtdbImportModal 등)은 헤더가 FILE 메뉴 트리를 렌더하지 않아 도달 불가로 제거 */}
-                        {!showDashboard && activeSession && activeSession.menuCode === 'OD_MATRIX' && (
-                            <OdMatrixModal/>
-                        )}
-
-                        {!showDashboard && activeSession && activeSession.menuCode === 'PASSENGER' && (
-                            <PassengerModal/>
-                        )}
-
-                        {!showDashboard && activeSession && (
-                            isDescendantOf(menu, 'SCHEMA_SETTING', activeSession.menuCode) ? (
-                                <SchemaSetting/>
-                            ) : activeSession.menuCode === 'VEHICLE_TYPE' ? (
-                                <PropertyForm
-                                    activePopupMenu={activeSession.menu}
-                                    open={true}
-                                    config={propertyFormSchema['VEHICLE_TYPE']}
-                                    onClose={() => { closeSession('VEHICLE_TYPE'); setActiveSubmenu(null); }}
-                                />
-                            ) : activeSession.menuCode === 'VEHICLE_MODEL' ? (
-                                <PropertyForm
-                                    activePopupMenu={activeSession.menu}
-                                    open={true}
-                                    config={propertyFormSchema['VEHICLE_MODEL']}
-                                    onClose={() => { closeSession('VEHICLE_MODEL'); setActiveSubmenu(null); }}
-                                />
-                            ) : menuCodeToStoreMap[activeSession.menuCode] ? (
-                                <PropertyPanel
-                                    activeSubmenu={activeSession.menu}
-                                    onClose={() => minimizeSession(activeSession.menuCode)}
-                                />
-                            ) : null
-                        )}
-
                     </div>
                     {showDashboard && <DashboardRight onClose={() => setShowDashboard(false)}/>}
 

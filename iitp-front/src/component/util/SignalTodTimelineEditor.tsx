@@ -1,18 +1,29 @@
-import React, { useCallback, useMemo, useState } from "react";
-import { useSignalTodStore } from "@stores/useSignalTodStore";
-import { findOverlappingTodPlans } from "@utils/signal";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSignalTodHistoryStore, useSignalTodStore } from "@stores/useSignalTodStore";
+import { useSignalStore } from "@stores/useSignalStore";
+import { useMessageStore } from "@stores/useMessageStore";
+import {
+    buildSignalPlanIdsByNode,
+    findFirstTodGap,
+    formatTodTime,
+    nextIndexedGuid,
+    parseTodTime,
+    TodPlanLike,
+    validateTodSchedule,
+} from "@utils/signalEditorUtils";
+import { generateDefaultSignalTod } from "@utils/signalGenerationRules";
 
-/* ───────────────────────────── 타입 ───────────────────────────── */
-interface Plan {
-    id: number | string;
-    startTime: string;
-    endTime: string;
-    [key: string]: any;
+interface Plan extends TodPlanLike {
+    __guid?: string;
+    featureType?: string;
+    parentGuid?: string;
 }
 
 interface TodNode {
     id: string | number;
     plans: Plan[];
+    __guid?: string;
+    featureType?: string;
     [key: string]: any;
 }
 
@@ -22,341 +33,855 @@ interface TodData {
     [key: string]: any;
 }
 
-/* ───────────────────────── 색상 팔레트 ──────────────────────────── */
 const PLAN_COLORS = [
-    "#4f8ef7", "#f76c4f", "#4fc97a", "#f7c44f",
-    "#b04ff7", "#4ff7e8", "#f74fb0", "#a8a8a8",
+    "#4f8ef7", "#e7654f", "#4fc97a", "#f7c44f",
+    "#b064f7", "#4fcfe8", "#e85ba8", "#8893a8",
 ];
 
+const HOUR_MARKS = Array.from({ length: 25 }, (_, index) => index);
+
+const ISSUE_LABELS: Record<string, string> = {
+    empty: "시간 구간 없음",
+    "invalid-time": "시간 형식 오류",
+    reversed: "시작·종료 오류",
+    overlap: "시간 중복",
+    gap: "빈 시간대",
+    "unknown-plan": "신호 Plan 연결 오류",
+};
+
 function planColor(planId: number | string): string {
-    const idx = Number(planId) % PLAN_COLORS.length;
-    return PLAN_COLORS[idx < 0 ? 0 : idx];
+    const numeric = Number(planId);
+    const index = Number.isFinite(numeric)
+        ? Math.abs(numeric) % PLAN_COLORS.length
+        : Math.abs(String(planId).split("").reduce((sum, char) => sum + char.charCodeAt(0), 0)) % PLAN_COLORS.length;
+    return PLAN_COLORS[index]!;
 }
 
-/* ────────────────────── 시간 유틸 ─────────────────────────── */
-function toMinutes(hhmm: string): number {
-    if (!hhmm) return 0;
-    const [h, m] = hhmm.split(":").map(Number);
-    return (h || 0) * 60 + (m || 0);
-}
-
-function toHHMM(minutes: number): string {
-    const h = Math.floor(minutes / 60) % 24;
-    const m = minutes % 60;
-    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
-function pct(minutes: number): string {
+function percentage(minutes: number): string {
     return `${((minutes / 1440) * 100).toFixed(4)}%`;
 }
 
-/* ──────────────────── 편집 팝오버 ──────────────────────────── */
-interface EditPopoverProps {
-    plan: Plan;
-    nodeId: string | number;
-    x: number;
-    y: number;
-    onClose: () => void;
-    onChange: (updated: Plan) => void;
-    onDelete: () => void;
+function editablePlanIds(node: TodNode, definedPlanIds: string[]): string[] {
+    if (definedPlanIds.length > 0) return definedPlanIds;
+    return Array.from(new Set((node.plans ?? []).map(plan => String(plan.id))))
+        .sort((left, right) => Number(left) - Number(right));
 }
 
-const EditPopover: React.FC<EditPopoverProps> = ({ plan, x, y, onClose, onChange, onDelete }) => {
-    const [planId, setPlanId] = useState(String(plan.id));
-    const [start, setStart] = useState(plan.startTime.slice(0, 5));
-    const [end, setEnd] = useState(plan.endTime.slice(0, 5));
+function resolveNodeGuid(node: TodNode): string | undefined {
+    if (node.__guid) return node.__guid;
+    const explicitParent = node.plans?.find(plan => plan.parentGuid)?.parentGuid;
+    if (explicitParent) return explicitParent;
+    const childGuid = node.plans?.find(plan => plan.__guid)?.__guid;
+    return childGuid?.match(/^(.*)\.plans-\d+$/)?.[1];
+}
 
-    const apply = () => {
-        onChange({ ...plan, id: Number(planId) || planId, startTime: start, endTime: end });
-        onClose();
-    };
+interface DragPreview {
+    nodeId: string;
+    planGuid: string;
+    neighborGuid?: string;
+    edge: "start" | "end";
+    minutes: number;
+}
 
-    return (
-        <div
-            style={{
-                position: "fixed", left: x, top: y, zIndex: 9999,
-                background: "#1e2235", border: "1px solid #3a4060",
-                borderRadius: 8, padding: "12px 14px", minWidth: 200,
-                boxShadow: "0 4px 20px rgba(0,0,0,0.6)", color: "#e0e0e0",
-                fontSize: 12,
-            }}
-        >
-            <div style={{ fontWeight: 600, marginBottom: 10, color: "#7aa2ff" }}>플랜 편집</div>
-            <label style={{ display: "block", marginBottom: 6 }}>
-                Plan ID
-                <input
-                    type="number"
-                    value={planId}
-                    onChange={e => setPlanId(e.target.value)}
-                    style={inputStyle}
-                />
-            </label>
-            <label style={{ display: "block", marginBottom: 6 }}>
-                시작 시각
-                <input
-                    type="time"
-                    value={start}
-                    onChange={e => setStart(e.target.value)}
-                    style={inputStyle}
-                />
-            </label>
-            <label style={{ display: "block", marginBottom: 10 }}>
-                종료 시각
-                <input
-                    type="time"
-                    value={end}
-                    onChange={e => setEnd(e.target.value)}
-                    style={inputStyle}
-                />
-            </label>
-            <div style={{ display: "flex", gap: 6 }}>
-                <button onClick={apply} style={btnStyle("#4f8ef7")}>적용</button>
-                <button onClick={onDelete} style={btnStyle("#e05555")}>삭제</button>
-                <button onClick={onClose} style={btnStyle("#555")}>취소</button>
-            </div>
-        </div>
-    );
-};
-
-const inputStyle: React.CSSProperties = {
-    display: "block", width: "100%", marginTop: 3,
-    background: "#111827", border: "1px solid #3a4060",
-    borderRadius: 4, color: "#e0e0e0", padding: "3px 6px", fontSize: 12,
-};
-
-const btnStyle = (bg: string): React.CSSProperties => ({
-    flex: 1, background: bg, border: "none", borderRadius: 4,
-    color: "#fff", padding: "4px 0", cursor: "pointer", fontSize: 11,
-});
-
-/* ──────────────────── 메인 컴포넌트 ──────────────────────── */
 interface SignalTodTimelineEditorProps {
     containerHeight?: number;
+    embeddedNodeId?: string | null;
+    hideSidebar?: boolean;
 }
 
-const HOUR_MARKS = Array.from({ length: 25 }, (_, i) => i); // 0~24
+const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
+    containerHeight = 400,
+    embeddedNodeId,
+    hideSidebar = false,
+}) => {
+    const rawData = useSignalTodStore((state: any) => state.currentJsonData) as TodData | undefined;
+    const signalData = useSignalStore((state: any) => state.currentJsonData) as { signals?: any[] } | undefined;
+    const nodes = useMemo<TodNode[]>(() => rawData?.nodes ?? [], [rawData]);
+    const planIdsByNode = useMemo(
+        () => buildSignalPlanIdsByNode(signalData?.signals ?? []),
+        [signalData],
+    );
+    const [search, setSearch] = useState("");
+    const [internalSelectedNodeId, setInternalSelectedNodeId] = useState<string | null>(null);
+    const selectedNodeId = embeddedNodeId !== undefined ? embeddedNodeId : internalSelectedNodeId;
+    const [selectedPlanGuid, setSelectedPlanGuid] = useState<string | null>(null);
+    const [issuesExpanded, setIssuesExpanded] = useState(false);
+    const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
+    const dragControllerRef = useRef<AbortController | null>(null);
 
-const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({ containerHeight = 400 }) => {
-    const store = useSignalTodStore;
+    const nodeIssues = useMemo(() => {
+        const result = new Map<string, ReturnType<typeof validateTodSchedule>>();
+        for (const node of nodes) {
+            const nodeId = String(node.id);
+            result.set(nodeId, validateTodSchedule(node.plans ?? [], planIdsByNode.get(nodeId) ?? []));
+        }
+        return result;
+    }, [nodes, planIdsByNode]);
 
-    const rawData = store((s: any) => s.currentJsonData) as TodData | undefined;
-    const nodes: TodNode[] = useMemo(() => rawData?.nodes ?? [], [rawData]);
+    const visibleNodes = useMemo(() => {
+        const query = search.trim().toLowerCase();
+        return nodes.filter(node => !query || String(node.id).toLowerCase().includes(query));
+    }, [nodes, search]);
 
-    const [editTarget, setEditTarget] = useState<{
-        nodeId: string | number;
-        planIdx: number;
-        x: number;
-        y: number;
-    } | null>(null);
+    useEffect(() => {
+        if (embeddedNodeId !== undefined) {
+            setSelectedPlanGuid(null);
+            return;
+        }
+        if (visibleNodes.length === 0) {
+            setInternalSelectedNodeId(null);
+            setSelectedPlanGuid(null);
+            return;
+        }
+        if (!visibleNodes.some(node => String(node.id) === selectedNodeId)) {
+            setInternalSelectedNodeId(String(visibleNodes[0]!.id));
+            setSelectedPlanGuid(null);
+        }
+    }, [embeddedNodeId, selectedNodeId, visibleNodes]);
 
+    useEffect(() => () => dragControllerRef.current?.abort(), []);
 
-    /* 데이터 업데이트 */
-    const updateNodes = useCallback((updatedNodes: TodNode[]) => {
-        const updated = { ...(rawData ?? {}), nodes: updatedNodes };
-        store.getState().setCurrentJsonData(updated as any);
-    }, [rawData]);
+    useEffect(() => {
+        setIssuesExpanded(false);
+    }, [selectedNodeId]);
 
-    /* 시간대 중복(상충 위험) 확인 — 겹치는 구간엔 두 플랜의 현시가 동시에 활성화된다 */
-    const confirmNoOverlap = useCallback((nodeId: string | number, candidate: Plan, excludeIndex?: number): boolean => {
-        const node = nodes.find(n => String(n.id) === String(nodeId));
-        if (!node) return true;
-        const overlaps = findOverlappingTodPlans(node.plans, candidate, excludeIndex);
-        if (overlaps.length === 0) return true;
-        const lines = overlaps.map(p => `· Plan ${p.id} (${p.startTime}~${p.endTime})`).join("\n");
-        return window.confirm(
-            `⚠️ 시간대 중복 감지 — 노드 #${nodeId}에서 아래 플랜과 시간이 겹칩니다.\n` +
-            `겹치는 구간에는 두 플랜의 현시가 동시에 활성화되어, 원래 다른 시간대로 분리했던 상충 방향이 같이 녹색이 될 수 있습니다.\n\n` +
-            `${lines}\n\n그래도 저장하시겠습니까?`
+    const applyPlan = useCallback((nodeId: string, currentGuid: string, updated: Plan): string | null => {
+        const node = nodes.find(item => String(item.id) === nodeId);
+        if (!node) return "교차로 TOD 정보를 찾을 수 없습니다.";
+        const nextPlans = node.plans.map(plan => plan.__guid === currentGuid ? updated : plan);
+        const blockingIssue = validateTodSchedule(nextPlans, planIdsByNode.get(nodeId) ?? [])
+            .find(issue => ["invalid-time", "reversed", "overlap"].includes(issue.code));
+        if (blockingIssue) return blockingIssue.message;
+        useSignalTodStore.getState().updateCurrentJsonData(updated as any, useSignalTodHistoryStore);
+        return null;
+    }, [nodes, planIdsByNode]);
+
+    const deletePlan = useCallback((guid: string) => {
+        useSignalTodStore.getState().removeRecordsByGuid([guid], useSignalTodHistoryStore);
+        setSelectedPlanGuid(null);
+    }, []);
+
+    const addPlan = useCallback((node: TodNode) => {
+        const nodeId = String(node.id);
+        const planIds = editablePlanIds(node, planIdsByNode.get(nodeId) ?? []);
+        const gap = findFirstTodGap(node.plans ?? []);
+        const parentGuid = resolveNodeGuid(node);
+        if (planIds.length === 0 || !parentGuid) return;
+
+        const splittablePlans = (node.plans ?? [])
+            .map(plan => ({
+                plan,
+                start: parseTodTime(plan.startTime, false),
+                end: parseTodTime(plan.endTime, true),
+            }))
+            .filter((item): item is { plan: Plan; start: number; end: number } =>
+                !!item.plan.__guid &&
+                item.start != null &&
+                item.end != null &&
+                item.end - item.start >= 10,
+            );
+        const splitTarget = splittablePlans.find(item => item.plan.__guid === selectedPlanGuid)
+            ?? splittablePlans.sort((left, right) => (right.end - right.start) - (left.end - left.start))[0];
+        if (!gap && !splitTarget) return;
+
+        const newGuid = nextIndexedGuid(node.plans ?? [], "plans", parentGuid);
+        const sourcePlanId = splitTarget ? String(splitTarget.plan.id) : null;
+        const nextPlanId = planIds.find(id => id !== sourcePlanId) ?? planIds[0]!;
+        const startTime = gap?.startTime ?? formatTodTime(
+            Math.max(
+                splitTarget!.start + 5,
+                Math.min(
+                    splitTarget!.end - 5,
+                    Math.round(((splitTarget!.start + splitTarget!.end) / 2) / 5) * 5,
+                ),
+            ),
         );
-    }, [nodes]);
-
-    /* 플랜 변경 */
-    const handlePlanChange = useCallback((nodeId: string | number, planIdx: number, updated: Plan) => {
-        if (!confirmNoOverlap(nodeId, updated, planIdx)) return;
-        const newNodes = nodes.map(node => {
-            if (String(node.id) !== String(nodeId)) return node;
-            const newPlans = [...node.plans];
-            newPlans[planIdx] = updated;
-            return { ...node, plans: newPlans };
-        });
-        updateNodes(newNodes);
-    }, [nodes, updateNodes, confirmNoOverlap]);
-
-    /* 플랜 삭제 */
-    const handlePlanDelete = useCallback((nodeId: string | number, planIdx: number) => {
-        const newNodes = nodes.map(node => {
-            if (String(node.id) !== String(nodeId)) return node;
-            const newPlans = node.plans.filter((_, i) => i !== planIdx);
-            return { ...node, plans: newPlans };
-        });
-        updateNodes(newNodes);
-        setEditTarget(null);
-    }, [nodes, updateNodes]);
-
-    /* 노드에 빈 플랜 추가 */
-    const handleAddPlan = useCallback((nodeId: string | number) => {
-        const node = nodes.find(n => String(n.id) === String(nodeId));
-        if (!node) return;
-        // 마지막 플랜의 endTime을 새 플랜의 startTime으로
-        const lastEnd = node.plans.length > 0 ? node.plans[node.plans.length - 1].endTime : "00:00";
-        const newPlan: Plan = {
-            id: (node.plans.length + 1),
-            startTime: lastEnd.slice(0, 5),
-            endTime: toHHMM(Math.min(toMinutes(lastEnd.slice(0, 5)) + 60, 1439)),
+        const plan: Plan = {
+            id: Number.isFinite(Number(nextPlanId)) ? Number(nextPlanId) : nextPlanId,
+            startTime,
+            endTime: gap?.endTime ?? splitTarget!.plan.endTime,
+            __guid: newGuid,
+            featureType: "plans",
+            parentGuid,
         };
-        if (!confirmNoOverlap(nodeId, newPlan)) return;
-        const newNodes = nodes.map(n =>
-            String(n.id) === String(nodeId)
-                ? { ...n, plans: [...n.plans, newPlan] }
-                : n
-        );
-        updateNodes(newNodes);
-    }, [nodes, updateNodes, confirmNoOverlap]);
 
-    /* 블록 클릭 → 팝오버 열기 */
-    const openEdit = (e: React.MouseEvent, nodeId: string | number, planIdx: number) => {
-        e.stopPropagation();
-        setEditTarget({ nodeId, planIdx, x: e.clientX + 8, y: e.clientY - 20 });
-    };
+        if (!gap && splitTarget) {
+            const shortened = { ...splitTarget.plan, endTime: startTime };
+            if (node.__guid) {
+                const nextPlans = (node.plans ?? []).map(item =>
+                    item.__guid === shortened.__guid ? shortened : item,
+                );
+                nextPlans.push(plan);
+                useSignalTodStore.getState().updateCurrentJsonData(
+                    { ...node, plans: nextPlans } as any,
+                    useSignalTodHistoryStore,
+                );
+            } else {
+                useSignalTodStore.getState().updateCurrentJsonData(shortened as any, useSignalTodHistoryStore);
+                useSignalTodStore.getState().updateCurrentJsonData(plan as any, useSignalTodHistoryStore);
+            }
+        } else {
+            useSignalTodStore.getState().updateCurrentJsonData(plan as any, useSignalTodHistoryStore);
+        }
+        setInternalSelectedNodeId(nodeId);
+        setSelectedPlanGuid(newGuid);
+    }, [planIdsByNode, selectedPlanGuid]);
+
+    const autoGenerateTod = useCallback((nodeId: string) => {
+        const definedPlanIds = [...(planIdsByNode.get(nodeId) ?? [])];
+        if (definedPlanIds.length === 0) {
+            useMessageStore.getState().setMessage({
+                type: "alert",
+                text: "TOD 자동 생성에 사용할 Signal PLAN이 없습니다.",
+                onClose: () => {},
+            });
+            return;
+        }
+
+        const existingNode = nodes.find(node => String(node.id) === nodeId);
+        const run = () => {
+            const nodeGuid = existingNode
+                ? resolveNodeGuid(existingNode) ?? nextIndexedGuid(nodes, "nodes")
+                : nextIndexedGuid(nodes, "nodes");
+            const schedule = generateDefaultSignalTod(definedPlanIds);
+            const plans = schedule.map((plan, index) => ({
+                ...plan,
+                __guid: `${nodeGuid}.plans-${index}`,
+                featureType: "plans",
+                parentGuid: nodeGuid,
+            }));
+            const nextNode: TodNode = {
+                ...(existingNode ?? {}),
+                id: nodeId,
+                plans,
+                __guid: nodeGuid,
+                featureType: "nodes",
+            };
+            const store = useSignalTodStore.getState();
+            if (rawData && existingNode && !existingNode.__guid) {
+                store.setCurrentJsonData({
+                    ...rawData,
+                    nodes: (rawData.nodes ?? []).map(node => node === existingNode ? nextNode : node),
+                } as any);
+                store.setChange(true);
+            } else if (rawData) {
+                store.updateCurrentJsonData(nextNode as any, useSignalTodHistoryStore);
+            } else {
+                store.setCurrentJsonData({ id: 0, nodes: [nextNode] } as any);
+                store.setChange(true);
+            }
+            setInternalSelectedNodeId(nodeId);
+            setSelectedPlanGuid(null);
+        };
+
+        if ((existingNode?.plans ?? []).length > 0) {
+            useMessageStore.getState().setMessage({
+                type: "confirm",
+                text: `교차로 #${nodeId}의 기존 TOD ${(existingNode?.plans ?? []).length}개 구간을 백엔드 기본 시간대로 다시 생성하시겠습니까?`,
+                onConfirm: run,
+            });
+        } else {
+            run();
+        }
+    }, [nodes, planIdsByNode, rawData]);
+
+    const commitBoundary = useCallback((
+        node: TodNode,
+        planGuid: string,
+        edge: "start" | "end",
+        minutes: number,
+    ) => {
+        const sortedPlans = [...(node.plans ?? [])].sort((left, right) =>
+            (parseTodTime(left.startTime, false) ?? 0) - (parseTodTime(right.startTime, false) ?? 0),
+        );
+        const index = sortedPlans.findIndex(plan => plan.__guid === planGuid);
+        if (index < 0) return;
+
+        const changedGuids = new Set<string>();
+        const nextPlans = sortedPlans.map(plan => ({ ...plan }));
+        const target = nextPlans[index]!;
+        const nextTime = formatTodTime(minutes);
+
+        if (edge === "start" && index > 0) {
+            const previous = nextPlans[index - 1]!;
+            target.startTime = nextTime;
+            previous.endTime = nextTime;
+            if (target.__guid) changedGuids.add(target.__guid);
+            if (previous.__guid) changedGuids.add(previous.__guid);
+        } else if (edge === "end" && index < nextPlans.length - 1) {
+            const next = nextPlans[index + 1]!;
+            target.endTime = nextTime;
+            next.startTime = nextTime;
+            if (target.__guid) changedGuids.add(target.__guid);
+            if (next.__guid) changedGuids.add(next.__guid);
+        } else {
+            return;
+        }
+
+        if (node.__guid) {
+            useSignalTodStore.getState().updateCurrentJsonData(
+                { ...node, plans: nextPlans } as any,
+                useSignalTodHistoryStore,
+            );
+            return;
+        }
+        nextPlans
+            .filter(plan => plan.__guid && changedGuids.has(plan.__guid))
+            .forEach(plan => useSignalTodStore.getState().updateCurrentJsonData(plan as any, useSignalTodHistoryStore));
+    }, []);
+
+    const startBoundaryDrag = useCallback((
+        event: React.PointerEvent<HTMLDivElement>,
+        node: TodNode,
+        plan: Plan,
+        edge: "start" | "end",
+    ) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!plan.__guid) return;
+
+        const timeline = event.currentTarget.closest<HTMLElement>("[data-tod-timeline]");
+        if (!timeline) return;
+        const timelineWidth = timeline.getBoundingClientRect().width;
+        if (timelineWidth <= 0) return;
+
+        const sortedPlans = [...(node.plans ?? [])].sort((left, right) =>
+            (parseTodTime(left.startTime, false) ?? 0) - (parseTodTime(right.startTime, false) ?? 0),
+        );
+        const index = sortedPlans.findIndex(item => item.__guid === plan.__guid);
+        if (index < 0) return;
+
+        const startMinutes = parseTodTime(plan.startTime, false);
+        const endMinutes = parseTodTime(plan.endTime, true);
+        if (startMinutes == null || endMinutes == null) return;
+
+        const previous = sortedPlans[index - 1];
+        const next = sortedPlans[index + 1];
+        if ((edge === "start" && !previous) || (edge === "end" && !next)) return;
+
+        const min = edge === "start"
+            ? (parseTodTime(previous!.startTime, false) ?? 0) + 5
+            : startMinutes + 5;
+        const max = edge === "start"
+            ? endMinutes - 5
+            : (parseTodTime(next!.endTime, true) ?? 1440) - 5;
+        const original = edge === "start" ? startMinutes : endMinutes;
+        const neighborGuid = edge === "start" ? previous?.__guid : next?.__guid;
+        const startX = event.clientX;
+        let latestMinutes = original;
+
+        dragControllerRef.current?.abort();
+        const controller = new AbortController();
+        dragControllerRef.current = controller;
+
+        const updatePreview = (pointerEvent: PointerEvent) => {
+            const deltaMinutes = ((pointerEvent.clientX - startX) / timelineWidth) * 1440;
+            latestMinutes = Math.max(min, Math.min(max, Math.round((original + deltaMinutes) / 5) * 5));
+            setDragPreview({
+                nodeId: String(node.id),
+                planGuid: plan.__guid!,
+                neighborGuid,
+                edge,
+                minutes: latestMinutes,
+            });
+        };
+        const finishDrag = () => {
+            controller.abort();
+            dragControllerRef.current = null;
+            setDragPreview(null);
+            if (latestMinutes !== original) {
+                commitBoundary(node, plan.__guid!, edge, latestMinutes);
+            }
+        };
+
+        window.addEventListener("pointermove", updatePreview, { signal: controller.signal });
+        window.addEventListener("pointerup", finishDrag, { signal: controller.signal, once: true });
+        window.addEventListener("pointercancel", finishDrag, { signal: controller.signal, once: true });
+    }, [commitBoundary]);
 
     if (!nodes.length) {
+        const emptyNodeId = embeddedNodeId ?? null;
+        const canGenerate = !!emptyNodeId && (planIdsByNode.get(emptyNodeId)?.length ?? 0) > 0;
         return (
-            <div style={{ color: "#666", padding: 32, textAlign: "center", fontSize: 13 }}>
-                signalTOD 데이터가 없습니다.
+            <div style={emptyStateStyle}>
+                <div style={{ fontSize: 15, color: "#bac5d8", marginBottom: 8 }}>신호 TOD 데이터가 없습니다.</div>
+                <div>신호 PLAN을 기준으로 백엔드 기본 TOD 시간표를 생성할 수 있습니다.</div>
+                {canGenerate && (
+                    <button
+                        type="button"
+                        onClick={() => autoGenerateTod(emptyNodeId!)}
+                        style={{ ...toolbarButtonStyle, marginTop: 14, color: "#edc45e", borderColor: "#75591e" }}
+                    >
+                        ⚡ TOD 자동 생성
+                    </button>
+                )}
             </div>
         );
     }
 
+    const bodyHeight = Math.max(190, containerHeight - 62);
+    const activeNode = nodes.find(node => String(node.id) === selectedNodeId) ?? null;
+    const activeNodeId = activeNode ? String(activeNode.id) : null;
+    const activePlans = [...(activeNode?.plans ?? [])].sort((left, right) =>
+        (parseTodTime(left.startTime, false) ?? 0) - (parseTodTime(right.startTime, false) ?? 0),
+    );
+    const activeIssues = activeNodeId ? nodeIssues.get(activeNodeId) ?? [] : [];
+    const activeAllowedPlanIds = activeNode && activeNodeId
+        ? editablePlanIds(activeNode, planIdsByNode.get(activeNodeId) ?? [])
+        : [];
+    const activeParentGuid = activeNode ? resolveNodeGuid(activeNode) : undefined;
+    const activeGap = activeNode ? findFirstTodGap(activeNode.plans ?? []) : null;
+    const selectedPlan = activePlans.find(plan => plan.__guid === selectedPlanGuid) ?? null;
+    const selectablePlanIds = selectedPlan
+        ? Array.from(new Set([...activeAllowedPlanIds, String(selectedPlan.id)]))
+        : activeAllowedPlanIds;
+    const activeCanSplit = activePlans.some(plan => {
+        const start = parseTodTime(plan.startTime, false);
+        const end = parseTodTime(plan.endTime, true);
+        return !!plan.__guid && start != null && end != null && end - start >= 10;
+    });
+    const legendPlanIds = Array.from(new Set(activePlans.map(plan => String(plan.id))))
+        .sort((a, b) => Number(a) - Number(b));
+
     return (
-        <div style={{ position: "relative", display: "flex", flexDirection: "column", height: containerHeight - 60, overflow: "hidden" }}
-             onClick={() => setEditTarget(null)}>
-
-            {/* 팝오버 */}
-            {editTarget && (() => {
-                const node = nodes.find(n => String(n.id) === String(editTarget.nodeId));
-                const plan = node?.plans[editTarget.planIdx];
-                if (!plan) return null;
-                return (
-                    <EditPopover
-                        plan={plan}
-                        nodeId={editTarget.nodeId}
-                        x={editTarget.x}
-                        y={editTarget.y}
-                        onClose={() => setEditTarget(null)}
-                        onChange={updated => handlePlanChange(editTarget.nodeId, editTarget.planIdx, updated)}
-                        onDelete={() => handlePlanDelete(editTarget.nodeId, editTarget.planIdx)}
+        <div style={{ display: "flex", height: bodyHeight, overflow: "hidden", background: "#080d18" }}>
+            {!hideSidebar && <aside style={sidebarStyle}>
+                <div style={{ padding: "9px 9px 7px", borderBottom: "1px solid #1d2739" }}>
+                    <input
+                        value={search}
+                        onChange={event => setSearch(event.target.value)}
+                        placeholder="교차로 ID 검색"
+                        style={{ ...toolbarInputStyle, width: "100%" }}
                     />
-                );
-            })()}
-
-            {/* 헤더: 시간 눈금 */}
-            <div style={{ display: "flex", flexShrink: 0 }}>
-                <div style={{ width: 90, flexShrink: 0 }} /> {/* 노드ID 칼럼 */}
-                <div style={{ flex: 1, position: "relative", height: 24, borderBottom: "1px solid #2a2f4a" }}>
-                    {HOUR_MARKS.map(h => (
-                        <div key={h} style={{
-                            position: "absolute", left: pct(h * 60),
-                            top: 0, height: "100%",
-                            borderLeft: h % 6 === 0 ? "1px solid #4a5080" : "1px solid #2a2f4a",
-                            paddingLeft: 2, fontSize: 10, color: "#666",
-                            transform: "translateX(-1px)",
-                        }}>
-                            {h % 6 === 0 ? `${String(h).padStart(2, "0")}:00` : ""}
-                        </div>
-                    ))}
+                    <div style={{ color: "#657188", fontSize: 9, marginTop: 6 }}>
+                        교차로 {visibleNodes.length}/{nodes.length}
+                    </div>
                 </div>
-                <div style={{ width: 30, flexShrink: 0 }} />
-            </div>
-
-            {/* 노드 행 목록 */}
-            <div style={{ overflowY: "auto", flex: 1 }}>
-                {nodes.map(node => (
-                    <div key={node.id} style={{ display: "flex", alignItems: "center", borderBottom: "1px solid #1a1e30", minHeight: 36 }}>
-                        {/* 노드 ID */}
-                        <div style={{
-                            width: 90, flexShrink: 0, fontSize: 11, color: "#8899bb",
-                            padding: "0 8px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        }} title={String(node.id)}>
-                            #{node.id}
-                        </div>
-
-                        {/* 타임라인 트랙 */}
-                        <div style={{ flex: 1, position: "relative", height: 28, background: "#111520", borderRadius: 2 }}>
-                            {(node.plans ?? []).map((plan, idx) => {
-                                const startMin = toMinutes(plan.startTime);
-                                const endMin = toMinutes(plan.endTime);
-                                const width = Math.max(0, endMin - startMin);
-                                if (width === 0) return null;
-                                const color = planColor(plan.id);
-                                return (
-                                    <div
-                                        key={idx}
-                                        onClick={e => openEdit(e, node.id, idx)}
-                                        title={`Plan ${plan.id} | ${plan.startTime} ~ ${plan.endTime}`}
-                                        style={{
-                                            position: "absolute",
-                                            left: pct(startMin),
-                                            width: pct(width),
-                                            top: 2, bottom: 2,
-                                            background: color,
-                                            borderRadius: 3,
-                                            cursor: "pointer",
-                                            display: "flex",
-                                            alignItems: "center",
-                                            justifyContent: "center",
-                                            fontSize: 10,
-                                            color: "#fff",
-                                            fontWeight: 600,
-                                            overflow: "hidden",
-                                            opacity: 0.88,
-                                            border: editTarget?.nodeId === node.id && editTarget?.planIdx === idx
-                                                ? "2px solid #fff" : "none",
-                                            boxSizing: "border-box",
-                                            transition: "opacity 0.1s",
-                                            userSelect: "none",
-                                        }}
-                                        onMouseEnter={e => (e.currentTarget.style.opacity = "1")}
-                                        onMouseLeave={e => (e.currentTarget.style.opacity = "0.88")}
-                                    >
-                                        {width > 30 ? `P${plan.id}` : ""}
-                                    </div>
-                                );
-                            })}
-                        </div>
-
-                        {/* 플랜 추가 버튼 */}
-                        <div style={{ width: 30, flexShrink: 0, display: "flex", justifyContent: "center" }}>
+                <div style={{ flex: 1, overflowY: "auto" }}>
+                    {visibleNodes.map(node => {
+                        const nodeId = String(node.id);
+                        const issues = nodeIssues.get(nodeId) ?? [];
+                        const selected = selectedNodeId === nodeId;
+                        return (
                             <button
-                                onClick={e => { e.stopPropagation(); handleAddPlan(node.id); }}
-                                title="플랜 추가"
+                                key={nodeId}
+                                onClick={() => {
+                                    setInternalSelectedNodeId(nodeId);
+                                    setSelectedPlanGuid(null);
+                                }}
                                 style={{
-                                    background: "none", border: "1px solid #3a4060",
-                                    color: "#7aa2ff", borderRadius: 3, cursor: "pointer",
-                                    fontSize: 14, width: 20, height: 20, padding: 0,
-                                    lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center",
+                                    width: "100%",
+                                    minHeight: 48,
+                                    padding: "8px 10px",
+                                    textAlign: "left",
+                                    border: "none",
+                                    borderBottom: "1px solid #151e2e",
+                                    borderLeft: selected ? "3px solid #4f8ef7" : "3px solid transparent",
+                                    background: selected ? "#101d34" : "transparent",
+                                    cursor: "pointer",
                                 }}
                             >
-                                +
+                                <div style={{ color: selected ? "#d7e3f6" : "#96a4ba", fontSize: 11, fontWeight: 700 }}>
+                                    교차로 #{nodeId}
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4 }}>
+                                    <span style={{ color: "#657188", fontSize: 9 }}>구간 {node.plans?.length ?? 0}</span>
+                                    {issues.length > 0 && (
+                                        <span title={issues.map(issue => issue.message).join("\n")} style={issueBadgeStyle}>
+                                            오류 {issues.length}
+                                        </span>
+                                    )}
+                                </div>
+                            </button>
+                        );
+                    })}
+                    {visibleNodes.length === 0 && (
+                        <div style={{ padding: 18, textAlign: "center", color: "#6e7a8f", fontSize: 10 }}>
+                            검색 결과가 없습니다.
+                        </div>
+                    )}
+                </div>
+            </aside>}
+
+            <section style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+                {activeNode ? (
+                    <>
+                        <div style={toolbarStyle}>
+                            <div>
+                                <strong style={{ color: "#cbd7e9", fontSize: 12 }}>교차로 #{activeNodeId}</strong>
+                                <div style={{ color: "#69768b", fontSize: 9, marginTop: 3 }}>
+                                    TOD 구간 {activePlans.length}개
+                                </div>
+                            </div>
+                            {activeIssues.length > 0 && (
+                                <button
+                                    onClick={() => setIssuesExpanded(value => !value)}
+                                    aria-expanded={issuesExpanded}
+                                    style={{ ...issueBadgeStyle, cursor: "pointer" }}
+                                >
+                                    유효성 오류 {activeIssues.length} {issuesExpanded ? "▲" : "▼"}
+                                </button>
+                            )}
+                            <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                                {legendPlanIds.map(planId => (
+                                    <span key={planId} style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#8794a9", fontSize: 9 }}>
+                                        <span style={{ width: 8, height: 8, borderRadius: 2, background: planColor(planId) }} />
+                                        P{planId}
+                                    </span>
+                                ))}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => autoGenerateTod(activeNodeId!)}
+                                style={{ ...toolbarButtonStyle, marginLeft: "auto", color: "#edc45e", borderColor: "#75591e" }}
+                            >
+                                ⚡ TOD 자동 생성
+                            </button>
+                            <button
+                                onClick={() => addPlan(activeNode)}
+                                disabled={(!activeGap && !activeCanSplit) || activeAllowedPlanIds.length === 0 || !activeParentGuid}
+                                title={
+                                    activeAllowedPlanIds.length === 0
+                                            ? "추가에 사용할 Plan이 없습니다."
+                                        : !activeParentGuid
+                                            ? "TOD 교차로의 편집 경로를 찾을 수 없습니다."
+                                            : activeGap
+                                                ? `${activeGap.startTime}–${activeGap.endTime} 빈 구간에 추가`
+                                                : activeCanSplit
+                                                    ? `${selectedPlan ? "선택한" : "가장 긴"} 구간을 나누어 추가`
+                                                    : "나눌 수 있는 시간 구간이 없습니다."
+                                }
+                                style={{
+                                    ...toolbarButtonStyle,
+                                    color: "#83adf5",
+                                    opacity: (!activeGap && !activeCanSplit) || activeAllowedPlanIds.length === 0 || !activeParentGuid ? 0.35 : 1,
+                                    cursor: (!activeGap && !activeCanSplit) || activeAllowedPlanIds.length === 0 || !activeParentGuid ? "not-allowed" : "pointer",
+                                }}
+                            >
+                                + 구간 추가
                             </button>
                         </div>
-                    </div>
-                ))}
-            </div>
 
-            {/* 하단 범례 */}
-            <div style={{ flexShrink: 0, padding: "6px 8px", borderTop: "1px solid #1a1e30", display: "flex", gap: 12, flexWrap: "wrap" }}>
-                {Array.from(new Set(nodes.flatMap(n => n.plans?.map(p => p.id) ?? []))).map(pid => (
-                    <div key={pid} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#8899bb" }}>
-                        <div style={{ width: 12, height: 12, borderRadius: 2, background: planColor(pid), flexShrink: 0 }} />
-                        Plan {pid}
+                        {issuesExpanded && activeIssues.length > 0 && (
+                            <div style={issuePanelStyle}>
+                                <div style={{ color: "#f3b0b0", fontWeight: 700, marginBottom: 6 }}>
+                                    이 교차로에서 확인이 필요한 항목
+                                </div>
+                                {activeIssues.map((issue, index) => (
+                                    <div
+                                        key={`${issue.code}-${index}`}
+                                        style={{
+                                            display: "grid",
+                                            gridTemplateColumns: "112px 1fr",
+                                            gap: 8,
+                                            padding: "4px 0",
+                                            borderTop: index === 0 ? "none" : "1px solid #3a2630",
+                                        }}
+                                    >
+                                        <strong style={{ color: issue.code === "gap" ? "#f5bd72" : "#ff9898" }}>
+                                            {ISSUE_LABELS[issue.code] ?? issue.code}
+                                        </strong>
+                                        <span style={{ color: "#c8b8bd" }}>{issue.message}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {selectedPlan && selectedPlan.__guid && (
+                            <div style={selectionBarStyle}>
+                                <span style={{ color: "#8190a7" }}>적용 신호 계획</span>
+                                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                                    {selectablePlanIds.map(id => {
+                                        const selected = String(selectedPlan.id) === id;
+                                        return (
+                                            <button
+                                                key={id}
+                                                onClick={() => applyPlan(activeNodeId!, selectedPlan.__guid!, {
+                                                    ...selectedPlan,
+                                                    id: Number.isFinite(Number(id)) ? Number(id) : id,
+                                                })}
+                                                title={`이 시간 구간에 Plan ${id} 적용`}
+                                                style={{
+                                                    minWidth: 42,
+                                                    border: selected ? "2px solid #fff" : "1px solid rgba(255,255,255,0.25)",
+                                                    background: planColor(id),
+                                                    color: "#fff",
+                                                    borderRadius: 5,
+                                                    padding: "4px 9px",
+                                                    cursor: "pointer",
+                                                    fontSize: 10,
+                                                    fontWeight: 800,
+                                                    opacity: selected ? 1 : 0.68,
+                                                    boxShadow: selected ? `0 0 0 2px ${planColor(id)}55` : "none",
+                                                }}
+                                            >
+                                                P{id}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                <strong style={{ color: "#cbd7e9", fontSize: 10 }}>
+                                    {String(selectedPlan.startTime).slice(0, 5)}–{String(selectedPlan.endTime).slice(0, 5)}
+                                </strong>
+                                <span style={{ color: "#647188", fontSize: 9 }}>색상은 Plan 구분용입니다.</span>
+                                <button
+                                    onClick={() => {
+                                        if (window.confirm(`Plan ${selectedPlan.id} 구간을 삭제하시겠습니까?`)) {
+                                            deletePlan(selectedPlan.__guid!);
+                                        }
+                                    }}
+                                    style={{ ...toolbarButtonStyle, color: "#ef7b7b", marginLeft: "auto" }}
+                                >
+                                    구간 삭제
+                                </button>
+                            </div>
+                        )}
+
+                        <div style={{ position: "relative", height: 34, flexShrink: 0, borderBottom: "1px solid #263149", background: "#0a101c" }}>
+                            {HOUR_MARKS.map(hour => (
+                                <div
+                                    key={hour}
+                                    style={{
+                                        position: "absolute",
+                                        left: percentage(hour * 60),
+                                        top: 0,
+                                        height: "100%",
+                                        borderLeft: hour % 6 === 0 ? "1px solid #4c5b79" : "1px solid #253047",
+                                        paddingLeft: 4,
+                                        color: hour % 6 === 0 ? "#7f8ca2" : "transparent",
+                                        fontSize: 10,
+                                        transform: "translateX(-1px)",
+                                        boxSizing: "border-box",
+                                    }}
+                                >
+                                    {hour % 6 === 0 ? `${String(hour).padStart(2, "0")}:00` : ""}
+                                </div>
+                            ))}
+                        </div>
+
+                        <div style={{ flex: 1, minHeight: 90, padding: "18px 10px", overflow: "auto" }}>
+                            <div
+                                data-tod-timeline
+                                style={{ position: "relative", height: 48, background: "#111827", borderRadius: 5, overflow: "hidden" }}
+                            >
+                                {activePlans.map((plan, index) => {
+                                    const baseStart = parseTodTime(plan.startTime, false);
+                                    const baseEnd = parseTodTime(plan.endTime, true);
+                                    if (baseStart == null || baseEnd == null || baseEnd <= baseStart) return null;
+
+                                    let start = baseStart;
+                                    let end = baseEnd;
+                                    if (dragPreview?.nodeId === activeNodeId) {
+                                        if (dragPreview.planGuid === plan.__guid) {
+                                            if (dragPreview.edge === "start") start = dragPreview.minutes;
+                                            else end = dragPreview.minutes;
+                                        } else if (dragPreview.neighborGuid === plan.__guid) {
+                                            if (dragPreview.edge === "start") end = dragPreview.minutes;
+                                            else start = dragPreview.minutes;
+                                        }
+                                    }
+                                    const width = end - start;
+                                    const color = planColor(plan.id);
+                                    const label = `P${plan.id} · ${formatTodTime(start)}–${formatTodTime(end)}`;
+                                    const selected = selectedPlanGuid === plan.__guid;
+                                    return (
+                                        <div
+                                            key={plan.__guid ?? `${plan.id}-${plan.startTime}-${plan.endTime}`}
+                                            role="button"
+                                            tabIndex={plan.__guid ? 0 : -1}
+                                            onClick={() => plan.__guid && setSelectedPlanGuid(plan.__guid)}
+                                            title={`${label} · 양쪽 경계를 드래그하여 시간 조정`}
+                                            style={{
+                                                position: "absolute",
+                                                left: percentage(start),
+                                                width: percentage(width),
+                                                top: 3,
+                                                bottom: 3,
+                                                border: selected ? "2px solid #fff" : "1px solid rgba(255,255,255,0.15)",
+                                                background: color,
+                                                color: "#fff",
+                                                borderRadius: 4,
+                                                cursor: plan.__guid ? "pointer" : "default",
+                                                fontSize: 10,
+                                                fontWeight: 700,
+                                                padding: "0 9px",
+                                                overflow: "hidden",
+                                                textOverflow: "ellipsis",
+                                                whiteSpace: "nowrap",
+                                                display: "flex",
+                                                alignItems: "center",
+                                                justifyContent: "center",
+                                                boxSizing: "border-box",
+                                                userSelect: "none",
+                                            }}
+                                        >
+                                            {index > 0 && (
+                                                <div
+                                                    aria-label={`${label} 시작 시각 조절`}
+                                                    onPointerDown={event => startBoundaryDrag(event, activeNode, plan, "start")}
+                                                    style={{ ...dragHandleStyle, left: 0 }}
+                                                />
+                                            )}
+                                            {width >= 90 ? label : `P${plan.id}`}
+                                            {index < activePlans.length - 1 && (
+                                                <div
+                                                    aria-label={`${label} 종료 시각 조절`}
+                                                    onPointerDown={event => startBoundaryDrag(event, activeNode, plan, "end")}
+                                                    style={{ ...dragHandleStyle, right: 0 }}
+                                                />
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                                {activeIssues.some(issue => issue.code === "gap") && (
+                                    <div style={{ position: "absolute", inset: 0, pointerEvents: "none", border: "1px dashed #f5ad55", borderRadius: 5 }} />
+                                )}
+                            </div>
+                            <div style={{ display: "flex", justifyContent: "space-between", color: "#718097", fontSize: 9, marginTop: 8 }}>
+                                <span>막대 경계를 드래그하면 맞닿은 두 구간이 5분 단위로 함께 조정됩니다.</span>
+                                {dragPreview && <strong style={{ color: "#dbe7fb" }}>{formatTodTime(dragPreview.minutes)}</strong>}
+                            </div>
+                        </div>
+                    </>
+                ) : (
+                    <div style={emptyStateStyle}>
+                        <div>
+                            {hideSidebar && selectedNodeId
+                                ? `교차로 #${selectedNodeId}의 TOD 일정이 없습니다.`
+                                : "왼쪽에서 교차로를 선택해주세요."}
+                        </div>
+                        {selectedNodeId && (planIdsByNode.get(selectedNodeId)?.length ?? 0) > 0 && (
+                            <button
+                                type="button"
+                                onClick={() => autoGenerateTod(selectedNodeId)}
+                                style={{ ...toolbarButtonStyle, marginTop: 14, color: "#edc45e", borderColor: "#75591e" }}
+                            >
+                                ⚡ TOD 자동 생성
+                            </button>
+                        )}
                     </div>
-                ))}
-                <div style={{ marginLeft: "auto", fontSize: 11, color: "#556", lineHeight: "12px" }}>
-                    블록 클릭 시 편집 · + 버튼으로 플랜 추가
+                )}
+
+                <div style={footerStyle}>
+                    <span>막대 클릭: Plan 선택</span>
+                    <span>경계 드래그: 시간 조정</span>
+                    <span>＋ 구간 추가: 빈 시간대 생성 또는 기존 구간 분할</span>
+                    <span style={{ marginLeft: "auto" }}>TOD는 00:00–24:00을 공백 없이 유지합니다.</span>
                 </div>
-            </div>
+            </section>
         </div>
     );
+};
+
+const toolbarStyle: React.CSSProperties = {
+    minHeight: 42,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "6px 10px",
+    borderBottom: "1px solid #1e293d",
+    background: "#0b121f",
+    boxSizing: "border-box",
+    flexShrink: 0,
+};
+
+const toolbarInputStyle: React.CSSProperties = {
+    width: 155,
+    background: "#111a2b",
+    border: "1px solid #2b3850",
+    borderRadius: 5,
+    color: "#d4dcea",
+    padding: "6px 8px",
+    fontSize: 10,
+    outline: "none",
+};
+
+const toolbarButtonStyle: React.CSSProperties = {
+    border: "1px solid #2b3850",
+    borderRadius: 5,
+    padding: "5px 8px",
+    cursor: "pointer",
+    fontSize: 10,
+    background: "#111a2b",
+};
+
+const sidebarStyle: React.CSSProperties = {
+    width: 190,
+    flexShrink: 0,
+    display: "flex",
+    flexDirection: "column",
+    borderRight: "1px solid #1e293d",
+    background: "#0a101c",
+};
+
+const selectionBarStyle: React.CSSProperties = {
+    minHeight: 36,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "5px 10px",
+    borderBottom: "1px solid #1e293d",
+    background: "#0d1626",
+    fontSize: 10,
+    boxSizing: "border-box",
+    flexShrink: 0,
+};
+
+const dragHandleStyle: React.CSSProperties = {
+    position: "absolute",
+    top: 0,
+    bottom: 0,
+    width: 8,
+    zIndex: 2,
+    cursor: "ew-resize",
+    touchAction: "none",
+    background: "rgba(255,255,255,0.22)",
+    borderLeft: "1px solid rgba(255,255,255,0.45)",
+    borderRight: "1px solid rgba(0,0,0,0.18)",
+};
+
+const issueBadgeStyle: React.CSSProperties = {
+    background: "#3a1d25",
+    border: "1px solid #713b43",
+    borderRadius: 10,
+    color: "#ff9292",
+    padding: "1px 5px",
+    fontSize: 8,
+    cursor: "help",
+};
+
+const issuePanelStyle: React.CSSProperties = {
+    maxHeight: 132,
+    overflowY: "auto",
+    padding: "8px 10px",
+    borderBottom: "1px solid #59313a",
+    background: "#24151c",
+    fontSize: 9,
+    boxSizing: "border-box",
+    flexShrink: 0,
+};
+
+const footerStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 14,
+    padding: "6px 10px",
+    borderTop: "1px solid #1e293d",
+    background: "#0a101c",
+    color: "#718097",
+    fontSize: 9,
+    flexShrink: 0,
+};
+
+const emptyStateStyle: React.CSSProperties = {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 220,
+    color: "#748096",
+    fontSize: 12,
+    textAlign: "center",
 };
 
 export default SignalTodTimelineEditor;

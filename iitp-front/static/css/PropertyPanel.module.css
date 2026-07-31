@@ -217,6 +217,7 @@
 /* ── Body ─────────────────────────────────────────────────────── */
 .body {
     overflow-y: auto;
+    overflow-x: hidden;
     flex: 1;
     min-height: 0;
     width: 100%;
@@ -224,6 +225,7 @@
 
 .bodyFull {
     overflow-y: auto;
+    overflow-x: hidden;
     max-height: 75vh;
     transition: max-height 0.25s ease;
     width: 100%;
@@ -247,8 +249,9 @@
 /* ── Grid container inside body ───────────────────────────────── */
 .gridWrap {
     height: 90%;
-    width: 99%;
+    width: 100%;
     padding: 6px 10px;
+    box-sizing: border-box;
 }
 
 .gridStaleBanner {

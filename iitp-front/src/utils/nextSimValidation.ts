@@ -3,6 +3,7 @@ import { useSignalStore } from "@stores/useSignalStore";
 import { useSignalTodStore } from "@stores/useSignalTodStore";
 import { getActiveVersionId } from "@utils/versionId";
 import axiosInstance from "@api/axiosInstance";
+import { validateSignalPlans, validateTodDataAgainstSignals } from "@utils/signalEditorUtils";
 
 /**
  * 시설물 메뉴 키 중 NextSim 실행에 필수인 항목 — layer.sql facility 그룹 기준
@@ -94,7 +95,43 @@ function validateSignalAgainstNetwork(network: any): FacilityValidationResult {
     const issues: string[] = [];
     if (badNode > 0) issues.push(`네트워크에 없는 노드를 참조하는 신호 ${badNode}건 (네트워크 재가져오기로 노드 id가 바뀌었을 수 있습니다)`);
     if (badConn > 0) issues.push(`존재하지 않는 커넥션을 참조하는 신호 ${badConn}건`);
+    issues.push(...validateSignalPlansAgainstSignals(signals).issues);
 
+    return { ok: issues.length === 0, issues };
+}
+
+/** 교차로별 Signal Plan/Phase 구조와 Turn 참조가 저장 가능한 상태인지 검사한다. */
+export function validateSignalPlansAgainstSignals(
+    sourceSignals?: any[],
+): FacilityValidationResult {
+    const signalData = useSignalStore.getState().currentJsonData as any;
+    const signals = (sourceSignals ?? signalData?.signals ?? []).filter(Boolean);
+    const byNode = new Map<string, any[]>();
+    for (const signal of signals) {
+        const nodeId = String(signal?.nodeId ?? "");
+        if (!nodeId) continue;
+        if (!byNode.has(nodeId)) byNode.set(nodeId, []);
+        byNode.get(nodeId)!.push(signal);
+    }
+
+    const issues: string[] = [];
+    for (const [nodeId, nodeSignals] of byNode) {
+        const turnIds = Array.from(new Set(
+            nodeSignals
+                .map(signal => signal?.turnId)
+                .filter((turnId: unknown) => turnId != null)
+                .map(String),
+        ));
+        const planHolder = nodeSignals.find(signal => Array.isArray(signal?.plans));
+        const plans = planHolder?.plans ?? [];
+        if (plans.length === 0) {
+            issues.push(`교차로 #${nodeId}: Signal Plan이 없습니다.`);
+            continue;
+        }
+        for (const issue of validateSignalPlans(plans, turnIds)) {
+            issues.push(`교차로 #${nodeId}: ${issue.message}`);
+        }
+    }
     return { ok: issues.length === 0, issues };
 }
 
@@ -107,28 +144,12 @@ function validateSignalAgainstNetwork(network: any): FacilityValidationResult {
  * (route-generator가 아니라 nextsim 자체의 별도 크래시 원인 — "존재하기만 하면 통과"인
  * 검사로는 못 잡음, TOD가 실제로 그 노드들을 커버하는지까지 봐야 함).
  */
-function validateSignalTodAgainstSignal(): FacilityValidationResult {
+export function validateSignalTodAgainstSignal(): FacilityValidationResult {
     const signalData = useSignalStore.getState().currentJsonData as any;
     const signals = (signalData?.signals ?? []).filter(Boolean);
-    // generateDummySignals와 동일 규약 — 노드당 대표 레코드 하나에만 plans가 붙는다.
-    const planNodeIds = new Set(
-        signals
-            .filter((s: any) => Array.isArray(s.plans) && s.plans.length > 0)
-            .map((s: any) => String(s.nodeId))
-    );
-    if (planNodeIds.size === 0) return { ok: true, issues: [] }; // 신호 자체에 플랜 없음 — TOD 검증 대상 없음
-
     const todData = useSignalTodStore.getState().currentJsonData as any;
-    const todNodeIds = new Set((todData?.nodes ?? []).filter(Boolean).map((n: any) => String(n.id)));
-
-    const missing = [...planNodeIds].filter((id) => !todNodeIds.has(id));
-    if (missing.length === 0) return { ok: true, issues: [] };
-
-    const preview = missing.slice(0, 5).join(', ') + (missing.length > 5 ? ' 외' : '');
-    return {
-        ok: false,
-        issues: [`신호 플랜은 있는데 TOD 일정이 없는 노드 ${missing.length}건(NextSim 크래시 원인): ${preview}`],
-    };
+    const issues = validateTodDataAgainstSignals(signals, (todData?.nodes ?? []).filter(Boolean));
+    return { ok: issues.length === 0, issues };
 }
 
 // Network ID naming 스펙 대역 — OdTerminalIdBandService/NetworkIdNormalizer(백엔드)와 동일 기준.

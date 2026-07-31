@@ -20,7 +20,11 @@ import { useNetworkEditStore } from '@stores/useNetworkEditStore';
 import { useNetworkUndoStore } from '@stores/useNetworkUndoStore';
 import { useEditGuideStore } from '@stores/useEditGuideStore';
 import { useMessageStore } from '@stores/useMessageStore';
-import { useSignalStore, useSignalHistoryStore } from '@stores/useSignalStore';
+import {
+    useSignalStore,
+    useSignalHistoryStore,
+    useSignalPlanHistoryStore,
+} from '@stores/useSignalStore';
 import { useSignalTodStore, useSignalTodHistoryStore } from '@stores/useSignalTodStore';
 import { useBusStationStore, useBusStationHistoryStore } from '@stores/useBusStationStore';
 import { useRailStationStore, useRailStationHistoryStore } from '@stores/useRailStationStore';
@@ -28,6 +32,8 @@ import { usePavementMarkingStore, usePavementMarkingHistoryStore } from '@stores
 import { assignPropertyToResponseData } from '@utils/guid';
 import { featureUpdateLogs } from '@utils/history';
 import { generateDummySignalsForNode } from '@utils/signal';
+import { generateDefaultSignalTod } from '@utils/signalGenerationRules';
+import { createSignalHistoryTransactionId } from '@utils/signalHistory';
 import { getNetworkLodTierByResolution } from '@utils/lodConstants';
 import { useModeStore } from '@stores/useModeStore';
 import { usePropertyStore } from '@stores/usePropertyStore';
@@ -438,28 +444,272 @@ export function deleteSignalsForNodes(nodeIds: (number | string)[]): void {
     }
 }
 
+export interface SignalNodeSyncResult {
+    mode: 'created' | 'synchronized';
+    signalCount: number;
+    addedConnections: number;
+    removedConnections: number;
+    addedTurns: number;
+    todCreated: boolean;
+}
+
+function nextSignalGuid(signals: any[]): string {
+    const used = new Set(signals.map(signal => String(signal.__guid ?? '')));
+    let index = signals.length;
+    while (used.has(`signals-${index}`)) index += 1;
+    return `signals-${index}`;
+}
+
+function createDefaultTodForNode(
+    nodeId: string,
+    planIds: Array<string | number>,
+    transactionId: string,
+): boolean {
+    const store = useSignalTodStore.getState();
+    const current = store.currentJsonData as { id?: number; nodes?: any[]; [key: string]: any } | undefined;
+    if ((current?.nodes ?? []).some(node => String(node.id) === nodeId)) return false;
+
+    const nodeGuid = `nodes-${Date.now()}`;
+    const defaultSchedule = generateDefaultSignalTod(planIds);
+    if (defaultSchedule.length === 0) return false;
+    const todNode = {
+        id: nodeId,
+        plans: defaultSchedule.map((plan, index) => ({
+            ...plan,
+            __guid: `${nodeGuid}.plans-${index}`,
+            featureType: 'plans',
+            parentGuid: nodeGuid,
+        })),
+        __guid: nodeGuid,
+        featureType: 'nodes',
+    };
+
+    if (current) {
+        store.updateCurrentJsonData(todNode, useSignalTodHistoryStore as any, {
+            scope: 'TOD',
+            transactionId,
+        });
+    } else {
+        store.setCurrentJsonData({ id: 0, nodes: [todNode] } as any);
+        store.setChange(true);
+        featureUpdateLogs(useSignalTodHistoryStore as any, {
+            guid: nodeGuid,
+            updateType: 'added',
+            properties: todNode,
+            scope: 'TOD',
+            transactionId,
+        });
+    }
+    return true;
+}
+
+function filterPlansToTurnIds(plans: any[] | undefined, validTurnIds: Set<string>): any[] | undefined {
+    if (!plans) return undefined;
+    return plans.map(plan => ({
+        ...plan,
+        phases: (plan.phases ?? []).map((phase: any) => ({
+            ...phase,
+            turnList: String(phase.turnList ?? '')
+                .split(/\s+/)
+                .filter(Boolean)
+                .filter((turnId: string) => validTurnIds.has(turnId))
+                .join(' '),
+        })),
+    }));
+}
+
 /**
- * 노드 하나의 신호를 토폴로지(접근로/방위각) 기준으로 통째로 (재)생성한다 — 기존 신호가
- * 있으면 먼저 전부 지운다(부분 병합이 아니라 "이 교차로의 완전한 신호 세트로 교체"가 목표,
- * SignalGroupedEditor의 "자동 생성"과 동일 원칙 — 둘 다 이 함수를 공유). 판정 기준은
- * generateDummySignalsForNode(iitp-rest DummySignalGenerator와 동일 로직)를 그대로 쓰므로
- * 신호 후보 조건(접근로 2개 이상 등) 미충족 노드는 null을 반환하고 아무 것도 하지 않는다.
+ * 신규 교차로는 Signal + 기본 PLAN + 종일 TOD를 최초 생성한다.
+ * 기존 교차로는 사용자가 만든 PLAN/TOD를 보존하면서 현재 Network Connection만 Turn 그룹에
+ * 동기화한다. 기존 그룹의 Turn ID는 유지하고 새 그룹에만 다음 ID를 부여한다.
  */
-export function generateSignalsForNode(network: Network, nodeId: number | string): number | null {
-    const generated = generateDummySignalsForNode(network, String(nodeId));
+export function synchronizeSignalsForNode(
+    network: Network,
+    nodeId: number | string,
+): SignalNodeSyncResult | null {
+    const normalizedNodeId = String(nodeId);
+    const generated = generateDummySignalsForNode(network, normalizedNodeId);
     if (generated.length === 0) return null;
-    deleteSignalsForNodes([nodeId]);
-    const base = (useSignalStore.getState().currentJsonData as { signals?: any[] } | undefined)?.signals?.length ?? 0;
-    generated.forEach((partial, i) => {
-        const newSig = {
+    const transactionId = createSignalHistoryTransactionId('AUTO_SIGNAL');
+    const turnHistoryMetadata = { scope: 'TURN' as const, transactionId };
+    const planHistoryMetadata = { scope: 'PLAN' as const, transactionId };
+
+    const store = useSignalStore.getState();
+    const allSignals = (store.currentJsonData as { signals?: any[] } | undefined)?.signals ?? [];
+    const existing = allSignals.filter(signal => String(signal.nodeId) === normalizedNodeId);
+
+    if (existing.length === 0) {
+        const workingSignals = [...allSignals];
+        generated.forEach(partial => {
+            const signalGuid = nextSignalGuid(workingSignals);
+            const plans = (partial.plans ?? []).map((plan: any, planIndex: number) => {
+                const planGuid = `${signalGuid}.plans-${planIndex}`;
+                return {
+                    ...plan,
+                    __guid: planGuid,
+                    featureType: 'plans',
+                    parentGuid: signalGuid,
+                    phases: (plan.phases ?? []).map((phase: any, phaseIndex: number) => ({
+                        ...phase,
+                        __guid: `${planGuid}.phases-${phaseIndex}`,
+                        featureType: 'phases',
+                        parentGuid: planGuid,
+                    })),
+                };
+            });
+            const newSignal = {
+                featureType: 'signals',
+                ...partial,
+                ...(partial.plans ? { plans } : {}),
+                __guid: signalGuid,
+            };
+            workingSignals.push(newSignal);
+            store.updateCurrentJsonData(
+                newSignal,
+                useSignalHistoryStore as any,
+                turnHistoryMetadata,
+            );
+            (newSignal.plans ?? []).forEach((plan: any) => {
+                featureUpdateLogs(useSignalPlanHistoryStore as any, {
+                    guid: plan.__guid,
+                    updateType: 'added',
+                    properties: plan,
+                    ...planHistoryMetadata,
+                });
+            });
+        });
+        const generatedPlanIds = generated
+            .find(signal => signal.plans?.length)
+            ?.plans
+            ?.map(plan => plan.id) ?? [];
+        const todCreated = createDefaultTodForNode(
+            normalizedNodeId,
+            generatedPlanIds,
+            transactionId,
+        );
+        return {
+            mode: 'created',
+            signalCount: generated.length,
+            addedConnections: generated.length,
+            removedConnections: 0,
+            addedTurns: new Set(generated.map(signal => String(signal.turnId))).size,
+            todCreated,
+        };
+    }
+
+    const generatedByConnection = new Map(
+        generated.map(signal => [String(signal.connectionId), signal]),
+    );
+    const existingByConnection = new Map<string, any>();
+    for (const signal of existing) {
+        if (signal.connectionId == null) continue;
+        const connectionId = String(signal.connectionId);
+        if (!existingByConnection.has(connectionId)) existingByConnection.set(connectionId, signal);
+    }
+
+    // 생성기가 계산한 임시 Turn 그룹별로 기존 Turn ID를 찾아 유지한다.
+    const stableTurnIdByGeneratedTurn = new Map<string, string>();
+    const usedTurnIds = new Set<string>();
+    for (const signal of existing) {
+        if (signal.connectionId == null || signal.turnId == null) continue;
+        const desired = generatedByConnection.get(String(signal.connectionId));
+        if (!desired) continue;
+        const generatedTurnId = String(desired.turnId);
+        if (!stableTurnIdByGeneratedTurn.has(generatedTurnId)) {
+            const stableTurnId = String(signal.turnId);
+            stableTurnIdByGeneratedTurn.set(generatedTurnId, stableTurnId);
+            usedTurnIds.add(stableTurnId);
+        }
+    }
+    let nextTurnId = Math.max(
+        -1,
+        ...existing
+            .map(signal => Number(signal.turnId))
+            .filter(Number.isFinite),
+    ) + 1;
+    for (const signal of generated) {
+        const generatedTurnId = String(signal.turnId);
+        if (stableTurnIdByGeneratedTurn.has(generatedTurnId)) continue;
+        while (usedTurnIds.has(String(nextTurnId))) nextTurnId += 1;
+        stableTurnIdByGeneratedTurn.set(generatedTurnId, String(nextTurnId));
+        usedTurnIds.add(String(nextTurnId));
+        nextTurnId += 1;
+    }
+
+    const matchedExistingGuids = new Set<string>();
+    const finalSignals: any[] = [];
+    const workingSignals = [...allSignals];
+    let addedConnections = 0;
+    for (const partial of generated) {
+        const connectionId = String(partial.connectionId);
+        const previous = existingByConnection.get(connectionId);
+        const synchronized = {
+            ...(previous ?? {}),
             featureType: 'signals',
             ...partial,
-            __guid: `signals-${base + i}`,
+            plans: undefined,
+            nodeId: normalizedNodeId,
+            turnId: stableTurnIdByGeneratedTurn.get(String(partial.turnId))!,
+            connectionId,
+            __guid: previous?.__guid ?? nextSignalGuid(workingSignals),
         };
-        useSignalStore.getState().updateCurrentJsonData(newSig, useSignalHistoryStore as any);
-        featureUpdateLogs(useSignalHistoryStore as any, { guid: newSig.__guid, updateType: 'added', properties: newSig });
-    });
-    return generated.length;
+        if (previous?.__guid) {
+            matchedExistingGuids.add(previous.__guid);
+            store.updateCurrentJsonData(
+                synchronized,
+                useSignalHistoryStore as any,
+                turnHistoryMetadata,
+            );
+        } else {
+            addedConnections += 1;
+            workingSignals.push(synchronized);
+            store.updateCurrentJsonData(
+                synchronized,
+                useSignalHistoryStore as any,
+                turnHistoryMetadata,
+            );
+        }
+        finalSignals.push(synchronized);
+    }
+
+    const removed = existing.filter(signal => !matchedExistingGuids.has(signal.__guid));
+    const removedGuids = removed.map(signal => signal.__guid).filter((guid): guid is string => !!guid);
+    if (removedGuids.length > 0) {
+        store.removeRecordsByGuid(
+            removedGuids,
+            useSignalHistoryStore as any,
+            turnHistoryMetadata,
+        );
+    }
+
+    // PLAN은 재생성하지 않는다. 살아남은 Turn 참조만 유지하고 새 Turn은 현시 미배정으로 둔다.
+    const originalPlans = existing.find(signal => signal.plans?.length)?.plans;
+    const validTurnIds = new Set(finalSignals.map(signal => String(signal.turnId)));
+    const preservedPlans = filterPlansToTurnIds(originalPlans, validTurnIds);
+    if (finalSignals.length > 0 && preservedPlans) {
+        const carrier = { ...finalSignals[0], plans: preservedPlans };
+        store.updateCurrentJsonData(
+            carrier,
+            useSignalPlanHistoryStore as any,
+            planHistoryMetadata,
+        );
+    }
+
+    const previousTurnIds = new Set(existing.map(signal => String(signal.turnId)));
+    const finalTurnIds = new Set(finalSignals.map(signal => String(signal.turnId)));
+    return {
+        mode: 'synchronized',
+        signalCount: finalSignals.length,
+        addedConnections,
+        removedConnections: removed.length,
+        addedTurns: [...finalTurnIds].filter(turnId => !previousTurnIds.has(turnId)).length,
+        todCreated: false,
+    };
+}
+
+/** 기존 호출부 호환용: 신규 생성/기존 동기화 후 현재 이동류 수를 반환한다. */
+export function generateSignalsForNode(network: Network, nodeId: number | string): number | null {
+    return synchronizeSignalsForNode(network, nodeId)?.signalCount ?? null;
 }
 
 // ── 링크 삭제 연쇄: 정류장 정리 ──────────────────────────────────

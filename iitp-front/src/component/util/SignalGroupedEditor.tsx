@@ -6,7 +6,8 @@ import { useMessageStore } from "@stores/useMessageStore";
 import { featureUpdateLogs } from "@utils/history";
 import { checkManualSignalEditConflicts, SignalPhaseConflict } from "@utils/signal";
 import { extractFeatureTypeFromGuid } from "@utils/guid";
-import { deleteSignalsForNodes, generateSignalsForNode } from "@hooks/useNetworkSelect";
+import { deleteSignalsForNodes, synchronizeSignalsForNode } from "@hooks/useNetworkSelect";
+import { buildSignalTurnGroups } from "@utils/signalTurnGroups";
 
 /** 상충 경고를 사용자에게 보여주고 계속 저장할지 확인받는다. */
 function confirmSignalConflicts(conflicts: SignalPhaseConflict[]): boolean {
@@ -24,9 +25,20 @@ interface SignalRecord {
     __guid: string;
     featureType: string;
     nodeId: string;
+    turnId?: string | number | null;
     turning: string | null;
     type: string | null;
     connectionId: string | null;
+    [key: string]: any;
+}
+
+interface NetworkConnection {
+    id: string | number;
+    fromLink?: string | number;
+    fromLane?: string | number;
+    toLink?: string | number;
+    toLane?: string | number;
+    turning?: string | null;
     [key: string]: any;
 }
 
@@ -37,7 +49,6 @@ const DIR = [
     { key: "Right_Turn", label: "우회전", icon: "↱", color: "#f7c44f" },
     { key: "U_Turn",     label: "유턴",   icon: "↩", color: "#b04ff7" },
 ] as const;
-type DirKey = typeof DIR[number]["key"];
 const DIR_ORDER: string[] = DIR.map(d => d.key);
 
 /** XML 단축코드(S/L/R/U) → DIR 키로 정규화 */
@@ -53,9 +64,58 @@ function dirMeta(key: string | null) {
     return DIR.find(d => d.key === key) ?? { label: key ?? "—", icon: "?", color: "#556" };
 }
 
+function signalTypeForConnection(connection: NetworkConnection): "RTOR" | "None" {
+    return normalizeTurning(connection.turning) === "Right_Turn" ? "RTOR" : "None";
+}
+
+function connectionLabel(connection: NetworkConnection): string {
+    const direction = dirMeta(normalizeTurning(connection.turning));
+    const lane = connection.fromLane != null || connection.toLane != null
+        ? ` · ${connection.fromLane ?? "?"}차로 → ${connection.toLane ?? "?"}차로`
+        : "";
+    return `#${connection.id} · ${connection.fromLink ?? "?"} → ${connection.toLink ?? "?"}${lane} · ${direction.icon} ${direction.label}`;
+}
+
+function inferTurnId(
+    connection: NetworkConnection,
+    signals: SignalRecord[],
+    connections: NetworkConnection[],
+    currentSignal?: SignalRecord,
+): string {
+    const connectionById = new Map(connections.map(item => [String(item.id), item]));
+    const targetDirection = normalizeTurning(connection.turning);
+    const sameApproach = signals.find(signal => {
+        if (signal.__guid === currentSignal?.__guid || signal.turnId == null) return false;
+        const linked = signal.connectionId == null
+            ? undefined
+            : connectionById.get(String(signal.connectionId));
+        return linked
+            && String(linked.fromLink) === String(connection.fromLink)
+            && normalizeTurning(linked.turning) === targetDirection;
+    });
+    if (sameApproach?.turnId != null) return String(sameApproach.turnId);
+
+    const currentConnection = currentSignal?.connectionId == null
+        ? undefined
+        : connectionById.get(String(currentSignal.connectionId));
+    if (currentSignal?.turnId != null
+            && currentConnection
+            && String(currentConnection.fromLink) === String(connection.fromLink)
+            && normalizeTurning(currentConnection.turning) === targetDirection) {
+        return String(currentSignal.turnId);
+    }
+
+    const numericTurnIds = signals
+        .map(signal => Number(signal.turnId))
+        .filter(Number.isFinite);
+    return String(numericTurnIds.length > 0 ? Math.max(...numericTurnIds) + 1 : 0);
+}
+
 /* ─────────────────────── 신호 행 ───────────────────────────────── */
 interface RowProps {
     sig: SignalRecord;
+    signals: SignalRecord[];
+    connections: NetworkConnection[];
     isSelected: boolean;
     rowRef: (el: HTMLTableRowElement | null) => void;
     onSave: (s: SignalRecord) => void;
@@ -63,45 +123,100 @@ interface RowProps {
     onValidate: (candidate: SignalRecord) => SignalPhaseConflict[];
 }
 
-const SignalRow: React.FC<RowProps> = ({ sig, isSelected, rowRef, onSave, onDelete, onValidate }) => {
+const SignalRow: React.FC<RowProps> = ({
+    sig,
+    signals,
+    connections,
+    isSelected,
+    rowRef,
+    onSave,
+    onDelete,
+    onValidate,
+}) => {
     const [editing, setEditing] = useState(false);
-    const [draft, setDraft] = useState({ turning: sig.turning ?? "", type: sig.type ?? "", connectionId: sig.connectionId ?? "" });
-    const meta = dirMeta(sig.turning);
+    const [connectionId, setConnectionId] = useState(sig.connectionId ?? "");
+    const connection = connections.find(item => String(item.id) === String(sig.connectionId));
+    const draftConnection = connections.find(item => String(item.id) === String(connectionId));
+    const direction = normalizeTurning(connection?.turning) ?? normalizeTurning(sig.turning);
+    const meta = dirMeta(direction);
+    const disconnected = !connection;
 
     const startEdit = () => {
-        // setDraft/setEditing 을 먼저 배치 → 이후 외부 스토어 업데이트
-        setDraft({ turning: sig.turning ?? DIR[0]!.key, type: sig.type ?? "", connectionId: sig.connectionId ?? "" });
+        setConnectionId(connection ? String(connection.id) : "");
         setEditing(true);
-        // 렌더 후 지도 하이라이트 (외부 스토어가 React 배치보다 앞서 flush되지 않도록 setTimeout)
-        setTimeout(() => useSelectionStore.getState().setSelectedGuid([sig.__guid]), 0);
+    };
+    const highlightConnection = () => {
+        const guid = connection?.__guid;
+        useSelectionStore.getState().setSelectedGuid([
+            typeof guid === "string" && guid.length > 0 ? guid : sig.__guid,
+        ]);
     };
     const save = () => {
-        const updated = { ...sig, turning: draft.turning || null, type: draft.type || null, connectionId: draft.connectionId || null };
+        if (!draftConnection) return;
+        const turning = normalizeTurning(draftConnection.turning);
+        const updated = {
+            ...sig,
+            turnId: inferTurnId(draftConnection, signals, connections, sig),
+            turning,
+            type: signalTypeForConnection(draftConnection),
+            connectionId: String(draftConnection.id),
+        };
         if (!confirmSignalConflicts(onValidate(updated))) return;
         onSave(updated);
         setEditing(false);
     };
     const cancel = () => {
-        setDraft({ turning: sig.turning ?? DIR[0]!.key, type: sig.type ?? "", connectionId: sig.connectionId ?? "" });
+        setConnectionId(connection ? String(connection.id) : "");
         setEditing(false);
     };
 
     if (editing) {
+        const draftMeta = dirMeta(normalizeTurning(draftConnection?.turning));
         return (
             <tr ref={rowRef} style={{ background: "#0c1322" }}>
+                <td style={signalChildDirectionTd}>
+                    <div style={directionAndTypeStyle}>
+                        {draftConnection
+                            ? <span style={{ ...readonlyValueStyle, color: draftMeta.color }}>
+                                {draftMeta.icon} {draftMeta.label}
+                            </span>
+                            : <span style={requiredValueStyle}>Connection 선택 필요</span>}
+                        {draftConnection && (
+                            <span style={typeInlineBadgeStyle}>
+                                {signalTypeForConnection(draftConnection)}
+                            </span>
+                        )}
+                    </div>
+                </td>
                 <td style={td}>
-                    <select value={draft.turning} onChange={e => setDraft(d => ({ ...d, turning: e.target.value }))} style={sel} autoFocus>
-                        {DIR.map(d => <option key={d.key} value={d.key}>{d.icon} {d.label}</option>)}
+                    <select
+                        value={connectionId}
+                        onChange={event => setConnectionId(event.target.value)}
+                        style={sel}
+                        autoFocus
+                    >
+                        <option value="">현재 교차로의 Connection 선택</option>
+                        {connections.map(item => {
+                            const owner = signals.find(signal =>
+                                signal.__guid !== sig.__guid
+                                && String(signal.connectionId) === String(item.id));
+                            return (
+                                <option key={String(item.id)} value={String(item.id)} disabled={!!owner}>
+                                    {connectionLabel(item)}
+                                    {owner ? ` · 사용 중 T${owner.turnId ?? "미지정"}` : ""}
+                                </option>
+                            );
+                        })}
                     </select>
                 </td>
-                <td style={td}>
-                    <input value={draft.type} onChange={e => setDraft(d => ({ ...d, type: e.target.value }))} placeholder="type" style={inp} />
-                </td>
-                <td style={td}>
-                    <input value={draft.connectionId} onChange={e => setDraft(d => ({ ...d, connectionId: e.target.value }))} placeholder="connection ID" style={inp} />
-                </td>
                 <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
-                    <button onClick={save} style={btnS("#4f8ef7")}>저장</button>
+                    <button
+                        onClick={save}
+                        disabled={!draftConnection}
+                        style={draftConnection ? btnS("#4f8ef7") : disabledButtonStyle}
+                    >
+                        연결
+                    </button>
                     <button onClick={cancel} style={{ ...btnS("#2a3050"), marginLeft: 4 }}>취소</button>
                 </td>
             </tr>
@@ -112,35 +227,65 @@ const SignalRow: React.FC<RowProps> = ({ sig, isSelected, rowRef, onSave, onDele
         <tr
             ref={rowRef}
             className="signal-data-row"
-            onClick={startEdit}
+            onClick={highlightConnection}
             style={{
                 cursor: "pointer",
                 borderBottom: "1px solid #0d1020",
-                background: isSelected ? "#0d1e3a" : undefined,
-                outline: isSelected ? "1px solid #4f8ef755" : undefined,
+                background: disconnected ? "#261014" : isSelected ? "#0d2444" : "#080e18",
+                outline: disconnected
+                    ? "1px solid #8f2f3d"
+                    : isSelected ? "1px solid #4f8ef755" : undefined,
                 outlineOffset: "-1px",
             }}
         >
-            <td style={td}>
-                <span style={{
-                    display: "inline-flex", alignItems: "center", gap: 5,
-                    background: meta.color + "18", border: `1px solid ${meta.color}44`,
-                    borderRadius: 5, padding: "2px 10px",
-                    color: meta.color, fontSize: 12, fontWeight: 600,
-                }}>
-                    <span style={{ fontSize: 14 }}>{meta.icon}</span>{meta.label}
-                </span>
+            <td style={signalChildDirectionTd}>
+                <div style={directionAndTypeStyle}>
+                    {disconnected ? (
+                        <span style={disconnectedBadgeStyle}>연결 끊김</span>
+                    ) : (
+                        <span style={{
+                            display: "inline-flex", alignItems: "center", gap: 5,
+                            background: meta.color + "18", border: `1px solid ${meta.color}44`,
+                            borderRadius: 5, padding: "2px 10px",
+                            color: meta.color, fontSize: 12, fontWeight: 600,
+                        }}>
+                            <span style={{ fontSize: 14 }}>{meta.icon}</span>{meta.label}
+                        </span>
+                    )}
+                    <span style={typeInlineBadgeStyle}>
+                        {connection ? signalTypeForConnection(connection) : sig.type || "—"}
+                    </span>
+                </div>
             </td>
-            <td style={{ ...td, color: "#556", fontSize: 12 }}>
-                {sig.type || <span style={{ color: "#222" }}>—</span>}
+            <td style={{ ...td, color: disconnected ? "#ef7f8e" : "#8eb3ee", fontSize: 11 }}>
+                {connection
+                    ? connectionLabel(connection)
+                    : `저장된 ID #${sig.connectionId || "없음"} · 현재 노드에 존재하지 않음`}
             </td>
-            <td style={{ ...td, color: "#7aa2ff", fontSize: 12, fontFamily: "monospace" }}>
-                {sig.connectionId || <span style={{ color: "#222", fontFamily: "sans-serif" }}>—</span>}
-            </td>
-            <td style={{ ...td, textAlign: "right" }}>
-                <button onClick={e => { e.stopPropagation(); onDelete(); }}
-                    className="del-btn"
-                    style={{ ...btnS("transparent"), color: "#c0392b", fontSize: 13, padding: "1px 6px" }}>✕</button>
+            <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
+                <button
+                    type="button"
+                    onClick={event => {
+                        event.stopPropagation();
+                        startEdit();
+                    }}
+                    title={disconnected ? "Connection 다시 연결" : "신호 연결 수정"}
+                    style={rowSecondaryButtonStyle}
+                >
+                    수정
+                </button>
+                <button
+                    type="button"
+                    onClick={event => {
+                        event.stopPropagation();
+                        onDelete();
+                    }}
+                    aria-label="신호 해제"
+                    title="신호만 해제하며 네트워크 Connection은 삭제하지 않습니다."
+                    style={{ ...rowDeleteButtonStyle, marginLeft: 4 }}
+                >
+                    X
+                </button>
             </td>
         </tr>
     );
@@ -149,33 +294,96 @@ const SignalRow: React.FC<RowProps> = ({ sig, isSelected, rowRef, onSave, onDele
 /* ───────────────────── 신호 추가 행 ────────────────────────────── */
 interface AddRowProps {
     nodeId: string;
+    signals: SignalRecord[];
+    connections: NetworkConnection[];
     onAdd: (s: Omit<SignalRecord, "__guid">) => void;
     onCancel: () => void;
     onValidate: (candidate: SignalRecord) => SignalPhaseConflict[];
 }
 
-const AddRow: React.FC<AddRowProps> = ({ nodeId, onAdd, onCancel, onValidate }) => {
-    const [draft, setDraft] = useState({ turning: "Straight" as DirKey, type: "", connectionId: "" });
+const AddRow: React.FC<AddRowProps> = ({
+    nodeId,
+    signals,
+    connections,
+    onAdd,
+    onCancel,
+    onValidate,
+}) => {
+    const [connectionId, setConnectionId] = useState("");
+    const connection = connections.find(item => String(item.id) === connectionId);
+    const meta = dirMeta(normalizeTurning(connection?.turning));
+    const availableCount = connections.filter(item =>
+        !signals.some(signal => String(signal.connectionId) === String(item.id))).length;
+
     const add = () => {
-        const candidate = { featureType: "signals", nodeId, turning: draft.turning, type: draft.type || null, connectionId: draft.connectionId || null } as unknown as SignalRecord;
+        if (!connection) return;
+        const candidate = {
+            featureType: "signals",
+            nodeId,
+            turnId: inferTurnId(connection, signals, connections),
+            turning: normalizeTurning(connection.turning),
+            type: signalTypeForConnection(connection),
+            connectionId: String(connection.id),
+        } as unknown as SignalRecord;
         if (!confirmSignalConflicts(onValidate(candidate))) return;
         onAdd(candidate);
     };
+
+    if (connections.length === 0) {
+        return (
+            <tr>
+                <td colSpan={3} style={emptyConnectionStyle}>
+                    이 교차로에는 연결할 수 있는 Connection이 없습니다. 네트워크 데이터를 먼저 확인하세요.
+                    <button onClick={onCancel} style={{ ...btnS("#2a3050"), marginLeft: 8 }}>닫기</button>
+                </td>
+            </tr>
+        );
+    }
+
     return (
         <tr style={{ background: "#090e1a" }}>
             <td style={td}>
-                <select value={draft.turning} onChange={e => setDraft(d => ({ ...d, turning: e.target.value as DirKey }))} style={sel} autoFocus>
-                    {DIR.map(d => <option key={d.key} value={d.key}>{d.icon} {d.label}</option>)}
+                <div style={directionAndTypeStyle}>
+                    <span style={{ ...readonlyValueStyle, color: connection ? meta.color : "#69758a" }}>
+                        {connection ? `${meta.icon} ${meta.label}` : "자동 결정"}
+                    </span>
+                    {connection && (
+                        <span style={typeInlineBadgeStyle}>
+                            {signalTypeForConnection(connection)}
+                        </span>
+                    )}
+                </div>
+            </td>
+            <td style={td}>
+                <select
+                    value={connectionId}
+                    onChange={event => setConnectionId(event.target.value)}
+                    style={sel}
+                    autoFocus
+                >
+                    <option value="">
+                        {availableCount > 0 ? "현재 교차로의 Connection 선택" : "사용 가능한 Connection 없음"}
+                    </option>
+                    {connections.map(item => {
+                        const owner = signals.find(signal =>
+                            String(signal.connectionId) === String(item.id));
+                        return (
+                            <option key={String(item.id)} value={String(item.id)} disabled={!!owner}>
+                                {connectionLabel(item)}
+                                {owner ? ` · 사용 중 T${owner.turnId ?? "미지정"}` : ""}
+                            </option>
+                        );
+                    })}
                 </select>
             </td>
-            <td style={td}>
-                <input value={draft.type} onChange={e => setDraft(d => ({ ...d, type: e.target.value }))} placeholder="type" style={inp} />
-            </td>
-            <td style={td}>
-                <input value={draft.connectionId} onChange={e => setDraft(d => ({ ...d, connectionId: e.target.value }))} placeholder="connection ID" style={inp} />
-            </td>
             <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
-                <button onClick={add} style={btnS("#4fc97a")}>추가</button>
+                <button
+                    onClick={add}
+                    disabled={!connection}
+                    style={connection ? btnS("#4fc97a") : disabledButtonStyle}
+                >
+                    신호 연결
+                </button>
                 <button onClick={onCancel} style={{ ...btnS("#2a3050"), marginLeft: 4 }}>취소</button>
             </td>
         </tr>
@@ -183,7 +391,15 @@ const AddRow: React.FC<AddRowProps> = ({ nodeId, onAdd, onCancel, onValidate }) 
 };
 
 /* ─────────────────────── 메인 컴포넌트 ─────────────────────────── */
-const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ containerHeight = 400 }) => {
+interface SignalGroupedEditorProps {
+    containerHeight?: number;
+    embeddedNodeId?: string | null;
+}
+
+const SignalGroupedEditor: React.FC<SignalGroupedEditorProps> = ({
+    containerHeight = 400,
+    embeddedNodeId,
+}) => {
     const rawData = useSignalStore((s: any) => s.currentJsonData) as { signals?: SignalRecord[] } | undefined;
     const signals: SignalRecord[] = useMemo(() =>
         (rawData?.signals ?? []).map((s: SignalRecord) => ({
@@ -196,11 +412,18 @@ const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ container
     const [manualNodeId, setManualNodeId] = useState<string | null>(null);
     const [search, setSearch] = useState("");
     const [addingTo, setAddingTo] = useState<string | null>(null);
+    const [collapsedTurnGroups, setCollapsedTurnGroups] = useState<Set<string>>(() => new Set());
 
     // 지도 선택 sync
-    const selectedGuid = useSelectionStore(s => s.selectedGuid[0] as string | undefined);
+    const selectedGuidValues = useSelectionStore(s => s.selectedGuid);
+    const selectedGuids = useMemo(
+        () => selectedGuidValues.map(String),
+        [selectedGuidValues],
+    );
+    const selectedGuid = selectedGuids[0];
     const network = useNetworkStore(s => s.currentJsonData);
     const rowRefs = useRef<Map<string, HTMLTableRowElement>>(new Map());
+    const tableScrollRef = useRef<HTMLDivElement>(null);
 
     /* 노드 그룹 */
     const nodeGroups = useMemo(() => {
@@ -242,12 +465,69 @@ const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ container
 
     /* activeId: 지도 클릭(신호든 노드든) > 탭 직접 클릭 > 첫 번째 노드 순서로 결정 */
     const activeId = useMemo(() => {
+        if (embeddedNodeId) return embeddedNodeId;
         if (mapNodeId) return mapNodeId;
         if (manualNodeId && nodeGroups.has(manualNodeId)) return manualNodeId;
         return nodeIds[0] ?? null;
-    }, [mapNodeId, manualNodeId, nodeGroups, nodeIds]);
+    }, [embeddedNodeId, mapNodeId, manualNodeId, nodeGroups, nodeIds]);
 
-    const activeSignals: SignalRecord[] = activeId ? (nodeGroups.get(activeId) ?? []) : [];
+    const activeSignals = useMemo<SignalRecord[]>(
+        () => activeId ? (nodeGroups.get(activeId) ?? []) : [],
+        [activeId, nodeGroups],
+    );
+    const activeNode = useMemo(
+        () => activeId
+            ? (network?.nodes ?? []).find((node: any) => String(node.id) === activeId)
+            : undefined,
+        [activeId, network],
+    );
+    const activeConnections = useMemo(
+        () => activeNode?.connections ?? [],
+        [activeNode],
+    );
+    const turnGroups = useMemo(
+        () => buildSignalTurnGroups(activeSignals, activeConnections),
+        [activeConnections, activeSignals],
+    );
+    const unassignedConnections = useMemo(() => {
+        const assignedIds = new Set(
+            activeSignals
+                .map(signal => signal.connectionId)
+                .filter(connectionId => connectionId != null)
+                .map(String),
+        );
+        return activeConnections.filter(connection => !assignedIds.has(String(connection.id)));
+    }, [activeConnections, activeSignals]);
+
+    useEffect(() => {
+        tableScrollRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    }, [activeId]);
+
+    useEffect(() => {
+        setCollapsedTurnGroups(current => {
+            const availableKeys = new Set(turnGroups.map(group => group.key));
+            const next = new Set([...current].filter(key => availableKeys.has(key)));
+            const unchanged = next.size === current.size
+                && [...next].every(key => current.has(key));
+            return unchanged ? current : next;
+        });
+    }, [turnGroups]);
+
+    const toggleTurnGroup = useCallback((groupKey: string) => {
+        setCollapsedTurnGroups(current => {
+            const next = new Set(current);
+            if (next.has(groupKey)) next.delete(groupKey);
+            else next.add(groupKey);
+            return next;
+        });
+    }, []);
+
+    const highlightTurnGroup = useCallback((connectionGuids: string[], fallbackSignalGuids: string[]) => {
+        const guids = connectionGuids.length > 0 ? connectionGuids : fallbackSignalGuids;
+        if (guids.length > 0) {
+            useSelectionStore.getState().setSelectedGuid(guids);
+        }
+    }, []);
 
     /* 지도 클릭 → 해당 행으로 스크롤 (state 변경 없음 → 재렌더 없음) */
     useEffect(() => {
@@ -275,6 +555,36 @@ const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ container
         setAddingTo(null);
     }, [rawData]);
 
+    useEffect(() => {
+        if (!activeId || activeConnections.length === 0) return;
+        const connectionById = new Map(
+            activeConnections.map(connection => [String(connection.id), connection]),
+        );
+        for (const signal of activeSignals) {
+            if (signal.connectionId == null) continue;
+            const connection = connectionById.get(String(signal.connectionId));
+            if (!connection) continue;
+
+            const turning = normalizeTurning(connection.turning);
+            const type = signalTypeForConnection(connection);
+            const turnId = signal.turnId == null || String(signal.turnId).trim() === ""
+                ? inferTurnId(connection, activeSignals, activeConnections, signal)
+                : String(signal.turnId);
+            if (normalizeTurning(signal.turning) === turning
+                    && signal.type === type
+                    && String(signal.turnId ?? "") === turnId) {
+                continue;
+            }
+            updateSignal({
+                ...signal,
+                turnId,
+                turning,
+                type,
+                connectionId: String(connection.id),
+            });
+        }
+    }, [activeConnections, activeId, activeSignals, updateSignal]);
+
     /* "전체 삭제" — 이 교차로의 신호를 한 번에 전부 지운다. 지도 편집(NetworkEditToolbar)의
      * 노드 컨텍스트 바 "🗑 신호 삭제"와 동일한 deleteSignalsForNodes를 공유 — 신호 TOD의
      * 관련 노드 항목도 함께 정리된다. window.confirm 대신 앱 공통 모달(MessagePopup)을 쓴다
@@ -289,35 +599,39 @@ const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ container
         });
     }, [nodeGroups]);
 
-    /* "자동 생성" — 네트워크 토폴로지(접근로/방위각) 기준으로 이 교차로의 신호 세트를
-     * 통째로 (재)생성한다. 지도 편집(NetworkEditToolbar)의 "⚡ 신호 생성"과 동일한
-     * generateSignalsForNode를 공유(iitp-rest DummySignalGenerator와도 같은 판정) —
-     * 조건 미충족(접근로 2개 미만 등)이면 null이라 알림만 띄우고 아무것도 만들지 않는다.
-     * 기존 신호가 있으면 확인 후 전부 지우고 새로 채운다(부분 병합이 아니라 항상
-     * "이 교차로의 완전한 신호 세트로 교체"가 목표). */
+    /* 신규 교차로는 Signal/기본 PLAN/TOD를 최초 생성한다. 기존 교차로는 사용자가 편집한
+     * PLAN/TOD를 보존하고, 현재 Network Connection과 Turn 그룹만 명시적으로 동기화한다. */
     const autoGenerateForNode = useCallback((nodeId: string) => {
         if (!network) return;
         const existing = nodeGroups.get(nodeId) ?? [];
         const run = () => {
-            const count = generateSignalsForNode(network, nodeId);
-            if (count == null) {
+            const result = synchronizeSignalsForNode(network, nodeId);
+            if (result == null) {
                 useMessageStore.getState().setMessage({
                     type: "alert",
                     text: "이 교차로는 신호 생성 조건(접근로 2개 이상 등)을 충족하지 않습니다.",
                     onClose: () => {},
                 });
+                return;
             }
+            useMessageStore.getState().setMessage({
+                type: "alert",
+                text: result.mode === "created"
+                    ? `신호 이동류 ${result.signalCount}건과 기본 PLAN/TOD를 생성했습니다.`
+                    : `네트워크와 동기화했습니다.\n추가 Connection ${result.addedConnections}건 · 제거 Connection ${result.removedConnections}건 · 새 Turn ${result.addedTurns}건\n기존 PLAN 시간과 TOD는 유지됩니다.`,
+                onClose: () => {},
+            });
         };
         if (existing.length > 0) {
             useMessageStore.getState().setMessage({
                 type: "confirm",
-                text: `이 교차로(#${nodeId})의 기존 신호 ${existing.length}건을 삭제하고 새로 생성하시겠습니까?`,
+                text: `교차로 #${nodeId}의 신호를 현재 Network Connection과 동기화하시겠습니까?\n미포함 Connection ${unassignedConnections.length}건을 Turn 그룹에 반영하며 기존 PLAN 시간과 TOD는 유지됩니다.`,
                 onConfirm: run,
             });
         } else {
             run();
         }
-    }, [network, nodeGroups]);
+    }, [network, nodeGroups, unassignedConnections.length]);
 
     /* 양방향 사고 위험(상충) 검사 — 현재 노드의 신호 목록 + 네트워크 방위각 기준 */
     const validateConflicts = useCallback((candidate: SignalRecord): SignalPhaseConflict[] => {
@@ -400,7 +714,9 @@ const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ container
                     <>
                         <button
                             onClick={() => autoGenerateForNode(activeId)}
-                            title="이 교차로의 신호를 토폴로지 기준으로 통째로 생성/재생성"
+                            title={activeSignals.length > 0
+                                ? "현재 Network Connection을 Turn 그룹에 동기화"
+                                : "Signal, 기본 PLAN, TOD 최초 생성"}
                             style={{
                                 flexShrink: 0, padding: "0 12px",
                                 background: "none", border: "none",
@@ -436,42 +752,171 @@ const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ container
 
             {/* ── 테이블 ── */}
             {activeId ? (
-                <div style={{ flex: 1, overflowY: "auto" }}>
+                <div ref={tableScrollRef} style={{ flex: 1, overflowY: "auto" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                         <colgroup>
-                            <col style={{ width: "24%" }} />
-                            <col style={{ width: "18%" }} />
+                            <col style={{ width: "32%" }} />
                             <col />
-                            <col style={{ width: "80px" }} />
+                            <col style={{ width: "170px" }} />
                         </colgroup>
                         <thead>
                             <tr style={{ background: "#060910" }}>
-                                <th style={th}>방향</th>
-                                <th style={th}>Type</th>
+                                <th style={th}>이동 방향</th>
                                 <th style={th}>Connection ID</th>
                                 <th style={th}></th>
                             </tr>
                         </thead>
                         <tbody>
-                            {activeSignals.map(sig => (
-                                <SignalRow
-                                    key={sig.__guid}
-                                    sig={sig}
-                                    isSelected={selectedGuid === sig.__guid}
-                                    rowRef={el => {
-                                        if (el) rowRefs.current.set(sig.__guid, el);
-                                        else rowRefs.current.delete(sig.__guid);
-                                    }}
-                                    onSave={updateSignal}
-                                    onDelete={() => deleteSignal(sig.__guid)}
+                            {turnGroups.map(group => {
+                                const collapsed = collapsedTurnGroups.has(group.key);
+                                const connectionGuids = group.connections
+                                    .map(connection => connection.__guid)
+                                    .filter((guid): guid is string =>
+                                        typeof guid === "string" && guid.length > 0);
+                                const highlightGuids = connectionGuids.length > 0
+                                    ? connectionGuids
+                                    : group.signalGuids;
+                                const groupSelected = highlightGuids.length > 0
+                                    && highlightGuids.every(guid => selectedGuids.includes(String(guid)));
+                                return (
+                                    <React.Fragment key={group.key}>
+                                        <tr
+                                            onClick={() => highlightTurnGroup(connectionGuids, group.signalGuids)}
+                                            style={{
+                                                background: groupSelected
+                                                    ? "#15315a"
+                                                    : group.isRtor ? "#1a170c" : "#0d1829",
+                                                borderTop: "1px solid #253550",
+                                                borderBottom: "1px solid #1c2940",
+                                                cursor: "pointer",
+                                            }}
+                                        >
+                                            <td
+                                                colSpan={3}
+                                                style={{
+                                                    padding: "8px 12px",
+                                                    boxShadow: group.isRtor
+                                                        ? "inset 3px 0 #9b7728"
+                                                        : "inset 3px 0 #315c92",
+                                                }}
+                                            >
+                                                <div style={turnGroupHeaderStyle}>
+                                                    <button
+                                                        type="button"
+                                                        onClick={event => {
+                                                            event.stopPropagation();
+                                                            toggleTurnGroup(group.key);
+                                                        }}
+                                                        style={turnGroupToggleStyle}
+                                                        title={collapsed ? "이동류 펼치기" : "이동류 접기"}
+                                                    >
+                                                        {collapsed ? "▶" : "▼"}
+                                                    </button>
+                                                    <span style={turnGroupBadgeStyle}>
+                                                        {group.turnId == null ? "미지정" : `T${group.turnId}`}
+                                                    </span>
+                                                    <span style={turnDirectionIconsStyle}>
+                                                        {group.directions.map(direction => (
+                                                            <span
+                                                                key={direction.key}
+                                                                title={`${direction.label} ${direction.count}개`}
+                                                                style={{ color: direction.color }}
+                                                            >
+                                                                {direction.icon}
+                                                            </span>
+                                                        ))}
+                                                    </span>
+                                                    <strong style={{ color: group.isRtor ? "#f2c15e" : "#c9d6e9" }}>
+                                                        {group.directionLabel || "방향 미지정"}
+                                                    </strong>
+                                                    <span style={turnGroupApproachStyle}>{group.approachLabel}</span>
+                                                    <span style={turnGroupCountStyle}>
+                                                        이동류 {group.signals.length}개
+                                                    </span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                        {!collapsed && group.signals.map(signal => (
+                                            <SignalRow
+                                                key={signal.__guid}
+                                                sig={signal as SignalRecord}
+                                                signals={activeSignals}
+                                                connections={activeConnections}
+                                                isSelected={(() => {
+                                                    const connection = activeConnections.find(item =>
+                                                        String(item.id) === String(signal.connectionId));
+                                                    const connectionGuid = connection?.__guid;
+                                                    return typeof connectionGuid === "string" && connectionGuid.length > 0
+                                                        ? selectedGuids.includes(connectionGuid)
+                                                        : selectedGuids.includes(String(signal.__guid));
+                                                })()}
+                                                rowRef={el => {
+                                                    if (el) rowRefs.current.set(signal.__guid, el);
+                                                    else rowRefs.current.delete(signal.__guid);
+                                                }}
+                                                onSave={updateSignal}
+                                                onDelete={() => deleteSignal(signal.__guid)}
+                                                onValidate={validateConflicts}
+                                            />
+                                        ))}
+                                    </React.Fragment>
+                                );
+                            })}
+                            {unassignedConnections.length > 0 && (
+                                <>
+                                    <tr>
+                                        <td colSpan={3} style={unassignedSectionStyle}>
+                                            <div>
+                                                <strong>미포함 Connection {unassignedConnections.length}개</strong>
+                                                <span style={unassignedDescriptionStyle}>
+                                                    아직 신호 이동류와 Turn 그룹에 반영되지 않았습니다.
+                                                </span>
+                                            </div>
+                                            <span style={unassignedHintStyle}>
+                                                위의 자동 생성을 실행하면 반영됩니다.
+                                            </span>
+                                        </td>
+                                    </tr>
+                                    {unassignedConnections.map(connection => {
+                                        const meta = dirMeta(normalizeTurning(connection.turning));
+                                        return (
+                                            <tr
+                                                key={`unassigned-${connection.id}`}
+                                                onClick={() => {
+                                                    if (connection.__guid) {
+                                                        useSelectionStore.getState().setSelectedGuid([connection.__guid]);
+                                                    }
+                                                }}
+                                                style={unassignedRowStyle}
+                                                title="지도에서 이 Connection 강조"
+                                            >
+                                                <td style={unassignedDirectionStyle}>
+                                                    <span style={{ color: meta.color, fontWeight: 700 }}>
+                                                        {meta.icon} {meta.label}
+                                                    </span>
+                                                    <span style={unassignedBadgeStyle}>미포함</span>
+                                                </td>
+                                                <td style={unassignedConnectionStyle}>
+                                                    {connectionLabel(connection)}
+                                                </td>
+                                                <td style={unassignedActionStyle}>지도 강조</td>
+                                            </tr>
+                                        );
+                                    })}
+                                </>
+                            )}
+                            {addingTo === activeId && (
+                                <AddRow
+                                    nodeId={activeId}
+                                    signals={activeSignals}
+                                    connections={activeConnections}
+                                    onAdd={addSignal}
+                                    onCancel={() => setAddingTo(null)}
                                     onValidate={validateConflicts}
                                 />
-                            ))}
-                            {addingTo === activeId && (
-                                <AddRow nodeId={activeId} onAdd={addSignal} onCancel={() => setAddingTo(null)} onValidate={validateConflicts} />
                             )}
                             {activeSignals.length === 0 && addingTo !== activeId && (
-                                <tr><td colSpan={4} style={{ padding: "24px", textAlign: "center", color: "#334", fontSize: 12 }}>
+                                <tr><td colSpan={3} style={{ padding: "24px", textAlign: "center", color: "#334", fontSize: 12 }}>
                                     이 교차로에 등록된 신호가 없습니다.
                                 </td></tr>
                             )}
@@ -485,9 +930,7 @@ const SignalGroupedEditor: React.FC<{ containerHeight?: number }> = ({ container
             )}
 
             <style>{`
-                tr.signal-data-row:hover { background: #0f1828 !important; }
-                .del-btn { opacity: 0; transition: opacity 0.15s; }
-                tr.signal-data-row:hover .del-btn { opacity: 1; }
+                tr.signal-data-row:hover { background: #101b2c !important; }
             `}</style>
         </div>
     );
@@ -501,6 +944,26 @@ const th: React.CSSProperties = {
     position: "sticky", top: 0,
 };
 const td: React.CSSProperties = { padding: "6px 12px", verticalAlign: "middle" };
+const signalChildDirectionTd: React.CSSProperties = {
+    ...td,
+    paddingLeft: 68,
+};
+const directionAndTypeStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    minWidth: 0,
+};
+const typeInlineBadgeStyle: React.CSSProperties = {
+    flexShrink: 0,
+    padding: "2px 6px",
+    border: "1px solid #27364e",
+    borderRadius: 4,
+    background: "#0d1625",
+    color: "#6f7e94",
+    fontSize: 9,
+    fontWeight: 700,
+};
 const inp: React.CSSProperties = {
     background: "#0e1525", border: "1px solid #2a3050", borderRadius: 4,
     color: "#c0d4f0", padding: "4px 8px", fontSize: 11,
@@ -512,5 +975,188 @@ const btnS = (bg: string): React.CSSProperties => ({
     color: bg === "transparent" ? undefined : "#fff",
     padding: "3px 10px", cursor: "pointer", fontSize: 11,
 });
+
+const readonlyValueStyle: React.CSSProperties = {
+    display: "inline-flex",
+    minHeight: 27,
+    alignItems: "center",
+    color: "#9cacc2",
+    fontSize: 11,
+    fontWeight: 600,
+};
+
+const requiredValueStyle: React.CSSProperties = {
+    ...readonlyValueStyle,
+    color: "#e18491",
+};
+
+const disabledButtonStyle: React.CSSProperties = {
+    ...btnS("#202738"),
+    color: "#586276",
+    cursor: "not-allowed",
+};
+
+const rowSecondaryButtonStyle: React.CSSProperties = {
+    height: 28,
+    border: "1px solid #2b3a52",
+    borderRadius: 5,
+    background: "#111b2b",
+    color: "#9eacc1",
+    padding: "0 9px",
+    fontSize: 10,
+    cursor: "pointer",
+};
+
+const rowDeleteButtonStyle: React.CSSProperties = {
+    height: 28,
+    border: "1px solid #57323b",
+    borderRadius: 5,
+    background: "#24151b",
+    color: "#e48791",
+    padding: "0 9px",
+    fontSize: 10,
+    cursor: "pointer",
+};
+
+const disconnectedBadgeStyle: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    border: "1px solid #a43b49",
+    borderRadius: 5,
+    background: "#421820",
+    color: "#ff9aa7",
+    padding: "3px 8px",
+    fontSize: 10,
+    fontWeight: 800,
+};
+
+const emptyConnectionStyle: React.CSSProperties = {
+    padding: 18,
+    textAlign: "center",
+    color: "#c27782",
+    fontSize: 11,
+    background: "#1b1016",
+    borderBottom: "1px solid #43202a",
+};
+
+const unassignedSectionStyle: React.CSSProperties = {
+    padding: "14px 18px 10px",
+    borderTop: "2px solid #684f1f",
+    borderBottom: "1px solid #3d321c",
+    background: "#18150e",
+    color: "#e7c46e",
+};
+
+const unassignedDescriptionStyle: React.CSSProperties = {
+    marginLeft: 10,
+    color: "#9d8d66",
+    fontSize: 10,
+    fontWeight: 400,
+};
+
+const unassignedHintStyle: React.CSSProperties = {
+    display: "block",
+    marginTop: 5,
+    color: "#6f674f",
+    fontSize: 9,
+};
+
+const unassignedRowStyle: React.CSSProperties = {
+    borderBottom: "1px solid #292619",
+    background: "#11120f",
+    cursor: "pointer",
+};
+
+const unassignedDirectionStyle: React.CSSProperties = {
+    ...td,
+    paddingLeft: 68,
+};
+
+const unassignedBadgeStyle: React.CSSProperties = {
+    display: "inline-flex",
+    marginLeft: 8,
+    padding: "2px 6px",
+    border: "1px solid #705824",
+    borderRadius: 4,
+    color: "#d5ab50",
+    background: "#241d0e",
+    fontSize: 9,
+    fontWeight: 700,
+};
+
+const unassignedConnectionStyle: React.CSSProperties = {
+    ...td,
+    color: "#9a9178",
+};
+
+const unassignedActionStyle: React.CSSProperties = {
+    ...td,
+    color: "#817451",
+    textAlign: "right",
+    fontSize: 10,
+};
+
+const turnGroupHeaderStyle: React.CSSProperties = {
+    minWidth: 0,
+    display: "flex",
+    alignItems: "center",
+    gap: 9,
+    fontSize: 11,
+};
+
+const turnGroupToggleStyle: React.CSSProperties = {
+    width: 22,
+    height: 22,
+    flexShrink: 0,
+    padding: 0,
+    border: "1px solid #30425f",
+    borderRadius: 4,
+    background: "#111d30",
+    color: "#8fa6c8",
+    cursor: "pointer",
+    fontSize: 9,
+};
+
+const turnGroupBadgeStyle: React.CSSProperties = {
+    minWidth: 42,
+    flexShrink: 0,
+    boxSizing: "border-box",
+    display: "inline-flex",
+    justifyContent: "center",
+    padding: "4px 9px",
+    border: "1px solid #4d79b8",
+    borderRadius: 5,
+    background: "#17365f",
+    color: "#d9eaff",
+    fontSize: 12,
+    fontWeight: 800,
+};
+
+const turnDirectionIconsStyle: React.CSSProperties = {
+    minWidth: 42,
+    display: "inline-flex",
+    gap: 5,
+    fontSize: 15,
+    fontWeight: 800,
+};
+
+const turnGroupApproachStyle: React.CSSProperties = {
+    minWidth: 0,
+    color: "#71829b",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+};
+
+const turnGroupCountStyle: React.CSSProperties = {
+    marginLeft: "auto",
+    flexShrink: 0,
+    padding: "3px 7px",
+    border: "1px solid #293b57",
+    borderRadius: 9,
+    background: "#111e31",
+    color: "#8194b0",
+    fontSize: 9,
+};
 
 export default SignalGroupedEditor;

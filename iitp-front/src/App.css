@@ -227,18 +227,6 @@ body {
   border-color: #00eaff;
 }
 
-.scenario-form-row--half {
-  flex-direction: row;
-  gap: 12px;
-}
-
-.scenario-form-row--half > div {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
 .scenario-form-error {
   color: #ff6b6b;
   font-size: 0.88rem;
@@ -261,45 +249,6 @@ body {
   background-color: rgba(255, 255, 255, 0.18);
 }
 
-/* 중심점 헤더: 라벨 + 지도 선택 버튼 나란히 */
-.scenario-form-coord-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-
-.scenario-form-coord-header label {
-  margin-bottom: 0;
-}
-
-/* "지도에서 선택" 버튼 - version-popup-content button 상속 덮어쓰기 */
-.version-popup-content .btn-map-pick {
-  background: linear-gradient(135deg, rgba(0, 188, 212, 0.2), rgba(0, 234, 255, 0.08));
-  border: 1px solid #00eaff;
-  border-radius: 7px;
-  color: #00eaff;
-  font-size: 0.82rem;
-  font-weight: 600;
-  padding: 0.3rem 0.75rem;
-  margin: 0;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.2s, box-shadow 0.2s;
-}
-
-.version-popup-content .btn-map-pick:hover {
-  background: linear-gradient(135deg, rgba(0, 188, 212, 0.35), rgba(0, 234, 255, 0.18));
-  box-shadow: 0 0 8px rgba(0, 234, 255, 0.4);
-}
-
-.scenario-form-coord-preview {
-  font-size: 0.8rem;
-  color: #00eaff;
-  margin: 4px 0 0;
-  opacity: 0.85;
-}
-
 /* 키 입력 라벨 + 배지 행 */
 .scenario-form-label-row {
   display: flex;
@@ -310,6 +259,12 @@ body {
 
 .scenario-form-label-row label {
   margin-bottom: 0;
+}
+
+.scenario-key-input--readonly {
+  cursor: default;
+  color: #baf8ff !important;
+  background: rgba(0, 234, 255, 0.07) !important;
 }
 
 /* 키 상태 배지 */
