@@ -229,10 +229,12 @@
 }
 
 /* ── Body ─────────────────────────────────────────────────────── */
-/* 그리드가 자체 스크롤(AG Grid)을 가지므로 body 는 스크롤하지 않고 남은 높이를 그대로 넘긴다 —
-   body 가 overflow-y:auto 이면 그리드가 패널 밖(하단 taskbar 아래)으로 흘러나간다. */
+/* 세로는 스크롤 허용 — 신호 에디터(SignalPlanEditor/SignalWorkspaceEditor 등)는 내용이 길어
+   body 스크롤에 의존한다. 가로는 hidden 이라야 컬럼이 넓은 AG Grid 가 패널 밖으로 밀리지 않는다.
+   AG Grid 경로에서는 .gridWrap 이하가 flex 로 높이를 정확히 배분하므로 세로 스크롤이 뜨지 않는다. */
 .body {
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
     flex: 1;
     min-height: 0;
     width: 100%;
@@ -242,6 +244,7 @@
 
 .bodyFull {
     overflow-y: auto;
+    overflow-x: hidden;
     max-height: 75vh;
     transition: max-height 0.25s ease;
     width: 100%;

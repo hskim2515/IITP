@@ -86,10 +86,23 @@ const useDefaultSelect = () => {
 
     useEffect(() => {
             if (!activeSubmenu) return;
-            if (!propertyFormSchema[activeSubmenu.menuCode]) return;
-            const layerName = propertyFormSchema[activeSubmenu.menuCode].layer
+            const menuCode = activeSubmenu.menuCode;
+            if (!menuCode) return;
+            const schema = propertyFormSchema[menuCode];
+            if (!schema) return;
+            const layerName = schema.layer
 
             if (!layerName || !viewer || !olMap) return
+
+            // ── 신호 레이어는 원격(main) 정책을 따른다 ──────────────────────────
+            //   신호 객체는 자체 지오메트리가 없고 네트워크 커넥션을 참조하므로, 하이라이트 대상
+            //   guid 를 네트워크 guid 로 치환해 'network' 레이어에 그린다. 카메라는 여기서 움직이지
+            //   않는다 — SignalWorkspaceEditor 가 노드 좌표 기준으로 한 번만 flyTo 하며, 여기서
+            //   커넥션마다 zoom 하면 마지막 대상이 카메라를 계속 빼앗는다.
+            const isSignalLayer = FEATURE_TYPE.SIGNAL === layerName;
+            const highlightLayerName = isSignalLayer ? 'network' : layerName;
+            const resolveHighlightGuid = (guid: string) =>
+                isSignalLayer ? (getNetworkGuid(layerManager, guid) ?? guid) : guid;
 
             // 'grid'(그리드/에디터 **단일** 행 선택)만 카메라 이동 동반 — 지도 클릭('map')과
             //   다중 체크('grid-bulk')는 하이라이트만 하고 카메라를 고정한다. 다중 선택에서
@@ -97,7 +110,7 @@ const useDefaultSelect = () => {
             // 속성모달 "편집" 진입(suppressFlyToOnce)은 대상이 이미 화면에 보이므로 fly 억제
             //   (리렌더 중 2초 flyToBoundingSphere 버벅임 방지). 소비 즉시 플래그 해제.
             //   'grid-bulk' 는 어차피 fly 하지 않으므로 이 1회용 플래그를 소모하지 않는다.
-            const nextSet = new Set<string>(selectedGuid ?? []);
+            const nextSet = new Set<string>((selectedGuid ?? []).map(String));
             const prevSet = prevSelectedGuidsRef.current;
 
             const selectionSource = useSelectionStore.getState().selectionSource;
@@ -122,49 +135,70 @@ const useDefaultSelect = () => {
 
             for (const guid of prevSet) {
                 if (!nextSet.has(guid)) {
-                    clearCesiumStyleByGuid(guid); // 3D 엔티티(노드/시설물) 정적 강조 원복
-                    if (layerName === 'network' && parseTileGuid(guid)) {
+                    const highlightGuid = resolveHighlightGuid(guid);
+                    clearCesiumStyleByGuid(highlightGuid); // 3D 엔티티(노드/시설물) 정적 강조 원복
+                    if (!isSignalLayer && layerName === 'network' && parseTileGuid(guid)) {
                         clearNetworkSelection();
                     } else {
-                        clearOlStyleByGuid(olMap, layerName, guid);
+                        clearOlStyleByGuid(olMap, highlightLayerName, highlightGuid, isSignalLayer);
                     }
                 }
             }
 
-            for (const guid of nextSet) {
-                if (!prevSet.has(guid)) {
-                    if (layerName === 'network' && parseTileGuid(guid)) {
-                        // 타일 모드 네트워크: 3D 선택 슬롯 + 2D 오버레이 (fly-to 는 grid 선택만)
-                        applyNetworkSelection(viewer, olMap, guid, fromGrid);
-                    } else if (FEATURE_TYPE.SIGNAL === layerName) {
-                        const mappedGuid = getNetworkGuid(layerManager,guid);
-                        if (mappedGuid) {
-                            const networkLayerName  ='network'
-                            highlightOlStyleByGuid(olMap, networkLayerName, mappedGuid);
-                            highlightCesiumStyleByGuid(viewer, networkLayerName, mappedGuid, { zoom: fromGrid });
+            // 신호: 대상 guid 를 네트워크 guid 로 치환해 한 번에 적용 (카메라는 고정)
+            const resolvedHighlightGuids = isSignalLayer
+                ? [...nextSet].map(resolveHighlightGuid)
+                : [];
+            const applySignalSelection = () => {
+                for (const highlightGuid of resolvedHighlightGuids) {
+                    highlightOlStyleByGuid(olMap, highlightLayerName, highlightGuid, true);
+                    highlightCesiumStyleByGuid(viewer, highlightLayerName, highlightGuid, { zoom: false });
+                }
+            };
+
+            if (isSignalLayer) {
+                applySignalSelection();
+            } else {
+                for (const guid of nextSet) {
+                    if (!prevSet.has(guid)) {
+                        if (layerName === 'network' && parseTileGuid(guid)) {
+                            // 타일 모드 네트워크: 3D 선택 슬롯 + 2D 오버레이 (fly-to 는 grid 선택만)
+                            applyNetworkSelection(viewer, olMap, guid, fromGrid);
+                        } else {
+                            highlightOlStyleByGuid(olMap, layerName, guid);
+                            highlightCesiumStyleByGuid(viewer, layerName, guid, { zoom: fromGrid });
                         }
-                    } else {
-                        highlightOlStyleByGuid(olMap, layerName, guid);
-                        highlightCesiumStyleByGuid(viewer, layerName, guid, { zoom: fromGrid });
                     }
                 }
             }
+
+            // 신호 편집기에서 교차로를 누르면 카메라 이동과 동시에 detail 타일/Entity 가 비동기로
+            //   만들어진다. 선택 순간에 Entity 가 아직 없어도 collectionChanged 때 같은 선택을 다시
+            //   적용해 3D 하이라이트가 빠지지 않게 한다 (신호 레이어 전용 — 원격 정책).
+            const highlightDataSource = isSignalLayer
+                ? viewer.dataSources.getByName(highlightLayerName)[0]
+                : undefined;
+            const removeCollectionListener = highlightDataSource?.entities.collectionChanged.addEventListener(
+                () => applySignalSelection(),
+            );
 
             prevSelectedGuidsRef.current = nextSet;
 
 
             return () => {
+                removeCollectionListener?.();
                 for (const guid of prevSelectedGuidsRef.current) {
-                    clearCesiumStyleByGuid(guid); // 3D 엔티티(노드/시설물) 정적 강조 원복
-                    if (layerName === 'network' && parseTileGuid(guid)) {
+                    const highlightGuid = resolveHighlightGuid(guid);
+                    clearCesiumStyleByGuid(highlightGuid); // 3D 엔티티(노드/시설물) 정적 강조 원복
+                    if (!isSignalLayer && layerName === 'network' && parseTileGuid(guid)) {
                         clearNetworkSelection();
                     } else {
-                        clearOlStyleByGuid(olMap, layerName, guid);
+                        clearOlStyleByGuid(olMap, highlightLayerName, highlightGuid, isSignalLayer);
                     }
                 }
                 prevSelectedGuidsRef.current.clear();
             };
-        }, [selectedGuid, activeSubmenu]
+        }, [selectedGuid, activeSubmenu, layerManager, olMap, viewer]
     );
 
     /** 로드된 링크 primitive 면 3D 선택 슬롯 적용 (성공 여부 반환) */
@@ -272,7 +306,9 @@ const useDefaultSelect = () => {
     const SELECTION_COLOR = 'rgba(255,255,0,0.95)';
     const SELECTION_FILL = 'rgba(255,255,0,0.35)';
 
-    function highlightOlStyleByGuid(olMap: OLMap, layerName: string, guid: string) {
+    /** exact=true 면 접두 일치 후손을 제외하고 그 guid 피처만 강조한다 (신호 레이어 —
+     *  커넥션 단위로 정확히 하나만 칠해야 하므로 원격 정책을 따른다). */
+    function highlightOlStyleByGuid(olMap: OLMap, layerName: string, guid: string, exact = false) {
         const olLayer = olMap.getLayers().getArray().find((layer) => {
             return matchesCustomKeyValue(layer, 'layer', layerName)
         }) as (VectorLayer<VectorSource> | WebGLVectorLayer | undefined);
@@ -282,13 +318,17 @@ const useDefaultSelect = () => {
 
         const styleFn = (olLayer as VectorLayer<VectorSource>)?.getStyleFunction?.();
 
-        features.getArray().forEach((feature) => {
+        features.getArray()
+            .filter(feature => !exact || feature.get('__guid') === guid)
+            .forEach((feature) => {
             if (styleFn) {
-                // 레이어 스타일 함수 기반으로 형광 초록 적용 (geometry override 포함)
+                // 레이어 스타일 함수 기반으로 선택 색 적용 (geometry override 포함)
                 feature.setStyle((f, resolution) => {
                     const base = styleFn(f, resolution);
                     if (!base) return undefined;
-                    const arr = Array.isArray(base) ? base : [base];
+                    // 레이어 공용 Style 객체를 직접 바꾸면 같은 스타일을 쓰는 다른 피처까지
+                    //   함께 물든다(원격에서 발견된 버그) — 반드시 복제본을 칠한다.
+                    const arr = (Array.isArray(base) ? base : [base]).map(style => style.clone());
                     arr.forEach(s => {
                         const image = s.getImage();
                         if (image instanceof CircleStyle) {
@@ -320,16 +360,18 @@ const useDefaultSelect = () => {
         });
     }
 
-    function clearOlStyleByGuid(olMap: OLMap, layerName: string, guid: string) {
+    function clearOlStyleByGuid(olMap: OLMap, layerName: string, guid: string, exact = false) {
         const olLayer = olMap.getLayers().getArray().find((layer) => {
             return matchesCustomKeyValue(layer, 'layer', layerName)
         }) as (VectorLayer<VectorSource> | WebGLVectorLayer | undefined);
         const features = getFeaturesByGuidPrefix(olLayer, guid);
 
         if (!features) return;
-        features.getArray().forEach((feature) => {
-            feature.setStyle(undefined)
-        })
+        features.getArray()
+            .filter(feature => !exact || feature.get('__guid') === guid)
+            .forEach((feature) => {
+                feature.setStyle(undefined)
+            })
     }
 
     function zoomToEntity(entity: Entity, viewer: Viewer): void {

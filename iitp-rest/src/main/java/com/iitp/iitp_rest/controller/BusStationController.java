@@ -1,9 +1,11 @@
 package com.iitp.iitp_rest.controller;
 
 import com.iitp.iitp_rest.model.publicTransit.bus.BusStationLogs;
+import com.iitp.iitp_rest.model.publicTransit.bus.BusStationResponse;
 import com.iitp.iitp_rest.model.publicTransit.bus.BusStationSaveRequest;
 import com.iitp.iitp_rest.model.publicTransit.bus.PublicTransitResponse;
 import com.iitp.iitp_rest.service.publicTransit.station.BusStationService;
+import com.iitp.iitp_rest.service.publicTransit.station.BusStationTileService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpHeaders;
@@ -22,6 +24,7 @@ import java.util.List;
 public class BusStationController {
 
     private final BusStationService busStationService;
+    private final BusStationTileService busStationTileService;
 
     @GetMapping("/{versionId}")
     public ResponseEntity<PublicTransitResponse> getBusStationsByVersionId(@PathVariable String versionId) {
@@ -35,6 +38,36 @@ public class BusStationController {
                 return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
             }
             log.error("[getBusStationsByVersionId] 오류", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * 버스정류장 BBox 타일링 조회 (읽기 전용) — viewport 와 교차하는 정류장만 반환.
+     * 정류장은 네트워크 링크에 종속 → 링크 시작 좌표로 bbox 산정. 기존 {@code GET /{versionId}} 와 병존.
+     */
+    @GetMapping("/{versionId}/tiles")
+    public ResponseEntity<PublicTransitResponse> getBusStationTiles(
+            @PathVariable String versionId,
+            @RequestParam String bbox) {
+        try {
+            String[] p = bbox.split(",");
+            if (p.length != 4) return ResponseEntity.badRequest().build();
+            double west  = Double.parseDouble(p[0].trim());
+            double south = Double.parseDouble(p[1].trim());
+            double east  = Double.parseDouble(p[2].trim());
+            double north = Double.parseDouble(p[3].trim());
+
+            List<BusStationResponse> stations = busStationTileService.queryByBbox(versionId, west, south, east, north);
+            PublicTransitResponse result = new PublicTransitResponse();
+            result.setBusStations(stations);
+            return ResponseEntity.ok(result);
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().build();
+        } catch (java.io.FileNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            log.error("[BusStationController] 타일 조회 오류 versionId={}", versionId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
@@ -86,6 +119,17 @@ public class BusStationController {
         log.info("[saveBusStations] versionId: {}", versionId);
         try {
             busStationService.saveBusStationsByVersionId(request, versionId);
+            // 타일 캐시 무효화 + 즉시 재빌드 — signal과 동일 패턴. request.getData()는
+            // BusStationData(저장용)라 타일용 BusStationResponse와 형태가 달라, 방금 저장한
+            // 값을 그대로 재조회(getBusStationsByVersionId)해 변환 로직을 재사용한다.
+            // 첫 정류장 타일 요청(lazy 빌드)을 저장 처리 시간으로 흡수.
+            try {
+                busStationTileService.invalidate(versionId);
+                List<BusStationResponse> saved = busStationService.getBusStationsByVersionId(versionId).getBusStations();
+                busStationTileService.ingest(versionId, saved != null ? saved : List.of());
+            } catch (Exception e) {
+                log.warn("[saveBusStations] 정류장 타일 사전 빌드 실패 (lazy 빌드로 폴백): {}", e.getMessage());
+            }
             return ResponseEntity.ok().build();
         } catch (Exception e) {
             log.error("[saveBusStations] 저장 오류", e);
@@ -101,6 +145,12 @@ public class BusStationController {
         log.info("[BusStationController] IMPORT versionId={}, size={}bytes", versionId, file.getSize());
         try {
             PublicTransitResponse response = busStationService.importFromXml(file.getBytes(), versionId);
+            try {
+                busStationTileService.invalidate(versionId);
+                busStationTileService.ingest(versionId, response.getBusStations() != null ? response.getBusStations() : List.of());
+            } catch (Exception e) {
+                log.warn("[importBusStationXml] 정류장 타일 사전 빌드 실패 (lazy 빌드로 폴백): {}", e.getMessage());
+            }
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("[importBusStationXml] 임포트 오류", e);

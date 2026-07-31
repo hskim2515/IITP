@@ -1069,6 +1069,15 @@ public class NextSimRunner {
         try {
             return runStage(versionId, workDir, binary, testCase, progress);
         } catch (TerminalNodeCrashException first) {
+            // 0단계: 버스 노선 절연 재시도 — 문서화된 NextSim 바이너리 결함(NEXTSIM_DATA_STRUCTURE.md
+            // #roadptline-xml: 터미널↔터미널의 유효한 노선이라도 시뮬 사이클 직전 크래시)이 원인이면
+            // 아래 터미널 이분탐색은 어떤 조합으로도 절대 성공하지 못하고 예산(MAX_CRASH_RECOVERY_ATTEMPTS)만
+            // 전부 태운다(실측: scenario2_1, 노선 1개 존재만으로 시도당 ~1분씩 무한 헛탐색). 노선이
+            // 있으면 노선만 비운 채 1회 재시도해 원인을 절연한다 — 성공하면 원인은 노선(바이너리 결함)으로
+            // 확정이고 이번 실행은 버스 노선 제외로 진행, 실패하면 원상 복구 후 기존 이분탐색으로 넘어간다.
+            String ptIsolated = tryPtIsolationRetry(versionId, workDir, networkDir, binary, testCase, progress);
+            if (ptIsolated != null) return ptIsolated;
+
             List<String> candidates = extractTerminalIds(networkXml);
             log.warn("[NextSimRunner] {} {} 크래시 — 터미널 {}개 중 이분탐색으로 안전 부분집합 탐색",
                     versionId, testCase, candidates.size());
@@ -1113,6 +1122,64 @@ public class NextSimRunner {
                     testCase + " 가 반복적으로 크래시했습니다 (터미널 " + candidates.size() + "개 중 어떤 조합으로도 성공 못 함) — " +
                     "NextSim 바이너리 결함으로 추정됩니다. OD 매트릭스의 source/sink 조합을 바꿔보세요.\n" +
                     tail(first.getMessage(), 800));
+        }
+    }
+
+    /**
+     * 버스 노선 절연 재시도 — 스테이징된 roadPTline.xml에 실제 노선이 있으면 노선만 비우고
+     * (PTRoute.json도 있으면 빈 스텁으로) 같은 스테이지를 1회 재실행한다.
+     *
+     * @return 성공하면 그 실행 로그(이번 실행은 버스 노선 제외로 계속 진행됨), 노선이 없거나
+     *         비워도 여전히 크래시하면(원상 복구 후) null — 호출부는 기존 터미널 이분탐색으로 진행.
+     */
+    private String tryPtIsolationRetry(
+            String versionId, Path workDir, Path networkDir, String binary, String testCase,
+            Consumer<String> progress) throws Exception {
+        Path roadPtLine = networkDir.resolve("roadPTline.xml");
+        String original;
+        try {
+            if (!Files.exists(roadPtLine)) return null;
+            original = Files.readString(roadPtLine, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return null;
+        }
+        if (!original.contains("<Line ")) return null; // 노선 자체가 없음 — 절연할 게 없다
+
+        Path ptRouteJson = networkDir.resolve("PTRoute.json");
+        String ptRouteOriginal = null;
+        try {
+            if (Files.exists(ptRouteJson)) ptRouteOriginal = Files.readString(ptRouteJson, StandardCharsets.UTF_8);
+        } catch (IOException ignored) {}
+
+        // NOTE: SimulationController.classifyStep()이 "{testCase} 크래시 복구" 부분문자열로 매칭 — 문구 유지.
+        progress.accept(testCase + " 크래시 복구 — 버스 노선 절연 재시도(노선 제외 1회 실행)");
+        try {
+            Files.writeString(roadPtLine, xml("<Lines mode=\"Bus\">\n</Lines>"), StandardCharsets.UTF_8);
+            if (ptRouteOriginal != null) {
+                Files.writeString(ptRouteJson, "{\n    \"Route\": []\n}", StandardCharsets.UTF_8);
+            }
+        } catch (IOException e) {
+            log.warn("[NextSimRunner] {} {} 버스 노선 절연 파일 쓰기 실패 — 이분탐색으로 진행: {}",
+                    versionId, testCase, e.getMessage());
+            return null;
+        }
+        try {
+            String output = runStage(versionId, workDir, binary, testCase, progress);
+            log.warn("[NextSimRunner] {} {} — 버스 노선 절연으로 성공: 크래시 원인이 roadPTline.xml의 " +
+                    "노선(NextSim 바이너리 결함 — NEXTSIM_DATA_STRUCTURE.md #roadptline-xml)으로 확인됨. " +
+                    "이번 실행은 버스 노선 제외로 진행됨 — 터미널 이분탐색 예산 소모 없음", versionId, testCase);
+            return output;
+        } catch (TerminalNodeCrashException stillCrashes) {
+            // 노선이 원인이 아님 — 원상 복구하고 기존 이분탐색으로
+            try {
+                Files.writeString(roadPtLine, original, StandardCharsets.UTF_8);
+                if (ptRouteOriginal != null) Files.writeString(ptRouteJson, ptRouteOriginal, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                log.warn("[NextSimRunner] {} {} 버스 노선 절연 원상복구 실패(무시): {}", versionId, testCase, e.getMessage());
+            }
+            log.info("[NextSimRunner] {} {} — 버스 노선을 비워도 크래시 — 노선 원인 아님, 터미널 이분탐색으로 진행",
+                    versionId, testCase);
+            return null;
         }
     }
 

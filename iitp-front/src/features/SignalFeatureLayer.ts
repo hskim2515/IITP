@@ -23,6 +23,8 @@ import { SignalTileMembership } from "@managers/signalTileMembership";
 import { unByKey } from "ol/Observable";
 import type { EventsKey } from "ol/events";
 import type OLMap from "ol/Map";
+import { diffSignalEditsByNode } from "@utils/signal";
+import { normalizeTurning } from "@utils/turning";
 
 /* ── 신호등 캔버스 아이콘 (정적) ── */
 function createTrafficLightIcon(): HTMLCanvasElement {
@@ -98,10 +100,11 @@ function signalStyle(feature: FeatureLike, resolution: number): Style[] {
 
     // 근거리(< SIGNAL_ICON): 신호등 아이콘 + 컬러 dot + 방향 화살표
     const arrowParts: string[] = [];
-    if (turnings.includes("U_Turn") || turnings.includes("UTurn"))       arrowParts.push("↩");
-    if (turnings.includes("Left_Turn") || turnings.includes("Left"))     arrowParts.push("←");
-    if (turnings.includes("Straight"))                                    arrowParts.push("↑");
-    if (turnings.includes("Right_Turn") || turnings.includes("Right"))   arrowParts.push("→");
+    const normalizedTurnings = new Set(turnings.map(normalizeTurning));
+    if (normalizedTurnings.has("U_Turn"))     arrowParts.push("↩");
+    if (normalizedTurnings.has("Left_Turn"))  arrowParts.push("←");
+    if (normalizedTurnings.has("Straight"))   arrowParts.push("↑");
+    if (normalizedTurnings.has("Right_Turn")) arrowParts.push("→");
     const arrowText = arrowParts.join("");
 
     const styles: Style[] = [
@@ -160,6 +163,23 @@ export class SignalFeatureLayer extends VectorLayer {
                 (s: any) => s.currentJsonData,
                 () => this.load(),
                 { equalityFn: (a: any, b: any) => a === b }
+            ));
+            // 저장 완료(isChanged: true → false) — DataIOPanel의 저장은 currentJsonData만
+            // 서버에 보낼 뿐 originData는 그대로 두므로, 손대지 않으면 diffSignalEditsByNode가
+            // 방금 저장된 노드도 계속 "로컬 편집"으로 오인해 오버레이가 안 사라진다. origin을
+            // 지금 값으로 맞추고, 타일도 새로고침해 서버에 실제로 반영된 최신본을 받아온다.
+            this.unsubscribes.push((signalStore as any).subscribe(
+                (s: any) => s.isChanged,
+                (isChanged: boolean, prevIsChanged: boolean) => {
+                    if (!prevIsChanged || isChanged) return;
+                    const cur = signalStore.getState().currentJsonData;
+                    if (cur) signalStore.getState().setOriginData(cur);
+                    if (SIGNAL_TILING.ENABLED) {
+                        this.tileManager?.clear();
+                        const map = this.getMapInternal() as OLMap | null;
+                        if (map) this.updateTiles(map);
+                    }
+                },
             ));
         }
         this.unsubscribes.push(useNetworkStore.subscribe(
@@ -224,10 +244,28 @@ export class SignalFeatureLayer extends VectorLayer {
         this.source.clear();
         if (!currentJsonData) return;
 
-        // 타일 모드: viewport 신호만 사용. 비-타일 모드: store 전체 신호 사용.
-        const signals: any[] = SIGNAL_TILING.ENABLED
-            ? this.membership.values()
-            : (currentJsonData.signals ?? []);
+        // 타일 모드: viewport 신호(서버 최신) + 로컬 미저장 편집을 nodeId 단위로 병합.
+        //   editedNodeIds: 새로 생기거나 내용이 바뀐 노드 → 로컬 레코드로 타일 값을 덮어씀.
+        //   deletedNodeIds: 로컬에서 전부 지운 노드 → 타일에 남은 옛 레코드를 숨김.
+        // 비-타일 모드: store 전체 신호 그대로 사용(원래도 로컬이 유일한 소스).
+        let signals: any[];
+        if (SIGNAL_TILING.ENABLED) {
+            const originData = store.getState().originData as any;
+            const { editedNodeIds, deletedNodeIds } = diffSignalEditsByNode(originData?.signals, currentJsonData.signals);
+            const merged = new Map<string, any>();
+            for (const s of this.membership.values()) {
+                const nid = String(s?.nodeId ?? '');
+                if (deletedNodeIds.has(nid)) continue;
+                merged.set(nid, s);
+            }
+            for (const s of currentJsonData.signals ?? []) {
+                const nid = String(s?.nodeId ?? '');
+                if (editedNodeIds.has(nid)) merged.set(nid, s);
+            }
+            signals = [...merged.values()];
+        } else {
+            signals = currentJsonData.signals ?? [];
+        }
         if (!signals?.length) return;
 
         const networkData = useNetworkStore.getState().currentJsonData;

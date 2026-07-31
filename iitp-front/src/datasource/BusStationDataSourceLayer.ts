@@ -5,8 +5,12 @@ import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { BusPublicStationResponse } from "@type/Station";
 import { computePositionAtOffsetCesium } from "@utils/offset";
 import { PublicTransitResponse } from "@type/openapi.gen";
-import { LOD_ALT } from "@utils/lodConstants";
+import { LOD_ALT, BUS_STATION_TILING } from "@utils/lodConstants";
 import { CesiumFacilityCluster } from "@datasource/cesiumFacilityCluster";
+import { getActiveVersionId } from "@utils/versionId";
+import { BusStationTileManager } from "@managers/BusStationTileManager";
+import { BusStationTileMembership } from "@managers/busStationTileMembership";
+import { diffRecordEditsById } from "@utils/tileEditDiff";
 
 /* ── 치수 ── */
 const PARKING_LOT_LEN_M = 14;
@@ -86,6 +90,11 @@ export default class BusStationDataSourceLayer {
     private cullTimer:     ReturnType<typeof setTimeout> | null = null;
     private onCameraChanged = () => this.scheduleCull();
 
+    // ── 버스정류장 타일링 (BUS_STATION_TILING.ENABLED 일 때만; 읽기 전용) ──
+    private tileManager: BusStationTileManager | null = null;
+    private tileVersionId: string | null = null;
+    private membership = new BusStationTileMembership();
+
     constructor(private viewer: Viewer) {
         this.dataSource      = new CustomDataSource(this.LAYER_NAME);
         this.stationMarkers  = new Cesium.BillboardCollection();
@@ -99,6 +108,7 @@ export default class BusStationDataSourceLayer {
         this.viewer.scene.camera.changed.addEventListener(this.onCameraChanged);
 
         this.load();
+        if (BUS_STATION_TILING.ENABLED) this.updateTiles(); // 첫 화면 정류장 타일 로드
 
         const store = layerNameToStoreMap[this.LAYER_NAME];
         if (store) {
@@ -106,6 +116,19 @@ export default class BusStationDataSourceLayer {
                 (state: { currentJsonData: BusPublicStationResponse }) => state.currentJsonData,
                 () => this.load(),
                 { equalityFn: (a: any, b: any) => a === b }
+            ));
+            // 저장 완료(isChanged: true → false) — SignalDataSourceLayer와 동일 조치.
+            this.unsubscribes.push((store as any).subscribe(
+                (s: any) => s.isChanged,
+                (isChanged: boolean, prevIsChanged: boolean) => {
+                    if (!prevIsChanged || isChanged) return;
+                    const cur = store.getState().currentJsonData;
+                    if (cur) store.getState().setOriginData(cur);
+                    if (BUS_STATION_TILING.ENABLED) {
+                        this.tileManager?.clear();
+                        this.updateTiles();
+                    }
+                },
             ));
         }
         const networkStore = layerNameToStoreMap["network"];
@@ -116,6 +139,31 @@ export default class BusStationDataSourceLayer {
                 { equalityFn: (a: any, b: any) => a === b }
             ));
         }
+    }
+
+    private updateTiles(): void {
+        if (!BUS_STATION_TILING.ENABLED) return;
+        const rect = this.viewer.camera.computeViewRectangle(this.viewer.scene.globe.ellipsoid);
+        if (!rect) return;
+        const west = Cesium.Math.toDegrees(rect.west);
+        const south = Cesium.Math.toDegrees(rect.south);
+        const east = Cesium.Math.toDegrees(rect.east);
+        const north = Cesium.Math.toDegrees(rect.north);
+        const versionId = getActiveVersionId();
+        if (!versionId) return;
+        // 버전 전환 감지 — 이전 버전 정류장 타일/멤버십 폐기 후 재생성(network/signal과 동일 패턴)
+        if (this.tileManager && this.tileVersionId !== String(versionId)) {
+            try { this.tileManager.clear(); } catch (_) { /* noop */ }
+            this.tileManager = null;
+        }
+        this.tileVersionId = String(versionId);
+        if (!this.tileManager) {
+            this.tileManager = new BusStationTileManager(String(versionId), {
+                onTileLoaded: (_k, payload) => { if (this.membership.add(payload)) this.load(); },
+                onTileEvicted: (_k, payload) => { if (this.membership.remove(payload)) this.load(); },
+            });
+        }
+        this.tileManager.updateForBbox(west, south, east, north);
     }
 
     public setVisible(visible: boolean): void {
@@ -142,7 +190,30 @@ export default class BusStationDataSourceLayer {
         if (!store || !networkStore) return;
 
         const busData: PublicTransitResponse = store.getState().currentJsonData;
-        if (!busData?.busStations) return;
+        if (!busData) return;
+
+        // 타일 모드: viewport 정류장(서버 최신) + 로컬 미저장 편집을 id 단위로 병합
+        //   (2D BusStationFeatureLayer와 동일 조치 — diffRecordEditsById 참고).
+        // 비-타일 모드: store 전체 정류장 그대로 사용.
+        let busStationsAll: any[];
+        if (BUS_STATION_TILING.ENABLED) {
+            const originData = store.getState().originData as any;
+            const { editedIds, deletedIds } = diffRecordEditsById(originData?.busStations, busData.busStations, 'id');
+            const merged = new Map<string, any>();
+            for (const s of this.membership.values()) {
+                const id = String(s?.id ?? '');
+                if (deletedIds.has(id)) continue;
+                merged.set(id, s);
+            }
+            for (const s of (busData.busStations ?? [])) {
+                const id = String(s?.id ?? '');
+                if (editedIds.has(id)) merged.set(id, s);
+            }
+            busStationsAll = [...merged.values()];
+        } else {
+            busStationsAll = busData.busStations ?? [];
+        }
+        if (!busStationsAll.length) return;
 
         const networkData: any = networkStore.getState().currentJsonData;
         if (!networkData?.links) return;
@@ -179,7 +250,7 @@ export default class BusStationDataSourceLayer {
         /* ── 정류장 위치 계산 ── */
         const rawEntries: Omit<BusStationEntry, 'baseH' | 'cartesian'>[] = [];
 
-        for (const station of busData.busStations) {
+        for (const station of busStationsAll) {
             const linkRef = String(station.linkRef);
             const laneRef = Number(station.laneRef);
             const lanes   = linkLaneMap.get(linkRef);
@@ -256,6 +327,7 @@ export default class BusStationDataSourceLayer {
         this.cullTimer = setTimeout(() => {
             this.cullTimer = null;
             this.updateVisibleStations();
+            if (BUS_STATION_TILING.ENABLED) this.updateTiles();
         }, 200);
     }
 
@@ -431,6 +503,8 @@ export default class BusStationDataSourceLayer {
         this.viewer.scene.camera.changed.removeEventListener(this.onCameraChanged);
         this.unsubscribes.forEach(u => u());
         this.unsubscribes = [];
+        this.tileManager?.clear();
+        this.tileManager = null;
         this.viewer.dataSources.remove(this.dataSource, true);
         this.viewer.scene.primitives.remove(this.stationMarkers);
         this.viewer.scene.primitives.remove(this.labelCollection);

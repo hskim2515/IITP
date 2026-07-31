@@ -39,6 +39,12 @@ interface NetworkDrawState {
     // 노드를 놓은 뒤 "🔗 도로 연결"로 명시적으로 고른다). beginDrawAt과 동일한 "결정은 클릭
     // 핸들러, 실행은 draw effect" 분업 — 소비 후 비운다.
     pendingNodePlacement: { coord: Coordinates; screenPos: { x: number; y: number } } | null;
+    // 선택 모드에서 레인/링크 위를 Alt+클릭("이 지점에서 도로를 끊어 노드를 만들고 싶다") —
+    // pendingNodePlacement와 달리 고립 노드가 아니라 그 자리에서 링크를 실제로 분할해
+    // 통과 커넥션까지 자동 생성된 노드를 만든다(NetworkEditToolbar의 "✂ 분할" 버튼과
+    // 동일한 동작을 재클릭 없이 한 번의 Alt+클릭으로). segIdx는 원곡선의 중간 정점을
+    // 보존하기 위함(splitLinkInNetwork 참고) — 소비 후 비운다.
+    pendingLaneSplit: { linkId: string; splitCoord: Coordinates; segIdx?: number; screenPos: { x: number; y: number } } | null;
     // "🔗 도로 연결" 버튼으로 진입 — 이 노드에 연결할 링크를 Shift+클릭/멀티셀렉트로 고르는 중.
     // 링크 멀티셀렉트 자체는 기존 selectedLinkIds를 그대로 쓰고, 이 필드는 "지금 그 선택이
     // 어느 노드에 연결될 것인지"만 기억한다(멀티셀렉트는 보통 단독 삭제·속성 변경용이라 대상
@@ -80,6 +86,9 @@ interface NetworkDrawState {
     /** Alt+빈 지형 클릭 — 도로를 그리지 않고 고립 노드만 배치(자동 스냅 없음). */
     placeNodeAt: (coord: Coordinates, screenPos: { x: number; y: number }) => void;
     clearPendingNodePlacement: () => void;
+    /** 레인/링크 위 Alt+클릭 — 그 지점에서 링크를 분할해 노드를 생성. */
+    splitLaneAt: (linkId: string, splitCoord: Coordinates, segIdx: number | undefined, screenPos: { x: number; y: number }) => void;
+    clearPendingLaneSplit: () => void;
     /** "🔗 도로 연결" 버튼 — 이 노드에 연결할 링크를 고르는 선택 모드로 진입. */
     startConnectTarget: (nodeId: string) => void;
     clearConnectTarget: () => void;
@@ -130,6 +139,7 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
     pendingStartCoord: null,
     pendingConnNodeId: null,
     pendingNodePlacement: null,
+    pendingLaneSplit: null,
     connectTargetNodeId: null,
     chainEndpoint: null,
     selectedLinkId: null,
@@ -187,6 +197,10 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
         pendingNodePlacement: { coord, screenPos },
     }),
     clearPendingNodePlacement: () => set({ pendingNodePlacement: null }),
+    splitLaneAt: (linkId, splitCoord, segIdx, screenPos) => set({
+        pendingLaneSplit: { linkId, splitCoord, segIdx, screenPos },
+    }),
+    clearPendingLaneSplit: () => set({ pendingLaneSplit: null }),
     startConnectTarget: (nodeId) => set({
         connectTargetNodeId: nodeId,
         selectedNodeId: null, selectedLinkId: null, selectedLaneId: null, selectedSegmentId: null,
@@ -258,5 +272,5 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
     setSelectedNodeIds: (ids) => set({ selectedNodeIds: ids, selectedLinkIds: [], selectedLinkId: null, selectedNodeId: null }),
     clearMultiSelection: () => set({ selectedLinkIds: [], selectedNodeIds: [] }),
     setLastDrawnPoint: (point) => set({ lastDrawnPoint: point }),
-    reset: () => set({ isActive: false, isConnectionActive: false, isSelectActive: false, placementMode: 'none', startNodeId: null, startNodeCoord: null, connSelectedNodeId: null, pendingStartCoord: null, pendingConnNodeId: null, pendingStartNodeId: null, pendingNodePlacement: null, connectTargetNodeId: null, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedSegmentId: null, selectedLinkIds: [], selectedNodeIds: [], chainEndpoint: null }),
+    reset: () => set({ isActive: false, isConnectionActive: false, isSelectActive: false, placementMode: 'none', startNodeId: null, startNodeCoord: null, connSelectedNodeId: null, pendingStartCoord: null, pendingConnNodeId: null, pendingStartNodeId: null, pendingNodePlacement: null, pendingLaneSplit: null, connectTargetNodeId: null, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedSegmentId: null, selectedLinkIds: [], selectedNodeIds: [], chainEndpoint: null }),
 }));

@@ -5,8 +5,6 @@ import { LayerField } from "@stores/useLayerSchemaStore";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { useScenarioStore } from '@stores/useScenarioStore';
 import { useNetworkStore } from '@stores/useNetworkStore';
-import { useNetworkDrawStore, PlacementMode } from '@stores/useNetworkDrawStore';
-import { useModeStore } from '@stores/useModeStore';
 import { useVehicleStore } from '@stores/useVehicleStore';
 import { useSimulationStore } from '@stores/useSimulationStore';
 import { useNetworkTileStore } from '@stores/useNetworkTileStore';
@@ -26,15 +24,6 @@ import styles from "@css/ToolsPanel.module.css";
 export interface FacilityProps {
     fields: LayerField[];
 }
-
-// 지도를 직접 클릭해 배치하는 시설물 — 이전엔 도킹된 NetworkDrawPanel(삭제됨)에 있던 3개
-// 배치 버튼을 여기로 옮겼다. 이 컴포넌트가 이미 같은 레이어들의 "더미 생성" 진입점이라
-// 자리가 자연스럽다.
-const PLACEMENT_LABELS: Partial<Record<string, PlacementMode>> = {
-    busStation: 'busStation',
-    railStation: 'railStation',
-    signal: 'signal',
-};
 
 // 더미 생성을 지원하는 레이어 키 → 생성 함수
 // 타일 모드에서는 네트워크 store 가 viewport 분(차선 stripped 가능)뿐이라 전체 네트워크를 임시 fetch
@@ -81,23 +70,6 @@ const Facility = ({ fields }: FacilityProps) => {
     // 차량 시뮬레이션 실행 진입점은 헤더의 NextSim 배지로 통일 — 여기서는 안내만 표시(전역 스토어 공유).
     const nsAvailable = useNextSimRunStore((s) => s.available);
     useEffect(() => { void checkNextSimAvailable(); }, []);
-    const placementMode = useNetworkDrawStore((s) => s.placementMode);
-    // 보기 모드에선 지도 클릭이 아무 것도 편집하지 않아야 한다 — 배치는 편집 동작이므로
-    // 편집 모드에서만 허용한다(버튼도 숨김). usePlacementMode 훅에도 동일 게이트가 있어
-    // 이중 방어(모드를 전환하는 사이 남아있는 placementMode도 거기서 정리됨).
-    const isEditMode = useModeStore((s) => s.appMode === 'edit');
-    // 배치 모드의 클릭 리스너/ESC 취소는 usePlacementMode(Maps.tsx, 항상 마운트)가 담당한다 —
-    // 이 컴포넌트(레이어 팝업의 "시설물" 탭)는 팝업을 닫거나 다른 탭으로 넘어가면 언마운트되므로,
-    // 여기 두면 배치 모드를 켠 채로 팝업을 닫는 순간 클릭이 먹통이 되는 문제가 있었다. 여기서는
-    // 버튼(상태 토글)만 담당한다.
-
-    const handleTogglePlacement = (key: string) => {
-        if (!isEditMode) return;
-        const mode = PLACEMENT_LABELS[key];
-        if (!mode) return;
-        if (placementMode === mode) useNetworkDrawStore.getState().exitToSelect();
-        else useNetworkDrawStore.getState().setPlacementMode(mode);
-    };
 
     // store의 currentJsonData 변화를 감지해 visibleFields 재계산
     const [, setDataTick] = useState(0);
@@ -149,10 +121,10 @@ const Facility = ({ fields }: FacilityProps) => {
         });
     }, [fields, layerManager]);
 
-    // 데이터 없고 더미 생성 또는 직접 배치가 가능한 레이어
+    // 데이터 없고 더미 생성이 가능한 레이어
     const emptyDummyFields = useMemo(() => {
         const visibleKeys = new Set(visibleFields.map(f => f.key));
-        return fields.filter(f => !visibleKeys.has(f.key) && (!!DUMMY_GENERATORS[f.key] || !!PLACEMENT_LABELS[f.key]));
+        return fields.filter(f => !visibleKeys.has(f.key) && !!DUMMY_GENERATORS[f.key]);
     }, [fields, visibleFields]);
 
     const toggleExpand = (parentKey: string) => {
@@ -363,15 +335,6 @@ const Facility = ({ fields }: FacilityProps) => {
                                     <span title={requiredDotTitle(parentKey)} style={{ color: requiredDotColor(parentKey), marginLeft: 5, fontSize: 10 }}>●</span>
                                 )}
                             </span>
-                            {isEditMode && PLACEMENT_LABELS[parentKey] && (
-                                <button
-                                    onClick={(e) => { e.stopPropagation(); handleTogglePlacement(parentKey); }}
-                                    title={placementMode === PLACEMENT_LABELS[parentKey] ? '배치 종료 (ESC)' : `지도를 클릭해 ${field.label} 추가 배치`}
-                                    style={placementMode === PLACEMENT_LABELS[parentKey] ? placeBtnActiveStyle : placeBtnStyle}
-                                >
-                                    {placementMode === PLACEMENT_LABELS[parentKey] ? '■ 배치 중' : '📍 배치'}
-                                </button>
-                            )}
                             <button
                                 onClick={(e) => { e.stopPropagation(); handleDelete(field); }}
                                 title={`${field.label} 데이터 삭제`}
@@ -402,24 +365,15 @@ const Facility = ({ fields }: FacilityProps) => {
                 );
             })}
 
-            {/* 데이터 없고 더미 생성 또는 직접 배치가 가능한 레이어 */}
+            {/* 데이터 없고 더미 생성이 가능한 레이어 */}
             {emptyDummyFields.map((field) => (
-                <div key={field.key} className={styles.sectionLabel} style={{ opacity: placementMode === PLACEMENT_LABELS[field.key] ? 1 : 0.5, cursor: 'default' }}>
+                <div key={field.key} className={styles.sectionLabel}>
                     <span style={{ flex: 1 }}>
                         {field.label}
                         {NEXTSIM_REQUIRED_KEYS.has(field.key) && (
                             <span title={requiredDotTitle(field.key)} style={{ color: requiredDotColor(field.key), marginLeft: 5, fontSize: 10 }}>●</span>
                         )}
                     </span>
-                    {isEditMode && PLACEMENT_LABELS[field.key] && (
-                        <button
-                            onClick={(e) => { e.stopPropagation(); handleTogglePlacement(field.key); }}
-                            title={placementMode === PLACEMENT_LABELS[field.key] ? '배치 종료 (ESC)' : `지도를 클릭해 ${field.label} 배치`}
-                            style={placementMode === PLACEMENT_LABELS[field.key] ? placeBtnActiveStyle : placeBtnStyle}
-                        >
-                            {placementMode === PLACEMENT_LABELS[field.key] ? '■ 배치 중' : '📍 배치'}
-                        </button>
-                    )}
                     {DUMMY_GENERATORS[field.key] && (
                     <button
                         onClick={(e) => { e.stopPropagation(); handleGenerate(field); }}
@@ -479,25 +433,6 @@ const generateBtnStyle: React.CSSProperties = {
     padding: '2px 6px',
     borderRadius: 4,
     flexShrink: 0,
-};
-
-const placeBtnStyle: React.CSSProperties = {
-    background: 'rgba(255,180,70,0.12)',
-    border: '1px solid rgba(255,180,70,0.3)',
-    color: '#ffb347',
-    cursor: 'pointer',
-    fontSize: 9,
-    padding: '2px 6px',
-    borderRadius: 4,
-    flexShrink: 0,
-    marginRight: 4,
-};
-
-const placeBtnActiveStyle: React.CSSProperties = {
-    ...placeBtnStyle,
-    background: 'rgba(255,80,80,0.15)',
-    border: '1px solid rgba(255,80,80,0.35)',
-    color: '#ff6b6b',
 };
 
 export default Facility;

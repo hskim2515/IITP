@@ -19,6 +19,13 @@ import { computePositionAtOffsetOl } from "@utils/offset";
 import { Coordinate } from "ol/coordinate";
 import { getDistance } from "ol/sphere";
 import { toLonLat } from "ol/proj";
+import { getActiveVersionId } from "@utils/versionId";
+import { BUS_STATION_TILING } from "@utils/lodConstants";
+import { BusStationTileManager } from "@managers/BusStationTileManager";
+import { BusStationTileMembership } from "@managers/busStationTileMembership";
+import { diffRecordEditsById } from "@utils/tileEditDiff";
+import { unByKey } from "ol/Observable";
+import type { EventsKey } from "ol/events";
 
 const PARKING_LOT_LENGTH_M = 14;
 
@@ -28,6 +35,11 @@ export default class BusStationFeatureLayer extends VectorLayer {
     private unsubscribe: (() => void) | undefined;
     private needsReload = false;
     private clusterOverlay: FacilityClusterOverlay;
+
+    // ── 버스정류장 타일링 (BUS_STATION_TILING.ENABLED 일 때만; 읽기 전용) ──
+    private tileManager: BusStationTileManager | null = null;
+    private membership = new BusStationTileMembership();
+    private moveEndKey: EventsKey | null = null;
 
     constructor() {
         const source = new VectorSource();
@@ -56,6 +68,22 @@ export default class BusStationFeatureLayer extends VectorLayer {
                 },
                 { equalityFn: (a: any, b: any) => a === b }
             );
+            // 저장 완료(isChanged: true → false) — 저장은 currentJsonData만 서버에 보낼 뿐
+            // originData는 그대로 두므로, 손대지 않으면 diffRecordEditsById가 방금 저장된
+            // 정류장도 계속 "로컬 편집"으로 오인해 오버레이가 안 사라진다(신호와 동일 조치).
+            (store as any).subscribe(
+                (s: any) => s.isChanged,
+                (isChanged: boolean, prevIsChanged: boolean) => {
+                    if (!prevIsChanged || isChanged) return;
+                    const cur = store.getState().currentJsonData;
+                    if (cur) store.getState().setOriginData(cur);
+                    if (BUS_STATION_TILING.ENABLED) {
+                        this.tileManager?.clear();
+                        const map = this.getMapInternal() as OLMap | null;
+                        if (map) this.updateTiles(map);
+                    }
+                },
+            );
         }
         const networkStore = layerNameToStoreMap["network"];
         if (networkStore) {
@@ -74,13 +102,36 @@ export default class BusStationFeatureLayer extends VectorLayer {
     }
 
     override setMapInternal(map: OLMap | null): void {
+        if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
         super.setMapInternal(map);
         if (map) {
             this.clusterOverlay.attach(map);
             this.clusterOverlay.setVisible(this.getVisible());
+            if (BUS_STATION_TILING.ENABLED) {
+                this.moveEndKey = map.on('moveend', () => this.updateTiles(map));
+                this.updateTiles(map);
+            }
         } else {
             this.clusterOverlay.detach();
+            this.tileManager?.clear();
+            this.tileManager = null;
         }
+    }
+
+    private updateTiles(map: OLMap): void {
+        const view = map.getView();
+        const size = map.getSize();
+        const resolution = view.getResolution();
+        if (!size || resolution == null) return;
+        if (!this.tileManager) {
+            const versionId = getActiveVersionId();
+            if (!versionId) return;
+            this.tileManager = new BusStationTileManager(String(versionId), {
+                onTileLoaded: (_k, payload) => { if (this.membership.add(payload)) this.load(); },
+                onTileEvicted: (_k, payload) => { if (this.membership.remove(payload)) this.load(); },
+            });
+        }
+        this.tileManager.update(view.calculateExtent(size), resolution);
     }
 
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
@@ -134,7 +185,33 @@ export default class BusStationFeatureLayer extends VectorLayer {
         if (!store || !networkStore) return;
 
         const busPublicStationResponse: PublicTransitResponse = store.getState().currentJsonData;
-        if (!busPublicStationResponse || !busPublicStationResponse.busStations) {
+        if (!busPublicStationResponse) {
+            this.source.clear();
+            return;
+        }
+
+        // 타일 모드: viewport 정류장(서버 최신) + 로컬 미저장 편집을 id 단위로 병합
+        //   (SignalFeatureLayer와 동일 조치 — diffRecordEditsById 참고).
+        // 비-타일 모드: store 전체 정류장 그대로 사용.
+        let busStationsAll: any[];
+        if (BUS_STATION_TILING.ENABLED) {
+            const originData = store.getState().originData as any;
+            const { editedIds, deletedIds } = diffRecordEditsById(originData?.busStations, busPublicStationResponse.busStations, 'id');
+            const merged = new Map<string, any>();
+            for (const s of this.membership.values()) {
+                const id = String(s?.id ?? '');
+                if (deletedIds.has(id)) continue;
+                merged.set(id, s);
+            }
+            for (const s of (busPublicStationResponse.busStations ?? [])) {
+                const id = String(s?.id ?? '');
+                if (editedIds.has(id)) merged.set(id, s);
+            }
+            busStationsAll = [...merged.values()];
+        } else {
+            busStationsAll = busPublicStationResponse.busStations ?? [];
+        }
+        if (!busStationsAll.length) {
             this.source.clear();
             return;
         }
@@ -173,10 +250,9 @@ export default class BusStationFeatureLayer extends VectorLayer {
             linkLaneMap.set(String(link.id), lanes);
         }
 
-        const busStations = busPublicStationResponse.busStations;
         const featureBuffer: Feature[] = [];
 
-        for (const busStation of busStations) {
+        for (const busStation of busStationsAll) {
             const linkRef = String(busStation.linkRef);
             const laneRef = Number(busStation.laneRef);
 
@@ -234,6 +310,9 @@ export default class BusStationFeatureLayer extends VectorLayer {
         if (this.unsubscribe) {
             this.unsubscribe();
         }
+        if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
+        this.tileManager?.clear();
+        this.tileManager = null;
         this.clusterOverlay.dispose();
         super.dispose();
     }

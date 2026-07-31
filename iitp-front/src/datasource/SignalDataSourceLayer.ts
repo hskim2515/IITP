@@ -9,6 +9,7 @@ import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import { LOD_ALT, SIGNAL_TILING } from "@utils/lodConstants";
 import { SignalTileManager } from "@managers/SignalTileManager";
 import { SignalTileMembership } from "@managers/signalTileMembership";
+import { diffSignalEditsByNode } from "@utils/signal";
 
 /* ─────────────────────────────────────────────────────────────────
    LOD 전략 (단순화: 줌아웃 시 크기 고정)
@@ -309,6 +310,23 @@ export default class SignalDataSourceLayer {
                 () => this.load(),
                 { equalityFn: (a: any, b: any) => a === b }
             ));
+            // 저장 완료(isChanged: true → false) — DataIOPanel의 저장은 currentJsonData만
+            // 서버에 보낼 뿐 originData는 그대로 두므로, 손대지 않으면 diffSignalEditsByNode가
+            // 방금 저장된 노드도 계속 "로컬 편집"으로 오인해 오버레이가 안 사라진다(2D
+            // SignalFeatureLayer와 동일 조치). origin을 지금 값으로 맞추고, 타일도 새로고침해
+            // 서버에 실제로 반영된 최신본을 받아온다.
+            this.unsubscribes.push((store as any).subscribe(
+                (s: any) => s.isChanged,
+                (isChanged: boolean, prevIsChanged: boolean) => {
+                    if (!prevIsChanged || isChanged) return;
+                    const cur = store.getState().currentJsonData;
+                    if (cur) store.getState().setOriginData(cur);
+                    if (SIGNAL_TILING.ENABLED) {
+                        this.tileManager?.clear();
+                        this.updateTiles();
+                    }
+                },
+            ));
         }
         this.unsubscribes.push((useNetworkStore as any).subscribe(
             (s: any) => s.currentJsonData,
@@ -409,10 +427,29 @@ export default class SignalDataSourceLayer {
 
         const signalStore = layerNameToStoreMap[this.LAYER_NAME];
         if (!signalStore) return;
-        // 타일 모드: viewport 신호만. 비-타일 모드: store 전체.
-        const signals: any[] = (SIGNAL_TILING.ENABLED
-            ? this.membership.values()
-            : ((signalStore as any).getState().currentJsonData?.signals ?? [])).filter(Boolean); // null 요소 방어
+        const currentJsonData = (signalStore as any).getState().currentJsonData;
+        // 타일 모드: viewport 신호(서버 최신) + 로컬 미저장 편집을 nodeId 단위로 병합
+        // (SignalFeatureLayer의 2D 쪽과 동일한 조치 — diffSignalEditsByNode 참고).
+        // 비-타일 모드: store 전체.
+        let signals: any[];
+        if (SIGNAL_TILING.ENABLED) {
+            const originData = (signalStore as any).getState().originData;
+            const { editedNodeIds, deletedNodeIds } = diffSignalEditsByNode(originData?.signals, currentJsonData?.signals);
+            const merged = new Map<string, any>();
+            for (const s of this.membership.values()) {
+                const nid = String(s?.nodeId ?? '');
+                if (deletedNodeIds.has(nid)) continue;
+                merged.set(nid, s);
+            }
+            for (const s of (currentJsonData?.signals ?? [])) {
+                const nid = String(s?.nodeId ?? '');
+                if (editedNodeIds.has(nid)) merged.set(nid, s);
+            }
+            signals = [...merged.values()];
+        } else {
+            signals = currentJsonData?.signals ?? [];
+        }
+        signals = signals.filter(Boolean); // null 요소 방어
         if (!signals.length) return;
 
         const networkData = (useNetworkStore as any).getState().currentJsonData;

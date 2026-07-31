@@ -262,7 +262,7 @@ KTDB 원본 `node_id`/`link_id`(문자열)는 위 규칙으로 재채번되며 �
 | 상황 | 연쇄되는 것 | 자동/수동 |
 |---|---|---|
 | KTDB 네트워크 재임포트(앱 설정 `busFacilityEnabled`/`railFacilityEnabled` 켜짐, 기본값) | OSM에서 새로 정류장/노선을 가져와 새 네트워크에 재스냅 후 자동 저장 — `roadStation.xml`/`railStation.xml`/`roadPTline.xml`/`railPTline.xml` 전부 **덮어쓰기** | ✅ (`OsmFacilityConverter` → `FileImportModal.tsx`) — 단 **수동으로 추가·편집한 정류장/노선도 이때 같이 사라짐** |
-| KTDB 네트워크 재임포트(위 토글 꺼짐, 또는 대형망 스트리밍 경로처럼 OSM 조회 자체가 없는 경우) | 정류장/역 자체(id·이름·부가정보)는 그대로 두고, 저장돼 있던 좌표(center/exit.coord)를 새 네트워크에 재스냅해 `link_ref`/`lane_ref`만 자동 갱신 | ✅ (`OsmFacilityConverter.resnapByLocalCoord` → `KtdbImportController.resnapExistingStationsIfNeeded`) — 재스냅 실패(좌표가 새 네트워크에서 50m 밖)한 정류장은 NextSim이 link_ref를 필수로 요구해 유지가 불가능하므로 제외됨(로그로 개수 확인 가능) |
+| KTDB 네트워크 재임포트(위 토글 꺼짐, 또는 대형망 스트리밍 경로처럼 OSM 조회 자체가 없는 경우) | 정류장/역 자체(id·이름·부가정보)는 그대로 두고, 저장돼 있던 좌표(center/exit.coord)를 새 네트워크에 재스냅해 `link_ref`/`lane_ref`만 자동 갱신. **재임포트는 매번 로컬좌표 원점을 bbox 중심으로 새로 잡으므로**(`build()`가 versionId로 Scenario를 못 찾아 좌표 재사용 분기를 안 탐), bbox가 달라지면 재스냅 전에 옛→새 원점 평행이동을 적용하고 저장된 center/coord도 새 원점 기준으로 갱신한다(실측: 좁은 bbox 재임포트에서 보정 없이는 전 정류장이 ~700m 어긋나 재스냅 전멸) | ✅ (`OsmFacilityConverter.resnapByLocalCoord`/`shiftLocalCoord`/`originShiftMeters` → `KtdbImportController.resnapExistingStationsIfNeeded`) — 재스냅 실패(보정 후에도 새 네트워크에서 50m 밖 = 그 위치에 도로가 사라진 경우)한 정류장은 삭제하지 않고 옛 link_ref를 그대로 유지(낡은 참조로 남는 게 조용한 삭제보다 안전, 로그로 개수 확인 가능) |
 | OSM 재조회 실패(Overpass 타임아웃 등) | 위와 동일한 재스냅 경로를 탄다(`fac`가 비어있는 것으로 취급) | ✅ 위와 동일 |
 | roadPTline.xml의 버스 노선 link/node seq(정류장 link_ref가 아니라 **노선 전체 경로**) | 그 노선이 지나는 정류장들(이미 재스냅된 linkRef)을 waypoint 삼아 위상 경로를 다시 이어 붙여 재구성 | ✅ (`OsmFacilityConverter.remapBusRouteByStationAnchors` → `KtdbImportController.remapStaleBusRoutes`) — 정류장 2개 미만이거나 정류장 사이 경로 연결이 안 되면(위상이 크게 바뀜) 그 노선만 재매핑 실패로 남아 수동 재작업 필요, 나머지 노선은 정상 갱신됨. 이번 요청에서 OSM으로 노선을 새로 가져온 경우(토글 켜짐)는 건너뜀(위 행에서 이미 덮어씀) |
 | railPTline.xml의 철도 노선 | link/node id가 아니라 `railStationSeq`(정류장 id)만 참조 — 정류장 id는 재임포트로 안 바뀌는 안정적 네임스페이스라 애초에 재매핑이 필요 없음 | ✅ 원래부터 문제없음 |
@@ -1085,6 +1085,27 @@ Route[]
 >
 > 버스 파이프라인의 나머지(SFTP 동기화·경로 캐시·PaxRoute.json 처리)는 모두 정상 동작 확인됨
 > (`NextSimRunner.java`, `BusPtLineController`/`BusStationService`).
+>
+> **자동 우회(2026-07-30 추가)**: 이 결함 때문에 노선이 하나라도 있으면 크래시 복구 터미널
+> 이분탐색이 어떤 조합으로도 성공하지 못한 채 예산 600회를 헛되이 태우는 문제가 실측됐다
+> (시도당 ~1분). 이제 크래시 복구 진입 시 **버스 노선 절연을 먼저 1회 시도**한다
+> (`NextSimRunner.tryPtIsolationRetry` — roadPTline.xml을 비우고 재실행, 성공하면 원인=노선으로
+> 확정하고 이번 실행은 버스 노선 제외로 진행, 실패하면 원상 복구 후 기존 터미널 이분탐색으로
+> 진행). 즉 버스 노선이 있는 시나리오도 시뮬레이션 자체는 (노선 제외로) 완주할 수 있게 됐다 —
+> 노선을 포함한 완주는 여전히 NextSim 바이너리 수정을 기다려야 한다.
+>
+> **재검증 결과(2026-07-30, scenario2_1) — 2번 결함 미재현**: 위 절연 로직이 실제로 2번
+> 결함 상황에서 개입하는지 확인하려고, 강남역 인근 소규모 네트워크(375노드/449링크)에서
+> 실제 터미널 쌍으로 3~8링크(정류장 1개 포함) 노선 6가지를 순차 실행했으나 **전부 크래시
+> 없이 정상 완주했다**(`test-fixtures/nextsim-crash-repro/case2-terminal-to-terminal-negative-result/`
+> 참고). 즉 2번 결함은 순수 링크 개수가 아니라 2026-07-27 조사가 이루어진 scenario3_1의
+> 특정 네트워크 토폴로지에 국한된 문제일 가능성이 높다 — 원 문서의 "위상에 따라 재현된다"는
+> 서술과 일치. 반대로 이번 재검증 중 **다른 크래시 하나를 새로 확정**했다: 버스 노선의
+> `station.seq`가 빈 문자열이면(정류장이 하나도 안 걸리면) 터미널 조합과 무관하게 항상
+> `Cannot build OD map for line N. RoadLinks or RoadStations is empty.`로 SIGSEGV — 위
+> "정류장이 하나도 안 걸린 노선" 항목과 같은 부류의 결함이나, 이번엔 수동 편집/직접 API
+> 호출 경로로 재현됨(`OsmFacilityConverter`의 빈 station.seq 노선 제외 로직을 안 거침).
+> 재현 데이터는 `test-fixtures/nextsim-crash-repro/case1-empty-station-seq/` 참고.
 
 역할: 버스 노선을 정의한다.
 
@@ -1198,6 +1219,8 @@ Mode
 철도 사용 시 필요
 
 > ⚠️ **역과 출입구는 id 카운터를 공유**: `railStation.id`와 그 `exit.id`는 OSM 자동 스냅 시 하나의 카운터(`31,000,001`부터)를 나눠 쓴다 — 아래 예시의 `id="40000001"`은 부천 레퍼런스 데이터셋 값이니 착오하지 말 것([ID 네이밍/채번 규칙](#id-naming) 참고). 과거 `OsmFacilityConverter.convertRailStations()`의 exit id 채번이 `idGen.get()`만 하고 증가시키지 않아, 다음 역이 그 exit와 같은 id를 이어받는 충돌 버그가 있었다 — `idGen.getAndIncrement()`로 수정 완료됨(코드의 "실측 크래시" 주석 참고).
+
+> ⚠️ **실측 데이터 품질 버그(2026-07-30, scenario2_1 KTDB 재임포트) — `subway_entrance`가 독립된 역으로 오분류**: `OsmOverpassService.parseFacilities()`/`OsmPtFacilityRepository.queryFacilities()`가 OSM `railway=subway_entrance`(지하철 출입구) 노드를 `railway=station|halt|tram_stop`(진짜 역)과 같은 리스트에 섞어 반환하고 있었다. `OsmFacilityConverter.convertRailStations()`는 입력받은 노드 하나당 역 하나를 만들기 때문에, 강남역 인근 소규모 bbox에서 실제로는 몇 개뿐이어야 할 역이 **42개**로 부풀려졌다 — "강남역 10번 출구"·"강남역 11번 출구" 등 출입구가 각각 독립된 "역"으로 생성되고, 진짜 역("강남")도 서로 다른 id(31000073/31000079)로 중복 생성됨(사용자의 "철도역이 42개라고?" 의심 질문으로 발견). **수정**: `FacilityQueryResult`에 `railExits` 필드를 신설해 `subway_entrance` 노드를 `railStations`와 분리하고, `convertRailStations()`가 각 출입구를 가장 가까운 역(400m 이내, `MAX_EXIT_STATION_DIST_M`)에 매칭해 그 역의 `exit` 서브엘리먼트로 붙이도록 변경 — 매칭되는 출입구가 하나도 없는 역은 기존처럼 역 좌표 자체를 스냅한 폴백 exit 하나를 생성한다. `OsmOverpassService.java`/`OsmPtFacilityRepository.java`(Overpass 실시간 경로·로컬 DB 캐시 경로 둘 다 동일 버그였음)/`OsmFacilityConverter.java` 3개 파일 수정.
 
 역할: 철도역과 출입구 정보를 정의한다.
 

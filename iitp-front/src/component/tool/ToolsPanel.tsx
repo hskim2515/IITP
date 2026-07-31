@@ -33,6 +33,10 @@ const ToolsPanel = () => {
         if (appMode === 'edit') {
             if (!autoSelectDoneRef.current) {
                 autoSelectDoneRef.current = true;
+                // 편집 진입 시 헤더를 최소화(모드전환/저장 버튼만 남김)하는 만큼, 보기 모드에서
+                // 열어뒀던 사이드 패널(레이어/측정/데이터 입출력/설정)도 함께 닫는다 — 안 닫으면
+                // 헤더는 최소화됐는데 패널만 화면에 남아 있어 어중간해진다(사용자 실측 지적).
+                setActiveIndex(null);
                 const ds = useNetworkDrawStore.getState();
                 if (!ds.isActive && !ds.isConnectionActive && ds.placementMode === 'none' && !ds.isSelectActive) {
                     try { ds.setSelectActive(true); } catch (_) { /* noop */ }

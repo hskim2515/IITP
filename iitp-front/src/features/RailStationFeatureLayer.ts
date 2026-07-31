@@ -15,6 +15,13 @@ import { RailPublicStationResponse } from "@type/Station";
 import { useSchemaStore } from "@stores/useSchemaStore";
 import { buildLinkMapOl, computeExitPositionOl } from "@utils/railStationPosition";
 import { Coordinate } from "ol/coordinate";
+import { getActiveVersionId } from "@utils/versionId";
+import { RAIL_STATION_TILING } from "@utils/lodConstants";
+import { RailStationTileManager } from "@managers/RailStationTileManager";
+import { RailStationTileMembership } from "@managers/railStationTileMembership";
+import { diffRecordEditsById } from "@utils/tileEditDiff";
+import { unByKey } from "ol/Observable";
+import type { EventsKey } from "ol/events";
 
 export default class RailStationFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -22,6 +29,11 @@ export default class RailStationFeatureLayer extends VectorLayer {
     private unsubscribe: (() => void) | undefined;
     private needsReload = false;
     private clusterOverlay: FacilityClusterOverlay;
+
+    // ── 철도정류장 타일링 (RAIL_STATION_TILING.ENABLED 일 때만; 읽기 전용) ──
+    private tileManager: RailStationTileManager | null = null;
+    private membership = new RailStationTileMembership();
+    private moveEndKey: EventsKey | null = null;
 
     constructor() {
         const source = new VectorSource();
@@ -47,6 +59,20 @@ export default class RailStationFeatureLayer extends VectorLayer {
                 () => this.load(),
                 { equalityFn: (a: any, b: any) => a === b }
             );
+            // 저장 완료(isChanged: true → false) — BusStationFeatureLayer/SignalFeatureLayer와 동일 조치.
+            (store as any).subscribe(
+                (s: any) => s.isChanged,
+                (isChanged: boolean, prevIsChanged: boolean) => {
+                    if (!prevIsChanged || isChanged) return;
+                    const cur = store.getState().currentJsonData;
+                    if (cur) store.getState().setOriginData(cur);
+                    if (RAIL_STATION_TILING.ENABLED) {
+                        this.tileManager?.clear();
+                        const map = this.getMapInternal() as OLMap | null;
+                        if (map) this.updateTiles(map);
+                    }
+                },
+            );
         }
         const networkStore = layerNameToStoreMap["network"];
         if (networkStore) {
@@ -65,13 +91,36 @@ export default class RailStationFeatureLayer extends VectorLayer {
     }
 
     override setMapInternal(map: OLMap | null): void {
+        if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
         super.setMapInternal(map);
         if (map) {
             this.clusterOverlay.attach(map);
             this.clusterOverlay.setVisible(this.getVisible());
+            if (RAIL_STATION_TILING.ENABLED) {
+                this.moveEndKey = map.on('moveend', () => this.updateTiles(map));
+                this.updateTiles(map);
+            }
         } else {
             this.clusterOverlay.detach();
+            this.tileManager?.clear();
+            this.tileManager = null;
         }
+    }
+
+    private updateTiles(map: OLMap): void {
+        const view = map.getView();
+        const size = map.getSize();
+        const resolution = view.getResolution();
+        if (!size || resolution == null) return;
+        if (!this.tileManager) {
+            const versionId = getActiveVersionId();
+            if (!versionId) return;
+            this.tileManager = new RailStationTileManager(String(versionId), {
+                onTileLoaded: (_k, payload) => { if (this.membership.add(payload)) this.load(); },
+                onTileEvicted: (_k, payload) => { if (this.membership.remove(payload)) this.load(); },
+            });
+        }
+        this.tileManager.update(view.calculateExtent(size), resolution);
     }
 
     public styleFunction(feature: FeatureLike, resolution: number): Style[] {
@@ -126,7 +175,30 @@ export default class RailStationFeatureLayer extends VectorLayer {
 
         try {
             const response: RailPublicStationResponse | undefined = store?.getState().currentJsonData;
-            if (!response?.railStations?.length) { this.source.clear(); return; }
+            if (!response) { this.source.clear(); return; }
+
+            // 타일 모드: viewport 정류장(서버 최신) + 로컬 미저장 편집을 id 단위로 병합
+            //   (BusStationFeatureLayer와 동일 조치 — diffRecordEditsById 참고).
+            // 비-타일 모드: store 전체 정류장 그대로 사용.
+            let railStationsAll: any[];
+            if (RAIL_STATION_TILING.ENABLED) {
+                const originData = store?.getState().originData as any;
+                const { editedIds, deletedIds } = diffRecordEditsById(originData?.railStations, response.railStations, 'id');
+                const merged = new Map<string, any>();
+                for (const s of this.membership.values()) {
+                    const id = String(s?.id ?? '');
+                    if (deletedIds.has(id)) continue;
+                    merged.set(id, s);
+                }
+                for (const s of (response.railStations ?? [])) {
+                    const id = String(s?.id ?? '');
+                    if (editedIds.has(id)) merged.set(id, s);
+                }
+                railStationsAll = [...merged.values()];
+            } else {
+                railStationsAll = response.railStations ?? [];
+            }
+            if (!railStationsAll.length) { this.source.clear(); return; }
 
             const networkData: any = networkStore?.getState().currentJsonData;
             if (!networkData?.links) { this.source.clear(); return; }
@@ -138,7 +210,7 @@ export default class RailStationFeatureLayer extends VectorLayer {
 
             const featureBuffer: Feature[] = [];
 
-            for (const station of response.railStations) {
+            for (const station of railStationsAll) {
                 const exits = station.exits ?? [];
                 const exitPositions: Coordinate[] = [];
 
@@ -183,6 +255,9 @@ export default class RailStationFeatureLayer extends VectorLayer {
 
     public dispose(): void {
         this.unsubscribe?.();
+        if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
+        this.tileManager?.clear();
+        this.tileManager = null;
         this.clusterOverlay.dispose();
         super.dispose();
     }

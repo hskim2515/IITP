@@ -227,18 +227,6 @@ body {
   border-color: #00eaff;
 }
 
-.scenario-form-row--half {
-  flex-direction: row;
-  gap: 12px;
-}
-
-.scenario-form-row--half > div {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
 .scenario-form-error {
   color: #ff6b6b;
   font-size: 0.88rem;
@@ -261,45 +249,6 @@ body {
   background-color: rgba(255, 255, 255, 0.18);
 }
 
-/* 중심점 헤더: 라벨 + 지도 선택 버튼 나란히 */
-.scenario-form-coord-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-
-.scenario-form-coord-header label {
-  margin-bottom: 0;
-}
-
-/* "지도에서 선택" 버튼 - version-popup-content button 상속 덮어쓰기 */
-.version-popup-content .btn-map-pick {
-  background: linear-gradient(135deg, rgba(0, 188, 212, 0.2), rgba(0, 234, 255, 0.08));
-  border: 1px solid #00eaff;
-  border-radius: 7px;
-  color: #00eaff;
-  font-size: 0.82rem;
-  font-weight: 600;
-  padding: 0.3rem 0.75rem;
-  margin: 0;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.2s, box-shadow 0.2s;
-}
-
-.version-popup-content .btn-map-pick:hover {
-  background: linear-gradient(135deg, rgba(0, 188, 212, 0.35), rgba(0, 234, 255, 0.18));
-  box-shadow: 0 0 8px rgba(0, 234, 255, 0.4);
-}
-
-.scenario-form-coord-preview {
-  font-size: 0.8rem;
-  color: #00eaff;
-  margin: 4px 0 0;
-  opacity: 0.85;
-}
-
 /* 키 입력 라벨 + 배지 행 */
 .scenario-form-label-row {
   display: flex;
@@ -310,6 +259,12 @@ body {
 
 .scenario-form-label-row label {
   margin-bottom: 0;
+}
+
+.scenario-key-input--readonly {
+  cursor: default;
+  color: #baf8ff !important;
+  background: rgba(0, 234, 255, 0.07) !important;
 }
 
 /* 키 상태 배지 */
@@ -551,16 +506,11 @@ body {
 
 /*timeline*/
 .timeline-container {
-  /* 헤더 전체 폭 기준 정중앙 고정 — 사용자 요청: 버튼 그룹 폭과 무관하게 위치가 항상
-     고정돼야 한다(nav/headerRight 사이 여유 공간 기준으로 재중앙 정렬하는 방식을 시도했으나,
-     버튼이 늘어나면 중심점 자체가 움직여 "위치가 옮겨진다"는 문제로 되돌림). 겹치는 경우엔
-     headerRight 쪽 z-index로 버튼이 항상 위에서 클릭되도록 한다(겹칠 수 있지만 버튼이
-     항상 이기는 방식 — Header.module.css .headerRight 주석 참고). */
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 1;
+  /* .header가 3열 그리드(1fr auto 1fr)의 가운데(auto) 컬럼 — 좌우 컬럼이 항상 같은 비율이라
+     nav/headerRight 내용 폭과 무관하게 항상 헤더 진짜 중앙에 고정되고(사용자 요청), 각 컬럼이
+     자기 폭 안에서만 그려지는 그리드 특성상 버튼 영역과 애초에 겹치지 않는다(예전
+     position:absolute 절대중앙배치는 위치는 고정이지만 겹칠 수 있었고, flex 남는공간중앙배치는
+     안 겹치지만 버튼 폭에 따라 위치가 움직였다 — 그리드가 두 요구를 동시에 만족). */
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -569,6 +519,10 @@ body {
   color: #ccc;
   font-family: 'Segoe UI', sans-serif;
   pointer-events: auto;
+  /* grid-column을 2로 명시 고정 — 편집모드 최소화(editMinimal)에서 이 요소 자체가 조건부로
+     렌더되지 않을 때, 그리드 자동배치가 다음 형제(headerRight)를 이 가운데 컬럼으로 당겨오는
+     버그가 있었다(Header.module.css .headerRight 참고). */
+  grid-column: 2;
 }
 
 .ruler {

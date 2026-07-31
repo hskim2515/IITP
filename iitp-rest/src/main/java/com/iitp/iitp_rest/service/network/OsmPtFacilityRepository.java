@@ -53,7 +53,17 @@ public class OsmPtFacilityRepository {
 
         List<OsmNode> railStations = named().query(
                 "SELECT id, lat, lon, tags FROM osm_pt_node " +
-                        "WHERE tags->>'railway' ~ '^(station|halt|tram_stop|subway_entrance)$' " +
+                        "WHERE tags->>'railway' ~ '^(station|halt|tram_stop)$' " +
+                        "AND geom && ST_MakeEnvelope(:west, :south, :east, :north, 4326)",
+                bboxParams, this::mapNode);
+
+        // subway_entrance(지하철 출입구)는 역이 아니다 — railStations와 섞이면 출입구
+        // 하나하나가 독립된 "역"으로 잘못 변환된다(OsmOverpassService.parseFacilities의
+        // 동일 버그 수정과 짝 맞춤). 별도로 조회해 OsmFacilityConverter가 가장 가까운
+        // 진짜 역의 exit로 매칭하게 한다.
+        List<OsmNode> railExits = named().query(
+                "SELECT id, lat, lon, tags FROM osm_pt_node " +
+                        "WHERE tags->>'railway' = 'subway_entrance' " +
                         "AND geom && ST_MakeEnvelope(:west, :south, :east, :north, 4326)",
                 bboxParams, this::mapNode);
 
@@ -111,24 +121,26 @@ public class OsmPtFacilityRepository {
         for (var rel : railRoutes) nodeIdsNeeded.addAll(rel.memberNodeIds());
         busStops.forEach(n -> nodeIdsNeeded.add(n.getId()));
         railStations.forEach(n -> nodeIdsNeeded.add(n.getId()));
+        railExits.forEach(n -> nodeIdsNeeded.add(n.getId()));
 
         List<OsmNode> allNodes;
         if (nodeIdsNeeded.isEmpty()) {
             allNodes = new ArrayList<>(busStops);
             allNodes.addAll(railStations);
+            allNodes.addAll(railExits);
         } else {
             allNodes = named().query(
                     "SELECT id, lat, lon, tags FROM osm_pt_node WHERE id = ANY(string_to_array(:idsCsv, ',')::bigint[])",
                     new MapSqlParameterSource().addValue("idsCsv", toCsv(nodeIdsNeeded)), this::mapNode);
         }
 
-        log.info("[OsmPtFacilityRepository] bbox=({},{},{},{}) → 버스정류장 {}개, 철도역 {}개, " +
+        log.info("[OsmPtFacilityRepository] bbox=({},{},{},{}) → 버스정류장 {}개, 철도역 {}개, 철도출입구 {}개, " +
                         "버스노선 {}개, 철도노선 {}개, 참조 way {}개, 전체 노드 {}개",
-                south, west, north, east, busStops.size(), railStations.size(),
+                south, west, north, east, busStops.size(), railStations.size(), railExits.size(),
                 busRoutes.size(), railRoutes.size(), allWays.size(), allNodes.size());
 
         return new OsmOverpassService.FacilityQueryResult(
-                busStops, railStations, busRoutes, railRoutes, allNodes, allWays);
+                busStops, railStations, busRoutes, railRoutes, allNodes, allWays, railExits);
     }
 
     private OsmNode mapNode(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {

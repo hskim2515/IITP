@@ -22,13 +22,15 @@ import ToolsPanel from "@component/tool/ToolsPanel";
 import { useNetworkDraw } from "@hooks/useNetworkDraw";
 import { useNetworkSelect } from "@hooks/useNetworkSelect";
 import { usePlacementMode } from "@hooks/usePlacementMode";
+import { useRouteDrawMode } from "@hooks/useRouteDrawMode";
 import { useOsmBboxDraw } from "@hooks/useOsmBboxDraw";
 import { useKtdbPolygonDraw } from "@hooks/useKtdbPolygonDraw";
 import useNetworkStationModify from "@hooks/useNetworkStationModify";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
-import NodeContextMenu from "@component/tool/NodeContextMenu";
-import LinkContextMenu from "@component/tool/LinkContextMenu";
 import NetworkEditToolbar from "@component/tool/NetworkEditToolbar";
+import RouteDrawToolbar from "@component/tool/RouteDrawToolbar";
+import StationRouteContextBar from "@component/tool/StationRouteContextBar";
+import FacilityPlacementQuickBar from "@component/tool/FacilityPlacementQuickBar";
 import NetworkDrawSettingsBar from "@component/tool/NetworkDrawSettingsBar";
 import { useCoordPick } from "@hooks/useCoordPick";
 import { useOsmBboxStore } from "@stores/useOsmBboxStore";
@@ -107,6 +109,7 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     useNetworkDraw();
     useNetworkSelect();
     usePlacementMode();
+    useRouteDrawMode();
     useNetworkStationModify();
     useOsmBboxDraw();
     useKtdbPolygonDraw();
@@ -303,9 +306,10 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
                 </div>
             )}
             <ToolsPanel/>
-            <NodeContextMenu/>
-            <LinkContextMenu/>
             <NetworkEditToolbar/>
+            <FacilityPlacementQuickBar/>
+            <RouteDrawToolbar/>
+            <StationRouteContextBar/>
             <NetworkDrawSettingsBar/>
 
             {!ONLY_3D && (

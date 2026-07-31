@@ -18,7 +18,7 @@ import Maps from "@component/map/Maps";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
 import OdMatrixModal from "@component/modal/OdMatrixModal";
 import PassengerModal from "@component/modal/PassengerModal";
-import Taskbar, { TaskbarRect } from "@component/panel/Taskbar";
+import Taskbar from "@component/panel/Taskbar";
 import DashboardLeft from "@component/panel/DashboardLeft";
 import DashboardRight from "@component/panel/DashboardRight";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
@@ -28,6 +28,7 @@ import { useBackgroundTaskStore } from "@stores/useBackgroundTaskStore";
 import { runAutoDummyGeneration } from "@utils/dummyGeneration";
 import { useNextSimRunStore, checkNextSimAvailable, startNextSimRun, cancelNextSimRun, resumeNextSimPollingIfRunning, formatElapsed } from "@utils/nextsim";
 import { consumePendingScenario } from "@utils/scenarioBootstrap";
+import { useModeStore } from "@stores/useModeStore";
 
 function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const step = useOnboardingStore((s) => s.step);
@@ -253,75 +254,16 @@ function App() {
 
     const { sessions, activeMenuCode, minimizeSession, closeSession } = useWorkflowStore();
 
-    // ── 하단 Taskbar 가림 방지: 컨테이너와 taskbar 의 "실제 좌표 차이"를 inset 으로 계산 ──
-    //   높이를 그대로 쓰면 컨테이너 하단이 뷰포트 하단과 다를 때(레이아웃 변경/스케일 등)
-    //   어긋난다. containerRect.bottom - taskbarRect.top 이 곧 "가려지는 두께"이므로,
-    //   이 값을 --taskbar-height 로 내려 하단 앵커 패널의 bottom 으로 쓰면 항상 정확히
-    //   taskbar 상단에서 끊긴다. 관리 포인트는 Taskbar 측정 → App 발행 한 곳뿐이다.
-    const contentContainerRef = useRef<HTMLDivElement>(null);
-    const taskbarRectRef = useRef<TaskbarRect | null>(null);
-    const [taskbarInset, setTaskbarInset] = useState(0);
-
-    const recomputeTaskbarInset = useCallback(() => {
-        const containerRect = contentContainerRef.current?.getBoundingClientRect();
-        const taskbarRect = taskbarRectRef.current;
-        const next = (containerRect && taskbarRect)
-            ? Math.max(0, Math.round(containerRect.bottom - taskbarRect.top))
-            : 0;
-        setTaskbarInset(prev => (prev === next ? prev : next));
-    }, []);
-
-    // Taskbar 가 rect 를 보고하는 시점엔 taskbar 자신의 레이아웃만 확정돼 있고, 같은 커밋에서
-    // 함께 마운트된 하단 패널 때문에 컨테이너 쪽 레이아웃은 아직 갱신 전일 수 있다. 그 프레임의
-    // containerRect 로 굳으면 inset 이 과소(최악 0)로 남아 그리드 하단이 taskbar 뒤로 들어간다 —
-    // 즉시 한 번, 다음 프레임에 한 번 더 계산한다.
-    const recomputeRafRef = useRef<number | null>(null);
-    const scheduleRecomputeTaskbarInset = useCallback(() => {
-        recomputeTaskbarInset();
-        if (recomputeRafRef.current !== null) cancelAnimationFrame(recomputeRafRef.current);
-        recomputeRafRef.current = requestAnimationFrame(() => {
-            recomputeRafRef.current = null;
-            recomputeTaskbarInset();
-        });
-    }, [recomputeTaskbarInset]);
-
-    useEffect(() => () => {
-        if (recomputeRafRef.current !== null) cancelAnimationFrame(recomputeRafRef.current);
-    }, []);
-
-    const handleTaskbarRectChange = useCallback((rect: TaskbarRect | null) => {
-        taskbarRectRef.current = rect;
-        scheduleRecomputeTaskbarInset();
-    }, [scheduleRecomputeTaskbarInset]);
-
-    useEffect(() => {
-        const onResize = () => scheduleRecomputeTaskbarInset();
-        window.addEventListener("resize", onResize);
-        return () => window.removeEventListener("resize", onResize);
-    }, [scheduleRecomputeTaskbarInset]);
-
-    // 컨테이너 자체가 커지거나 줄면(좌측 패널/대시보드 토글, 헤더 높이 변화, 창 리사이즈)
-    // containerRect.bottom 이 바뀌므로 inset 도 다시 계산해야 한다 — 세션 전환 이벤트만으로는
-    // 잡히지 않는 경로다.
-    useEffect(() => {
-        const el = contentContainerRef.current;
-        if (!el || typeof ResizeObserver === "undefined") return;
-        const ro = new ResizeObserver(() => scheduleRecomputeTaskbarInset());
-        ro.observe(el);
-        return () => ro.disconnect();
-    }, [scheduleRecomputeTaskbarInset, selectedScenario]);
-
-    // 세션/대시보드 전환으로 레이아웃이 바뀐 다음 프레임에 좌표 재계산
-    useEffect(() => {
-        const raf = requestAnimationFrame(recomputeTaskbarInset);
-        return () => cancelAnimationFrame(raf);
-    }, [sessions.length, activeMenuCode, showDashboard, recomputeTaskbarInset]);
+    // 하단 Taskbar 가림 방지는 레이아웃 구조가 담당한다 — main 안의 컨텐츠 컨테이너를
+    // flex column 으로 두고 [지도+패널] 과 [Taskbar] 를 형제로 쌓으면, 지도 컨테이너가
+    // taskbar 위에서 끝나므로 taskbar 높이를 측정해 오프셋으로 내려보낼 필요가 없다.
 
     const {
         menu,
         activeSubmenu,
         activeDropdownMenu,
         setActiveSubmenu,
+        setActiveDropdownMenu,
     } = useMenuStore();
 
     const activeSession = sessions.find(s => s.menuCode === activeMenuCode && !s.isMinimized);
@@ -332,6 +274,22 @@ function App() {
             usePropertyStore.getState().setSelectedProps(null);
         }
     }, [activeSubmenu]);
+
+    const appMode = useModeStore((s) => s.appMode);
+
+    // 편집 모드 진입 시 헤더의 파일/기타 메뉴(HeaderMenu)는 통째로 숨겨지는데, 그 메뉴로
+    // 열어뒀던 LeftPanel(activeDropdownMenu)이나 시설물 편집 그리드(activeSession/PropertyPanel
+    // 등)는 별도 전역 상태(useMenuStore/useWorkflowStore)라 헤더가 숨겨져도 화면에 그대로
+    // 남아 있었다(사용자 실측 지적: "안닫히고 그대로"). 헤더를 최소화하는 취지에 맞춰 이 화면도
+    // 함께 정리한다 — 세션은 파괴하지 않고 최소화만 해 편집 중이던 내용은 보존한다.
+    useEffect(() => {
+        if (appMode === 'edit' && !showDashboard) {
+            setActiveDropdownMenu(null);
+            setActiveSubmenu(null);
+            if (activeMenuCode) minimizeSession(activeMenuCode);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [appMode, showDashboard]);
 
     useEffect(() => {
         fetchSchema()
@@ -367,60 +325,69 @@ function App() {
                 >
                     {!showDashboard && activeDropdownMenu && <LeftPanel/>}
                     {showDashboard && <DashboardLeft onClose={() => setShowDashboard(false)}/>}
+                    {/* 바깥: [지도+하단 패널] 과 [Taskbar] 를 세로로 쌓는다.
+                        taskbar 가 흐름 안의 형제라 안쪽 컨테이너가 taskbar 위에서 끝나고,
+                        그 안의 하단 앵커 패널(PropertyPanel/PropertyPopup/SchemaSetting)은
+                        컨테이너 하단에 붙이기만 하면 taskbar 에 가리지 않는다 — 높이를 측정해
+                        오프셋을 내려보내는 계산이 필요 없다. */}
                     <div
-                        ref={contentContainerRef}
                         style={{
                             flex: "1 1 auto",
                             minWidth: "0",
                             overflow: "hidden",
-                            position: "relative",
-                            // 이 컨테이너 하단에서 taskbar 상단까지의 실측 두께(하드코딩 없음).
-                            // 안의 하단 앵커 패널(PropertyPanel/PropertyPopup/SchemaSetting)이
-                            // bottom: var(--taskbar-height) 로 참조해 taskbar 위에서 끊긴다.
-                            ["--taskbar-height" as any]: `${taskbarInset}px`,
+                            display: "flex",
+                            flexDirection: "column",
                         }}
                     >
-                        <Maps
-                            singleMapMode={showDashboard}
-                        />
+                        <div
+                            style={{
+                                flex: "1 1 auto",
+                                minHeight: 0,
+                                overflow: "hidden",
+                                position: "relative",
+                            }}
+                        >
+                            <Maps
+                                singleMapMode={showDashboard}
+                            />
 
-                        {!showDashboard && <Taskbar onRectChange={handleTaskbarRectChange}/>}
+                            {/* KTDB/OSM/NETWORK 임포트는 FileImportModal(헤더 파일>가져오기)로 통합 —
+                                구 메뉴 모달(KtdbImportModal 등)은 헤더가 FILE 메뉴 트리를 렌더하지 않아 도달 불가로 제거 */}
+                            {!showDashboard && activeSession && activeSession.menuCode === 'OD_MATRIX' && (
+                                <OdMatrixModal/>
+                            )}
 
-                        {/* KTDB/OSM/NETWORK 임포트는 FileImportModal(헤더 파일>가져오기)로 통합 —
-                            구 메뉴 모달(KtdbImportModal 등)은 헤더가 FILE 메뉴 트리를 렌더하지 않아 도달 불가로 제거 */}
-                        {!showDashboard && activeSession && activeSession.menuCode === 'OD_MATRIX' && (
-                            <OdMatrixModal/>
-                        )}
+                            {!showDashboard && activeSession && activeSession.menuCode === 'PASSENGER' && (
+                                <PassengerModal/>
+                            )}
 
-                        {!showDashboard && activeSession && activeSession.menuCode === 'PASSENGER' && (
-                            <PassengerModal/>
-                        )}
+                            {!showDashboard && activeSession && (
+                                isDescendantOf(menu, 'SCHEMA_SETTING', activeSession.menuCode) ? (
+                                    <SchemaSetting/>
+                                ) : activeSession.menuCode === 'VEHICLE_TYPE' ? (
+                                    <PropertyForm
+                                        activePopupMenu={activeSession.menu}
+                                        open={true}
+                                        config={propertyFormSchema['VEHICLE_TYPE']}
+                                        onClose={() => { closeSession('VEHICLE_TYPE'); setActiveSubmenu(null); }}
+                                    />
+                                ) : activeSession.menuCode === 'VEHICLE_MODEL' ? (
+                                    <PropertyForm
+                                        activePopupMenu={activeSession.menu}
+                                        open={true}
+                                        config={propertyFormSchema['VEHICLE_MODEL']}
+                                        onClose={() => { closeSession('VEHICLE_MODEL'); setActiveSubmenu(null); }}
+                                    />
+                                ) : menuCodeToStoreMap[activeSession.menuCode] ? (
+                                    <PropertyPanel
+                                        activeSubmenu={activeSession.menu}
+                                        onClose={() => minimizeSession(activeSession.menuCode)}
+                                    />
+                                ) : null
+                            )}
+                        </div>
 
-                        {!showDashboard && activeSession && (
-                            isDescendantOf(menu, 'SCHEMA_SETTING', activeSession.menuCode) ? (
-                                <SchemaSetting/>
-                            ) : activeSession.menuCode === 'VEHICLE_TYPE' ? (
-                                <PropertyForm
-                                    activePopupMenu={activeSession.menu}
-                                    open={true}
-                                    config={propertyFormSchema['VEHICLE_TYPE']}
-                                    onClose={() => { closeSession('VEHICLE_TYPE'); setActiveSubmenu(null); }}
-                                />
-                            ) : activeSession.menuCode === 'VEHICLE_MODEL' ? (
-                                <PropertyForm
-                                    activePopupMenu={activeSession.menu}
-                                    open={true}
-                                    config={propertyFormSchema['VEHICLE_MODEL']}
-                                    onClose={() => { closeSession('VEHICLE_MODEL'); setActiveSubmenu(null); }}
-                                />
-                            ) : menuCodeToStoreMap[activeSession.menuCode] ? (
-                                <PropertyPanel
-                                    activeSubmenu={activeSession.menu}
-                                    onClose={() => minimizeSession(activeSession.menuCode)}
-                                />
-                            ) : null
-                        )}
-
+                        {!showDashboard && <Taskbar/>}
                     </div>
                     {showDashboard && <DashboardRight onClose={() => setShowDashboard(false)}/>}
 

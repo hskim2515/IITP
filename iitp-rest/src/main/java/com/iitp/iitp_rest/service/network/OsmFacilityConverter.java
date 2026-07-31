@@ -35,6 +35,7 @@ public class OsmFacilityConverter {
     private static final double SCALE_X = 88000.0;
     private static final double SCALE_Y = 111000.0;
     private static final double MAX_SNAP_DIST_M = 50.0; // 링크 스냅 최대 거리(m)
+    private static final double MAX_EXIT_STATION_DIST_M = 400.0; // 출입구→역 매칭 최대 거리(m, 강남역처럼 큰 역은 출입구가 넓게 퍼짐)
     private static final double GRID_CELL_M = 100.0; // 링크 공간 그리드 셀 크기(m)
     /** OSM에는 배차간격 정보가 없어 변환된 모든 버스 노선에 일괄로 채우는 기본값(분) */
     private static final int DEFAULT_BUS_INTERVAL_MIN = 10;
@@ -154,7 +155,8 @@ public class OsmFacilityConverter {
             // 두 노드 모두 보통 동일한 name 태그를 갖고 있어 이름으로 재매칭한다.
             Map<String, String> railStationIdByName = new LinkedHashMap<>();
             railStations = convertRailStations(
-                    facilities.railStations(), links, baseLat, baseLon, railStationIdByOsmNode, railStationIdByName);
+                    facilities.railStations(), facilities.railExits(), links, baseLat, baseLon,
+                    railStationIdByOsmNode, railStationIdByName);
             railRoutes = convertRailRoutes(
                     facilities.railRoutes(), bbox, railStationIdByOsmNode, railStationIdByName);
         } else {
@@ -215,17 +217,46 @@ public class OsmFacilityConverter {
     // ── 철도 역 ────────────────────────────────────────────────────────────────
 
     private RailPublicTransitResponse convertRailStations(
-            List<OsmNode> stations, List<LinkXml> links, double baseLat, double baseLon,
+            List<OsmNode> stations, List<OsmNode> exits, List<LinkXml> links, double baseLat, double baseLon,
             Map<Long, String> railStationIdByOsmNode, Map<String, String> railStationIdByName) {
 
         AtomicLong idGen = new AtomicLong(31000001L);
         List<RailStationResponse> result = new ArrayList<>();
 
+        record StationLocal(OsmNode node, double lx, double ly) {}
+        List<StationLocal> stationLocals = new ArrayList<>();
         for (OsmNode st : stations) {
             double lx = (st.getLon() - baseLon) * SCALE_X;
             double ly = (st.getLat() - baseLat) * SCALE_Y;
+            stationLocals.add(new StationLocal(st, lx, ly));
+        }
 
-            SnapResult snap = snapToLink(lx, ly);
+        // railway=subway_entrance 노드(출입구)는 역이 아니라 역에 딸린 출구다 — 각 출입구를
+        // 가장 가까운 역(400m 이내)에 매칭한다(실측: 강남역처럼 큰 역은 출입구가 여러 개에 넓게
+        // 퍼져 있음). 매칭 안 되면(출입구 데이터가 없거나 너무 멀면) 버린다 — 아래에서 그 역은
+        // 자체 좌표를 스냅한 폴백 exit 하나로 대체한다.
+        Map<Long, List<OsmNode>> exitsByStationOsmId = new HashMap<>();
+        for (OsmNode exit : exits == null ? List.<OsmNode>of() : exits) {
+            double ex = (exit.getLon() - baseLon) * SCALE_X;
+            double ey = (exit.getLat() - baseLat) * SCALE_Y;
+            StationLocal best = null;
+            double bestDist = MAX_EXIT_STATION_DIST_M;
+            for (StationLocal sl : stationLocals) {
+                double d = Math.hypot(sl.lx() - ex, sl.ly() - ey);
+                if (d < bestDist) {
+                    bestDist = d;
+                    best = sl;
+                }
+            }
+            if (best != null) {
+                exitsByStationOsmId.computeIfAbsent(best.node().getId(), k -> new ArrayList<>()).add(exit);
+            }
+        }
+
+        for (StationLocal sl : stationLocals) {
+            OsmNode st = sl.node();
+            double lx = sl.lx();
+            double ly = sl.ly();
 
             RailStationResponse station = new RailStationResponse();
             station.setId(String.valueOf(idGen.getAndIncrement()));
@@ -247,32 +278,52 @@ public class OsmFacilityConverter {
                 railStationIdByName.putIfAbsent(name, station.getId());
             }
 
-            // 출입구: 링크 스냅이 있으면 exit 생성, 없어도 역 자체는 표시
-            if (snap != null) {
+            // ⚠️ 실측 크래시(과거): idGen.get()은 카운터를 소비하지 않고 "다음 값을 훔쳐보기만"
+            // 해서, 바로 다음 루프의 station.setId()가 같은 값을 또 쓰게 돼 station id와
+            // exit id가 충돌했다(실측: railStation.xml의 exit 85개 전부가 다른 역의 id와
+            // 겹침). NextSim RouteGenerator의 PT Route Generation 단계가 이 id를 키로
+            // 맵을 구성하는데, 충돌로 항목이 덮어써지며 std::out_of_range(_Map_base::at)로
+            // 크래시했다(scenario2_1, 터미널 조합과 무관하게 항상 재현). getAndIncrement()로
+            // 고유 id를 소비하도록 수정됨 — 아래도 동일하게 유지.
+            List<OsmNode> myExits = exitsByStationOsmId.getOrDefault(st.getId(), List.of());
+            List<ExitResponse> exitList = new ArrayList<>();
+            for (OsmNode exitNode : myExits) {
+                double ex = (exitNode.getLon() - baseLon) * SCALE_X;
+                double ey = (exitNode.getLat() - baseLat) * SCALE_Y;
+                SnapResult exitSnap = snapToLink(ex, ey);
+                if (exitSnap == null) continue;
                 ExitResponse exit = new ExitResponse();
-                // ⚠️ 실측 크래시: idGen.get()은 카운터를 소비하지 않고 "다음 값을 훔쳐보기만"
-                // 해서, 바로 다음 루프의 station.setId()가 같은 값을 또 쓰게 돼 station id와
-                // exit id가 충돌했다(실측: railStation.xml의 exit 85개 전부가 다른 역의 id와
-                // 겹침). NextSim RouteGenerator의 PT Route Generation 단계가 이 id를 키로
-                // 맵을 구성하는데, 충돌로 항목이 덮어써지며 std::out_of_range(_Map_base::at)로
-                // 크래시했다(scenario2_1, 터미널 조합과 무관하게 항상 재현). getAndIncrement()로
-                // 고유 id를 소비하도록 수정.
                 exit.setId(String.valueOf(idGen.getAndIncrement()));
-                exit.setLinkRef(String.valueOf(snap.linkId()));
-                exit.setOffset(round2(snap.offset()));
+                exit.setLinkRef(String.valueOf(exitSnap.linkId()));
+                exit.setOffset(round2(exitSnap.offset()));
                 exit.setAccessTime("30");
-                exit.setCoord(fmt3(lx) + " " + fmt3(ly));
-                station.setExits(List.of(exit));
-            } else {
-                station.setExits(List.of());
+                exit.setCoord(fmt3(ex) + " " + fmt3(ey));
+                exitList.add(exit);
             }
+            // 매칭된 실제 출입구가 하나도 없으면(OSM에 출입구 데이터가 없거나 전부 스냅 실패)
+            // 기존 동작대로 역 좌표 자체를 스냅한 폴백 exit 하나를 생성한다.
+            if (exitList.isEmpty()) {
+                SnapResult snap = snapToLink(lx, ly);
+                if (snap != null) {
+                    ExitResponse exit = new ExitResponse();
+                    exit.setId(String.valueOf(idGen.getAndIncrement()));
+                    exit.setLinkRef(String.valueOf(snap.linkId()));
+                    exit.setOffset(round2(snap.offset()));
+                    exit.setAccessTime("30");
+                    exit.setCoord(fmt3(lx) + " " + fmt3(ly));
+                    exitList.add(exit);
+                }
+            }
+            station.setExits(exitList);
 
             result.add(station);
         }
 
         RailPublicTransitResponse resp = new RailPublicTransitResponse();
         resp.setRailStations(result);
-        log.info("철도역 변환: {}개", result.size());
+        int matchedExits = exitsByStationOsmId.values().stream().mapToInt(List::size).sum();
+        log.info("철도역 변환: {}개 (역-매칭 출입구 {}개, 미매칭 출입구 {}개)",
+                result.size(), matchedExits, (exits == null ? 0 : exits.size()) - matchedExits);
         return resp;
     }
 
@@ -1022,6 +1073,21 @@ public class OsmFacilityConverter {
         buildLinkGrid(links);
     }
 
+    /**
+     * 터미널 노드 집합(type=Terminal)을 주어진 네트워크로 갱신한다 — {@link #remapBusRouteByStationAnchors}가
+     * 내부적으로 쓰는 {@link #extendToTerminal}/{@link #touchesTerminalAtBothEnds}는 이 집합이
+     * 비어있으면 무조건 실패(null)로 판정하므로, prepareLinkIndex와 함께 반드시 호출해야 한다.
+     * convert()는 OSM 변환 중 이 집합을 함께 채우지만, remapBusRouteByStationAnchors만 단독으로
+     * 쓰는 경로(예: "노선 그리기")는 convert()를 거치지 않으므로 별도 진입점이 필요하다.
+     */
+    public void prepareTerminalNodes(List<NodeXml> nodes) {
+        terminalNodeIds.clear();
+        if (nodes == null) return;
+        for (NodeXml n : nodes) {
+            if (n.getType() == NodeType.Terminal && n.getId() != null) terminalNodeIds.add(n.getId());
+        }
+    }
+
     /** center 문자열("lx ly", 로컬좌표)을 prepareLinkIndex로 준비된 네트워크에 재스냅한다.
      *  50m 밖이라 스냅 실패하거나 좌표 파싱 실패면 null. */
     public ResnapResult resnapByLocalCoord(String center) {
@@ -1040,6 +1106,31 @@ public class OsmFacilityConverter {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    /**
+     * 로컬 좌표 문자열("x y")을 원점 이동만큼 평행이동한 새 문자열로 변환한다.
+     *
+     * <p>로컬 좌표는 시나리오 버전의 원점(위경도) 기준인데, KTDB 재임포트는 매번 원점을
+     * bbox 중심으로 새로 잡는다({@code KtdbImportController.build()}가 versionId로 Scenario를
+     * 못 찾아 기존 좌표 재사용 분기를 타지 않음 — 실측: 다른 bbox로 재임포트하자 저장된
+     * 정류장 좌표가 일괄 ~700m 어긋나 재스냅이 전부 50m 밖 판정으로 실패). 재스냅 전에
+     * 이 함수로 옛 원점 기준 좌표를 새 원점 기준으로 옮겨야 한다.
+     *
+     * @param dxM (옛 원점 경도 - 새 원점 경도) × {@link #SCALE_X}
+     * @param dyM (옛 원점 위도 - 새 원점 위도) × {@link #SCALE_Y}
+     * @return 변환된 "x y" 문자열, 파싱 실패면 원본 그대로
+     */
+    public static String shiftLocalCoord(String center, double dxM, double dyM) {
+        double[] xy = parseLocalCoord(center);
+        if (xy == null) return center;
+        return String.format("%.3f %.3f", xy[0] + dxM, xy[1] + dyM);
+    }
+
+    /** 옛/새 원점 위경도로 로컬 좌표 평행이동량(dxM, dyM)을 계산한다. 옛 원점을 모르면 [0,0]. */
+    public static double[] originShiftMeters(Double oldLat, Double oldLon, double newLat, double newLon) {
+        if (oldLat == null || oldLon == null || (oldLat == 0.0 && oldLon == 0.0)) return new double[]{0, 0};
+        return new double[]{(oldLon - newLon) * SCALE_X, (oldLat - newLat) * SCALE_Y};
     }
 
     private double[] projectPointOnSegment(double px, double py,

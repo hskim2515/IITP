@@ -587,8 +587,19 @@ export default class NetworkFeatureLayer extends VectorLayer {
     private refreshEditedNodeFeatures(edited: Set<string>, deleted: Set<string>): void {
         if (!NETWORK_TILING.ENABLED) return;
         const store = layerNameToStoreMap[this.LAYER_NAME];
-        const nodes: any[] = (store?.getState() as any)?.currentJsonData?.nodes ?? [];
+        const currentData: any = (store?.getState() as any)?.currentJsonData;
+        const nodes: any[] = currentData?.nodes ?? [];
         const nodeById = new Map(nodes.filter(Boolean).map((n: any) => [String(n.id), n]));
+
+        // ⚠️ 실사용 발견(2026-07-30): buildNodeFeatures가 포트를 그리려면 그 포트가 가리키는
+        // 링크(port.linkId)의 좌표가 필요한데, 그동안 this.cachedLinkMap(서버 타일 baseline)만
+        // 넘겼다 — 방금 그린/분할한 새 링크는 아직 서버 타일에 없어 cachedLinkMap에 없으므로
+        // linkMap.get()이 undefined를 반환해 그 포트가 통째로 스킵됐다("아무리 확대해도 새
+        // 포트가 안 보임 — 저장 후 재로드하면 서버 타일에 편입돼 보임"으로 재현). scheduleStoreSync가
+        // currentJsonData.links를 이미 "서버 타일 ∪ 편집 보존 링크"로 유지해주므로, 그걸
+        // cachedLinkMap 위에 덮어써서 신규/수정 링크도 조회되게 한다.
+        const linkMap = new Map(this.cachedLinkMap);
+        for (const l of (currentData?.links ?? [])) if (l) linkMap.set(String(l.id), l);
 
         const removeFeats = (id: string) => {
             const feats = this.nodeFeaturesMap.get(id);
@@ -608,7 +619,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
             if (!node) continue;
             removeFeats(id);
             try {
-                const feats = this.buildNodeFeatures(node, this.cachedLinkMap);
+                const feats = this.buildNodeFeatures(node, linkMap);
                 this.nodeFeaturesMap.set(id, feats);
                 this.source.addFeatures(feats);
                 touched = true;
@@ -656,6 +667,12 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 }
             }
             return styles;
+        }
+        // 차선 경계선 — 근접 줌에서만(멀리서는 도로 몸체 폭만 보여도 충분하고, 여러 개
+        // 그리면 오히려 지저분함).
+        if (ft === "lane-divider") {
+            if (!zoomedIn) return [];
+            return [new Style({ stroke: new Stroke({ color: "rgba(255,255,255,0.55)", width: 1, lineDash: [4, 4] }), zIndex: 122 })];
         }
         return [];
     }
@@ -785,7 +802,23 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 left.push([p[0] + nx * half, p[1] + ny * half]);
                 right.push([p[0] - nx * half, p[1] - ny * half]);
             }
-            const ring = [...left, ...right.reverse(), left[0]!];
+            // 차선 경계선 — 몸체 폴리곤은 width만 반영하고 차선 "개수"는 시각적으로 전혀
+            // 드러내지 않았다(실사용 발견: "폭은 바뀌는데 차선수가 안 바뀜"). 저장 전
+            // 임시 오버레이라 실제 레인 폴리곤(buildLinkFeatures)까지 복제할 필요는 없고,
+            // 좌/우 경계 사이를 차선 수만큼 균등 분할한 얇은 구분선만 그려도 "차선이
+            // 몇 개로 바뀌었는지"는 즉시 확인 가능하다.
+            const laneCount = link.numLane ?? link.lanes?.length ?? 1;
+            for (let li = 1; li < laneCount; li++) {
+                const frac = li / laneCount;
+                const dividerPts = pts.map((_, j) => {
+                    const r = right[j]!, l = left[j]!;
+                    return [r[0]! + (l[0]! - r[0]!) * frac, r[1]! + (l[1]! - r[1]!) * frac];
+                });
+                const divider = new Feature(new LineString(dividerPts));
+                divider.setProperties({ featureType: "lane-divider", linkRef: link.id });
+                buf.push(divider);
+            }
+            const ring = [...left, ...[...right].reverse(), left[0]!];
             const poly = new Feature(new Polygon([ring]));
             poly.setProperties({ featureType: "links", linkRef: link.id });
             buf.push(poly);
@@ -1406,14 +1439,24 @@ export default class NetworkFeatureLayer extends VectorLayer {
         // ── 핵심 최적화: O(N) Map 5개 재생성 대신 참조 동등성 스캔 ──
         // finishSegment()는 links/nodes 배열 끝에만 추가하고, 기존 원소는 같은 참조를 유지한다.
 
-        // 1. 순수 append 검증: 기존 마지막 링크 참조가 동일해야 한다
-        //    (split은 filter로 중간 제거 후 concat → 마지막 원소가 달라짐)
+        // 1. 순수 append 검증: 기존 마지막 링크/노드 참조가 각각 동일해야 한다
+        //    (split/merge는 filter로 중간 제거 후 재구성 → 마지막 원소가 달라지거나, 길이는
+        //    같거나 늘었어도 중간 원소가 빠지며 뒤쪽 인덱스가 전부 밀린다).
+        //    ⚠️ 실사용 발견: 노드 쪽은 이 마지막-원소 검증이 누락돼 있었다 — 중복 노드 병합
+        //    (mergeNodesInNetwork)처럼 노드 하나가 배열 중간에서 제거+재구성되면 nodes.length
+        //    조건은 우연히 통과할 수 있는데, 그러면 아래 인덱스 기반 diff가 밀린 인덱스를
+        //    엉뚱한 노드로 오인해 newPorts = nextNode.ports.slice(prevNode.ports.length)가
+        //    잘못된 길이로 잘려 새로 생긴 포트가 조용히 렌더링 누락됐다("아무리 확대해도
+        //    포트가 안 보임 — 저장 후 재로드(fullBuild)하면 보임"으로 재현).
         const prevLastLinkIdx = prev.links.length - 1;
+        const prevLastNodeIdx = prev.nodes.length - 1;
         const isPureAppend =
             next.links.length >= prev.links.length &&
             next.nodes.length >= prev.nodes.length &&
             prevLastLinkIdx >= 0 &&
-            next.links[prevLastLinkIdx] === prev.links[prevLastLinkIdx];
+            next.links[prevLastLinkIdx] === prev.links[prevLastLinkIdx] &&
+            prevLastNodeIdx >= 0 &&
+            next.nodes[prevLastNodeIdx] === prev.nodes[prevLastNodeIdx];
 
         if (!isPureAppend) {
             this.fullBuild(next);

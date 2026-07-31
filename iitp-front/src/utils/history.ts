@@ -15,6 +15,8 @@ interface FeatureUpdateHistoryOptions {
     properties?: Record<string, unknown>;
     parentGuid?: string;
     grandParentGuid?: string;
+    scope?: 'TURN' | 'PLAN' | 'TOD';
+    transactionId?: string;
 }
 
 const setMessage = useMessageStore.getState().setMessage;
@@ -214,7 +216,16 @@ export const featureUpdateLogs = (
     store: ReturnType<typeof useHistoryStoreFactory>,
     options: FeatureUpdateHistoryOptions
 ) => {
-    const { guid, updateType, field, oldValue, newValue, properties } = options;
+    const {
+        guid,
+        updateType,
+        field,
+        oldValue,
+        newValue,
+        properties,
+        scope,
+        transactionId,
+    } = options;
     let updates: UpdateLogEntry = {};
     const timestamp = new Date().toISOString();
 
@@ -230,6 +241,8 @@ export const featureUpdateLogs = (
                 oldValue,
                 newValue,
                 timestamp,
+                scope,
+                transactionId,
             }
         ];
     }
@@ -242,6 +255,8 @@ export const featureUpdateLogs = (
             newValue: updateType === "added" ? value : null,
             timestamp,
             properties,
+            scope,
+            transactionId,
         }));
     }
 

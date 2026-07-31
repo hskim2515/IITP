@@ -128,15 +128,30 @@ public class KtdbImportController {
      *
      * @param fac 이번 임포트에서 OSM으로 새로 가져온 결과 — null이거나 해당 교통수단이
      *            비어있으면("자동생성 안 함") 그 교통수단만 재스냅 대상.
+     * @param oldOriginLat/oldOriginLon 재임포트 "이전" 시나리오 버전 좌표(=기존 정류장 로컬
+     *            좌표의 원점). 재임포트는 매번 원점을 bbox 중심으로 새로 잡으므로(build()가
+     *            versionId로 Scenario를 못 찾아 좌표 재사용 분기를 안 탐), bbox가 바뀌면 저장된
+     *            로컬 좌표가 통째로 어긋난다(실측: 좁은 bbox 재임포트에서 전 정류장이 ~700m
+     *            벗어나 재스냅 전멸). 스냅 전에 옛→새 원점 평행이동을 적용하고, 저장 시 center/
+     *            coord도 새 원점 기준으로 갱신해 데이터 일관성을 유지한다.
      */
     private void resnapExistingStationsIfNeeded(
             String versionId, java.util.List<com.iitp.iitp_rest.model.network.link.LinkXml> links,
-            com.iitp.iitp_rest.service.network.OsmFacilityConverter.FacilityResult fac) {
+            com.iitp.iitp_rest.service.network.OsmFacilityConverter.FacilityResult fac,
+            Double oldOriginLat, Double oldOriginLon, double newOriginLat, double newOriginLon) {
         boolean busFresh = fac != null && fac.busStations() != null && !fac.busStations().getBusStations().isEmpty();
         boolean railFresh = fac != null && fac.railStations() != null && !fac.railStations().getRailStations().isEmpty();
         if (busFresh && railFresh || links == null || links.isEmpty()) return;
 
         facilityConverter.prepareLinkIndex(links);
+        double[] shift = com.iitp.iitp_rest.service.network.OsmFacilityConverter.originShiftMeters(
+                oldOriginLat, oldOriginLon, newOriginLat, newOriginLon);
+        boolean shifted = shift[0] != 0.0 || shift[1] != 0.0;
+        if (shifted) {
+            log.info("[KTDB] {} 원점 이동 감지: ({}, {}) → ({}, {}) — 로컬좌표 평행이동 dx={}m dy={}m 적용",
+                    versionId, oldOriginLat, oldOriginLon, newOriginLat, newOriginLon,
+                    Math.round(shift[0]), Math.round(shift[1]));
+        }
 
         if (!busFresh) {
             try {
@@ -144,6 +159,11 @@ public class KtdbImportController {
                 if (existing != null && !existing.isEmpty()) {
                     int resnapped = 0, unsnapped = 0;
                     for (var st : existing) {
+                        // 원점이 바뀐 경우 스냅 성공 여부와 무관하게 center는 새 원점 기준으로
+                        // 갱신해야 한다(순수 좌표계 변환 — 같은 물리적 위치). 일부만 갱신하면
+                        // 한 데이터셋 안에 서로 다른 원점 기준 좌표가 섞이는 최악의 상태가 된다.
+                        if (shifted) st.setCenter(com.iitp.iitp_rest.service.network.OsmFacilityConverter
+                                .shiftLocalCoord(st.getCenter(), shift[0], shift[1]));
                         var r = facilityConverter.resnapByLocalCoord(st.getCenter());
                         // 스냅 실패(50m 밖) 시 정류장 자체를 지우면 안 된다 — 이름/부가정보를 가진
                         // 실제 레코드가 좌표 문제 하나로 통째로 사라지는 게 훨씬 나쁜 결과다.
@@ -155,7 +175,7 @@ public class KtdbImportController {
                         st.setOffset((double) r.offset());
                         resnapped++;
                     }
-                    if (resnapped > 0) {
+                    if (resnapped > 0 || (shifted && !existing.isEmpty())) {
                         var req = new com.iitp.iitp_rest.model.publicTransit.bus.BusStationSaveRequest();
                         req.setData(busStationService.toDataList(existing));
                         req.setLogs(new com.iitp.iitp_rest.model.LogsData());
@@ -176,8 +196,12 @@ public class KtdbImportController {
                 if (existing != null && !existing.isEmpty()) {
                     int resnapped = 0, unsnapped = 0;
                     for (var st : existing) {
+                        if (shifted) st.setCenter(com.iitp.iitp_rest.service.network.OsmFacilityConverter
+                                .shiftLocalCoord(st.getCenter(), shift[0], shift[1]));
                         if (st.getExits() == null || st.getExits().isEmpty()) continue;
                         for (var exit : st.getExits()) {
+                            if (shifted) exit.setCoord(com.iitp.iitp_rest.service.network.OsmFacilityConverter
+                                    .shiftLocalCoord(exit.getCoord(), shift[0], shift[1]));
                             var r = facilityConverter.resnapByLocalCoord(exit.getCoord());
                             // 스냅 실패해도 exit을 지우지 않고 옛 linkRef를 그대로 둔다 — 버스
                             // 정류장과 동일 원칙(조용한 삭제보다 낡은 채로 남는 게 안전).
@@ -187,7 +211,7 @@ public class KtdbImportController {
                             resnapped++;
                         }
                     }
-                    if (resnapped > 0) {
+                    if (resnapped > 0 || (shifted && !existing.isEmpty())) {
                         var req = new com.iitp.iitp_rest.model.publicTransit.rail.RailStationSaveRequest();
                         req.setData(existing);
                         req.setLogs(new com.iitp.iitp_rest.model.LogsData());
@@ -413,6 +437,17 @@ public class KtdbImportController {
                         .body(new OsmSaveResponse(null, validation.errors()));
             }
 
+            // 재임포트 "이전" 버전 좌표 = 기존 정류장/역 로컬 좌표의 원점 — updateCoordinatesByKey로
+            // 덮어쓰기 전에 캡처해야 재스냅 시 옛→새 원점 평행이동을 계산할 수 있다.
+            Double oldOriginLat = null, oldOriginLon = null;
+            if (versionId != null && !versionId.isBlank()) {
+                try {
+                    var oldVer = scenarioService.getVersionByKey(versionId);
+                    oldOriginLat = oldVer.getLatitude();
+                    oldOriginLon = oldVer.getLongitude();
+                } catch (Exception ignored) { /* 버전 없음 — 첫 임포트 */ }
+            }
+
             if (versionId != null && !versionId.isBlank()) {
                 byte[] xmlBytes = networkJaxbParser.marshal(networkXml);
                 fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "network.xml");
@@ -492,6 +527,8 @@ public class KtdbImportController {
                             .map(String::valueOf)
                             .collect(java.util.stream.Collectors.toSet());
                 final com.iitp.iitp_rest.service.network.OsmFacilityConverter.FacilityResult finalFac = fac;
+                final Double finalOldOriginLat = oldOriginLat, finalOldOriginLon = oldOriginLon;
+                final double finalNewOriginLat = ctx.originLat(), finalNewOriginLon = ctx.originLon();
                 scaffoldInProgress.add(vid);
                 CompletableFuture.runAsync(() -> {
                     try {
@@ -499,7 +536,8 @@ public class KtdbImportController {
                                 finalTerminalCoords, finalNetworkXml, null, odParams);
                         try { networkTileService.ingest(vid, resp); }
                         catch (Exception e) { log.warn("[KTDB] 타일 DB 선빌드 실패 (무시): {}", e.getMessage()); }
-                        resnapExistingStationsIfNeeded(vid, finalNetworkXml.getLinks(), finalFac);
+                        resnapExistingStationsIfNeeded(vid, finalNetworkXml.getLinks(), finalFac,
+                                finalOldOriginLat, finalOldOriginLon, finalNewOriginLat, finalNewOriginLon);
                         boolean busRoutesFresh = finalFac != null && finalFac.busRoutes() != null
                                 && !((List<?>) finalFac.busRoutes().getOrDefault("lines", List.of())).isEmpty();
                         if (!busRoutesFresh) remapStaleBusRoutes(vid, finalNetworkXml.getLinks());
@@ -554,7 +592,14 @@ public class KtdbImportController {
                     streamingConverter.streamConvert(
                             south, west, north, east, originLat, originLon, networkId, versionId);
 
+            // 재임포트 "이전" 버전 좌표 캡처 — 일반 경로와 동일(재스냅 원점 평행이동용)
+            Double oldOriginLat = null, oldOriginLon = null;
             if (versionId != null && !versionId.isBlank()) {
+                try {
+                    var oldVer = scenarioService.getVersionByKey(versionId);
+                    oldOriginLat = oldVer.getLatitude();
+                    oldOriginLon = oldVer.getLongitude();
+                } catch (Exception ignored) { /* 버전 없음 — 첫 임포트 */ }
                 try { scenarioService.updateCoordinatesByKey(versionId, originLat, originLon); }
                 catch (Exception e) { log.warn("좌표 업데이트 실패 (무시): {}", e.getMessage()); }
                 // 스트리밍 경로도 동일 — 옛 DB 편집본이 새 XML을 가리는 것 방지
@@ -584,6 +629,7 @@ public class KtdbImportController {
                 // 와 동일한 SCALE_X/SCALE_Y 로 origin 기준 로컬 미터 근사 변환(상대 거리 비교용이라
                 // 근사로 충분 — OD 샘플 수요를 근접 sink 우선으로 생성하는 데 사용)
                 final double odScaleOriginLat = originLat, odScaleOriginLon = originLon;
+                final Double finalOldOriginLat = oldOriginLat, finalOldOriginLon = oldOriginLon;
                 java.util.Map<Long, double[]> terminalCoords = new java.util.HashMap<>();
                 for (var n : sr.nodes()) {
                     if (n.getId() == null || n.getCoordinates() == null) continue;
@@ -635,7 +681,8 @@ public class KtdbImportController {
                             lx.setShape(lr.getShape());
                             return lx;
                         }).toList();
-                        resnapExistingStationsIfNeeded(vid, linksForSnap, null);
+                        resnapExistingStationsIfNeeded(vid, linksForSnap, null,
+                                finalOldOriginLat, finalOldOriginLon, odScaleOriginLat, odScaleOriginLon);
                         remapStaleBusRoutes(vid, linksForSnap);
                         String staleWarning = checkStaleRoutes(vid, allLinkIds, allNodeIds);
                         String warning = java.util.stream.Stream.of(signalGenWarning, staleWarning)
