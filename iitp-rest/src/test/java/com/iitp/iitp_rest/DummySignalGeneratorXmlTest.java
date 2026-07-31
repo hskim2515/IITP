@@ -65,6 +65,10 @@ class DummySignalGeneratorXmlTest {
 
         assertTrue(xml.contains("<node id=\"10000001\">"), "접근 2개 이상 노드는 신호 노드로 생성돼야 함");
         assertTrue(xml.contains("<planList>") && xml.contains("<plan "), "플랜이 있어야 함");
+        assertTrue(xml.matches("(?s).*<turn[^>]*turning=\"S\"[^>]*connList=\"1\".*"),
+                "직진 connection은 S turn으로 보존돼야 함");
+        assertTrue(xml.matches("(?s).*<turn[^>]*turning=\"L\"[^>]*connList=\"2\".*"),
+                "좌회전 connection은 L turn으로 보존돼야 함");
         // scaffolder 의 signalValid/extractSignalPlanNodeIds 로 그대로 소비 가능해야 함
         assertTrue(NextSimInputScaffolder.signalValid(xml, Set.of("10000001")));
         assertEquals(Set.of("10000001"), NextSimInputScaffolder.extractSignalPlanNodeIds(xml));
@@ -125,10 +129,59 @@ class DummySignalGeneratorXmlTest {
         NetworkXml network = networkWith(intersectionNode(10000001L));
         String xml = generator.generateSignalXml(network);
 
-        // intersectionNode: 신호 필요 접근로는 100/300 두 개뿐(200은 전부 RTOR라 제외).
-        // 좌표(center/link) 데이터가 없어 페어링 불가 → 단독 페이즈 2개 × (녹색+황색)
-        assertTrue(xml.contains("<plan id=\"0\" cycle=\"46\""), "평시(plan 0): 단독 페이즈 2개 × (20+3)초");
-        assertTrue(xml.contains("<plan id=\"1\" cycle=\"66\""), "혼잡(plan 1): 단독 페이즈 2개 × (30+3)초, 처리용량 확보 위해 페이즈당 녹색 시간이 더 김");
+        // 일반 접근로는 100/300 두 개이며 RTOR 접근로 200은 모든 현시에 들어간다.
+        // 좌표(center/link) 데이터가 없어 페어링 불가 → 일반 현시 2개 × (녹색+RTOR 3초)
+        assertTrue(xml.contains("<plan id=\"0\" cycle=\"46\""), "평시(plan 0): 2 × (20+3)초");
+        assertTrue(xml.contains("<plan id=\"1\" cycle=\"66\""), "혼잡(plan 1): 2 × (30+3)초");
+    }
+
+    @Test
+    void every_phase_contains_all_rtor_turns_and_three_second_phases_contain_only_rtor() {
+        NodeXml node = new NodeXml();
+        node.setId(10000001L);
+        node.setConnections(List.of(
+                conn(1, 100, 300, Turning.Straight),
+                conn(2, 300, 100, Turning.Straight),
+                conn(3, 200, 100, Turning.Right_Turn),
+                conn(4, 400, 300, Turning.Right_Turn)
+        ));
+        String xml = generator.generateSignalXml(networkWith(node));
+
+        Set<String> rtorTurnIds = new HashSet<>();
+        Matcher rtorTurn = Pattern.compile(
+                "<turn id=\"(\\d+)\" turning=\"R\" type=\"RTOR\""
+        ).matcher(xml);
+        while (rtorTurn.find()) rtorTurnIds.add(rtorTurn.group(1));
+        assertEquals(2, rtorTurnIds.size(), "두 접근로의 우회전이 각각 RTOR Turn으로 생성돼야 함");
+
+        Matcher plan = Pattern.compile(
+                "<plan id=\"0\"[^>]*>(.*?)</plan>", Pattern.DOTALL
+        ).matcher(xml);
+        assertTrue(plan.find(), "검증할 P0이 있어야 함");
+
+        Matcher phase = Pattern.compile(
+                "<phase id=\"\\d+\" duration=\"(\\d+)\" turnList=\"([^\"]*)\""
+        ).matcher(plan.group(1));
+        int transitionCount = 0;
+        int regularCount = 0;
+        while (phase.find()) {
+            Set<String> activeTurnIds = phase.group(2).trim().isEmpty()
+                    ? Set.of()
+                    : Set.of(phase.group(2).trim().split("\\s+"));
+            if ("3".equals(phase.group(1))) {
+                assertEquals(rtorTurnIds, activeTurnIds, "3초 현시는 모든 RTOR만 포함해야 함");
+                transitionCount++;
+            } else {
+                assertTrue(activeTurnIds.containsAll(rtorTurnIds),
+                        "일반 현시에도 모든 RTOR이 포함돼야 함");
+                assertTrue(activeTurnIds.size() > rtorTurnIds.size(),
+                        "일반 현시는 RTOR 외에 해당 현시의 직진/좌회전도 포함해야 함");
+                regularCount++;
+            }
+        }
+
+        assertEquals(2, transitionCount, "각 일반 현시 뒤에 3초 RTOR 현시가 하나씩 필요함");
+        assertEquals(2, regularCount, "일반 현시는 두 개여야 함");
     }
 
     /**
@@ -156,19 +209,37 @@ class DummySignalGeneratorXmlTest {
         ));
         String xml = generator.generateSignalXml(networkWith(fourWay));
 
-        // turn id -> type(RTOR 인지) 매핑
+        // turn id -> type(RTOR 인지), 소속 접근로 매핑.
+        // 같은 접근로의 S/L은 별도 turn이어도 같은 현시에 함께 켜질 수 있다.
         Map<String, Boolean> turnIsRtor = new HashMap<>();
-        Matcher turnM = Pattern.compile("<turn id=\"(\\d+)\" turning=\"[^\"]+\" type=\"(\\w+)\"").matcher(xml);
-        while (turnM.find()) turnIsRtor.put(turnM.group(1), "RTOR".equals(turnM.group(2)));
+        Map<String, String> connectionApproach = Map.of(
+                "1", "100", "2", "100",
+                "3", "200", "4", "200",
+                "5", "300", "6", "300",
+                "7", "400", "8", "400"
+        );
+        Map<String, String> turnApproach = new HashMap<>();
+        Matcher turnM = Pattern.compile(
+                "<turn id=\"(\\d+)\" turning=\"[^\"]+\" type=\"(\\w+)\" connList=\"([^\"]*)\""
+        ).matcher(xml);
+        while (turnM.find()) {
+            String turnId = turnM.group(1);
+            turnIsRtor.put(turnId, "RTOR".equals(turnM.group(2)));
+            String firstConnection = turnM.group(3).trim().split(" ")[0];
+            turnApproach.put(turnId, connectionApproach.get(firstConnection));
+        }
 
         Matcher phaseM = Pattern.compile("<phase id=\"\\d+\" duration=\"\\d+\" turnList=\"([^\"]*)\"").matcher(xml);
         int phasesChecked = 0;
         while (phaseM.find()) {
             String[] ids = phaseM.group(1).trim().isEmpty() ? new String[0] : phaseM.group(1).split(" ");
-            long nonRtorCount = java.util.Arrays.stream(ids)
+            long activeApproachCount = java.util.Arrays.stream(ids)
                     .filter(id -> !turnIsRtor.getOrDefault(id, true))
+                    .map(turnApproach::get)
+                    .filter(java.util.Objects::nonNull)
+                    .distinct()
                     .count();
-            assertTrue(nonRtorCount <= 1,
+            assertTrue(activeApproachCount <= 1,
                     "한 phase에 서로 다른 접근로가 동시에 활성화됨(충돌 가능) turnList=" + phaseM.group(1));
             phasesChecked++;
         }

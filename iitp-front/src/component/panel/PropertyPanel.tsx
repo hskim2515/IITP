@@ -31,12 +31,21 @@ import styles from "@css/PropertyPanel.module.css";
 import {useWorkflowStore} from "@stores/useWorkflowStore";
 import {useMenuStore} from "@stores/useMenuStore";
 import DrilldownGrid from "@component/util/DrilldownGrid";
-import SignalTodTimelineEditor from "@component/util/SignalTodTimelineEditor";
-import SignalGroupedEditor from "@component/util/SignalGroupedEditor";
+import SignalPropertyPanelController, {
+    SignalPropertyPanelContext,
+} from "@component/panel/SignalPropertyPanelController";
+import { HistoryStoreFactoryType } from "@stores/useHistoryStoreFactory";
+import { UpdateLogEntry } from "@type/HistoryTypes";
+import { SignalHistoryScope } from "@utils/signalHistory";
 
 export interface PropertyPanelProps {
     activeSubmenu: MenuTreeResponse
     onClose: () => void;
+}
+
+interface SaveMenuDataOptions {
+    logs?: UpdateLogEntry;
+    historyStoresToReset?: HistoryStoreFactoryType[];
 }
 
 const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
@@ -106,7 +115,9 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         };
     }, [selectedGuid, submenu.item.layer]);
 
-    useEffect(() => { clearSelected(); }, [activeSubmenu]);
+    useEffect(() => {
+        clearSelected();
+    }, [activeSubmenu, clearSelected]);
 
     const handleMouseMove = useCallback((e: MouseEvent) => {
         if (rafRef.current !== null) return;
@@ -115,6 +126,8 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
             const newHeight = window.innerHeight - e.clientY - 35;
             if (newHeight > 150 && newHeight < window.innerHeight * 0.9) {
                 heightRef.current = newHeight;
+                // 내부 편집기도 containerHeight를 즉시 받아 드래그 중 함께 리사이즈한다.
+                setHeight(newHeight);
                 if (overlayRef.current) {
                     overlayRef.current.style.height = `${newHeight}px`;
                 }
@@ -127,67 +140,88 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         document.removeEventListener('mousemove', handleMouseMove);
         document.removeEventListener('mouseup', stopResizing);
         document.body.style.userSelect = 'auto';
+        document.body.style.cursor = '';
         setHeight(heightRef.current);
     }, [handleMouseMove]);
 
     const startResizing = useCallback((e: React.MouseEvent) => {
+        e.preventDefault();
         document.addEventListener('mousemove', handleMouseMove);
         document.addEventListener('mouseup', stopResizing);
         document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'ns-resize';
     }, [handleMouseMove, stopResizing]);
 
     useEffect(() => {
         return () => {
             document.removeEventListener('mousemove', handleMouseMove);
             document.removeEventListener('mouseup', stopResizing);
+            document.body.style.userSelect = 'auto';
+            document.body.style.cursor = '';
+            if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
         };
     }, [handleMouseMove, stopResizing]);
 
     const [reloadFlag, setReloadFlag] = useState(false);
     useHistoryInit(reloadFlag);
 
-    const doSave = async (versionKey: string) => {
-        const api = apiConfig[activeSubmenu.menuCode as ApiMenuKey]?.update;
+    const saveMenuData = async (
+        menuCode: string,
+        versionKey: string,
+        options?: SaveMenuDataOptions,
+    ) => {
+        const api = apiConfig[menuCode as ApiMenuKey]?.update;
         if (!api) return;
-        const currentJson = store.getState().currentJsonData;
-        const logJson = historyStore.getState().updateLogs;
-        const snapshotLogJson = historyStore.getState().snapshotUpdateLogs;
-        const mergedLog = mergeUpdateLogs(logJson, snapshotLogJson);
-        const payloadData = submenu.item?.fullData ? currentJson : Object.values(currentJson)[0];
+        const targetStore = menuCodeToStoreMap[menuCode];
+        const targetHistoryStore = menuCodeToHistoryStoreMap[menuCode];
+        const schemaItem = propertyFormSchema[menuCode];
+        if (!targetStore || !targetHistoryStore || !schemaItem) return;
+
+        const currentJson = targetStore.getState().currentJsonData;
+        const logJson = targetHistoryStore.getState().updateLogs;
+        const snapshotLogJson = targetHistoryStore.getState().snapshotUpdateLogs;
+        const mergedLog = options?.logs ?? mergeUpdateLogs(logJson, snapshotLogJson);
+        const payloadData = schemaItem.fullData ? currentJson : Object.values(currentJson)[0];
         const payload = { data: payloadData, logs: mergedLog };
-        try {
-            if (activeSubmenu.menuCode === 'NETWORK') {
-                // 네트워크는 diff 저장 단일 진입점 (변경분만 전송 + 타일모드 삭제 id 합집합).
-                // ⚠️ 타일 모드에서 전체 저장 폴백 금지 — viewport 일부가 전국 데이터를 덮어씀.
-                const result = await saveNetworkDiffTileAware(versionKey);
-                if (result === 'skipped') {
-                    if (NETWORK_TILING.ENABLED) throw new Error('diff 저장 불가 (타일 모드 — 전체 저장 폴백 금지)');
-                    await axiosInstance({ method: api.method, url: api.url + '/' + versionKey, data: payload });
-                }
-            } else {
+
+        if (menuCode === 'NETWORK') {
+            // 네트워크는 diff 저장 단일 진입점 (변경분만 전송 + 타일모드 삭제 id 합집합).
+            // ⚠️ 타일 모드에서 전체 저장 폴백 금지 — viewport 일부가 전국 데이터를 덮어씀.
+            const result = await saveNetworkDiffTileAware(versionKey);
+            if (result === 'skipped') {
+                if (NETWORK_TILING.ENABLED) throw new Error('diff 저장 불가 (타일 모드 — 전체 저장 폴백 금지)');
                 await axiosInstance({ method: api.method, url: api.url + '/' + versionKey, data: payload });
             }
-            historyStore.getState().resetUpdateLogs();
-            setReloadFlag(prev => !prev);
-            setMessage({ type: 'info', text: '저장 완료' });
-        } catch (error) {
-            setMessage({ type: 'error', text: '저장 실패: ' + error });
-            throw error;
+        } else {
+            await axiosInstance({ method: api.method, url: api.url + '/' + versionKey, data: payload });
         }
+        const historyStoresToReset = options?.historyStoresToReset ?? [targetHistoryStore];
+        historyStoresToReset.forEach(history => {
+            history.getState().resetUpdateLogs();
+            history.getState().resetSnapshotUpdateLogs();
+        });
+        targetStore.getState().setChange(false);
     };
 
     // 평소 저장 = 지금 버전에 제자리 저장 (OD Matrix/PASSENGER와 동일하게 새 버전을 만들지 않음)
-    const handleSaveBtn = () => {
-        const logJson = historyStore.getState().updateLogs;
-        if (!logJson || logJson.length === 0) {
-            setMessage({ type: 'warn', text: '변경사항이 없습니다.' });
+    const handleSaveBtn = async () => {
+        if (!selectedScenario || !selectedScenarioVersion) return;
+        const state = historyStore.getState();
+        if (state.updateLogs.length === 0 && state.snapshotUpdateLogs.length === 0) {
+            setMessage({ type: "warn", text: "변경사항이 없습니다." });
             return;
         }
-        if (!selectedScenario || !selectedScenarioVersion) return;
-        doSave(selectedScenarioVersion.key);
+        try {
+            await saveMenuData(activeSubmenu.menuCode, selectedScenarioVersion.key);
+            setReloadFlag(prev => !prev);
+            setMessage({ type: "info", text: "저장 완료" });
+        } catch (error) {
+            setMessage({ type: "error", text: "저장 실패: " + error });
+        }
     };
 
     const handleInitBtn = () => {
+        if (!store || !historyStore) return;
         store.getState().initCurrentData();
         store.getState().setChange(false);
         historyStore.getState().resetAllHistoryStack();
@@ -195,7 +229,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     };
 
     const handleHistoryApply = (isUndo: boolean) => {
-        if (!historyStore) return;
+        if (!historyStore || !store) return;
         const historyFn = isUndo ? historyStore.getState().undo : historyStore.getState().redo;
         const updateHistory = historyFn();
         if (!updateHistory) {
@@ -224,7 +258,17 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
             : bodySize === "mini" ? styles.bodyMini
                 : styles.body;
 
-    return (
+    interface PanelContext {
+        historyMenuCode: string;
+        historyStore?: HistoryStoreFactoryType;
+        historyScope?: SignalHistoryScope;
+        content: React.ReactNode;
+        onSave: () => void | Promise<void>;
+        onInit: () => void;
+        onHistoryApply: (isUndo: boolean) => void;
+    }
+
+    const renderPanel = (context: PanelContext) => (
         <>
         <div ref={overlayRef} className={styles.overlay} style={{ height: `${height}px` }}>
             <div className={styles.panel}>
@@ -244,15 +288,15 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                     </div>
 
                     <div className={styles.actionGroup}>
-                        <button className={styles.revertBtn} onClick={handleInitBtn} title="초기 데이터로 되돌리기">
+                        <button className={styles.revertBtn} onClick={context.onInit} title="초기 데이터로 되돌리기">
                             되돌리기
                         </button>
-                        <HistoryController onHistoryAply={handleHistoryApply}/>
+                        <HistoryController onHistoryAply={context.onHistoryApply}/>
                         <button className={styles.historyBtn} onClick={() => setIsHistoryOpen(true)}>
                             변경 이력
                         </button>
                         <div className={styles.divider}/>
-                        <button className={styles.saveBtn} onClick={handleSaveBtn}>
+                        <button className={styles.saveBtn} onClick={context.onSave}>
                             저장
                         </button>
                     </div>
@@ -284,7 +328,9 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                         <HistoryModal
                             onClose={() => setIsHistoryOpen(false)}
                             open={isHistoryOpen}
-                            menuCode={activeSubmenu.menuCode}
+                            menuCode={context.historyMenuCode}
+                            historyStoreOverride={context.historyStore}
+                            historyScope={context.historyScope}
                         />
                     )}
                     {submenu.item?.layer && (
@@ -296,18 +342,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                                         : "ℹ 줌아웃 상태입니다 — 목록은 마지막으로 불러온 화면 범위(줌인 상태)의 도로 데이터입니다. 실시간으로 갱신되지 않습니다."}
                                 </div>
                             )}
-                            {activeSubmenu.menuCode === "SIGNAL_TOD" ? (
-                                <SignalTodTimelineEditor containerHeight={height} />
-                            ) : activeSubmenu.menuCode === "SIGNAL" ? (
-                                <SignalGroupedEditor containerHeight={height} />
-                            ) : (
-                                <DrilldownGrid
-                                    layerName={submenu.item.layer}
-                                    layerGroupName={"facility"}
-                                    currentJsonData={currentJsonData}
-                                    containerHeight={height}
-                                />
-                            )}
+                            {context.content}
                         </div>
                     )}
                 </div>
@@ -315,6 +350,34 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         </div>
         </>
     );
+
+    if (activeSubmenu.menuCode === "SIGNAL" || activeSubmenu.menuCode === "SIGNAL_TOD") {
+        return (
+            <SignalPropertyPanelController
+                menuCode={activeSubmenu.menuCode}
+                containerHeight={height}
+                saveMenuData={saveMenuData}
+                onSaved={() => setReloadFlag(prev => !prev)}
+            >
+                {(context: SignalPropertyPanelContext) => renderPanel(context)}
+            </SignalPropertyPanelController>
+        );
+    }
+
+    return renderPanel({
+        historyMenuCode: activeSubmenu.menuCode,
+        content: (
+            <DrilldownGrid
+                layerName={submenu.item.layer}
+                layerGroupName={"facility"}
+                currentJsonData={currentJsonData}
+                containerHeight={height}
+            />
+        ),
+        onSave: handleSaveBtn,
+        onInit: handleInitBtn,
+        onHistoryApply: handleHistoryApply,
+    });
 };
 
 export default PropertyPanel;

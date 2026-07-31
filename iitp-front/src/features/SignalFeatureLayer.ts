@@ -24,6 +24,7 @@ import { unByKey } from "ol/Observable";
 import type { EventsKey } from "ol/events";
 import type OLMap from "ol/Map";
 import { diffSignalEditsByNode } from "@utils/signal";
+import { normalizeTurning } from "@utils/turning";
 
 /* ── 신호등 캔버스 아이콘 (정적) ── */
 function createTrafficLightIcon(): HTMLCanvasElement {
@@ -99,10 +100,11 @@ function signalStyle(feature: FeatureLike, resolution: number): Style[] {
 
     // 근거리(< SIGNAL_ICON): 신호등 아이콘 + 컬러 dot + 방향 화살표
     const arrowParts: string[] = [];
-    if (turnings.includes("U_Turn") || turnings.includes("UTurn"))       arrowParts.push("↩");
-    if (turnings.includes("Left_Turn") || turnings.includes("Left"))     arrowParts.push("←");
-    if (turnings.includes("Straight"))                                    arrowParts.push("↑");
-    if (turnings.includes("Right_Turn") || turnings.includes("Right"))   arrowParts.push("→");
+    const normalizedTurnings = new Set(turnings.map(normalizeTurning));
+    if (normalizedTurnings.has("U_Turn"))     arrowParts.push("↩");
+    if (normalizedTurnings.has("Left_Turn"))  arrowParts.push("←");
+    if (normalizedTurnings.has("Straight"))   arrowParts.push("↑");
+    if (normalizedTurnings.has("Right_Turn")) arrowParts.push("→");
     const arrowText = arrowParts.join("");
 
     const styles: Style[] = [

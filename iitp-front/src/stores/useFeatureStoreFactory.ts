@@ -6,9 +6,10 @@ import useHistoryStoreFactory from "@stores/useHistoryStoreFactory";
 import { featureUpdateLogs } from "@utils/history";
 import {findParentRecordByFeatureType, findParentRecordByGuid} from "@utils/json";
 import { diff, applyChange } from 'deep-diff';
-import {UpdateLogEntry} from "@type/HistoryTypes";
+import {FieldChange, UpdateLogEntry} from "@type/HistoryTypes";
 
 export type FeatureStoreFactoryType<T> = UseBoundStore<StoreApi<State<T>&Actions<T>>>
+export type HistoryChangeMetadata = Pick<FieldChange, "scope" | "transactionId">;
 
 export interface State<T> {
     // fetch 한 data
@@ -31,8 +32,16 @@ export interface Actions<T> {
     setCurrentJsonData: (data: T) => void;
     // 파일 가져오기 전용: importEpoch 증가 + currentJsonData 변경을 단일 set()으로 원자 처리
     setCurrentJsonDataWithFullBuild: (data: T) => void;
-    updateCurrentJsonData: (data: T, historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
-    removeRecordsByGuid: (guids: (string | number)[], historyStore?: ReturnType<typeof useHistoryStoreFactory>) => void;
+    updateCurrentJsonData: (
+        data: T,
+        historyStore?: ReturnType<typeof useHistoryStoreFactory>,
+        historyMetadata?: HistoryChangeMetadata,
+    ) => void;
+    removeRecordsByGuid: (
+        guids: (string | number)[],
+        historyStore?: ReturnType<typeof useHistoryStoreFactory>,
+        historyMetadata?: HistoryChangeMetadata,
+    ) => void;
     setChange: (changed: boolean) => void;
     initCurrentData: () => void;
     // 네트워크 교체 시 의존 레이어 초기화용: 데이터/변경플래그 모두 지우고 레이어 재빌드 트리거
@@ -66,7 +75,7 @@ const createFeatureStore = <T>() => {
                             const currentEpoch = (get() as unknown as State<T>).importEpoch;
                             set({ currentJsonData: data, importEpoch: currentEpoch + 1 });
                         },
-                        updateCurrentJsonData: (record, historyStore) => {
+                        updateCurrentJsonData: (record, historyStore, historyMetadata) => {
 
                             const current = get().currentJsonData;
                             if (!record || typeof record !== "object" || !record.__guid) return;
@@ -103,6 +112,7 @@ const createFeatureStore = <T>() => {
                                                     field,
                                                     oldValue,
                                                     newValue,
+                                                    ...historyMetadata,
                                                 });
                                             }
                                         }
@@ -147,8 +157,9 @@ const createFeatureStore = <T>() => {
                                 if (historyStore) {
                                     featureUpdateLogs(historyStore, {
                                         guid: record.__guid,
-                                        updateType: "added",
-                                        properties: record,
+                                                    updateType: "added",
+                                                    properties: record,
+                                                    ...historyMetadata,
                                     });
                                 }
 
@@ -181,13 +192,14 @@ const createFeatureStore = <T>() => {
                             if (historyStore) {
                                 featureUpdateLogs(historyStore, {
                                     guid: record.__guid,
-                                    updateType: "added",
-                                    properties: record,
+                                        updateType: "added",
+                                        properties: record,
+                                        ...historyMetadata,
                                 });
                             }
                         },
 
-                    removeRecordsByGuid: (guids: (string | number)[], historyStore) => {
+                    removeRecordsByGuid: (guids: (string | number)[], historyStore, historyMetadata) => {
                         const current = get().currentJsonData as Record<string, any>;
                         if (!current) return;
 
@@ -241,6 +253,7 @@ const createFeatureStore = <T>() => {
                                             oldValue: value,
                                             newValue: null,
                                             timestamp,
+                                            ...historyMetadata,
                                         }))
                                     )
                                 };

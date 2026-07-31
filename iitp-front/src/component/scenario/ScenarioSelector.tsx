@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useScenarioStore } from "@stores/useScenarioStore";
 import { Scenario, ScenarioVersions } from "@type/Scenario";
-import MapRangePicker from "./MapRangePicker";
+import { generateScenarioKey } from "@utils/scenarioKey";
 import ScenarioPreviewPopover from "./ScenarioPreviewPopover";
 
 interface ScenarioForm {
@@ -12,11 +12,11 @@ interface ScenarioForm {
     latitude: string;
 }
 
-type KeyStatus = "idle" | "checking" | "ok" | "duplicate" | "invalid";
+type KeyStatus = "idle" | "checking" | "ok" | "invalid";
 type ModalMode = "create" | "edit";
 
 const EMPTY_FORM: ScenarioForm = { key: "", label: "", description: "", longitude: "", latitude: "" };
-const KEY_REGEX = /^[A-Za-z0-9_]*$/;
+const MAX_KEY_GENERATION_ATTEMPTS = 5;
 
 const ScenarioSelector = () => {
     const setScenario = useScenarioStore((state) => state.setScenario);
@@ -25,13 +25,12 @@ const ScenarioSelector = () => {
     const [showModal, setShowModal]         = useState(false);
     const [modalMode, setModalMode]         = useState<ModalMode>("create");
     const [editingId, setEditingId]         = useState<number | null>(null);
-    const [showMapPicker, setShowMapPicker] = useState(false);
     const [form, setForm]                   = useState<ScenarioForm>(EMPTY_FORM);
     const [keyStatus, setKeyStatus]         = useState<KeyStatus>("idle");
     const [submitting, setSubmitting]       = useState(false);
     const [error, setError]                 = useState<string | null>(null);
     const [deleteConfirm, setDeleteConfirm] = useState<Scenario | null>(null);
-    const debounceRef                       = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const keyGenerationRef                  = useRef(0);
 
     /* ── hover 미리보기 ── */
     const [hoveredKey, setHoveredKey] = useState<string | null>(null);
@@ -84,44 +83,51 @@ const ScenarioSelector = () => {
 
     useEffect(() => { fetchScenarios(); }, []);
 
-    /* ── key 입력 처리 ── */
-    const handleKeyChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const val = e.target.value;
-        if (!KEY_REGEX.test(val)) return;
-        setForm((prev) => ({ ...prev, key: val }));
-        if (!val) { setKeyStatus("idle"); return; }
-        setKeyStatus("checking");
-        if (debounceRef.current) clearTimeout(debounceRef.current);
-        debounceRef.current = setTimeout(async () => {
-            try {
-                const res = await fetch(
-                    `${import.meta.env.VITE_API_URL}/scenario/check-key?key=${encodeURIComponent(val)}`
-                );
-                const exists: boolean = await res.json();
-                setKeyStatus(exists ? "duplicate" : "ok");
-            } catch {
-                setKeyStatus("idle");
-            }
-        }, 400);
+    const checkScenarioKeyExists = async (key: string) => {
+        if (scenarioList.some((scenario) => scenario.key === key)) return true;
+
+        const res = await fetch(
+            `${import.meta.env.VITE_API_URL}/scenario/check-key?key=${encodeURIComponent(key)}`
+        );
+        if (!res.ok) throw new Error("시나리오 키 중복 확인 실패");
+        return await res.json() as boolean;
+    };
+
+    const findAvailableScenarioKey = async (firstCandidate?: string) => {
+        for (let attempt = 0; attempt < MAX_KEY_GENERATION_ATTEMPTS; attempt += 1) {
+            const candidate = attempt === 0 && firstCandidate ? firstCandidate : generateScenarioKey();
+            if (!await checkScenarioKeyExists(candidate)) return candidate;
+        }
+        throw new Error("고유한 시나리오 키 생성 실패");
     };
 
     const handleFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }));
     };
 
-    const handleMapSelect = (lon: number, lat: number) => {
-        setForm((prev) => ({ ...prev, longitude: String(lon), latitude: String(lat) }));
-        setShowMapPicker(false);
-    };
-
     /* ── 생성 모달 열기 ── */
     const openCreateModal = () => {
+        const requestId = ++keyGenerationRef.current;
+        const candidate = generateScenarioKey();
+
         setModalMode("create");
         setEditingId(null);
-        setForm(EMPTY_FORM);
-        setKeyStatus("idle");
+        setForm({ ...EMPTY_FORM, key: candidate });
+        setKeyStatus("checking");
         setError(null);
         setShowModal(true);
+
+        void findAvailableScenarioKey(candidate)
+            .then((availableKey) => {
+                if (keyGenerationRef.current !== requestId) return;
+                setForm((prev) => ({ ...prev, key: availableKey }));
+                setKeyStatus("ok");
+            })
+            .catch(() => {
+                if (keyGenerationRef.current !== requestId) return;
+                setKeyStatus("invalid");
+                setError("시나리오 키를 자동 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+            });
     };
 
     /* ── 수정 모달 열기 ── */
@@ -168,9 +174,14 @@ const ScenarioSelector = () => {
         setError(null);
 
         if (modalMode === "create") {
-            if (!form.key.trim())           { setError("키를 입력해 주세요."); return; }
-            if (keyStatus === "duplicate")  { setError("이미 사용 중인 키입니다."); return; }
-            if (keyStatus === "checking")   { setError("키 중복 확인 중입니다. 잠시 후 다시 시도해 주세요."); return; }
+            if (!form.key.trim() || keyStatus === "invalid") {
+                setError("시나리오 키를 자동 생성하지 못했습니다. 모달을 닫고 다시 시도해 주세요.");
+                return;
+            }
+            if (keyStatus === "checking") {
+                setError("시나리오 키를 생성하고 있습니다. 잠시 후 다시 시도해 주세요.");
+                return;
+            }
         }
         if (!form.label.trim()) { setError("이름을 입력해 주세요."); return; }
 
@@ -184,16 +195,32 @@ const ScenarioSelector = () => {
             const body: Record<string, unknown> = {
                 label:       form.label.trim(),
                 description: form.description.trim(),
-                longitude:   form.longitude ? parseFloat(form.longitude) : null,
-                latitude:    form.latitude  ? parseFloat(form.latitude)  : null,
             };
-            if (modalMode === "create") body.key = form.key.trim();
+            if (modalMode === "edit") {
+                // 중심점 UI는 제거하지만 기존 시나리오 좌표는 수정 저장 시 그대로 보존한다.
+                body.longitude = form.longitude ? parseFloat(form.longitude) : null;
+                body.latitude = form.latitude ? parseFloat(form.latitude) : null;
+            } else {
+                body.key = form.key.trim();
+            }
 
-            const res = await fetch(url, {
+            let res = await fetch(url, {
                 method,
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(body),
             });
+
+            // 생성 직전에 동일 키가 등록된 극히 드문 경우 새 키로 한 번 자동 재시도한다.
+            if (modalMode === "create" && !res.ok && await checkScenarioKeyExists(String(body.key))) {
+                const replacementKey = await findAvailableScenarioKey();
+                body.key = replacementKey;
+                setForm((prev) => ({ ...prev, key: replacementKey }));
+                res = await fetch(url, {
+                    method,
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(body),
+                });
+            }
             if (!res.ok) throw new Error("실패");
             handleModalClose();
             fetchScenarios();
@@ -205,18 +232,11 @@ const ScenarioSelector = () => {
     };
 
     const handleModalClose = () => {
+        keyGenerationRef.current += 1;
         setShowModal(false);
         setForm(EMPTY_FORM);
         setKeyStatus("idle");
         setError(null);
-    };
-
-    /* ── key 상태 배지 ── */
-    const keyBadge = () => {
-        if (keyStatus === "checking")  return <span className="key-badge key-badge--checking">확인 중...</span>;
-        if (keyStatus === "ok")        return <span className="key-badge key-badge--ok">✓ 사용 가능</span>;
-        if (keyStatus === "duplicate") return <span className="key-badge key-badge--dup">✗ 중복</span>;
-        return null;
     };
 
     return (
@@ -287,34 +307,6 @@ const ScenarioSelector = () => {
                         <h2>{modalMode === "edit" ? "시나리오 수정" : "시나리오 추가"}</h2>
                         <form onSubmit={handleSubmit} className="scenario-create-form">
 
-                            {/* 키 — 생성 시만 편집 가능 */}
-                            {modalMode === "create" ? (
-                                <div className="scenario-form-row">
-                                    <div className="scenario-form-label-row">
-                                        <label>키 (고유값) *</label>
-                                        {keyBadge()}
-                                    </div>
-                                    <input
-                                        name="key"
-                                        value={form.key}
-                                        onChange={handleKeyChange}
-                                        placeholder="영문자·숫자·밑줄만 사용 (예: SCENARIO_001)"
-                                        autoComplete="off"
-                                        className={
-                                            keyStatus === "ok"        ? "input--ok"  :
-                                            keyStatus === "duplicate" ? "input--err" : ""
-                                        }
-                                    />
-                                    <span className="scenario-form-hint">영문자(A-Z, a-z), 숫자(0-9), 밑줄(_)만 입력 가능</span>
-                                </div>
-                            ) : (
-                                <div className="scenario-form-row">
-                                    <label>키 (고유값)</label>
-                                    <input value={form.key} disabled style={{ opacity: 0.45 }} />
-                                    <span className="scenario-form-hint">키는 변경할 수 없습니다.</span>
-                                </div>
-                            )}
-
                             {/* 이름 */}
                             <div className="scenario-form-row">
                                 <label>이름 *</label>
@@ -338,50 +330,13 @@ const ScenarioSelector = () => {
                                 />
                             </div>
 
-                            {/* 중심점 */}
-                            <div className="scenario-form-row">
-                                <div className="scenario-form-coord-header">
-                                    <label>중심점 (경도 / 위도)</label>
-                                    <button type="button" className="btn-map-pick" onClick={() => setShowMapPicker(true)}>
-                                        🗺 지도에서 선택
-                                    </button>
-                                </div>
-                                <div className="scenario-form-row--half">
-                                    <div>
-                                        <input
-                                            name="longitude"
-                                            type="number"
-                                            step="any"
-                                            value={form.longitude}
-                                            onChange={handleFormChange}
-                                            placeholder="경도 (127.123)"
-                                        />
-                                    </div>
-                                    <div>
-                                        <input
-                                            name="latitude"
-                                            type="number"
-                                            step="any"
-                                            value={form.latitude}
-                                            onChange={handleFormChange}
-                                            placeholder="위도 (36.456)"
-                                        />
-                                    </div>
-                                </div>
-                                {form.longitude && form.latitude && (
-                                    <p className="scenario-form-coord-preview">
-                                        📍 {parseFloat(form.latitude).toFixed(5)}°N, {parseFloat(form.longitude).toFixed(5)}°E
-                                    </p>
-                                )}
-                            </div>
-
                             {error && <p className="scenario-form-error">{error}</p>}
 
                             <div className="scenario-form-actions">
                                 <button type="button" onClick={handleModalClose} className="btn-cancel">취소</button>
                                 <button
                                     type="submit"
-                                    disabled={submitting || (modalMode === "create" && (keyStatus === "duplicate" || keyStatus === "checking"))}
+                                    disabled={submitting || (modalMode === "create" && (keyStatus === "checking" || keyStatus === "invalid"))}
                                 >
                                     {submitting ? "저장 중..." : modalMode === "edit" ? "수정" : "추가"}
                                 </button>
@@ -391,9 +346,6 @@ const ScenarioSelector = () => {
                 </div>
             )}
 
-            {showMapPicker && (
-                <MapRangePicker onSelect={handleMapSelect} onClose={() => setShowMapPicker(false)} />
-            )}
         </div>
     );
 };

@@ -98,7 +98,7 @@ public ResponseEntity<SignalNodeResponseData> getSignal(@PathVariable String ver
 
         if (hasDbData) {
             SignalVersion signalVersion = signalService.getDataFromDatabase(versionId);
-            result.setSignals(signalVersion.getData());
+            result.setSignals(signalService.hydrateMissingPlansFromXml(versionId, signalVersion.getData()));
         } else {
             signalResponseList = signalService.getDataFromXml(versionId);
             result.setSignals(signalResponseList);
@@ -162,7 +162,7 @@ public ResponseEntity<SignalNodeResponseData> getSignal(@PathVariable String ver
                     versionId, BaseVersion.VersionRole.LATEST);
             boolean hasDbData = opt.isPresent() && opt.get().getData() != null && !opt.get().getData().isEmpty();
             if (hasDbData) {
-                signals = opt.get().getData();
+                signals = signalService.hydrateMissingPlansFromXml(versionId, opt.get().getData());
             } else {
                 signals = signalService.getDataFromXml(versionId);
             }
@@ -225,7 +225,7 @@ public ResponseEntity<SignalNodeResponseData> getSignal(@PathVariable String ver
 
             if (hasOriginData) {
                 SignalVersion signalVersion = signalService.getOriginData(versionId);
-                result.setSignals(signalVersion.getData());
+                result.setSignals(signalService.hydrateMissingPlansFromXml(versionId, signalVersion.getData()));
             } else {
                 // ORIGIN이 없거나 비어있으면 XML에서 읽어 DB에 저장
                 List<SignalResponse> xmlData = signalService.getDataFromXml(versionId);
