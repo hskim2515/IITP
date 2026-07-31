@@ -39,6 +39,9 @@ export interface PropertyPanelProps {
     onClose: () => void;
 }
 
+/** 리사이즈 하한 — 이보다 낮으면 헤더/툴바만 남아 그리드가 사라진다 */
+const MIN_PANEL_HEIGHT = 150;
+
 const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     const submenu = {
         item: propertyFormSchema[activeSubmenu.menuCode],
@@ -74,6 +77,75 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
     const overlayRef = useRef<HTMLDivElement>(null);
     const { minimizeSession, closeSession } = useWorkflowStore();
     const setActiveSubmenu = useMenuStore((s) => s.setActiveSubmenu);
+
+    // 하단 Taskbar 오프셋은 CSS 변수(--taskbar-height)로 일원화되어 있다 —
+    // App.tsx 컨테이너가 값을 공급하고 .overlay 가 bottom 으로 참조한다(개별 인라인 계산 없음).
+    // 리사이즈 계산에는 px 값이 필요하므로 컨테이너에서 실제 값을 읽는다.
+    const overlayRefForOffset = overlayRef;
+    const readTaskbarOffset = useCallback((): number => {
+        const el = overlayRefForOffset.current;
+        if (!el) return 0;
+        const raw = getComputedStyle(el).getPropertyValue("--taskbar-height").trim();
+        const px = parseFloat(raw);
+        return Number.isFinite(px) ? px : 0;
+    }, [overlayRefForOffset]);
+
+    // overlay 가 taskbar 위에서 실제로 쓸 수 있는 최대 높이(px).
+    // overlay 의 컨테이닝 블록은 App.tsx 의 콘텐츠 컨테이너(= overlay 의 부모 노드)이고,
+    // 그 하단에서 taskbar 두께만큼을 뺀 값이 곧 CSS 의 max-height 와 같은 값이다.
+    const readAvailableHeight = useCallback((): number => {
+        const host = overlayRef.current?.parentElement;
+        if (!host) return 0;
+        return Math.max(0, host.clientHeight - readTaskbarOffset());
+    }, [readTaskbarOffset]);
+
+    // 그리드/에디터에 넘길 실제 가용 높이 — header/handle/배너 높이를 상수로 빼는 대신
+    // 실제 DOM 을 측정해 하드코딩(magic number)을 제거한다.
+    const gridWrapRef = useRef<HTMLDivElement>(null);
+    const [bodyHeight, setBodyHeight] = useState(0);
+    useEffect(() => {
+        const el = gridWrapRef.current;
+        if (!el || typeof ResizeObserver === "undefined") return;
+        const ro = new ResizeObserver((entries) => {
+            const h = entries[0]?.contentRect.height;
+            if (typeof h === "number") setBodyHeight(Math.max(0, Math.round(h)));
+        });
+        ro.observe(el);
+        return () => ro.disconnect();
+    }, [activeSubmenu.menuCode]);
+    // 측정 전(첫 페인트)에는 패널 높이 기준 근사값 사용. 단 그 근사값도 taskbar 위 가용
+    // 높이를 넘지 않게 잘라야 한다 — 넘긴 채로 그리드가 한 프레임이라도 그려지면 그만큼
+    // 하단 row/스크롤바가 taskbar 뒤로 나간다.
+    const containerHeight = bodyHeight > 0
+        ? bodyHeight
+        : Math.max(0, Math.min(height, readAvailableHeight() || height));
+
+    // 창 축소·taskbar 등장으로 가용 높이가 줄면 저장된 패널 높이도 같이 줄인다.
+    // (CSS max-height 가 표시 자체는 이미 막지만, 상태값이 과대하게 남아 있으면 첫 페인트
+    //  근사값과 리사이즈 계산이 계속 과대값을 기준으로 삼는다.)
+    useEffect(() => {
+        const clamp = () => {
+            const available = readAvailableHeight();
+            if (available <= 0) return;
+            setHeight(prev => {
+                const next = Math.max(MIN_PANEL_HEIGHT, Math.min(prev, available));
+                if (next !== prev) heightRef.current = next;
+                return next;
+            });
+        };
+        clamp();
+        const raf = requestAnimationFrame(clamp);
+        window.addEventListener("resize", clamp);
+        const host = overlayRef.current?.parentElement;
+        const ro = (host && typeof ResizeObserver !== "undefined")
+            ? new ResizeObserver(() => clamp()) : null;
+        if (host) ro?.observe(host);
+        return () => {
+            cancelAnimationFrame(raf);
+            window.removeEventListener("resize", clamp);
+            ro?.disconnect();
+        };
+    }, [readAvailableHeight]);
 
     type BodySize = "mini" | "default" | "full";
     const [bodySize, setBodySize] = useState<BodySize>("default");
@@ -113,7 +185,33 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         };
     }, [selectedGuid, submenu.item.layer]);
 
-    useEffect(() => { clearSelected(); }, [activeSubmenu]);
+    // 패널을 새로 열 때 이전(다른 메뉴)의 선택을 정리한다. 단, 속성모달 "편집" 버튼으로 특정
+    //   객체를 열었으면(pendingGridGuid) 그 선택을 지우지 말고 'grid' 소스로 확정해 그리드가
+    //   해당 객체 depth 까지 진입·체크·스크롤하게 한다(setTimeout 없이 마운트 시점에 결정적으로 처리).
+    // (A) 메뉴 전환 시 이전(다른 메뉴)의 선택 정리. 단, 속성모달 "편집" 진입(pendingGridGuid)이면
+    //   여기서 지우지 않고 (B)가 "그리드 데이터가 준비된 뒤" 확정한다.
+    useEffect(() => {
+        const pending = useSelectionStore.getState().pendingGridGuid;
+        if (!pending || pending.length === 0) clearSelected();
+        // 메뉴 전환/닫힘 시 (B)가 소비하지 못한 pending 이 다음 그리드에 잘못 적용되지 않도록 정리.
+        //   (현재 open 의 (B)는 이 cleanup 전에 실행되므로 영향 없음)
+        return () => { useSelectionStore.getState().setPendingGridGuid(null); };
+    }, [activeSubmenu]);
+
+    // (B) 편집 진입 pending 선택을 "그리드 데이터가 준비된 시점"에 확정(체크·스크롤·드릴다운).
+    //   ⚠️ 콜드스타트: 전체그리드(NETWORK 타일)는 networkGridData 가 async 로 로드되기 전까지
+    //   viewport 폴백 데이터가 쓰이는데, 이 전환(폴백→전체그리드) 시 네비게이션이 리셋되며
+    //   마운트 시점에 이미 소비한 선택이 사라진다. 그래서 실제 데이터가 준비된 뒤(pending 에서)
+    //   적용해야 warm-start(데이터 즉시 존재)와 동일하게 동작한다.
+    //   전체그리드는 networkGridData 로드 완료를, 그 외는 currentJsonData 존재를 준비 기준으로 본다.
+    useEffect(() => {
+        const pending = useSelectionStore.getState().pendingGridGuid;
+        if (!pending || pending.length === 0) return;
+        const dataReady = useFullGrid ? !!networkGridData : !!currentJsonData;
+        if (!dataReady) return;
+        useSelectionStore.getState().setSelectedGuid(pending, 'grid');
+        useSelectionStore.getState().setPendingGridGuid(null);
+    }, [useFullGrid, networkGridData, currentJsonData]);
 
     // 타일 모드 NETWORK: 편집 그리드 진입 시 전체 목록 로드 (viewport 와 무관)
     useEffect(() => {
@@ -126,8 +224,17 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
         if (rafRef.current !== null) return;
 
         rafRef.current = requestAnimationFrame(() => {
-            const newHeight = window.innerHeight - e.clientY - 35;
-            if (newHeight > 150 && newHeight < window.innerHeight * 0.9) {
+            // 패널 하단은 taskbar 위에 놓이므로(--taskbar-height) 커서까지의 높이에서 그만큼 뺀다
+            const taskbarOffset = readTaskbarOffset();
+            const newHeight = window.innerHeight - e.clientY - taskbarOffset;
+            // 뷰포트 비율 상한(0.9)만으로는 부족하다 — 콘텐츠 컨테이너는 헤더(44px) 아래에서
+            // 시작하므로 실제 가용 높이가 더 작다. 실측 가용 높이와 함께 낮은 쪽을 상한으로 쓴다.
+            const available = readAvailableHeight();
+            const maxHeight = Math.min(
+                window.innerHeight * 0.9 - taskbarOffset,
+                available > 0 ? available : Number.POSITIVE_INFINITY,
+            );
+            if (newHeight > MIN_PANEL_HEIGHT && newHeight < maxHeight) {
                 heightRef.current = newHeight;
                 if (overlayRef.current) {
                     overlayRef.current.style.height = `${newHeight}px`;
@@ -135,7 +242,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
             }
             rafRef.current = null;
         });
-    }, []);
+    }, [readTaskbarOffset, readAvailableHeight]);
 
     const stopResizing = useCallback(() => {
         document.removeEventListener('mousemove', handleMouseMove);
@@ -307,7 +414,7 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                         />
                     )}
                     {submenu.item?.layer && (
-                        <div className={styles.gridWrap}>
+                        <div ref={gridWrapRef} className={styles.gridWrap}>
                             {useFullGrid && !networkGridData && networkGridLoading && (
                                 <div className={styles.gridStaleBanner}>
                                     ℹ 전체 도로 목록을 불러오는 중입니다…
@@ -321,16 +428,16 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
                                 </div>
                             )}
                             {activeSubmenu.menuCode === "SIGNAL_TOD" ? (
-                                <SignalTodTimelineEditor containerHeight={height} />
+                                <SignalTodTimelineEditor containerHeight={containerHeight} />
                             ) : activeSubmenu.menuCode === "SIGNAL" ? (
-                                <SignalGroupedEditor containerHeight={height} />
+                                <SignalGroupedEditor containerHeight={containerHeight} />
                             ) : (
                                 <DrilldownGrid
                                     layerName={submenu.item.layer}
                                     layerGroupName={"facility"}
                                     currentJsonData={useFullGrid && networkGridData ? networkGridData : currentJsonData}
                                     externalData={useFullGrid && !!networkGridData}
-                                    containerHeight={height}
+                                    containerHeight={containerHeight}
                                 />
                             )}
                         </div>

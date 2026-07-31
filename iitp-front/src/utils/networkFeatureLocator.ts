@@ -4,6 +4,7 @@ import type { Map as OLMap } from "ol";
 import Feature from "ol/Feature";
 import Point from "ol/geom/Point";
 import LineString from "ol/geom/LineString";
+import Polygon from "ol/geom/Polygon";
 import VectorLayer from "ol/layer/Vector";
 import VectorSource from "ol/source/Vector";
 import { Fill, Stroke, Style } from "ol/style";
@@ -11,6 +12,7 @@ import CircleStyle from "ol/style/Circle";
 import { fromLonLat, transformExtent } from "ol/proj";
 import axiosInstance from "@api/axiosInstance";
 import { useScenarioStore } from "@stores/useScenarioStore";
+import { useSelectionStore } from "@stores/useSelectionStore";
 // ⚠️ @datasource/NetworkDataSourceLayer 를 import 하지 말 것 — UI 유틸 경유로
 // LayerManager eager glob 과 모듈 평가 사이클이 생겨 3D 레이어가 조용히 죽는다.
 import { networkPrimitivePropertiesMap, NETWORK_HIGHLIGHT_DURATION_MS } from "@utils/networkPrimitiveShared";
@@ -24,7 +26,7 @@ import { networkPrimitivePropertiesMap, NETWORK_HIGHLIGHT_DURATION_MS } from "@u
  * - 2D 하이라이트: 타일 모드 2D 는 MVT(VectorTile render feature) 경로라 per-feature
  *   setStyle 이 동작하지 않는다 — 3D 오버레이 primitive 와 같은 방식으로, 전용 최상단
  *   VectorLayer 에 임시 geometry 를 그려 강조한다. 색상은 3D 기준(YELLOW) 통일,
- *   선택 오버레이는 3D 선택 슬롯과 동일하게 NETWORK_HIGHLIGHT_DURATION_MS 후 자동 만료.
+ *   선택 오버레이는 자동 만료하지 않고 다음 선택/선택해제 전까지 유지한다(3D 선택 슬롯과 동일).
  */
 
 export { NETWORK_HIGHLIGHT_DURATION_MS };
@@ -32,7 +34,8 @@ export { NETWORK_HIGHLIGHT_DURATION_MS };
 // 3D 기준 색상(Cesium.Color.YELLOW 계열)에 맞춘 2D 하이라이트 색
 const HIGHLIGHT_COLOR = "rgba(255,255,0,0.95)";
 const HIGHLIGHT_FILL = "rgba(255,255,0,0.35)";
-const HOVER_COLOR = "rgba(255,255,0,0.55)";
+const HOVER_COLOR = "rgba(255,220,0,0.95)";
+const HOVER_FILL = "rgba(255,220,0,0.45)";
 
 export interface ParsedTileGuid {
     featureType: "links" | "nodes";
@@ -131,7 +134,8 @@ function ensureHighlight2DLayer(olMap: OLMap): VectorLayer<VectorSource> {
     return highlight2DLayer;
 }
 
-/** 선택 좌표를 2D 하이라이트 오버레이에 표시 (기존 표시는 교체, 5초 후 자동 해제) */
+/** 선택 좌표를 2D 하이라이트 오버레이에 표시 (기존 표시는 교체).
+ *  자동 만료 없음 — 다른 객체 선택/빈 곳 클릭/그리드 선택해제(clearNetworkHighlight2D) 전까지 유지. */
 export function showNetworkHighlight2D(olMap: OLMap, coords: { lng: number; lat: number }[]): void {
     const first = coords[0];
     if (!first) return;
@@ -144,11 +148,8 @@ export function showNetworkHighlight2D(olMap: OLMap, coords: { lng: number; lat:
         : new LineString(coords.map((c) => fromLonLat([c.lng, c.lat])));
     source.addFeature(new Feature({ geometry }));
 
-    if (highlight2DClearTimer) clearTimeout(highlight2DClearTimer);
-    highlight2DClearTimer = setTimeout(() => {
-        highlight2DClearTimer = null;
-        highlight2DLayer?.getSource()?.clear();
-    }, NETWORK_HIGHLIGHT_DURATION_MS);
+    // 이전에 걸려 있던 만료 타이머가 있으면 취소(선택을 지우지 않도록)
+    if (highlight2DClearTimer) { clearTimeout(highlight2DClearTimer); highlight2DClearTimer = null; }
 }
 
 /** 2D 하이라이트 오버레이 제거 (자동 해제 타이머 포함) */
@@ -170,7 +171,9 @@ function ensureHover2DLayer(olMap: OLMap): VectorLayer<VectorSource> {
         source: new VectorSource(),
         zIndex: 490, // 선택 오버레이(500) 바로 아래
         style: new Style({
-            stroke: new Stroke({ color: HOVER_COLOR, width: 4 }),
+            // 폴리곤(레인 hover)은 fill 로 채워지고, 라인(링크 hover)은 stroke 만 적용된다.
+            fill: new Fill({ color: HOVER_FILL }),
+            stroke: new Stroke({ color: HOVER_COLOR, width: 3 }),
             image: new CircleStyle({
                 radius: 7,
                 fill: new Fill({ color: HOVER_COLOR }),
@@ -179,6 +182,7 @@ function ensureHover2DLayer(olMap: OLMap): VectorLayer<VectorSource> {
         }),
     });
     hover2DLayer.set("layer", "networkHoverHighlight");
+    hover2DLayer.set("excludeFromHit", true); // 호버 오버레이 자체가 픽에 잡히지 않게
     olMap.addLayer(hover2DLayer);
     return hover2DLayer;
 }
@@ -198,6 +202,18 @@ export function showNetworkHoverHighlight2DProjected(olMap: OLMap, coords3857: n
     source.clear();
     const geometry = coords3857.length === 1 ? new Point(first) : new LineString(coords3857);
     source.addFeature(new Feature({ geometry }));
+}
+
+/** 레인 폴리곤 링(EPSG:3857)을 2D 호버 오버레이에 표시 — 선택(클릭) 하이라이트와 동일한
+ *  buildLaneRing3857 링을 쓰므로 hover 가 "화면에 보이는 차선"과 정확히 겹친다. */
+export function showNetworkHoverHighlightPolygon2D(olMap: OLMap, ring3857: number[][]): void {
+    if (!ring3857 || ring3857.length < 3) return;
+    const layer = ensureHover2DLayer(olMap);
+    const source = layer.getSource();
+    if (!source) return;
+    source.clear();
+    source.addFeature(new Feature({ geometry: new Polygon([ring3857]) }));
+    try { olMap.render(); } catch (_) {}
 }
 
 /** 2D 호버 오버레이 제거 — 비어 있으면 no-op (mousemove 마다 호출돼도 OL 리렌더 미유발) */
@@ -231,6 +247,18 @@ export async function fetchNetworkFeatureProps(
     }
 }
 
+/**
+ * await 후에도 이 guid 가 아직 선택 상태인지 확인한다.
+ *
+ * 오프스크린 대상은 `/network/{v}/feature` 응답을 기다리는데, 그 사이 사용자가 그리드에서
+ * 다른 행을 선택하면 늦게 도착한 이전 응답이 `showNetworkHighlight2D` 로 소스를 clear 하고
+ * **이전 객체에 선택 오버레이를 다시 그린다**(선택 상태와 어긋난 잔상). stale 응답은 버린다.
+ */
+function isStillSelected(guid: string): boolean {
+    const current = useSelectionStore.getState().selectedGuid;
+    return Array.isArray(current) && current.some((g) => String(g) === guid);
+}
+
 /** guid 로 좌표 획득 — 로드된 primitive 캐시 우선, 없으면 /feature API. 실패 시 빈 배열. */
 async function resolveCoordsByGuid(parsed: ParsedTileGuid): Promise<{ lng: number; lat: number }[]> {
     // 1) 캐시 우선: 이미 렌더된 링크는 API 없이 즉시 좌표 확보
@@ -259,6 +287,7 @@ export async function flyToNetworkFeatureByGuid(
     if (!parsed) return false;
     const coords = await resolveCoordsByGuid(parsed);
     if (coords.length === 0) return false;
+    if (!isStillSelected(guid)) return false; // 응답 대기 중 선택이 바뀜 — 이전 대상으로 이동/강조 금지
     fitMapsToCoords(coords, viewer, olMap);
     if (olMap) showNetworkHighlight2D(olMap, coords);
     return true;
@@ -276,6 +305,7 @@ export async function highlightNetworkFeature2DByGuid(
     if (!parsed || !olMap) return false;
     const coords = await resolveCoordsByGuid(parsed);
     if (coords.length === 0) return false;
+    if (!isStillSelected(guid)) return false; // 응답 대기 중 선택이 바뀜 — 이전 대상 강조 금지
     showNetworkHighlight2D(olMap, coords);
     return true;
 }

@@ -1,11 +1,16 @@
 
 /* Taskbar.css */
+/* height 는 여기(시각 스타일)에서만 정의한다 — TS 쪽에 같은 숫자를 복제하지 말 것.
+   Taskbar.tsx 가 이 요소의 실제 높이를 측정해 App 으로 올리고, App 이 --taskbar-height
+   CSS 변수로 내려주면 하단 앵커 패널들이 그 값을 bottom 으로 쓴다. 값을 바꿔도 자동 반영된다. */
 .edit-taskbar {
     position: fixed;
     bottom: 0px;
     left: 0;
     width: 100%;
     height: 45px;
+    /* border-top 이 45px 밖으로 삐져나와 실제 46px 을 점유하지 않게 (offset 과 1px 어긋남 방지) */
+    box-sizing: border-box;
     background: rgba(20, 20, 20, 0.95);
     display: flex;
     align-items: center;

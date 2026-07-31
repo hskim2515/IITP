@@ -15,7 +15,7 @@ import { Fill, Stroke, Style } from "ol/style";
 import CircleStyle from "ol/style/Circle";
 import { matchesCustomKeyValue } from "@utils/olLayer";
 import { Entity, Viewer } from "cesium";
-import {defaultEventHandlers} from "@handler/defaultEventHandler";
+import {defaultEventHandlers, clearMapHoverArtifacts} from "@handler/defaultEventHandler";
 import {FEATURE_TYPE} from "@type/Signal";
 import {getNetworkGuid} from "@utils/signal";
 import {useLayerStore} from "@stores/useLayerStore";
@@ -26,8 +26,12 @@ import {
     flyToNetworkFeatureByGuid,
     highlightNetworkFeature2DByGuid,
     clearNetworkHighlight2D,
-    NETWORK_HIGHLIGHT_DURATION_MS,
 } from "@utils/networkFeatureLocator";
+
+// 선택된 Cesium 엔티티 정적 강조의 원복 함수 저장소(guid → 원본 복원).
+// 깜빡임/자동 만료 없이 다음 선택·선택해제 전까지 강조를 유지하고, 해제 시 원본 스타일로 되돌린다.
+const cesiumHighlightReverts = new Map<string, () => void>();
+const SELECTION_HIGHLIGHT_COLOR = Cesium.Color.YELLOW;
 
 const useDefaultSelect = () => {
 
@@ -63,6 +67,23 @@ const useDefaultSelect = () => {
         };
     }, [olEventManager, olMap]);
 
+    // 커서가 지도 밖으로 나가면 hover 강조를 해제한다.
+    //   hover 슬롯은 pointermove 로만 갱신되므로, 커서가 하단 편집 그리드 쪽으로 빠져나가면
+    //   마지막 hover 가 지도에 그대로 남는다(해제 이벤트가 아예 오지 않음). 이 잔상이
+    //   이후 그리드 선택 변경 때 이전 링크에 주황 계열 하이라이트로 드러난다.
+    useEffect(() => {
+        const olViewport = olMap?.getViewport?.() ?? null;
+        const cesiumCanvas = viewer?.canvas ?? null;
+        if (!olViewport && !cesiumCanvas) return;
+        const onLeave = () => clearMapHoverArtifacts();
+        olViewport?.addEventListener('pointerleave', onLeave);
+        cesiumCanvas?.addEventListener('pointerleave', onLeave);
+        return () => {
+            olViewport?.removeEventListener('pointerleave', onLeave);
+            cesiumCanvas?.removeEventListener('pointerleave', onLeave);
+        };
+    }, [olMap, viewer]);
+
     useEffect(() => {
             if (!activeSubmenu) return;
             if (!propertyFormSchema[activeSubmenu.menuCode]) return;
@@ -70,19 +91,42 @@ const useDefaultSelect = () => {
 
             if (!layerName || !viewer || !olMap) return
 
-            // 'grid'(그리드/에디터 행 선택)만 카메라 이동 동반 — 지도 클릭('map')은 하이라이트만
-            const fromGrid = useSelectionStore.getState().selectionSource === 'grid';
-
+            // 'grid'(그리드/에디터 **단일** 행 선택)만 카메라 이동 동반 — 지도 클릭('map')과
+            //   다중 체크('grid-bulk')는 하이라이트만 하고 카메라를 고정한다. 다중 선택에서
+            //   guid 마다 fly-to 를 돌리면 화면이 대상 사이를 계속 튀어다니며 버벅인다.
+            // 속성모달 "편집" 진입(suppressFlyToOnce)은 대상이 이미 화면에 보이므로 fly 억제
+            //   (리렌더 중 2초 flyToBoundingSphere 버벅임 방지). 소비 즉시 플래그 해제.
+            //   'grid-bulk' 는 어차피 fly 하지 않으므로 이 1회용 플래그를 소모하지 않는다.
             const nextSet = new Set<string>(selectedGuid ?? []);
             const prevSet = prevSelectedGuidsRef.current;
 
+            const selectionSource = useSelectionStore.getState().selectionSource;
+            // 선택이 2개 이상이면 소스가 'grid' 여도 이동하지 않는다 — 아래 nextSet 루프가 guid
+            //   마다 fly/zoom 을 호출하므로 카메라가 대상 사이를 연쇄로 튀어다닌다. GridTable 외의
+            //   경로(예: PropertyPanel 이 pendingGridGuid 를 여러 개 복원할 때)도 같은 정책을 탄다.
+            let fromGrid = selectionSource === 'grid' && nextSet.size <= 1;
+            if (fromGrid && useSelectionStore.getState().suppressFlyToOnce) {
+                useSelectionStore.getState().setSuppressFlyToOnce(false);
+                fromGrid = false;
+            }
+
+            // 선택이 바뀌는 순간, 지도가 남겨둔 hover 잔상을 먼저 지운다.
+            //   hover 는 pointermove 로만 갱신되므로 커서가 지도 밖(그리드)으로 나가면 마지막
+            //   hover 강조가 그대로 남는다 — 선택이 다른 객체로 옮겨가면 이전 링크를 덮고 있던
+            //   노란 선택 오버레이가 빠지면서 그 아래 주황 계열 hover 오버레이가 드러난다.
+            //   지도 클릭 경로에서도 안전하다: 이 이펙트는 handleXxxSelect 가 선택 강조를 적용한
+            //   뒤에 실행되고, 여기서 지우는 것은 hover 슬롯뿐이라 선택 강조는 유지된다.
+            const selectionChanged =
+                prevSet.size !== nextSet.size || [...nextSet].some((g) => !prevSet.has(g));
+            if (selectionChanged) clearMapHoverArtifacts();
+
             for (const guid of prevSet) {
                 if (!nextSet.has(guid)) {
+                    clearCesiumStyleByGuid(guid); // 3D 엔티티(노드/시설물) 정적 강조 원복
                     if (layerName === 'network' && parseTileGuid(guid)) {
                         clearNetworkSelection();
                     } else {
                         clearOlStyleByGuid(olMap, layerName, guid);
-                        // clearCesiumStyleByGuid(viewer, layerName, guid);
                     }
                 }
             }
@@ -111,11 +155,11 @@ const useDefaultSelect = () => {
 
             return () => {
                 for (const guid of prevSelectedGuidsRef.current) {
+                    clearCesiumStyleByGuid(guid); // 3D 엔티티(노드/시설물) 정적 강조 원복
                     if (layerName === 'network' && parseTileGuid(guid)) {
                         clearNetworkSelection();
                     } else {
                         clearOlStyleByGuid(olMap, layerName, guid);
-                        // clearCesiumStyleByGuid(viewer, layerName, guid);
                     }
                 }
                 prevSelectedGuidsRef.current.clear();
@@ -155,7 +199,7 @@ const useDefaultSelect = () => {
     function applyNetworkSelection(viewer: Viewer, olMap: OLMap, guid: string, flyTo: boolean) {
         const applied = highlightNetworkLinkByGuid(guid);
         if (!applied) {
-            // 노드/포트 등 엔티티는 blink 하이라이트 (줌은 flyTo 경로가 담당)
+            // 노드/포트 등 엔티티는 정적 강조(줌은 flyTo 경로가 담당) — 다음 선택/해제 전까지 유지
             highlightCesiumStyleByGuid(viewer, 'network', guid, { zoom: false });
         }
         if (flyTo) {
@@ -176,60 +220,52 @@ const useDefaultSelect = () => {
         clearNetworkHighlight2D();
     }
 
+    // 정적(비-깜빡임) 강조를 적용하고, 원복 함수를 저장해 선택해제 시 되돌린다.
+    // 자동 만료 setTimeout 을 두지 않아 다음 선택/선택해제 전까지 강조가 유지된다.
     function highlightCesiumStyleByGuid(viewer: Viewer, layerName: string, guid: string, options?: { zoom?: boolean }): boolean {
         let found = false;
         viewer?.dataSources?.getByName(layerName)[0]?.entities.values.forEach(entity => {
-            if (entity.id === guid) {
-                found = true;
+            if (entity.id !== guid) return;
+            found = true;
 
-                const blinkingColor = new Cesium.CallbackProperty((time) => {
-                    // 현재 시간(ms 기준)
-                    const currentTime = Date.now();
-
-                    // 0.5초마다 색상 전환
-                    const isYellow = Math.floor(currentTime / 500) % 2 === 0;
-
-                    return isYellow
-                        ? Cesium.Color.YELLOW.withAlpha(1.0)
-                        : Cesium.Color.RED.withAlpha(1.0);
-                }, false);
-
-                const blinkingMaterial = new Cesium.ColorMaterialProperty(blinkingColor);
-
-                let originalMaterial: Cesium.MaterialProperty | undefined = undefined;
-                let originalColor: Cesium.Property | undefined = undefined;
-
+            // 이미 강조 중이면 원본을 다시 캡처하지 않는다(재선택 시 원본이 노란색으로 덮이는 것 방지).
+            if (!cesiumHighlightReverts.has(guid)) {
+                const highlightMaterial = new Cesium.ColorMaterialProperty(SELECTION_HIGHLIGHT_COLOR);
                 if (entity.polyline) {
-                    originalMaterial = entity.polyline.material;
-                    entity.polyline.material = blinkingMaterial;
+                    const orig = entity.polyline.material;
+                    entity.polyline.material = highlightMaterial;
+                    cesiumHighlightReverts.set(guid, () => { if (entity.polyline) entity.polyline.material = orig; });
                 } else if (entity.corridor) {
-                    originalMaterial = entity.corridor.material;
-                    entity.corridor.material = blinkingMaterial;
+                    const orig = entity.corridor.material;
+                    entity.corridor.material = highlightMaterial;
+                    cesiumHighlightReverts.set(guid, () => { if (entity.corridor) entity.corridor.material = orig; });
                 } else if (entity.point) {
-                    originalColor = entity.point.color;
-                    entity.point.color = blinkingColor;
+                    const orig = entity.point.color;
+                    entity.point.color = new Cesium.ConstantProperty(SELECTION_HIGHLIGHT_COLOR);
+                    cesiumHighlightReverts.set(guid, () => { if (entity.point) entity.point.color = orig; });
                 } else if (entity.polygon) {
-                    originalMaterial = entity.polygon.material;
-                    entity.polygon.material = blinkingColor;
-                }
-
-                setTimeout(() => {
-                    if (entity.polyline && originalMaterial) {
-                        entity.polyline.material = originalMaterial;
-                    } else if (entity.corridor && originalMaterial) {
-                        entity.corridor.material = originalMaterial;
-                    } else if (entity.point && originalColor) {
-                        entity.point.color = originalColor;
-                    } else if (entity.polygon && originalMaterial) {
-                        entity.polygon.material = originalMaterial;
-                    }
-                }, NETWORK_HIGHLIGHT_DURATION_MS);
-                if (options?.zoom !== false) {
-                    zoomToEntity(entity, viewer)
+                    const orig = entity.polygon.material;
+                    entity.polygon.material = highlightMaterial;
+                    cesiumHighlightReverts.set(guid, () => { if (entity.polygon) entity.polygon.material = orig; });
                 }
             }
+
+            if (options?.zoom !== false) {
+                zoomToEntity(entity, viewer)
+            }
         })
+        // requestRenderMode 대응 — 정적 머티리얼 변경은 명시 렌더 요청이 있어야 반영된다.
+        if (found) { try { viewer.scene.requestRender(); } catch { /* noop */ } }
         return found;
+    }
+
+    /** 선택해제/선택변경 시 정적 강조를 원본 스타일로 되돌린다. */
+    function clearCesiumStyleByGuid(guid: string): void {
+        const revert = cesiumHighlightReverts.get(guid);
+        if (!revert) return;
+        try { revert(); } catch { /* noop */ }
+        cesiumHighlightReverts.delete(guid);
+        try { viewer?.scene.requestRender(); } catch { /* noop */ }
     }
 
     // 3D 하이라이트(YELLOW) 기준으로 2D 선택 색상 통일

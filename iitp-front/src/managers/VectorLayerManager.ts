@@ -129,9 +129,20 @@ class VectorLayerManager {
         const group = this.layerGroups[groupName];
         if (!group) return;
 
+        // exact match 만 보면 prefix 로 등록된 하위 레이어(layerName_*)가 누락된다 — _matchName 사용
         group.forEach(layer => {
-            if (matchesCustomKeyValue(layer, 'layer', layerName)
-                && (isVectorLayer(layer) || isWebGLVectorLayer(layer))) {
+            if (!this._matchName(layer, layerName)) return;
+
+            // 레이어가 자체 구현을 제공하면 위임한다. MVT(VectorTile)로 그리는 도로/차선은
+            // per-feature setStyle 이 불가하므로 레이어 내부에서 style 게이트로 처리해야
+            // 실제로 2D 에서 사라진다 (기존 피처 스타일 토글만으로는 계속 보였던 원인).
+            const custom = (layer as any).toggleFeatureTypeVisible;
+            if (typeof custom === 'function') {
+                custom.call(layer, featureType, visible);
+                return;
+            }
+
+            if (isVectorLayer(layer) || isWebGLVectorLayer(layer)) {
                 const source = layer.getSource();
                 if (!source) return;
                 // featureType 별로 필터링
@@ -143,8 +154,10 @@ class VectorLayerManager {
                         feature.setStyle(new Style({}));
                     }
                 });
+                try { (layer as any).changed?.(); } catch (_) { /* noop */ }
             }
         });
+        try { this.olMap.render(); } catch (_) { /* noop */ }
     }
 
 

@@ -1,7 +1,8 @@
 /* ── 전체 컨테이너 ───────────────────────────────────────────────── */
+/* bottom 은 App.tsx 컨테이너가 공급하는 --taskbar-height 를 참조 (하단 Taskbar 가림 방지) */
 .container {
     position: absolute;
-    top: 0; left: 0; right: 0; bottom: 0;
+    top: 0; left: 0; right: 0; bottom: var(--taskbar-height, 0px);
     z-index: 1000;
     display: flex;
     flex-direction: column;
@@ -93,8 +94,11 @@
 }
 
 /* ── 스크롤 영역 ──────────────────────────────────────────────────── */
+/* min-height:0 이 없으면 flex 자식(body)의 기본 min-height:auto 때문에 내용 높이만큼
+   늘어나 overflow-y:auto 가 작동하지 않는다 — 항목을 펼치면 아래 요소가 잘려 보이던 원인. */
 .body {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 16px;
     display: flex;
@@ -109,7 +113,9 @@
 }
 
 /* ── SchemaTable 카드 ─────────────────────────────────────────────── */
+/* flex-shrink:0 — 펼친 카드가 압축되지 않고 body 스크롤로 접근되게 한다 */
 .schemaCard {
+    flex-shrink: 0;
     border: 1px solid rgba(255, 255, 255, 0.07);
     border-radius: 8px;
     overflow: hidden;

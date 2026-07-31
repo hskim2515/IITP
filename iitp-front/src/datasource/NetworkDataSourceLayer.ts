@@ -18,11 +18,11 @@ import { useNetworkEditStore } from "@stores/useNetworkEditStore";
 // map/상수는 의존성 없는 공유 리프 모듈(networkPrimitiveShared)에 있다 — UI 유틸이 이 파일을
 // 직접 import 하면 LayerManager 의 eager glob(@datasource/*)과 모듈 평가 사이클이 생기기 때문.
 // (LayerManager 는 default export 우선으로 클래스를 등록하므로 보조 export 추가는 안전)
-import { networkPrimitivePropertiesMap, NETWORK_HIGHLIGHT_DURATION_MS } from "@utils/networkPrimitiveShared";
+import { networkPrimitivePropertiesMap, networkPickVisibility } from "@utils/networkPrimitiveShared";
 // guid=링크 guid. laneIdx 지정 시 그 레인만(부모 링크 전체 아님) 하이라이트.
 /** hover 전용 하이라이트 — 선택 슬롯(setNetworkSelectionHighlight)은 건드리지 않는다 */
 export let highlightNetworkPrimitive: ((guid: string | null, laneIdx?: number) => void) | null = null;
-/** 선택(그리드/클릭) 하이라이트 — hover 가 덮지 못하는 별도 슬롯, 5초 후 자동 만료 */
+/** 선택(그리드/클릭) 하이라이트 — hover 가 덮지 못하는 별도 슬롯, 다음 선택/해제 전까지 유지 */
 export let setNetworkSelectionHighlight: ((guid: string, laneIdx?: number) => void) | null = null;
 export let clearNetworkSelectionHighlight: (() => void) | null = null;
 
@@ -98,6 +98,9 @@ export function pickNetworkAtPosition(
     scene: Cesium.Scene,
     position: Cesium.Cartesian2,
 ): { guid: string; props: any } | null {
+    // 화면에 보이는 것만 pick — 이 함수는 렌더된 primitive 가 아니라 좌표 캐시를 탐색하므로
+    // 레이어/링크 가시성을 직접 확인하지 않으면 숨긴 도로도 계속 히트한다.
+    if (!networkPickVisibility.layer || !networkPickVisibility.links) return null;
     const groundPt = pickGroundPoint(scene, position);
     if (!groundPt) return null;
     const carto = Cesium.Cartographic.fromCartesian(groundPt);
@@ -141,6 +144,8 @@ export function pickNetworkAtPosition(
  *  직접 pick 이 불가하므로, 지면점의 중심선 대비 우측 오프셋으로 레인 인덱스를 계산한다.
  *  buildLinkInstances 의 오프셋 규칙(중앙정렬, (i - (laneCount-1)/2)*laneWidth, 차선0=최좌측)과 정합. */
 export function pickLaneAtPosition(scene: Cesium.Scene, position: Cesium.Cartesian2, link: any): any | null {
+    // 레인 가시화가 꺼져 있으면 레인 단위 선택도 하지 않는다 (링크로만 해석)
+    if (!networkPickVisibility.layer || !networkPickVisibility.lanes) return null;
     const lanes = link?.lanes ?? [];
     const coords = (link?.coordinates ?? []).filter((c: any) => c && isFinite(c.lng) && isFinite(c.lat));
     if (lanes.length === 0 || coords.length < 2) return null;
@@ -370,7 +375,7 @@ export default class NetworkDataSourceLayer {
     // hover 슬롯 (mousemove 마다 갱신)
     private highlightedGuid: string | null = null;
     private highlightPrimitive: Cesium.GroundPrimitive | null = null;
-    // 선택 슬롯 (그리드/클릭 선택) — hover 가 덮지 않으며 NETWORK_HIGHLIGHT_DURATION_MS 후 자동 만료
+    // 선택 슬롯 (그리드/클릭 선택) — hover 가 덮지 않으며 다음 선택/명시 해제 전까지 유지(자동 만료 없음)
     private selectionHighlightedGuid: string | null = null;
     private selectionHighlightPrimitive: Cesium.GroundPrimitive | null = null;
     private selectionHighlightTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1194,9 +1199,11 @@ export default class NetworkDataSourceLayer {
         requestAnimationFrame(step);
     }
 
-    /** 선택 하이라이트 (그리드/클릭) — hover 가 덮지 못하며 일정 시간 후 자동 만료. */
+    /** 선택 하이라이트 (그리드/클릭) — hover 가 덮지 못한다.
+     *  자동 만료 없음 — 다른 대상 선택 시 교체되거나 clearSelectionHighlightInstance 로 명시 해제될 때까지 유지. */
     private selectionHighlightInstance(guid: string, laneIdx?: number): void {
         const cacheKey = laneIdx != null ? `${guid}#${laneIdx}` : guid;
+        // 이전에 걸려 있던 만료 타이머가 있으면 취소(선택을 지우지 않도록)
         if (this.selectionHighlightTimer) { clearTimeout(this.selectionHighlightTimer); this.selectionHighlightTimer = null; }
 
         if (this.selectionHighlightedGuid !== cacheKey) {
@@ -1214,11 +1221,6 @@ export default class NetworkDataSourceLayer {
                 this.highlightedGuid = null;
             }
         }
-        // 재선택마다 수명 연장 — 2D(showNetworkHighlight2D)와 동일 생명주기
-        this.selectionHighlightTimer = setTimeout(() => {
-            this.selectionHighlightTimer = null;
-            this.clearSelectionHighlightInstance();
-        }, NETWORK_HIGHLIGHT_DURATION_MS);
         this.pumpHighlightRender(this.selectionHighlightPrimitive);
     }
 
@@ -1650,6 +1652,7 @@ export default class NetworkDataSourceLayer {
     /** 레이어 전체 on/off (DataSourceLayerManager에서 호출) */
     public setVisible(visible: boolean): void {
         this._layerVisible = visible;
+        networkPickVisibility.layer = visible; // 숨긴 도로가 hover/click 에 잡히지 않게
         this.applyVisibility();
         try { this.viewer.scene.requestRender(); } catch (_) {}
     }
@@ -1657,6 +1660,10 @@ export default class NetworkDataSourceLayer {
     /** 하위 featureType on/off (DataSourceLayerManager.toggleByFeatureType에서 호출) */
     public toggleFeatureTypeVisible(featureType: string, visible: boolean): void {
         this.featureTypeVisible[featureType] = visible;
+        // 2D 렌더/픽과 3D 기하 pick(pickNetworkAtPosition)이 같은 상태를 보도록 공유 플래그 동기화
+        if (featureType in networkPickVisibility) {
+            (networkPickVisibility as any)[featureType] = visible;
+        }
         // links/lanes 는 applyVisibility 가 Primitive show 로 처리.
         // nodes/ports/connections 엔티티는 featureType별 show 를 직접 토글 (토글 시 1회 순회).
         if (featureType === 'nodes' || featureType === 'ports' || featureType === 'connections') {

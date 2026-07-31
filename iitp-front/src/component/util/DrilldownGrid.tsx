@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useMemo } from "react";
+import React, { useCallback, useEffect, useRef, useState, useMemo } from "react";
 
 import { useNavigationStore, useCurrentFrame } from "@stores/useNavigationStore";
 import { useSelectionStore } from "@stores/useSelectionStore";
@@ -8,7 +8,7 @@ import { useSchemaStore } from "@stores/useSchemaStore";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { layerNameToHistoryStoreMap } from "@hooks/useHistoryInit";
 
-import { generateGuidWithParentGuid } from "@utils/guid";
+import { generateGuidWithParentGuid, isGuidSelfOrDescendant } from "@utils/guid";
 import { generateTemplate } from "@utils/schema";
 import { createEventHandlers } from "@handler/createEventHandlers";
 import { useNetworkStore } from "@stores/useNetworkStore";
@@ -37,9 +37,7 @@ type DrilldownGridProps = {
 };
 
 function guidBelongsToRows(rows: any[], targetGuid: string): boolean {
-    return rows.some(
-        (row) => targetGuid === row.__guid || targetGuid.startsWith(`${row.__guid}.`)
-    );
+    return rows.some((row) => isGuidSelfOrDescendant(targetGuid, row.__guid));
 }
 
 // 삭제 전/후 네트워크를 비교해 실제로 사라진 링크 id를 뽑는다 — busStation/railStation은
@@ -60,6 +58,43 @@ const DrilldownGrid = ({
     const setMessage = useMessageStore.getState().setMessage;
     const dataStore = layerNameToStoreMap[layerName];
     const historyStore = layerNameToHistoryStoreMap[layerName];
+
+    // GridTable 은 AG Grid 특성상 픽셀 높이가 필요하다. GridToolbar/루트탭 높이를 상수로
+    // 빼는 대신 실제 tableWrap 을 측정해 넘긴다 — 하단 taskbar 에 그리드가 가려지던 원인.
+    const tableWrapRef = useRef<HTMLDivElement>(null);
+    const [measuredTableHeight, setMeasuredTableHeight] = useState(0);
+    useEffect(() => {
+        const el = tableWrapRef.current;
+        if (!el || typeof ResizeObserver === "undefined") return;
+        let retryRaf: number | null = null;
+        const ro = new ResizeObserver((entries) => {
+            const h = entries[0]?.contentRect.height;
+            if (typeof h !== "number") return;
+            const next = Math.max(0, Math.round(h));
+            if (next > 0) {
+                setMeasuredTableHeight(next);
+                return;
+            }
+            // 레이아웃 확정 전 프레임에서 0 이 오면 그대로 두면 안 된다 — 0 은 "미측정"으로
+            // 취급돼 상위 근사값(containerHeight)으로 되돌아가고, 그 값이 실제 가용 높이보다
+            // 크면 그리드 하단(마지막 row·가로 스크롤바)이 패널 밖 taskbar 뒤로 나간다.
+            if (retryRaf !== null) return;
+            retryRaf = requestAnimationFrame(() => {
+                retryRaf = null;
+                const cur = tableWrapRef.current?.clientHeight ?? 0;
+                if (cur > 0) setMeasuredTableHeight(cur);
+            });
+        });
+        ro.observe(el);
+        return () => {
+            if (retryRaf !== null) cancelAnimationFrame(retryRaf);
+            ro.disconnect();
+        };
+    }, []);
+    // 측정 전 첫 페인트에는 상위가 넘긴 근사값 사용 (측정되면 그 값이 우선)
+    const tableHeight = measuredTableHeight > 0
+        ? measuredTableHeight
+        : Math.max(0, Number.isFinite(containerHeight) ? containerHeight : 0);
 
     const init = useNavigationStore((s) => s.init);
     const clear = useNavigationStore((s) => s.clear);
@@ -121,8 +156,16 @@ const DrilldownGrid = ({
             hasChildren: children.length > 0,
         });
 
+        // 선택 유지 판정은 "현재 활성 root(rowData)"가 아니라 "데이터의 모든 root"를 기준으로 한다.
+        //   속성모달 편집 버튼으로 새 그리드를 열면 activeRootKey 는 rootKeys[0](예: nodes)로 시작하는데,
+        //   대상이 다른 root(예: links)면 여기서 clearSelected() 로 지워져, root 전환 effect(대상이 속한
+        //   root 로 activeRootKey 를 옮김)가 동작하기도 전에 선택이 사라진다. 어느 root 에든 속하면
+        //   유지해 root 전환이 끝난 뒤 그 root 에서 체크·드릴다운되게 한다.
         const pendingGuid = useSelectionStore.getState().selectedGuid[0] as string | undefined;
-        if (!pendingGuid || !guidBelongsToRows(rowData, pendingGuid)) {
+        const rootsInData = Object.keys(data).filter((k) => Array.isArray(data[k]));
+        const belongsSomewhere = !!pendingGuid
+            && rootsInData.some((k) => guidBelongsToRows(data[k] ?? [], pendingGuid as string));
+        if (!pendingGuid || !belongsSomewhere) {
             clearSelected();
         }
     }, [layerName, activeRootKey, init, rebuildStack, clearSelected, getStructureByLayerName]);
@@ -460,13 +503,13 @@ const DrilldownGrid = ({
                 }}
             />
 
-            <div className={style.tableWrap}>
+            <div ref={tableWrapRef} className={style.tableWrap}>
                 <GridTable
                     key={`${frame.levelName}-${frame.parentGuid || 'root'}`}
                     layerName={layerName}
                     layerGroupName={layerGroupName}
                     frame={frame}
-                    containerHeight={containerHeight}
+                    containerHeight={tableHeight}
                     onCellUpdate={handleCellUpdate}
                 />
             </div>

@@ -21,16 +21,18 @@ import {
     pickNetworkAtPosition,
     pickLaneAtPosition,
 } from "@datasource/NetworkDataSourceLayer";
-import { networkPrimitivePropertiesMap } from "@utils/networkPrimitiveShared";
+import { networkPrimitivePropertiesMap, isNetworkFeatureTypeVisible } from "@utils/networkPrimitiveShared";
 import {
     normalizeCoords,
     parseTileGuid,
     showNetworkHighlight2D,
     clearNetworkHighlight2D,
     showNetworkHoverHighlight2D,
+    showNetworkHoverHighlightPolygon2D,
     clearNetworkHoverHighlight2D,
     fetchNetworkFeatureProps,
 } from "@utils/networkFeatureLocator";
+import { getLaneRing3857ByRef } from "@utils/laneGeometry";
 import { useNetworkStore } from "@stores/useNetworkStore";
 import { findNearestNode, findNearestLink, findNearestLane } from "@hooks/useNetworkSelect";
 import { getNetworkLodTierByResolution } from "@utils/lodConstants";
@@ -65,6 +67,25 @@ const requestCesiumRender = (): void => {
     requestAnimationFrame(() => { try { viewer.scene.requestRender(); } catch (_) {} });
 };
 
+// 지오메트리 치수 변이(원기둥 length/topRadius/bottomRadius, ellipse/corridor 등)는
+// GeometryVisualizer 가 프리미티브를 비동기로 재빌드한다 — requestRenderMode 에서 2프레임만
+// 펌프하면 재빌드 완료 전이라 "이전 상태가 다음 hover 이벤트의 렌더에서야 드러나는" 한 단계
+// 지연이 남는다(노드/포트는 cylinder+CLAMP_TO_GROUND 라 정확히 이 경로). 재빌드가 끝나 드로우될
+// 때까지 여러 프레임을 펌프해, 다음 이벤트를 기다리지 않고 이번 hover 안에 반영되게 한다.
+// (requestRenderMode 라 유휴 시 실제 렌더 비용은 거의 없음 — 상한 프레임만 소모)
+const pumpCesiumRenderFrames = (maxFrames = 12): void => {
+    const viewer = useCesiumStore.getState().viewer;
+    if (!viewer) return;
+    let frames = 0;
+    const step = () => {
+        try { viewer.scene.requestRender(); } catch (_) {}
+        if (++frames >= maxFrames) return;
+        requestAnimationFrame(step);
+    };
+    try { viewer.scene.requestRender(); } catch (_) {}
+    requestAnimationFrame(step);
+};
+
 // ── 네트워크(타일 모드) 선택/호버 2D·3D 연동 헬퍼 ─────────────────────────
 //   선택: 3D 선택 슬롯(setNetworkSelectionHighlight) + 2D 오버레이(showNetworkHighlight2D)를
 //   항상 쌍으로 적용/해제해 어느 지도를 클릭해도 두 지도가 같은 강조 상태를 갖게 한다.
@@ -93,6 +114,32 @@ const normalizeNetworkTileSelectionGuid = (props: Record<string, any> | null): s
     return null;
 };
 
+/**
+ * 하단 편집 그리드 동기화용 selectedGuid 계산.
+ *   NETWORK 편집 그리드는 항상 타일 guid(assignTileGuids: T_L{id}/T_N{id}/T_L{id}_lane{idx})를 쓰므로,
+ *   지도 클릭 props(작업셋 hit 은 경로형 __guid) 를 id 기반 타일 guid 로 정규화해야 그리드가 매칭된다.
+ *   레인 클릭은 링크로 뭉개지 않고 "레인 depth"(T_L{id}_lane{idx})까지 살려 그리드가 그 깊이까지 진입하게 한다.
+ *   네트워크가 아닌 시설물(featureType 이 nodes/links/lanes 가 아님)은 각자 경로형 guid 가 그리드와 맞으므로
+ *   원래 __guid 를 그대로 돌려준다.
+ */
+const networkSelectionGuidForGrid = (
+    props: Record<string, any> | null,
+    laneIdx?: number,
+): string | null => {
+    const guid = props?.__guid;
+    if (typeof guid === "string" && /^T_[LN]\d/.test(guid)) return guid; // 이미 타일 guid (MVT/타일)
+    const ft = props?.featureType;
+    if (ft === "nodes" && props?.id != null) return `T_N${props.id}`;
+    if (ft === "lanes") {
+        const linkId = props?.linkRef ?? props?.linkId;
+        const li = laneIdx ?? props?.laneRef;
+        if (linkId != null && li != null) return `T_L${linkId}_lane${li}`;
+        if (linkId != null) return `T_L${linkId}`;
+    }
+    if (ft === "links" && props?.id != null) return `T_L${props.id}`;
+    return typeof guid === "string" ? guid : null; // 비-네트워크 시설물: 경로형 guid 유지
+};
+
 /** 링크/레인 선택 강조를 두 지도에 동시 적용 (3D 선택 슬롯 + 2D 오버레이) */
 const applyMapSelectionHighlight = (guid: string | null, laneIdx: number | undefined, props: Record<string, any> | null): void => {
     if (!guid) { clearMapSelectionHighlight(); return; }
@@ -116,13 +163,35 @@ const clearMapSelectionHighlight = (): void => {
  *  (매 이동마다 재빌드하면 3D 호버 중에도 OL 맵 전체 렌더가 돌아 지연 발생). */
 let networkHover2DKey: string | null = null;
 
-const updateNetworkHover2D = (guid: string | null, laneIdx: number | undefined, props: Record<string, any> | null): void => {
+const updateNetworkHover2D = (
+    guid: string | null,
+    laneIdx: number | undefined,
+    props: Record<string, any> | null,
+    ring3857?: number[][] | null,
+): void => {
     const key = guid == null ? null : (laneIdx != null ? `${guid}#${laneIdx}` : guid);
     if (key === networkHover2DKey) return; // 같은 대상 — no-op
     networkHover2DKey = key;
     if (!guid) { clearNetworkHoverHighlight2D(); return; }
     const olMap = useOpenLayersStore.getState().map;
     if (!olMap) { clearNetworkHoverHighlight2D(); return; }
+
+    // 1) MVT 히트 시 화면 폴리곤 기하를 그대로 사용 — "보이는 차선"과 완전 일치
+    if (ring3857 && ring3857.length >= 3) {
+        showNetworkHoverHighlightPolygon2D(olMap, ring3857);
+        return;
+    }
+
+    // 2) 레인 hover: 선택(클릭)·MVT 와 동일한 buildLaneRing3857 (미터→3857 위도 보정 포함)
+    if (laneIdx != null && props?.featureType === "lanes") {
+        const linkRef = props.linkRef ?? props.linkId ?? parseTileGuid(guid)?.id;
+        const laneRing = linkRef != null ? getLaneRing3857ByRef(linkRef, laneIdx) : null;
+        if (laneRing && laneRing.length >= 3) {
+            showNetworkHoverHighlightPolygon2D(olMap, laneRing);
+            return;
+        }
+    }
+
     const coords = coordsFromNetworkProps(props, guid);
     if (coords.length > 0) showNetworkHoverHighlight2D(olMap, coords);
     else clearNetworkHoverHighlight2D();
@@ -149,9 +218,74 @@ const findCesiumEntityByGuid = (guid: string): Cesium.Entity | null => {
         const ds = viewer.dataSources.get(i);
         if (!ds.show) continue;
         const entity = ds.entities.getById(guid);
-        if (entity) return entity;
+        if (entity && isEntityVisible(entity)) return entity;
     }
     return null;
+};
+
+/**
+ * "화면에 실제로 보이는" 엔티티인지 — hover/click 픽 대상 판정.
+ * Cesium 의 scene.pick 은 엔티티/데이터소스의 show=false 를 항상 걸러주지 않으므로
+ * (숨김 직후 프레임, 분류 primitive 잔존 등) 픽 결과를 코드에서 한 번 더 검증한다.
+ * 소유 DataSource 는 entity.entityCollection.owner 로 역참조한다.
+ */
+const isEntityVisible = (entity: Cesium.Entity | null | undefined): boolean => {
+    if (!entity) return false;
+    if (entity.isShowing === false) return false; // 부모 체인까지 반영된 Cesium 계산값
+    if (entity.show === false) return false;
+    const owner: any = (entity.entityCollection as any)?.owner;
+    if (owner && owner.show === false) return false;
+    return true;
+};
+
+/** OL 레이어가 화면에 보이는지 (숨긴 레이어는 hover/click 픽 대상에서 제외) */
+const isOlLayerVisible = (layer: any): boolean => {
+    if (!layer) return false;
+    return typeof layer.getVisible === "function" ? layer.getVisible() !== false : true;
+};
+
+/** Style 이 실제로 무언가를 그리는지 — 빈 Style({}) 은 숨김 처리된 피처를 뜻한다 */
+const styleDrawsSomething = (style: any): boolean => {
+    if (!style) return false;
+    const list = Array.isArray(style) ? style : [style];
+    return list.some((s: any) => {
+        if (!s || typeof s.getImage !== "function") return true; // 판별 불가 → 보이는 것으로 취급
+        return !!(s.getImage() || s.getStroke() || s.getFill() || s.getText());
+    });
+};
+
+/**
+ * 피처가 화면에 실제로 그려지는지 — hover/click 픽 대상 판정.
+ * featureType 가시화 off 는 (a) 네트워크: 공유 게이트, (b) 일반 벡터 레이어:
+ * 빈 Style({}) 주입으로 표현되므로 둘 다 확인해야 "가려졌는데 hover 되는" 문제가 없다.
+ */
+const isOlFeatureVisible = (feature: any, layer: any, resolution: number): boolean => {
+    if (!feature) return false;
+    if (!isNetworkFeatureTypeVisible(feature.get?.("featureType"))) return false;
+    const own = typeof feature.getStyle === "function" ? feature.getStyle() : undefined;
+    if (own != null) {
+        const resolved = typeof own === "function" ? own(feature, resolution) : own;
+        return styleDrawsSomething(resolved);
+    }
+    // 피처 자체 스타일이 없으면 레이어 스타일 함수 결과로 판정 (없으면 보이는 것으로 취급)
+    const styleFn = typeof layer?.getStyleFunction === "function" ? layer.getStyleFunction() : undefined;
+    if (!styleFn) return true;
+    try {
+        return styleDrawsSomething(styleFn(feature, resolution));
+    } catch (_) {
+        return true;
+    }
+};
+
+/** 2D 에 네트워크(도로)가 실제로 그려지고 있는지 — network 본 레이어 또는 MVT 레이어 중 하나라도 보이면 true */
+const isNetwork2DVisible = (olMap: OLMap): boolean => {
+    for (const layer of olMap.getAllLayers()) {
+        if (!isOlLayerVisible(layer)) continue;
+        if (matchesCustomKeyValue(layer, "layer", "network") || matchesCustomKeyValue(layer, "layer", "network-mvt")) {
+            return true;
+        }
+    }
+    return false;
 };
 
 type Network2DHit = {
@@ -160,6 +294,8 @@ type Network2DHit = {
     /** MVT 렌더 피처 히트 (최소 props — 단건 조회로 보강 필요) */
     fromMvt?: boolean;
     linkId?: string;
+    /** MVT 폴리곤 ring(EPSG:3857) — 화면과 완전 동일 기하로 hover 할 때 사용 */
+    ring3857?: number[][];
 };
 
 /**
@@ -169,25 +305,37 @@ type Network2DHit = {
  *    detail tier 레인 폴리곤은 getId() = linkId*100+laneIdx 로 디코드)
  */
 const pickNetwork2DAt = (olMap: OLMap, pixel: number[]): Network2DHit | null => {
+    // 네트워크 레이어가 숨겨져 있으면 작업셋 기반 기하 fallback 도 하지 않는다
+    // (기하 탐색은 레이어 렌더와 무관하게 히트하므로, 화면에 없는 도로가 잡히던 원인)
+    if (!isNetwork2DVisible(olMap)) return null;
     const network: any = useNetworkStore.getState().currentJsonData;
     const coord = olMap.getCoordinateFromPixel(pixel as [number, number]);
     const res = olMap.getView().getResolution() ?? 1;
     const isDetail = getNetworkLodTierByResolution(res) === "detail";
+    // 기하 탐색은 렌더와 무관하게 히트하므로 featureType 가시화도 직접 확인해야 한다
+    const nodesOk = isNetworkFeatureTypeVisible("nodes");
+    const lanesOk = isNetworkFeatureTypeVisible("lanes");
+    const linksOk = isNetworkFeatureTypeVisible("links");
 
-    if (network && coord) {
-        // 노드는 마커 직접 클릭(res*8)만 즉시 선택 — 절대 우선(res*20)이면 교차로 부근
-        // 레인/링크 클릭이 전부 노드로 가로채임
+    // 노드 직접 클릭은 항상 최우선 (교차로 부근에서 레인/MVT 가 가로채지 않게)
+    if (network && coord && nodesOk) {
         const nodeCand = findNearestNode(network.nodes ?? [], coord, res * 20);
-        let nodeDist = Infinity;
         if (nodeCand) {
             const p = fromLonLat([nodeCand.coordinates.lng, nodeCand.coordinates.lat]);
-            nodeDist = Math.hypot(p[0]! - coord[0]!, p[1]! - coord[1]!);
+            const nodeDist = Math.hypot(p[0]! - coord[0]!, p[1]! - coord[1]!);
+            if (nodeDist <= res * 8) return { props: { ...nodeCand, featureType: "nodes" } };
         }
-        const directNode = nodeCand && nodeDist <= res * 8 ? nodeCand : null;
-        const lane = !directNode && isDetail ? findNearestLane(network.links ?? [], coord, res * 8) : null;
-        const link = (!directNode && !lane) ? findNearestLink(network.links ?? [], coord, res * 15) : null;
-        const node = directNode ?? ((!lane && !link) ? nodeCand : null);
-        if (node) return { props: { ...node, featureType: "nodes" } };
+    }
+
+    // detail 에서는 화면에 그려진 MVT 차선 폴리곤을 우선 픽 — hover 기하가 "보이는 것"과 1:1.
+    const mvtHit = pickNetworkMvtAt(olMap, pixel, isDetail);
+    if (mvtHit) return mvtHit;
+
+    if (network && coord) {
+        const nodeCand = nodesOk ? findNearestNode(network.nodes ?? [], coord, res * 20) : null;
+        const lane = (isDetail && lanesOk) ? findNearestLane(network.links ?? [], coord, res * 8) : null;
+        const link = (!lane && linksOk) ? findNearestLink(network.links ?? [], coord, res * 15) : null;
+        const node = (!lane && !link) ? nodeCand : null;
         if (lane) {
             const l0 = (network.links ?? []).find((l: any) => String(l.id) === lane.linkId);
             const laneObj = l0?.lanes?.[lane.laneIdx];
@@ -200,8 +348,14 @@ const pickNetwork2DAt = (olMap: OLMap, pixel: number[]): Network2DHit | null => 
             }
         }
         if (link) return { props: { ...link, featureType: "links" }, linkId: String(link.id) };
+        if (node) return { props: { ...node, featureType: "nodes" } };
     }
 
+    return null;
+};
+
+/** MVT 렌더 피처 픽 — 화면 폴리곤 ring 까지 함께 반환 */
+const pickNetworkMvtAt = (olMap: OLMap, pixel: number[], isDetail: boolean): Network2DHit | null => {
     let mvtHit: Network2DHit | null = null;
     olMap.forEachFeatureAtPixel(pixel as [number, number], (feature: any) => {
         const rawId = feature?.getId?.();
@@ -209,7 +363,29 @@ const pickNetwork2DAt = (olMap: OLMap, pixel: number[]): Network2DHit | null => 
         if (!Number.isFinite(idNum)) return undefined;
         const linkId = isDetail ? Math.floor(idNum / 100) : idNum;
         const laneIdx = isDetail ? idNum % 100 : undefined;
+        // 숨긴 featureType 은 MVT 에서도 그려지지 않으므로 픽 대상에서 제외
+        if (!isNetworkFeatureTypeVisible(laneIdx != null ? "lanes" : "links")) return undefined;
         const guid = laneIdx != null ? `T_L${linkId}_lane${laneIdx}` : `T_L${linkId}`;
+        let ring3857: number[][] | undefined;
+        try {
+            const geom = feature.getGeometry?.();
+            if (geom?.getType?.() === "Polygon") {
+                const coords = geom.getCoordinates?.()?.[0];
+                if (Array.isArray(coords) && coords.length >= 3) ring3857 = coords;
+            } else if (feature.getType?.() === "Polygon") {
+                const flat = feature.getFlatCoordinates?.() as number[] | undefined;
+                const ends = feature.getEnds?.() as number[] | undefined;
+                const end = ends?.[0] ?? flat?.length ?? 0;
+                if (flat && end >= 6) {
+                    const ring: number[][] = [];
+                    for (let i = 0; i + 1 < end; i += 2) ring.push([flat[i]!, flat[i + 1]!]);
+                    if (ring.length >= 3) ring3857 = ring;
+                }
+            }
+            // 타일 로컬(0..4096) 좌표면 맵 투영이 아님 → 계산 폴백 사용
+            const s = ring3857?.[0];
+            if (s && Math.abs(s[0]!) < 10000 && Math.abs(s[1]!) < 10000) ring3857 = undefined;
+        } catch (_) { /* geometry 추출 실패 시 계산 폴백 */ }
         mvtHit = {
             props: laneIdx != null
                 ? { __guid: guid, featureType: "lanes", linkRef: String(linkId), laneRef: laneIdx }
@@ -217,11 +393,13 @@ const pickNetwork2DAt = (olMap: OLMap, pixel: number[]): Network2DHit | null => 
             laneIdx,
             fromMvt: true,
             linkId: String(linkId),
+            ring3857,
         };
         return true;
     }, {
         hitTolerance: 6,
-        layerFilter: (layer) => matchesCustomKeyValue(layer, "layer", "network-mvt"),
+        // 숨긴 MVT 레이어(네트워크 가시화 off)는 픽 대상에서 제외
+        layerFilter: (layer) => matchesCustomKeyValue(layer, "layer", "network-mvt") && isOlLayerVisible(layer),
     });
     return mvtHit;
 };
@@ -233,7 +411,9 @@ export const defaultEventHandlers ={
         // 도로 그리기 / 커넥션 그리기 / 선택편집 / 시설물 배치 모드 중에는 속성조회 이벤트 무시
         const drawStore = useNetworkDrawStore.getState();
         if (drawStore.isActive || drawStore.isConnectionActive || drawStore.isSelectActive || drawStore.placementMode !== 'none') return;
-        if (useMenuStore.getState().activeSubmenu) return;
+        // 편집 그리드(activeSubmenu)가 열려 있어도 지도 클릭으로 선택을 잡아 하단 그리드가
+        // 해당 객체 depth 까지 진입·체크·스크롤하도록 한다(속성 모달은 activeSubmenu 동안 숨겨짐).
+        // 네트워크 편집 서브모드(isSelectActive 등)는 위 가드에서 이미 useNetworkSelect 로 분기됨.
 
         const viewer = useCesiumStore.getState().viewer;
         if (!viewer) return;
@@ -266,14 +446,19 @@ export const defaultEventHandlers ={
             props.height = cartographic.height;
         }
 
-        if (Cesium.defined(picked) && picked.id instanceof Cesium.Entity && picked.id.properties) {
+        // 숨긴 엔티티/데이터소스는 클릭 대상이 아니다 — 통과 못 하면 아래 네트워크 픽 경로로 내려간다
+        const pickedEntity = (Cesium.defined(picked) && picked.id instanceof Cesium.Entity && picked.id.properties)
+            ? pickBestEntityAt(viewer.scene, clickPos, picked.id)
+            : null;
+
+        if (pickedEntity) {
             // Entity 피킹 (노드, 포트, 커넥션, 버스정류장 등)
             // 밀집 구역: 확대된 이웃이 가리면 커서에 중심이 가장 가까운 엔티티로 보정
-            const entity = pickBestEntityAt(viewer.scene, clickPos, picked.id);
+            const entity = pickedEntity;
             const flat = entity.properties?.getValue(Cesium.JulianDate.now()) ?? {};
             Object.assign(props, flat);
             setSelectedProps(props);
-            setSelectedGuid([props.__guid]);
+            setSelectedGuid([networkSelectionGuidForGrid(props) ?? props.__guid]);
             selectEntity(entity);                 // 3D 엔티티 선택 하이라이트
             highlightNetworkPrimitive?.(null);    // 링크 하이라이트 해제
             clearNetworkSelectionHighlight?.();   // 이전 링크 선택 강조 해제 (3D 슬롯)
@@ -317,7 +502,7 @@ export const defaultEventHandlers ={
             if (primitiveProps) {
                 Object.assign(props, primitiveProps);
                 setSelectedProps(props);
-                setSelectedGuid([primitiveProps.__guid]);
+                setSelectedGuid([networkSelectionGuidForGrid(primitiveProps, laneIdxForHighlight) ?? primitiveProps.__guid]);
                 // 선택 슬롯(hover 와 별개, 자동 만료) + 2D 오버레이 동시 적용
                 applyMapSelectionHighlight(linkGuidForHighlight, laneIdxForHighlight, primitiveProps);
             } else {
@@ -332,7 +517,8 @@ export const defaultEventHandlers ={
         // 선택편집 / 시설물 배치 모드 중에는 속성조회 이벤트 무시
         const drawState = useNetworkDrawStore.getState();
         if (drawState.isSelectActive || drawState.placementMode !== 'none') return;
-        if (useMenuStore.getState().activeSubmenu) return;
+        // 편집 그리드(activeSubmenu)가 열려 있어도 지도 클릭 선택을 하단 그리드와 동기화한다
+        // (depth 진입·체크·스크롤). 편집 서브모드는 위 가드에서 useNetworkSelect 로 분기됨.
         const olMap = useOpenLayersStore.getState().map;
 
         if (!olMap) {
@@ -353,8 +539,11 @@ export const defaultEventHandlers ={
         updateNetworkHover2D(null, undefined, null);
         highlightNetworkPrimitive?.(null);
 
+        const clickResolution = olMap.getView().getResolution() ?? 1;
         let isFeatureExist = false;
         olMap.forEachFeatureAtPixel(e.pixel, function (feature, layer) {
+            if (!isOlLayerVisible(layer)) return; // 숨긴 레이어는 클릭 대상 아님
+            if (!isOlFeatureVisible(feature, layer, clickResolution)) return; // 숨긴 피처도 제외
             const guid = feature.get("__guid");
             if (guid) {
                 isFeatureExist = true;
@@ -382,7 +571,8 @@ export const defaultEventHandlers ={
         }, {
             // disableHitDetection: true 인 WebGLVectorLayer(TrailFeatureLayer 등)에서
             // forEachFeatureAtPixel 호출 시 throw 발생 → 해당 레이어 제외
-            layerFilter: (layer) => !isWebGLVectorLayer(layer) && !layer.get("excludeFromHit"),
+            // 숨긴 레이어(가시화 off)도 제외 — 화면에 보이는 것만 클릭 대상
+            layerFilter: (layer) => !isWebGLVectorLayer(layer) && !layer.get("excludeFromHit") && isOlLayerVisible(layer),
         });
         if (!isFeatureExist) {
             // OL 벡터 피처 히트 실패 → MVT 로 렌더되는 링크/레인은 __guid 피처가 없어 여기로 온다.
@@ -390,7 +580,8 @@ export const defaultEventHandlers ={
             const hit = pickNetwork2DAt(olMap, e.pixel);
             if (hit) {
                 setSelectedProps(hit.props);
-                setSelectedGuid(hit.props.__guid ? [hit.props.__guid] : []);
+                const gridGuid = networkSelectionGuidForGrid(hit.props, hit.laneIdx);
+                setSelectedGuid(gridGuid ? [gridGuid] : []);
                 if (hit.props.featureType === 'nodes') {
                     // 노드: 3D 는 엔티티 확대 미러, 2D 는 선택 오버레이 점 표시
                     clearMapSelectionHighlight();
@@ -449,10 +640,15 @@ export const defaultEventHandlers ={
             return;
         }
 
-        if (pickedObject?.id instanceof Cesium.Entity) {
+        // 숨긴 엔티티/데이터소스는 hover 대상이 아니다 — null 이면 아래 네트워크 픽 경로로 내려간다
+        const hoverEntity = pickedObject?.id instanceof Cesium.Entity
+            ? pickBestEntityAt(scene, position, pickedObject.id)
+            : null;
+
+        if (hoverEntity) {
             // Entity 호버 (노드, 포트, 커넥션 등)
             // 밀집 구역: 확대된 이웃이 가리면 커서에 중심이 가장 가까운 엔티티로 보정
-            const entity = pickBestEntityAt(scene, position, pickedObject.id);
+            const entity = hoverEntity;
             highlightNetworkPrimitive?.(null);
             updateNetworkHover2D(null, undefined, null);
             if (highlightedEntity !== entity && selectedEntity !== entity) {
@@ -468,9 +664,21 @@ export const defaultEventHandlers ={
         clearCesiumHighlight();
         if (highlightedFeature) clearOlHighlight(highlightedFeature); // 2D 확대 미러 해제
         const hit = pickNetworkAtPosition(scene, position);
-        highlightNetworkPrimitive?.(hit?.guid ?? null); // 동일 대상이면 내부에서 no-op
+        if (!hit) {
+            highlightNetworkPrimitive?.(null);
+            updateNetworkHover2D(null, undefined, null);
+            return;
+        }
+        // 클릭과 동일: 레인 역산 → 그 레인만 hover (laneIdx 없으면 링크 전체만 강조돼
+        //   "레인 hover 가 사라진" 것처럼 보였음 — 클릭 하이라이트는 pickLaneAtPosition 을 씀)
+        const lane = pickLaneAtPosition(scene, position, hit.props);
+        const laneIdx = lane?._laneIdx as number | undefined;
+        const hoverProps = laneIdx != null
+            ? { ...lane, featureType: "lanes", linkRef: hit.props?.id, laneRef: laneIdx }
+            : hit.props;
+        highlightNetworkPrimitive?.(hit.guid, laneIdx); // 동일 대상이면 내부에서 no-op
         // 2D 호버 미러 — 대상이 바뀔 때만 오버레이 재생성 (updateNetworkHover2D 키 가드)
-        updateNetworkHover2D(hit?.guid ?? null, undefined, hit?.props ?? null);
+        updateNetworkHover2D(hit.guid, laneIdx, hoverProps);
     },
 
     handleOlHover : (e: MapBrowserEvent<UIEvent>) => {
@@ -481,9 +689,13 @@ export const defaultEventHandlers ={
 
         if (!olMap) return;
 
+        const hoverResolution = olMap.getView().getResolution() ?? 1;
+
         const featureInfo = olMap.forEachFeatureAtPixel(
             e.pixel,
             (feature: FeatureLike, layer: Layer) => {
+                if (!isOlLayerVisible(layer)) return undefined; // 숨긴 레이어는 hover 대상 아님
+                if (!isOlFeatureVisible(feature, layer, hoverResolution)) return undefined; // 숨긴 피처도 제외
                 const isTargetLayer = !hoverLayerName || (hoverLayerName && matchesCustomKeyValue(layer, 'layer', hoverLayerName));
 
                 if (isTargetLayer
@@ -506,7 +718,7 @@ export const defaultEventHandlers ={
             },
             {
                 hitTolerance: 10,
-                layerFilter: (layer) => !isWebGLVectorLayer(layer) && !layer.get("excludeFromHit"),
+                layerFilter: (layer) => !isWebGLVectorLayer(layer) && !layer.get("excludeFromHit") && isOlLayerVisible(layer),
             }
         );
 
@@ -520,7 +732,7 @@ export const defaultEventHandlers ={
             const hoverHit = pickNetwork2DAt(olMap, e.pixel);
             if (hoverHit) {
                 const hoverGuid = normalizeNetworkTileSelectionGuid(hoverHit.props);
-                updateNetworkHover2D(hoverGuid, hoverHit.laneIdx, hoverHit.props);
+                updateNetworkHover2D(hoverGuid, hoverHit.laneIdx, hoverHit.props, hoverHit.ring3857);
                 // 3D 미러: 화면에 로드된 링크만 (노드는 프리미티브 슬롯 대상 아님)
                 const parsed = hoverGuid ? parseTileGuid(hoverGuid) : null;
                 if (parsed?.featureType === 'links' && networkPrimitivePropertiesMap.has(parsed.parentGuid)) {
@@ -606,6 +818,9 @@ const isClampedPolylineEntity = (entity: Cesium.Entity): boolean => {
 const setEntityScaleFactor = (entity: Cesium.Entity, factor: number): void => {
     const base = captureEntityBase(entity);
     const half = factor === 1 ? 1 : factor * 0.5;
+    // 지오메트리 치수 변이(corridor/ellipse/cylinder)는 비동기 재빌드라 렌더 펌프를 더 돌려야
+    //   다음 hover 이벤트를 기다리지 않고 이번에 반영된다. (point/model/billboard 는 즉시 반영)
+    let geometryRebuild = false;
     if (entity.point && base.pixelSize !== undefined)
         entity.point.pixelSize = new Cesium.ConstantProperty(base.pixelSize * factor);
     if (entity.model && base.scale !== undefined)
@@ -614,8 +829,10 @@ const setEntityScaleFactor = (entity: Cesium.Entity, factor: number): void => {
         entity.polyline.width = new Cesium.ConstantProperty(base.width * factor);
     if (entity.billboard && base.bbScale !== undefined)
         entity.billboard.scale = new Cesium.ConstantProperty(base.bbScale * factor);
-    if (entity.corridor && base.corridorWidth !== undefined)
+    if (entity.corridor && base.corridorWidth !== undefined) {
         entity.corridor.width = new Cesium.ConstantProperty(base.corridorWidth * half);
+        geometryRebuild = true;
+    }
     // polygon 은 변이하지 않음 — 노면표시 폴리곤은 extrudedHeight 가 없어(base 0) 시각 효과가
     // 없었고, 지오메트리/재질 변이는 비동기 재빌드 지연을 유발 → 오버레이 경로에서 처리
     if (entity.ellipse) {
@@ -623,16 +840,22 @@ const setEntityScaleFactor = (entity: Cesium.Entity, factor: number): void => {
             entity.ellipse.semiMajorAxis = new Cesium.ConstantProperty(base.semiMajorAxis * half);
         if (base.semiMinorAxis !== undefined)
             entity.ellipse.semiMinorAxis = new Cesium.ConstantProperty(base.semiMinorAxis * half);
+        if (base.semiMajorAxis !== undefined || base.semiMinorAxis !== undefined) geometryRebuild = true;
     }
     if (entity.cylinder) {
+        // 노드/포트: cylinder + CLAMP_TO_GROUND — 치수 변이가 비동기 재빌드를 유발해 한 단계 지연됨
         if (base.length !== undefined)
             entity.cylinder.length = new Cesium.ConstantProperty(base.length * half);
         if (base.topRadius !== undefined)
             entity.cylinder.topRadius = new Cesium.ConstantProperty(base.topRadius * half);
         if (base.bottomRadius !== undefined)
             entity.cylinder.bottomRadius = new Cesium.ConstantProperty(base.bottomRadius * half);
+        if (base.length !== undefined || base.topRadius !== undefined || base.bottomRadius !== undefined)
+            geometryRebuild = true;
     }
-    requestCesiumRender();
+    // 재빌드 대상이면 여러 프레임 펌프(비동기 재빌드 완료까지), 아니면 2프레임으로 충분.
+    if (geometryRebuild) pumpCesiumRenderFrames();
+    else requestCesiumRender();
 };
 
 // ── 오버레이형 엔티티 hover/select 강조 (clampToGround 폴리라인 + 폴리곤) ────
@@ -854,18 +1077,21 @@ const getEntityScreenDistance = (
  * 화면좌표 거리(점 엔티티는 중심, 폴리라인 커넥션은 세그먼트 최소거리)가 가장 가까운
  * 것을 고른다 — 폴리라인도 점수화에 참여하므로 커넥션 hover 가 확대 객체에 가로채이지 않는다.
  */
-const pickBestEntityAt = (scene: Cesium.Scene, position: Cesium.Cartesian2, fallback: Cesium.Entity): Cesium.Entity => {
+const pickBestEntityAt = (scene: Cesium.Scene, position: Cesium.Cartesian2, fallback: Cesium.Entity): Cesium.Entity | null => {
+    // 숨긴 엔티티는 후보에서 제외 — fallback 자체가 숨겨졌으면 보이는 후보만 남긴다
+    const visibleFallback = isEntityVisible(fallback) ? fallback : null;
     let picks: any[] = [];
     try {
         picks = scene.drillPick(position, 8, ENTITY_PICK_WINDOW_PX, ENTITY_PICK_WINDOW_PX) ?? [];
-    } catch (_) { return fallback; }
+    } catch (_) { return visibleFallback; }
     const entities: Cesium.Entity[] = [];
     for (const p of picks) {
-        if (p?.id instanceof Cesium.Entity && !entities.includes(p.id)) entities.push(p.id);
+        if (p?.id instanceof Cesium.Entity && isEntityVisible(p.id) && !entities.includes(p.id)) entities.push(p.id);
     }
-    if (entities.length <= 1) return fallback;
+    if (entities.length === 0) return visibleFallback;
+    if (entities.length === 1) return visibleFallback ?? entities[0]!;
     const now = Cesium.JulianDate.now();
-    let best = fallback;
+    let best: Cesium.Entity | null = visibleFallback;
     let bestD = Infinity;
     for (const ent of entities) {
         const d = getEntityScreenDistance(scene, ent, position, now);
@@ -976,6 +1202,25 @@ const clearOlHighlight = (feature: FeatureLike | Feature | undefined) => {
     originalFeatureStyles.delete(feature)
     highlightedFeature = undefined;
 }
+
+/**
+ * 지도가 만든 **hover 잔상**(2D/3D)을 한 번에 해제한다. select 슬롯은 건드리지 않는다.
+ *
+ * hover 슬롯은 "다음 pointermove 가 와야" 갱신·해제되는 구조라, 커서가 지도 밖(하단 편집
+ * 그리드 등)으로 빠져나가면 마지막 hover 강조가 그대로 남는다. 그 상태에서 그리드 행을 클릭해
+ * 선택이 다른 객체로 옮겨가면, 이전 링크를 덮고 있던 노란 선택 오버레이(zIndex 500)가 빠지면서
+ * 그 아래 깔려 있던 hover 오버레이(HOVER_COLOR = rgba(255,220,0), zIndex 490)가 드러난다 —
+ * "노란 하이라이트는 옮겨지는데 주황 계열이 이전 링크에 남는다"는 증상의 정체다.
+ *
+ * 호출처: 지도 커서 이탈(pointerleave)과 선택 변경(useDefaultSelect) 두 곳.
+ */
+export const clearMapHoverArtifacts = (): void => {
+    highlightNetworkPrimitive?.(null);            // 3D 네트워크 hover primitive
+    updateNetworkHover2D(null, undefined, null);  // 2D 네트워크 hover 오버레이 (+ 메모 키 리셋)
+    clearCesiumHighlight();                       // 3D 엔티티 hover 확대/오버레이
+    clearOlHighlight(highlightedFeature);         // 2D 벡터 피처 hover 스타일
+    requestCesiumRender();
+};
 
 const applySelectionHighlight = (feature: Feature, styleFunction: StyleFunction) => {
     if (originalSelectedStyles.has(feature)) return; // 이미 선택 하이라이트 적용됨
