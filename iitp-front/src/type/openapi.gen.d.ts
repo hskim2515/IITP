@@ -36,6 +36,38 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/threed-tileset/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["update"];
+        post?: never;
+        delete: operations["delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scenario/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getScenarioById"];
+        put: operations["updateScenario"];
+        post?: never;
+        delete: operations["deleteScenario"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/menu/{menuId}": {
         parameters: {
             query?: never;
@@ -68,7 +100,7 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/vehicle/vehicle-route/{versionId}": {
+    "/vehicle/vehicle-route/{scenarioKey}": {
         parameters: {
             query?: never;
             header?: never;
@@ -78,13 +110,61 @@ export type paths = {
         get?: never;
         put?: never;
         post: operations["getVehicleRoute"];
+        delete: operations["deleteVehicleRoute"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vehicle/vehicle-route/{scenarioKey}/viewport": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["getVehicleRouteViewport"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/vehicle/generate-vehicle-route/{versionId}": {
+    "/vehicle/vehicle-route/{scenarioKey}/active-count": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["getActiveVehicleCount"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vehicle/upload-db/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["uploadVehicleSimDb"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vehicle/generate-vehicle-route/{scenarioKey}": {
         parameters: {
             query?: never;
             header?: never;
@@ -164,6 +244,70 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/threed-tileset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAll"];
+        put?: never;
+        post: operations["create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/simulation/{versionId}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["run"];
+        delete: operations["cancel"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/simulation-scenario/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getSimulationScenario"];
+        put?: never;
+        post: operations["saveSimulationScenario"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/simulation-scenario/{scenarioKey}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importScenarioXml"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/signal/{versionId}": {
         parameters: {
             query?: never;
@@ -174,6 +318,70 @@ export type paths = {
         get: operations["getSignal"];
         put?: never;
         post: operations["saveSignal"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/signal/{versionId}/repair-tod": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["repairSignalTod"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/signal/{versionId}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importSignalXml"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/signal-tod/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getSignalTod"];
+        put?: never;
+        post: operations["saveSignalTod"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/signal-tod/{scenarioKey}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importSignalTodXml"];
         delete?: never;
         options?: never;
         head?: never;
@@ -196,6 +404,54 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/scenario": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAllScenarios"];
+        put?: never;
+        post: operations["createScenario"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scenario/{id}/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getScenarioVersions"];
+        put?: never;
+        post: operations["createVersion"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scenario/version/{versionKey}/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resetVersionData"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/public-transit/station/rail/{versionId}": {
         parameters: {
             query?: never;
@@ -205,7 +461,23 @@ export type paths = {
         };
         get: operations["getRailStationsByVersionId"];
         put?: never;
-        post: operations["saveBusStations"];
+        post: operations["saveRailStations"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/station/rail/{versionId}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importRailStationXml"];
         delete?: never;
         options?: never;
         head?: never;
@@ -221,7 +493,151 @@ export type paths = {
         };
         get: operations["getBusStationsByVersionId"];
         put?: never;
-        post: operations["saveBusStations_1"];
+        post: operations["saveBusStations"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/station/bus/{versionId}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importBusStationXml"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/rail/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getRailPtLine"];
+        put?: never;
+        post: operations["saveRailPtLine"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/rail/{scenarioKey}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importRailPtLineXml"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get"];
+        put?: never;
+        post: operations["save"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/{scenarioKey}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importDefault"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/weekend/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getWeekend"];
+        put?: never;
+        post: operations["saveWeekend"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/weekend/{scenarioKey}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importWeekend"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/weekday/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getWeekday"];
+        put?: never;
+        post: operations["saveWeekday"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/weekday/{scenarioKey}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importWeekday"];
         delete?: never;
         options?: never;
         head?: never;
@@ -244,6 +660,257 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/passenger/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getPassenger"];
+        put?: never;
+        post: operations["savePassenger"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/passenger/{versionId}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importPassengerXml"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/od-matrix/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOdMatrix"];
+        put?: never;
+        post: operations["saveOdMatrix"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/od-matrix/{versionId}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importOdMatrixXml"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getNetworkByVersionId"];
+        put?: never;
+        post: operations["saveNetwork"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/{versionId}/reanchor": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["reanchorNetwork"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/{versionId}/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importNetworkXml"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/{versionId}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["saveNetworkDiff"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/{versionId}/dependent/zip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["downloadDependentZip"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/{versionId}/calibrate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["calibrateNetwork"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/import/osm/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * OSM bbox → 검증 + network.xml SFTP 저장 + OsmSaveResponse
+         * @description 신호등 connection 정보가 signals 필드로 함께 반환됩니다.
+         */
+        post: operations["importAndSave"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/import/ktdb/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * KTDB 표준노드링크 bbox → NetworkXml 직접 변환 → SFTP 저장
+         * @description 대형 bbox(전국 포함)는 타일 스트리밍 처리 후 간소화 응답 반환.
+         */
+        post: operations["importKtdbSave"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/import/ktdb/json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** KTDB 표준노드링크 bbox → NetworkResponse JSON (저장 없음) */
+        post: operations["importKtdbJson"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/import/auto/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 표준노드링크 bbox 필터링 → SFTP 저장 + OsmSaveResponse */
+        post: operations["generateAndSave"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/import/auto/json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 정밀도로지도/표준노드링크 bbox 필터링 → NetworkResponse + Signals JSON */
+        post: operations["generateJson"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/menu": {
         parameters: {
             query?: never;
@@ -254,6 +921,230 @@ export type paths = {
         get?: never;
         put?: never;
         post: operations["createMenu"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/osm-pt/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importFromFile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/osm-pt/import-turn-restrictions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importTurnRestrictions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/osm-pt/import-traffic-signals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importTrafficSignals"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/osm-pt/import-public-traffic-lights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importPublicTrafficLights"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/osm-pt/import-crossroad-info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["importCrossRoadInfo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vehicle/vehicle-route/{scenarioKey}/exists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["checkVehicleRouteExists"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/vehicle/signal-timeline/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getSignalTimelineByPlan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/simulation/{versionId}/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/simulation/available": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["available"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/simulation-scenario/{scenarioKey}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["exportAsXml"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/simulation-scenario/origin/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOriginScenario"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/simulation-scenario/histories/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getHistories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/signal/{versionId}/tiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getSignalTiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/signal/{versionId}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["exportAsXml_1"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -292,6 +1183,54 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/signal-tod/{scenarioKey}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["exportAsXml_2"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/signal-tod/origin/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOriginSignalTod"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/signal-tod/histories/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getHistories_1"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/schema": {
         parameters: {
             query?: never;
@@ -308,14 +1247,14 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/scenario": {
+    "/scenario/check-key": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["getAllScenarios"];
+        get: operations["checkKey"];
         put?: never;
         post?: never;
         delete?: never;
@@ -324,14 +1263,14 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/scenario/{id}": {
+    "/route/{scenarioKey}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["getScenarioById"];
+        get: operations["getRoute"];
         put?: never;
         post?: never;
         delete?: never;
@@ -340,14 +1279,302 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/scenario/{id}/versions": {
+    "/route/pax/{scenarioKey}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["getScenarioVersions"];
+        get: operations["getPaxRoute"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/station/rail/{versionId}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["exportAsXml_3"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/station/rail/origin/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOriginRailStations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/station/rail/histories/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getLogsByVersion_1"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/station/bus/{versionId}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["exportAsXml_4"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/station/bus/origin/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOriginBusStations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/station/bus/histories/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getLogsByVersion_2"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/rail/{scenarioKey}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["exportAsXml_5"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/rail/origin/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOriginRailPtLine"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/rail/histories/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getHistories_2"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/{scenarioKey}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["export"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/weekend/{scenarioKey}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["exportWeekend"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/weekend/origin/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOriginWeekend"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/weekend/histories/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getHistoriesWeekend"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/weekday/{scenarioKey}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["exportWeekday"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/weekday/origin/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOriginWeekday"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/weekday/histories/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getHistoriesWeekday"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/origin/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOrigin"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/public-transit/line/bus/histories/{scenarioKey}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getHistories_3"];
         put?: never;
         post?: never;
         delete?: never;
@@ -379,7 +1606,7 @@ export type paths = {
             path?: never;
             cookie?: never;
         };
-        get: operations["getLogsByVersion_1"];
+        get: operations["getLogsByVersion_3"];
         put?: never;
         post?: never;
         delete?: never;
@@ -388,14 +1615,379 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
-    "/network/{versionId}": {
+    "/passenger/origin/{versionId}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["getNetworkByScenarioKey"];
+        get: operations["getOriginPassenger"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/passenger/histories/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getHistories_4"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/od-matrix/origin/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOriginOdMatrix"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/od-matrix/histories/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getHistories_5"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/{versionId}/tiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getNetworkTiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/{versionId}/tiles.mvt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getNetworkMvt"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/{versionId}/grid": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getNetworkGrid"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/{versionId}/feature": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getNetworkFeature"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/{versionId}/extent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getNetworkExtent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/{versionId}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["exportAsXml_6"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/{versionId}/backup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["downloadBackup"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/public-traffic-lights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getPublicTrafficLights"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/osm-traffic-signals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOsmTrafficSignals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/origin/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOriginNetwork"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/import/sumo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** OSM bbox → SUMO netconvert → network.xml 다운로드 */
+        get: operations["importSumoXml"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/import/sumo/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** OSM bbox → SUMO netconvert → 검증 + SFTP 저장 + OsmSaveResponse */
+        get: operations["importSumoSave"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/import/sumo/json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** OSM bbox → SUMO netconvert → NetworkResponse JSON */
+        get: operations["importSumoJson"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/import/osm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** OSM bbox → network.xml 다운로드 */
+        get: operations["importFromOsmXml"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/import/osm/json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** OSM bbox → NetworkResponse JSON */
+        get: operations["importFromOsmJson"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/import/ktdb/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * KTDB 가져오기 백그라운드 스캐폴딩(더미 신호/OD/TOD 생성 + 타일 빌드) 진행 여부
+         * @description 가져오기 응답은 이 작업을 기다리지 않으므로, 완료 여부를 프론트가 폴링으로 확인한다.
+         */
+        get: operations["getScaffoldStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/import/ktdb/detail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 줌인 viewport bbox에 대한 상세 KTDB NetworkResponse
+         * @description 전체 가져오기 후 zoom-in 시 해당 영역의 상세 데이터를 요청하는 용도.
+         */
+        get: operations["importKtdbDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/histories/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getHistories_6"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/crossroad-info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCrossRoadInfo"];
         put?: never;
         post?: never;
         delete?: never;
@@ -452,6 +2044,22 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/local-data/models/**": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["serve"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/layer/list": {
         parameters: {
             query?: never;
@@ -500,6 +2108,86 @@ export type paths = {
         patch?: never;
         trace?: never;
     };
+    "/analytics/summary/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/region-traffic/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getRegionTraffic"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/region-od-graph/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getRegionOdGraph"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/od-flow/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getOdFlow"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/link-traffic/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getLinkTraffic"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/analytics/link-stats/{versionId}": {
         parameters: {
             query?: never;
@@ -511,6 +2199,86 @@ export type paths = {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/intersection-los/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getIntersectionLos"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/facility-coverage/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getFacilityCoverage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/analytics/congestion-graph/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCongestionGraph"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scenario/{id}/versions/{versionId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["deleteVersion"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/network/{versionId}/dependent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["deleteDependentData"];
         options?: never;
         head?: never;
         patch?: never;
@@ -533,6 +2301,54 @@ export type components = {
             correctionHpr?: string;
             /** Format: double */
             zoffset?: number;
+        };
+        ThreedTilesetRequest: {
+            label?: string;
+            /** Format: int32 */
+            sortOrder?: number;
+            urls?: string[];
+        };
+        ThreedTilesetResponse: {
+            /** Format: int64 */
+            id?: number;
+            label?: string;
+            /** Format: int32 */
+            sortOrder?: number;
+            urls?: string[];
+        };
+        Scenario: {
+            /** Format: int64 */
+            id?: number;
+            key?: string;
+            /** Format: double */
+            longitude?: number;
+            /** Format: double */
+            latitude?: number;
+            /** Format: double */
+            baseRotation?: number;
+            /** Format: double */
+            baseScale?: number;
+            label?: string;
+            description?: string;
+            versions?: components["schemas"]["ScenarioVersion"][];
+        };
+        ScenarioVersion: {
+            /** Format: int64 */
+            id?: number;
+            key?: string;
+            label?: string;
+            /** Format: date-time */
+            insertDate?: string;
+            /** Format: date-time */
+            modifyDate?: string;
+            /** Format: double */
+            latitude?: number;
+            /** Format: double */
+            longitude?: number;
+            /** Format: double */
+            baseRotation?: number;
+            /** Format: double */
+            baseScale?: number;
         };
         MenuRequest: {
             /** Format: int64 */
@@ -597,6 +2413,8 @@ export type components = {
             targetNorthing?: number;
             /** Format: double */
             halfWidth?: number;
+            /** Format: int32 */
+            numLane?: number;
         };
         RoadResponse: {
             roads?: components["schemas"]["Road"][];
@@ -607,6 +2425,16 @@ export type components = {
             roadEntities?: components["schemas"]["RoadResponse"];
             /** Format: int32 */
             speedFactor?: number;
+            regenerate?: boolean;
+            generateDummy?: boolean;
+            bbox?: string;
+            /** Format: int32 */
+            fromTime?: number;
+            /** Format: int32 */
+            toTime?: number;
+            /** Format: int32 */
+            bufferSec?: number;
+            stickyIds?: string[];
         };
         Detail: {
             field?: string;
@@ -620,16 +2448,39 @@ export type components = {
             deleted?: components["schemas"]["Detail"][];
             modified?: components["schemas"]["Detail"][];
         };
+        XmlLayerSaveRequest: {
+            data?: {
+                [key: string]: unknown;
+            };
+            logs?: components["schemas"]["LogsData"];
+        };
+        PhaseData: {
+            id?: string;
+            duration?: string;
+            turnList?: string;
+            minGreenTime?: string;
+            maxGreenTime?: string;
+        };
+        PlanData: {
+            id?: string;
+            cycle?: string;
+            offset?: string;
+            phases?: components["schemas"]["PhaseData"][];
+        };
         SignalResponse: {
             nodeId?: string;
             turnId?: string;
             turning?: string;
             type?: string;
             connectionId?: string;
+            plans?: components["schemas"]["PlanData"][];
         };
         SignalSaveRequest: {
             data?: components["schemas"]["SignalResponse"][];
             logs?: components["schemas"]["LogsData"];
+        };
+        SignalNodeResponseData: {
+            signals?: components["schemas"]["SignalResponse"][];
         };
         CreateFieldOptionRequest: {
             value?: string;
@@ -670,6 +2521,11 @@ export type components = {
             optionsToCreate?: components["schemas"]["CreateFieldOptionRequest"][];
             optionIdsToDelete?: number[];
         };
+        ScenarioVersionRequest: {
+            key?: string;
+            label?: string;
+            sourceVersionKey?: string;
+        };
         Coordinates: {
             /** Format: double */
             lat?: number;
@@ -707,25 +2563,72 @@ export type components = {
             lineId?: string;
             times?: string[];
         };
+        ExitResponse: {
+            id?: string;
+            linkRef?: string;
+            /** Format: double */
+            offset?: number;
+            accessTime?: string;
+            coord?: string;
+        };
+        RailPublicTransitResponse: {
+            railStations?: components["schemas"]["RailStationResponse"][];
+        };
+        RailStationResponse: {
+            id?: string;
+            /** @enum {unknown} */
+            transitMode?: "subway" | "bus";
+            lineList?: string;
+            /** @enum {unknown} */
+            type?: "island" | "side" | "face-to-face" | "staggered";
+            address?: string;
+            center?: string;
+            exits?: components["schemas"]["ExitResponse"][];
+            coordinates?: components["schemas"]["Coordinates"];
+        };
+        BusLineResponse: {
+            list?: string;
+        };
         BusStationData: {
             id?: string;
             transitMode?: string;
-            /** Format: int32 */
+            /** Format: int64 */
             linkRef?: number;
-            /** Format: int32 */
+            /** Format: int64 */
             laneRef?: number;
             /** Format: double */
-            pos?: number;
+            offset?: number;
             type?: string;
             /** Format: int32 */
             parkingLots?: number;
             address?: string;
             center?: string;
-            lines?: string[];
+            line?: components["schemas"]["BusLineResponse"];
         };
         BusStationSaveRequest: {
             data?: components["schemas"]["BusStationData"][];
             logs?: components["schemas"]["LogsData"];
+        };
+        BusStationResponse: {
+            id?: string;
+            /** @enum {unknown} */
+            transitMode?: "subway" | "bus";
+            /** Format: int64 */
+            linkRef?: number;
+            /** Format: int64 */
+            laneRef?: number;
+            /** Format: double */
+            offset?: number;
+            /** @enum {unknown} */
+            type?: "island" | "side" | "face-to-face" | "staggered";
+            /** Format: int32 */
+            parkingLots?: number;
+            address?: string;
+            center?: string;
+            line?: components["schemas"]["BusLineResponse"];
+        };
+        PublicTransitResponse: {
+            busStations?: components["schemas"]["BusStationResponse"][];
         };
         PavementMarkingData: {
             id?: string;
@@ -746,6 +2649,185 @@ export type components = {
             data?: components["schemas"]["PavementMarkingData"][];
             logs?: components["schemas"]["LogsData"];
         };
+        CellResponse: {
+            /** Format: int64 */
+            id?: number;
+            /** Format: double */
+            length?: number;
+            /** Format: double */
+            offset?: number;
+        };
+        ConnectionResponse: {
+            /** Format: int64 */
+            id?: number;
+            /** Format: int64 */
+            fromLink?: number;
+            /** Format: int64 */
+            fromLane?: number;
+            /** Format: int64 */
+            toLink?: number;
+            /** Format: int64 */
+            toLane?: number;
+            /** @enum {string} */
+            turning?: "Straight" | "Right_Turn" | "Left_Turn";
+            /** Format: double */
+            length?: number;
+            /** Format: double */
+            width?: number;
+            /** Format: double */
+            ffSpd?: number;
+            shape?: string;
+            coordinates?: components["schemas"]["Coordinates"][];
+        };
+        LaneResponse: {
+            /** Format: int64 */
+            id?: number;
+            leftLaneId?: string;
+            rightLaneId?: string;
+            /** Format: int32 */
+            numCell?: number;
+            laneAccessType?: string;
+            rightLC?: boolean;
+            leftLC?: boolean;
+            shape?: string;
+            segments?: components["schemas"]["SegmentResponse"][];
+            cells?: components["schemas"]["CellResponse"][];
+        };
+        LinkResponse: {
+            /** Format: int64 */
+            id?: number;
+            /** Format: int64 */
+            fromNode?: number;
+            /** Format: int64 */
+            toNode?: number;
+            /** Format: int32 */
+            numLane?: number;
+            /** Format: double */
+            length?: number;
+            /** Format: double */
+            width?: number;
+            /** Format: double */
+            maxSpd?: number;
+            /** Format: double */
+            minSpd?: number;
+            /** Format: double */
+            ffSpd?: number;
+            /** Format: double */
+            waveSpd?: number;
+            /** Format: double */
+            qmax?: number;
+            /** Format: double */
+            maxVeh?: number;
+            /** @enum {string} */
+            simType?: "Meso" | "Micro";
+            /** @enum {string} */
+            type?: "straight" | "curve";
+            name?: string;
+            layer?: string;
+            /** Format: double */
+            stopLine?: number;
+            shape?: string;
+            lanes?: components["schemas"]["LaneResponse"][];
+            sections?: components["schemas"]["SectionResponse"][];
+            coordinates?: components["schemas"]["Coordinates"][];
+        };
+        NetworkResponse: {
+            nodes?: components["schemas"]["NodeResponse"][];
+            links?: components["schemas"]["LinkResponse"][];
+            /** Format: double */
+            baseScale?: number;
+        };
+        NodeResponse: {
+            /** Format: int64 */
+            id?: number;
+            /** @enum {string} */
+            type?: "Intersection" | "Normal" | "Merging" | "Diverging" | "Terminal" | "Garage";
+            /** Format: int32 */
+            numPort?: number;
+            /** Format: int32 */
+            numConnection?: number;
+            /** @enum {string} */
+            v2x?: "on" | "off";
+            center?: string;
+            name?: string;
+            ports?: components["schemas"]["PortResponse"][];
+            connections?: components["schemas"]["ConnectionResponse"][];
+            coordinates?: components["schemas"]["Coordinates"];
+            portLinkIds?: string[];
+        };
+        OsmSaveResponse: {
+            network?: components["schemas"]["NetworkResponse"];
+            warnings?: string[];
+            errors?: string[];
+            signals?: components["schemas"]["SignalResponse"][];
+            busStations?: components["schemas"]["PublicTransitResponse"];
+            railStations?: components["schemas"]["RailPublicTransitResponse"];
+            busRoutes?: {
+                [key: string]: unknown;
+            };
+            railRoutes?: {
+                [key: string]: unknown;
+            };
+            simplified?: boolean;
+        };
+        PortResponse: {
+            /** @enum {string} */
+            type?: "in" | "out";
+            linkId?: string;
+            /** Format: int64 */
+            direction?: number;
+        };
+        SectionResponse: {
+            /** Format: int64 */
+            id?: number;
+            leftId?: string;
+            rightId?: string;
+            /** Format: double */
+            slope?: number;
+            /** Format: double */
+            length?: number;
+            /** Format: double */
+            offset?: number;
+        };
+        SegmentResponse: {
+            /** Format: int64 */
+            id?: number;
+            block?: boolean;
+            /** Format: double */
+            initPoint?: number;
+            /** Format: double */
+            endPoint?: number;
+            rightLc?: string;
+            leftLc?: string;
+        };
+        NetworkDiffRequest: {
+            baseVersionId?: string;
+            upsertLinks?: components["schemas"]["LinkResponse"][];
+            upsertNodes?: components["schemas"]["NodeResponse"][];
+            deleteLinkIds?: number[];
+            deleteNodeIds?: number[];
+        };
+        AutoNetworkJsonResponse: {
+            network?: components["schemas"]["NetworkResponse"];
+            signals?: components["schemas"]["SignalResponse"][];
+        };
+        SignalTimelineResponse: {
+            nodeId?: string;
+            signalTimeline?: components["schemas"]["Timeline"][];
+            turnInfo?: components["schemas"]["Turn"][];
+        };
+        Timeline: {
+            startTime?: string;
+            endTime?: string;
+            activeTurns?: string[];
+            signalState?: string;
+        };
+        Turn: {
+            id?: string;
+            turning?: string;
+            type?: string;
+            connList?: string[];
+        };
         VehicleType: {
             /** Format: int64 */
             id?: number;
@@ -754,9 +2836,16 @@ export type components = {
             v2x?: string;
             drt?: string;
             maxPax?: string;
+            nextsimTypeCode?: string;
         };
-        SignalNodeResponseData: {
-            signals?: components["schemas"]["SignalResponse"][];
+        XmlLayerLog: {
+            /** Format: int64 */
+            id?: number;
+            layerKey?: string;
+            versionId?: string;
+            data?: components["schemas"]["LogsData"];
+            /** Format: date-time */
+            createdAt?: string;
         };
         SignalLogs: {
             versionId?: string;
@@ -810,74 +2899,21 @@ export type components = {
             name?: string;
             children?: components["schemas"]["SchemaStructure"][];
         };
-        Scenario: {
+        RailStationLogs: {
+            versionId?: string;
+            /** Format: date-time */
+            createdAt?: string;
             /** Format: int64 */
             id?: number;
-            key?: string;
-            /** Format: double */
-            longitude?: number;
-            /** Format: double */
-            latitude?: number;
-            label?: string;
-            description?: string;
-            versions?: components["schemas"]["ScenarioVersion"][];
+            data?: components["schemas"]["LogsData"];
         };
-        ScenarioVersion: {
+        BusStationLogs: {
+            versionId?: string;
+            /** Format: date-time */
+            createdAt?: string;
             /** Format: int64 */
             id?: number;
-            key?: string;
-            label?: string;
-            /** Format: date-time */
-            insertDate?: string;
-            /** Format: date-time */
-            modifyDate?: string;
-        };
-        ExitResponse: {
-            id?: string;
-            linkRef?: string;
-            /** Format: double */
-            offset?: number;
-            accessTime?: string;
-            coord?: string;
-        };
-        RailPublicTransitResponse: {
-            railStations?: components["schemas"]["RailStationResponse"][];
-        };
-        RailStationResponse: {
-            id?: string;
-            /** @enum {string} */
-            transitMode?: "subway" | "bus";
-            lineList?: string;
-            /** @enum {string} */
-            type?: "island" | "side" | "face_to_face" | "staggered";
-            address?: string;
-            center?: string;
-            exits?: components["schemas"]["ExitResponse"][];
-            coordinates?: components["schemas"]["Coordinates"];
-        };
-        BusLineResponse: {
-            list?: string;
-        };
-        BusStationResponse: {
-            id?: string;
-            /** @enum {string} */
-            transitMode?: "subway" | "bus";
-            /** Format: int64 */
-            linkRef?: number;
-            /** Format: int64 */
-            laneRef?: number;
-            /** Format: double */
-            offset?: number;
-            /** @enum {string} */
-            type?: "island" | "side" | "face_to_face" | "staggered";
-            /** Format: int32 */
-            parkingLots?: number;
-            address?: string;
-            center?: string;
-            line?: components["schemas"]["BusLineResponse"];
-        };
-        PublicTransitResponse: {
-            busStations?: components["schemas"]["BusStationResponse"][];
+            data?: components["schemas"]["LogsData"];
         };
         RoadAssetData: {
             pavementMarkings?: components["schemas"]["PavementMarkingData"][];
@@ -889,135 +2925,6 @@ export type components = {
             /** Format: int64 */
             id?: number;
             data?: components["schemas"]["LogsData"];
-        };
-        CellResponse: {
-            /** Format: int64 */
-            id?: number;
-            /** Format: double */
-            length?: number;
-            /** Format: double */
-            offset?: number;
-        };
-        ConnectionResponse: {
-            /** Format: int64 */
-            id?: number;
-            /** Format: int64 */
-            fromLink?: number;
-            /** Format: int64 */
-            fromLane?: number;
-            /** Format: int64 */
-            toLink?: number;
-            /** Format: int64 */
-            toLane?: number;
-            /** @enum {string} */
-            turning?: "Straight" | "Right_Turn" | "Left_Turn";
-            /** Format: double */
-            length?: number;
-            /** Format: double */
-            width?: number;
-            /** Format: double */
-            ffSpd?: number;
-            shape?: string;
-        };
-        LaneResponse: {
-            /** Format: int64 */
-            id?: number;
-            leftLaneId?: string;
-            rightLaneId?: string;
-            /** Format: int32 */
-            numCell?: number;
-            laneAccessType?: string;
-            rightLC?: boolean;
-            leftLC?: boolean;
-            shape?: string;
-            segments?: components["schemas"]["SegmentResponse"][];
-            cells?: components["schemas"]["CellResponse"][];
-        };
-        LinkResponse: {
-            /** Format: int64 */
-            id?: number;
-            /** Format: int64 */
-            fromNode?: number;
-            /** Format: int64 */
-            toNode?: number;
-            /** Format: int32 */
-            numLane?: number;
-            /** Format: double */
-            length?: number;
-            /** Format: double */
-            width?: number;
-            /** Format: double */
-            maxSpd?: number;
-            /** Format: double */
-            minSpd?: number;
-            /** Format: double */
-            ffSpd?: number;
-            /** Format: double */
-            waveSpd?: number;
-            /** Format: double */
-            qmax?: number;
-            /** Format: double */
-            maxVeh?: number;
-            /** @enum {string} */
-            simType?: "Meso" | "Micro";
-            /** @enum {string} */
-            type?: "straight" | "curve";
-            layer?: string;
-            /** Format: double */
-            stopLine?: number;
-            shape?: string;
-            lanes?: components["schemas"]["LaneResponse"][];
-            sections?: components["schemas"]["SectionResponse"][];
-            coordinates?: components["schemas"]["Coordinates"][];
-        };
-        NetworkResponse: {
-            nodes?: components["schemas"]["NodeResponse"][];
-            links?: components["schemas"]["LinkResponse"][];
-        };
-        NodeResponse: {
-            /** Format: int64 */
-            id?: number;
-            /** @enum {string} */
-            type?: "Intersection" | "Normal" | "Merging" | "Diverging" | "Terminal" | "Garage";
-            /** Format: int32 */
-            numPort?: number;
-            /** Format: int32 */
-            numConnection?: number;
-            /** @enum {string} */
-            v2x?: "on" | "off";
-            center?: string;
-            ports?: components["schemas"]["PortResponse"][];
-            connections?: components["schemas"]["ConnectionResponse"][];
-            coordinates?: components["schemas"]["Coordinates"];
-            portLinkIds?: string[];
-        };
-        PortResponse: {
-            /** @enum {string} */
-            type?: "in" | "out";
-            linkId?: string;
-            /** Format: int64 */
-            direction?: number;
-        };
-        SectionResponse: {
-            /** Format: int64 */
-            id?: number;
-            leftId?: string;
-            rightId?: string;
-            /** Format: double */
-            slope?: number;
-            /** Format: double */
-            length?: number;
-            /** Format: double */
-            offset?: number;
-        };
-        SegmentResponse: {
-            /** Format: int64 */
-            id?: number;
-            block?: boolean;
-            /** Format: double */
-            initPoint?: number;
-            /** Format: double */
-            endPoint?: number;
         };
         MenuTreeResponse: {
             /** Format: int64 */
@@ -1056,6 +2963,97 @@ export type components = {
             label?: string;
             layers?: components["schemas"]["LayerResponse"][];
         };
+        OverallSummaryResponse: {
+            /** Format: int32 */
+            totalVehicles?: number;
+            /** Format: int32 */
+            totalLinks?: number;
+            /** Format: double */
+            simulationDuration?: number;
+            /** Format: int32 */
+            peakVolume?: number;
+            /** Format: double */
+            peakTimestep?: number;
+        };
+        RegionTraffic: {
+            code?: string;
+            name?: string;
+            rings?: number[][][];
+            centroid?: number[];
+            /** Format: int32 */
+            volume?: number;
+            /** Format: double */
+            capacity?: number;
+            /** Format: double */
+            vcRatio?: number;
+            /** Format: int32 */
+            linkCount?: number;
+        };
+        RegionTrafficResponse: {
+            tier?: string;
+            regions?: components["schemas"]["RegionTraffic"][];
+        };
+        Edge: {
+            from?: string;
+            to?: string;
+            /** Format: int32 */
+            volume?: number;
+        };
+        Node: {
+            code?: string;
+            name?: string;
+            centroid?: number[];
+            /** Format: int32 */
+            totalVolume?: number;
+        };
+        RegionOdGraphResponse: {
+            tier?: string;
+            nodes?: components["schemas"]["Node"][];
+            edges?: components["schemas"]["Edge"][];
+        };
+        OdFlowResponse: {
+            /** Format: int32 */
+            fromTime?: number;
+            /** Format: int32 */
+            toTime?: number;
+            pairs?: components["schemas"]["OdPair"][];
+        };
+        OdPair: {
+            /** Format: double */
+            fromLng?: number;
+            /** Format: double */
+            fromLat?: number;
+            /** Format: double */
+            toLng?: number;
+            /** Format: double */
+            toLat?: number;
+            /** Format: int32 */
+            volume?: number;
+        };
+        LinkTraffic: {
+            linkId?: string;
+            /** Format: int32 */
+            volume?: number;
+            /** Format: double */
+            avgSpeed?: number;
+            coordinates?: components["schemas"]["Coordinates"][];
+            /** Format: int64 */
+            fromNode?: number;
+            /** Format: int64 */
+            toNode?: number;
+            /** Format: double */
+            capacity?: number;
+            /** Format: double */
+            vcRatio?: number;
+            losGrade?: string;
+        };
+        LinkTrafficResponse: {
+            /** Format: int32 */
+            fromTime?: number;
+            /** Format: int32 */
+            toTime?: number;
+            links?: components["schemas"]["LinkTraffic"][];
+        };
         LinkStatsResponse: {
             /** Format: int32 */
             interval?: number;
@@ -1078,6 +3076,44 @@ export type components = {
             /** Format: double */
             avgSpeed?: number;
         };
+        IntersectionLos: {
+            nodeId?: string;
+            /** Format: double */
+            lng?: number;
+            /** Format: double */
+            lat?: number;
+            losGrade?: string;
+            /** Format: int32 */
+            approachLinkCount?: number;
+        };
+        IntersectionLosResponse: {
+            intersections?: components["schemas"]["IntersectionLos"][];
+        };
+        CoveredLink: {
+            linkId?: string;
+            coordinates?: components["schemas"]["Coordinates"][];
+            /** Format: int32 */
+            coverageCount?: number;
+        };
+        Facility: {
+            type?: string;
+            /** Format: double */
+            lng?: number;
+            /** Format: double */
+            lat?: number;
+        };
+        FacilityCoverageResponse: {
+            /** Format: double */
+            maxMinutes?: number;
+            /** Format: int32 */
+            facilityCount?: number;
+            facilities?: components["schemas"]["Facility"][];
+            links?: components["schemas"]["CoveredLink"][];
+        };
+        CongestionGraphResponse: {
+            nodes?: components["schemas"]["Node"][];
+            edges?: components["schemas"]["Edge"][];
+        };
     };
     responses: never;
     parameters: never;
@@ -1086,6 +3122,10 @@ export type components = {
     pathItems: never;
 };
 export type VehicleTypeModel = components['schemas']['VehicleTypeModel'];
+export type ThreedTilesetRequest = components['schemas']['ThreedTilesetRequest'];
+export type ThreedTilesetResponse = components['schemas']['ThreedTilesetResponse'];
+export type Scenario = components['schemas']['Scenario'];
+export type ScenarioVersion = components['schemas']['ScenarioVersion'];
 export type MenuRequest = components['schemas']['MenuRequest'];
 export type MenuResponse = components['schemas']['MenuResponse'];
 export type Cartesian3 = components['schemas']['Cartesian3'];
@@ -1095,24 +3135,50 @@ export type RoadResponse = components['schemas']['RoadResponse'];
 export type VehicleRequest = components['schemas']['VehicleRequest'];
 export type Detail = components['schemas']['Detail'];
 export type LogsData = components['schemas']['LogsData'];
+export type XmlLayerSaveRequest = components['schemas']['XmlLayerSaveRequest'];
+export type PhaseData = components['schemas']['PhaseData'];
+export type PlanData = components['schemas']['PlanData'];
 export type SignalResponse = components['schemas']['SignalResponse'];
 export type SignalSaveRequest = components['schemas']['SignalSaveRequest'];
+export type SignalNodeResponseData = components['schemas']['SignalNodeResponseData'];
 export type CreateFieldOptionRequest = components['schemas']['CreateFieldOptionRequest'];
 export type CreateFieldRequest = components['schemas']['CreateFieldRequest'];
 export type SchemaFieldsRequest = components['schemas']['SchemaFieldsRequest'];
 export type UpdateFieldOption = components['schemas']['UpdateFieldOption'];
 export type UpdateFieldRequest = components['schemas']['UpdateFieldRequest'];
+export type ScenarioVersionRequest = components['schemas']['ScenarioVersionRequest'];
 export type Coordinates = components['schemas']['Coordinates'];
 export type ExitData = components['schemas']['ExitData'];
 export type RailStationData = components['schemas']['RailStationData'];
 export type RailStationSaveRequest = components['schemas']['RailStationSaveRequest'];
 export type TimetableData = components['schemas']['TimetableData'];
+export type ExitResponse = components['schemas']['ExitResponse'];
+export type RailPublicTransitResponse = components['schemas']['RailPublicTransitResponse'];
+export type RailStationResponse = components['schemas']['RailStationResponse'];
+export type BusLineResponse = components['schemas']['BusLineResponse'];
 export type BusStationData = components['schemas']['BusStationData'];
 export type BusStationSaveRequest = components['schemas']['BusStationSaveRequest'];
+export type BusStationResponse = components['schemas']['BusStationResponse'];
+export type PublicTransitResponse = components['schemas']['PublicTransitResponse'];
 export type PavementMarkingData = components['schemas']['PavementMarkingData'];
 export type PavementMarkingSaveRequest = components['schemas']['PavementMarkingSaveRequest'];
+export type CellResponse = components['schemas']['CellResponse'];
+export type ConnectionResponse = components['schemas']['ConnectionResponse'];
+export type LaneResponse = components['schemas']['LaneResponse'];
+export type LinkResponse = components['schemas']['LinkResponse'];
+export type NetworkResponse = components['schemas']['NetworkResponse'];
+export type NodeResponse = components['schemas']['NodeResponse'];
+export type OsmSaveResponse = components['schemas']['OsmSaveResponse'];
+export type PortResponse = components['schemas']['PortResponse'];
+export type SectionResponse = components['schemas']['SectionResponse'];
+export type SegmentResponse = components['schemas']['SegmentResponse'];
+export type NetworkDiffRequest = components['schemas']['NetworkDiffRequest'];
+export type AutoNetworkJsonResponse = components['schemas']['AutoNetworkJsonResponse'];
+export type SignalTimelineResponse = components['schemas']['SignalTimelineResponse'];
+export type Timeline = components['schemas']['Timeline'];
+export type Turn = components['schemas']['Turn'];
 export type VehicleType = components['schemas']['VehicleType'];
-export type SignalNodeResponseData = components['schemas']['SignalNodeResponseData'];
+export type XmlLayerLog = components['schemas']['XmlLayerLog'];
 export type SignalLogs = components['schemas']['SignalLogs'];
 export type ColumnOption = components['schemas']['ColumnOption'];
 export type LayerSchemaFieldResponse = components['schemas']['LayerSchemaFieldResponse'];
@@ -1121,31 +3187,32 @@ export type LayerSchemaResponse = components['schemas']['LayerSchemaResponse'];
 export type SchemaColumn = components['schemas']['SchemaColumn'];
 export type SchemaDefinition = components['schemas']['SchemaDefinition'];
 export type SchemaStructure = components['schemas']['SchemaStructure'];
-export type Scenario = components['schemas']['Scenario'];
-export type ScenarioVersion = components['schemas']['ScenarioVersion'];
-export type ExitResponse = components['schemas']['ExitResponse'];
-export type RailPublicTransitResponse = components['schemas']['RailPublicTransitResponse'];
-export type RailStationResponse = components['schemas']['RailStationResponse'];
-export type BusLineResponse = components['schemas']['BusLineResponse'];
-export type BusStationResponse = components['schemas']['BusStationResponse'];
-export type PublicTransitResponse = components['schemas']['PublicTransitResponse'];
+export type RailStationLogs = components['schemas']['RailStationLogs'];
+export type BusStationLogs = components['schemas']['BusStationLogs'];
 export type RoadAssetData = components['schemas']['RoadAssetData'];
 export type PavementMarkingLogs = components['schemas']['PavementMarkingLogs'];
-export type CellResponse = components['schemas']['CellResponse'];
-export type ConnectionResponse = components['schemas']['ConnectionResponse'];
-export type LaneResponse = components['schemas']['LaneResponse'];
-export type LinkResponse = components['schemas']['LinkResponse'];
-export type NetworkResponse = components['schemas']['NetworkResponse'];
-export type NodeResponse = components['schemas']['NodeResponse'];
-export type PortResponse = components['schemas']['PortResponse'];
-export type SectionResponse = components['schemas']['SectionResponse'];
-export type SegmentResponse = components['schemas']['SegmentResponse'];
 export type MenuTreeResponse = components['schemas']['MenuTreeResponse'];
 export type LayerResponse = components['schemas']['LayerResponse'];
 export type LayerGroupResponse = components['schemas']['LayerGroupResponse'];
+export type OverallSummaryResponse = components['schemas']['OverallSummaryResponse'];
+export type RegionTraffic = components['schemas']['RegionTraffic'];
+export type RegionTrafficResponse = components['schemas']['RegionTrafficResponse'];
+export type Edge = components['schemas']['Edge'];
+export type Node = components['schemas']['Node'];
+export type RegionOdGraphResponse = components['schemas']['RegionOdGraphResponse'];
+export type OdFlowResponse = components['schemas']['OdFlowResponse'];
+export type OdPair = components['schemas']['OdPair'];
+export type LinkTraffic = components['schemas']['LinkTraffic'];
+export type LinkTrafficResponse = components['schemas']['LinkTrafficResponse'];
 export type LinkStatsResponse = components['schemas']['LinkStatsResponse'];
 export type LinkSummary = components['schemas']['LinkSummary'];
 export type TimeSlotStats = components['schemas']['TimeSlotStats'];
+export type IntersectionLos = components['schemas']['IntersectionLos'];
+export type IntersectionLosResponse = components['schemas']['IntersectionLosResponse'];
+export type CoveredLink = components['schemas']['CoveredLink'];
+export type Facility = components['schemas']['Facility'];
+export type FacilityCoverageResponse = components['schemas']['FacilityCoverageResponse'];
+export type CongestionGraphResponse = components['schemas']['CongestionGraphResponse'];
 export type $defs = Record<string, never>;
 export interface operations {
     getVehicleTypeFlat: {
@@ -1253,6 +3320,120 @@ export interface operations {
                 content: {
                     "*/*": components["schemas"]["VehicleTypeModel"];
                 };
+            };
+        };
+    };
+    update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThreedTilesetRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ThreedTilesetResponse"];
+                };
+            };
+        };
+    };
+    delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getScenarioById: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["Scenario"];
+                };
+            };
+        };
+    };
+    updateScenario: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Scenario"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["Scenario"];
+                };
+            };
+        };
+    };
+    deleteScenario: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -1397,11 +3578,122 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                versionId: string;
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VehicleRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    deleteVehicleRoute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
             };
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getVehicleRouteViewport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VehicleRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getActiveVehicleCount: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VehicleRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    uploadVehicleSimDb: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -1421,7 +3713,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                versionId: string;
+                scenarioKey: string;
             };
             cookie?: never;
         };
@@ -1592,6 +3884,177 @@ export interface operations {
             };
         };
     };
+    getAll: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ThreedTilesetResponse"][];
+                };
+            };
+        };
+    };
+    create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThreedTilesetRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ThreedTilesetResponse"];
+                };
+            };
+        };
+    };
+    run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    cancel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getSimulationScenario: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    saveSimulationScenario: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["XmlLayerSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    importScenarioXml: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     getSignal: {
         parameters: {
             query?: never;
@@ -1635,6 +4098,138 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    repairSignalTod: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+        };
+    };
+    importSignalXml: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SignalNodeResponseData"];
+                };
+            };
+        };
+    };
+    getSignalTod: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    saveSignalTod: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["XmlLayerSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    importSignalTodXml: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
             };
         };
     };
@@ -1684,6 +4279,118 @@ export interface operations {
             };
         };
     };
+    getAllScenarios: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["Scenario"][];
+                };
+            };
+        };
+    };
+    createScenario: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Scenario"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["Scenario"];
+                };
+            };
+        };
+    };
+    getScenarioVersions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ScenarioVersion"][];
+                };
+            };
+        };
+    };
+    createVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScenarioVersionRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["ScenarioVersion"];
+                };
+            };
+        };
+    };
+    resetVersionData: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     getRailStationsByVersionId: {
         parameters: {
             query?: never;
@@ -1706,7 +4413,7 @@ export interface operations {
             };
         };
     };
-    saveBusStations: {
+    saveRailStations: {
         parameters: {
             query?: never;
             header?: never;
@@ -1727,6 +4434,35 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    importRailStationXml: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RailPublicTransitResponse"];
+                };
             };
         };
     };
@@ -1752,7 +4488,7 @@ export interface operations {
             };
         };
     };
-    saveBusStations_1: {
+    saveBusStations: {
         parameters: {
             query?: never;
             header?: never;
@@ -1773,6 +4509,351 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    importBusStationXml: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PublicTransitResponse"];
+                };
+            };
+        };
+    };
+    getRailPtLine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    saveRailPtLine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["XmlLayerSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    importRailPtLineXml: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    save: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["XmlLayerSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    importDefault: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getWeekend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    saveWeekend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["XmlLayerSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    importWeekend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getWeekday: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    saveWeekday: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["XmlLayerSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    importWeekday: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
             };
         };
     };
@@ -1822,6 +4903,535 @@ export interface operations {
             };
         };
     };
+    getPassenger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    savePassenger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["XmlLayerSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    importPassengerXml: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getOdMatrix: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    saveOdMatrix: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["XmlLayerSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    importOdMatrixXml: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getNetworkByVersionId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    saveNetwork: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["XmlLayerSaveRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reanchorNetwork: {
+        parameters: {
+            query: {
+                latitude: number;
+                longitude: number;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OsmSaveResponse"];
+                };
+            };
+        };
+    };
+    importNetworkXml: {
+        parameters: {
+            query?: {
+                latitude?: number;
+                longitude?: number;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OsmSaveResponse"];
+                };
+            };
+        };
+    };
+    saveNetworkDiff: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NetworkDiffRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    downloadDependentZip: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    calibrateNetwork: {
+        parameters: {
+            query: {
+                srcLat1: number;
+                srcLon1: number;
+                dstLat1: number;
+                dstLon1: number;
+                srcLat2: number;
+                srcLon2: number;
+                dstLat2: number;
+                dstLon2: number;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OsmSaveResponse"];
+                };
+            };
+        };
+    };
+    importAndSave: {
+        parameters: {
+            query: {
+                /** @description 남쪽 위도 */
+                south: number;
+                /** @description 서쪽 경도 */
+                west: number;
+                /** @description 북쪽 위도 */
+                north: number;
+                /** @description 동쪽 경도 */
+                east: number;
+                /** @description 원점 위도 */
+                baseLat?: number;
+                /** @description 원점 경도 */
+                baseLon?: number;
+                /** @description Network id (기본: 0) */
+                networkId?: number;
+                /** @description 시나리오 버전 키 (SFTP 저장 경로, 선택) */
+                versionId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OsmSaveResponse"];
+                };
+            };
+        };
+    };
+    importKtdbSave: {
+        parameters: {
+            query: {
+                /** @description 남쪽 위도 */
+                south: number;
+                /** @description 서쪽 경도 */
+                west: number;
+                /** @description 북쪽 위도 */
+                north: number;
+                /** @description 동쪽 경도 */
+                east: number;
+                /** @description Network id (기본: 0) */
+                networkId?: number;
+                /** @description 시나리오 버전 키 (SFTP 저장 경로) */
+                versionId?: string;
+                /** @description 폴리곤/파일 경계 — [[[lon,lat],...],...] JSON, 여러 링이면 합집합 */
+                polygon?: string;
+                /** @description OD 샘플 수요 최소 flow(대/h) — 앱 설정 자동생성 항목, 미지정 시 기본값 */
+                odMinFlow?: number;
+                /** @description OD 샘플 수요 최대 flow(대/h) — 앱 설정 자동생성 항목, 미지정 시 기본값 */
+                odMaxFlow?: number;
+                /** @description OD 거리 감쇠 기준 거리(m) — 앱 설정 자동생성 항목, 미지정 시 기본값 */
+                odRefDistM?: number;
+                /** @description 버스 정류장/노선 자동생성 여부 — 앱 설정 자동생성 항목, 미지정 시 true */
+                generateBusFacilities?: boolean;
+                /** @description 철도역/노선 자동생성 여부 — 앱 설정 자동생성 항목, 미지정 시 true */
+                generateRailFacilities?: boolean;
+                /** @description 버스 노선 기본 배차간격(분) — 앱 설정 자동생성 항목, 미지정 시 기본값 */
+                busDefaultIntervalMin?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OsmSaveResponse"];
+                };
+            };
+        };
+    };
+    importKtdbJson: {
+        parameters: {
+            query: {
+                /** @description 남쪽 위도 */
+                south: number;
+                /** @description 서쪽 경도 */
+                west: number;
+                /** @description 북쪽 위도 */
+                north: number;
+                /** @description 동쪽 경도 */
+                east: number;
+                /** @description Network id (기본: 0) */
+                networkId?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NetworkResponse"];
+                };
+            };
+        };
+    };
+    generateAndSave: {
+        parameters: {
+            query: {
+                /** @description 남쪽 위도 */
+                south: number;
+                /** @description 서쪽 경도 */
+                west: number;
+                /** @description 북쪽 위도 */
+                north: number;
+                /** @description 동쪽 경도 */
+                east: number;
+                /** @description 시나리오 버전 키 */
+                versionId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OsmSaveResponse"];
+                };
+            };
+        };
+    };
+    generateJson: {
+        parameters: {
+            query: {
+                /** @description 남쪽 위도 */
+                south: number;
+                /** @description 서쪽 경도 */
+                west: number;
+                /** @description 북쪽 위도 */
+                north: number;
+                /** @description 동쪽 경도 */
+                east: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["AutoNetworkJsonResponse"];
+                };
+            };
+        };
+    };
     createMenu: {
         parameters: {
             query?: never;
@@ -1842,6 +5452,322 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["MenuResponse"];
+                };
+            };
+        };
+    };
+    importFromFile: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": Record<string, never>;
+                };
+            };
+        };
+    };
+    importTurnRestrictions: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": Record<string, never>;
+                };
+            };
+        };
+    };
+    importTrafficSignals: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": Record<string, never>;
+                };
+            };
+        };
+    };
+    importPublicTrafficLights: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": Record<string, never>;
+                };
+            };
+        };
+    };
+    importCrossRoadInfo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": Record<string, never>;
+                };
+            };
+        };
+    };
+    checkVehicleRouteExists: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getSignalTimelineByPlan: {
+        parameters: {
+            query: {
+                baseEpoch: number;
+                planId: string;
+                duration: number;
+            };
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SignalTimelineResponse"][];
+                };
+            };
+        };
+    };
+    status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    available: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    exportAsXml: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    getOriginScenario: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getHistories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["XmlLayerLog"][];
+                };
+            };
+        };
+    };
+    getSignalTiles: {
+        parameters: {
+            query: {
+                bbox: string;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["SignalNodeResponseData"];
+                };
+            };
+        };
+    };
+    exportAsXml_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
                 };
             };
         };
@@ -1890,6 +5816,74 @@ export interface operations {
             };
         };
     };
+    exportAsXml_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    getOriginSignalTod: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getHistories_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["XmlLayerLog"][];
+                };
+            };
+        };
+    };
     getSchemata: {
         parameters: {
             query?: never;
@@ -1910,9 +5904,11 @@ export interface operations {
             };
         };
     };
-    getAllScenarios: {
+    checkKey: {
         parameters: {
-            query?: never;
+            query: {
+                key: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1925,17 +5921,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["Scenario"][];
+                    "*/*": boolean;
                 };
             };
         };
     };
-    getScenarioById: {
+    getRoute: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: number;
+                scenarioKey: string;
             };
             cookie?: never;
         };
@@ -1947,17 +5943,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["Scenario"];
+                    "*/*": Record<string, never>;
                 };
             };
         };
     };
-    getScenarioVersions: {
+    getPaxRoute: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                id: number;
+                scenarioKey: string;
             };
             cookie?: never;
         };
@@ -1969,7 +5965,411 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "*/*": components["schemas"]["ScenarioVersion"][];
+                    "*/*": Record<string, never>;
+                };
+            };
+        };
+    };
+    exportAsXml_3: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    getOriginRailStations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RailPublicTransitResponse"];
+                };
+            };
+        };
+    };
+    getLogsByVersion_1: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RailStationLogs"][];
+                };
+            };
+        };
+    };
+    exportAsXml_4: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    getOriginBusStations: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["PublicTransitResponse"];
+                };
+            };
+        };
+    };
+    getLogsByVersion_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["BusStationLogs"][];
+                };
+            };
+        };
+    };
+    exportAsXml_5: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    getOriginRailPtLine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getHistories_2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["XmlLayerLog"][];
+                };
+            };
+        };
+    };
+    export: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    exportWeekend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    getOriginWeekend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getHistoriesWeekend: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["XmlLayerLog"][];
+                };
+            };
+        };
+    };
+    exportWeekday: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    getOriginWeekday: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getHistoriesWeekday: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["XmlLayerLog"][];
+                };
+            };
+        };
+    };
+    getOrigin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getHistories_3: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenarioKey: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["XmlLayerLog"][];
                 };
             };
         };
@@ -1996,7 +6396,7 @@ export interface operations {
             };
         };
     };
-    getLogsByVersion_1: {
+    getLogsByVersion_3: {
         parameters: {
             query?: never;
             header?: never;
@@ -2018,7 +6418,151 @@ export interface operations {
             };
         };
     };
-    getNetworkByScenarioKey: {
+    getOriginPassenger: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getHistories_4: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["XmlLayerLog"][];
+                };
+            };
+        };
+    };
+    getOriginOdMatrix: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getHistories_5: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["XmlLayerLog"][];
+                };
+            };
+        };
+    };
+    getNetworkTiles: {
+        parameters: {
+            query: {
+                bbox: string;
+                lod?: string;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NetworkResponse"];
+                };
+            };
+        };
+    };
+    getNetworkMvt: {
+        parameters: {
+            query: {
+                z: number;
+                x: number;
+                y: number;
+                lod?: string;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-protobuf": string;
+                };
+            };
+        };
+    };
+    getNetworkGrid: {
         parameters: {
             query?: never;
             header?: never;
@@ -2036,6 +6580,451 @@ export interface operations {
                 };
                 content: {
                     "*/*": components["schemas"]["NetworkResponse"];
+                };
+            };
+        };
+    };
+    getNetworkFeature: {
+        parameters: {
+            query: {
+                featureType: string;
+                id?: number;
+                parentId?: number;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": Record<string, never>;
+                };
+            };
+        };
+    };
+    getNetworkExtent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: number;
+                    };
+                };
+            };
+        };
+    };
+    exportAsXml_6: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    downloadBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    getPublicTrafficLights: {
+        parameters: {
+            query: {
+                bbox: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    getOsmTrafficSignals: {
+        parameters: {
+            query: {
+                bbox: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    }[];
+                };
+            };
+        };
+    };
+    getOriginNetwork: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    importSumoXml: {
+        parameters: {
+            query: {
+                /** @description 남쪽 위도 */
+                south: number;
+                /** @description 서쪽 경도 */
+                west: number;
+                /** @description 북쪽 위도 */
+                north: number;
+                /** @description 동쪽 경도 */
+                east: number;
+                /** @description 원점 위도 */
+                baseLat?: number;
+                /** @description 원점 경도 */
+                baseLon?: number;
+                /** @description Network id (기본: 0) */
+                networkId?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    importSumoSave: {
+        parameters: {
+            query: {
+                /** @description 남쪽 위도 */
+                south: number;
+                /** @description 서쪽 경도 */
+                west: number;
+                /** @description 북쪽 위도 */
+                north: number;
+                /** @description 동쪽 경도 */
+                east: number;
+                /** @description 원점 위도 */
+                baseLat?: number;
+                /** @description 원점 경도 */
+                baseLon?: number;
+                /** @description Network id (기본: 0) */
+                networkId?: number;
+                /** @description 시나리오 버전 키 (SFTP 저장 경로) */
+                versionId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OsmSaveResponse"];
+                };
+            };
+        };
+    };
+    importSumoJson: {
+        parameters: {
+            query: {
+                /** @description 남쪽 위도 */
+                south: number;
+                /** @description 서쪽 경도 */
+                west: number;
+                /** @description 북쪽 위도 */
+                north: number;
+                /** @description 동쪽 경도 */
+                east: number;
+                /** @description 원점 위도 */
+                baseLat?: number;
+                /** @description 원점 경도 */
+                baseLon?: number;
+                /** @description Network id (기본: 0) */
+                networkId?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NetworkResponse"];
+                };
+            };
+        };
+    };
+    importFromOsmXml: {
+        parameters: {
+            query: {
+                /** @description 남쪽 위도 */
+                south: number;
+                /** @description 서쪽 경도 */
+                west: number;
+                /** @description 북쪽 위도 */
+                north: number;
+                /** @description 동쪽 경도 */
+                east: number;
+                /** @description 원점 위도 */
+                baseLat?: number;
+                /** @description 원점 경도 */
+                baseLon?: number;
+                /** @description Network id (기본: 0) */
+                networkId?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
+    importFromOsmJson: {
+        parameters: {
+            query: {
+                /** @description 남쪽 위도 */
+                south: number;
+                /** @description 서쪽 경도 */
+                west: number;
+                /** @description 북쪽 위도 */
+                north: number;
+                /** @description 동쪽 경도 */
+                east: number;
+                /** @description 원점 위도 */
+                baseLat?: number;
+                /** @description 원점 경도 */
+                baseLon?: number;
+                /** @description Network id (기본: 0) */
+                networkId?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NetworkResponse"];
+                };
+            };
+        };
+    };
+    getScaffoldStatus: {
+        parameters: {
+            query: {
+                /** @description 시나리오 버전 키 */
+                versionId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    importKtdbDetail: {
+        parameters: {
+            query: {
+                /** @description 남쪽 위도 */
+                south: number;
+                /** @description 서쪽 경도 */
+                west: number;
+                /** @description 북쪽 위도 */
+                north: number;
+                /** @description 동쪽 경도 */
+                east: number;
+                /** @description Network id (기본: 0) */
+                networkId?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["NetworkResponse"];
+                };
+            };
+        };
+    };
+    getHistories_6: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["XmlLayerLog"][];
+                };
+            };
+        };
+    };
+    getCrossRoadInfo: {
+        parameters: {
+            query: {
+                bbox: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": {
+                        [key: string]: unknown;
+                    }[];
                 };
             };
         };
@@ -2104,6 +7093,26 @@ export interface operations {
             };
         };
     };
+    serve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+        };
+    };
     getAllLayers: {
         parameters: {
             query?: never;
@@ -2166,6 +7175,132 @@ export interface operations {
             };
         };
     };
+    getSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OverallSummaryResponse"];
+                };
+            };
+        };
+    };
+    getRegionTraffic: {
+        parameters: {
+            query: {
+                tier: string;
+                atTime?: number;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RegionTrafficResponse"];
+                };
+            };
+        };
+    };
+    getRegionOdGraph: {
+        parameters: {
+            query: {
+                tier: string;
+                fromTime?: number;
+                toTime?: number;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["RegionOdGraphResponse"];
+                };
+            };
+        };
+    };
+    getOdFlow: {
+        parameters: {
+            query: {
+                bbox: string;
+                fromTime?: number;
+                toTime?: number;
+                maxPairs?: number;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["OdFlowResponse"];
+                };
+            };
+        };
+    };
+    getLinkTraffic: {
+        parameters: {
+            query: {
+                bbox: string;
+                fromTime?: number;
+                toTime?: number;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["LinkTrafficResponse"];
+                };
+            };
+        };
+    };
     getLinkStats: {
         parameters: {
             query?: {
@@ -2188,6 +7323,127 @@ export interface operations {
                 content: {
                     "*/*": components["schemas"]["LinkStatsResponse"];
                 };
+            };
+        };
+    };
+    getIntersectionLos: {
+        parameters: {
+            query: {
+                bbox: string;
+                fromTime?: number;
+                toTime?: number;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["IntersectionLosResponse"];
+                };
+            };
+        };
+    };
+    getFacilityCoverage: {
+        parameters: {
+            query?: {
+                facilityTypes?: string;
+                maxMinutes?: number;
+                fromTime?: number;
+                toTime?: number;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["FacilityCoverageResponse"];
+                };
+            };
+        };
+    };
+    getCongestionGraph: {
+        parameters: {
+            query: {
+                bbox: string;
+                fromTime?: number;
+                toTime?: number;
+                threshold?: number;
+            };
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": components["schemas"]["CongestionGraphResponse"];
+                };
+            };
+        };
+    };
+    deleteVersion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+                versionId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    deleteDependentData: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                versionId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

@@ -1,0 +1,40 @@
+/* PropertyModal(지도 객체 선택 시 뜨는 우하단 플로팅 속성창) 전용 스크롤 표현.
+   레이아웃/색은 PropertyModal.tsx 의 인라인 styles 객체가 계속 담당하고, 이 파일은
+   pseudo-element 로만 지정할 수 있는 스크롤바 스타일만 맡는다 —
+   인라인 style 로는 ::-webkit-scrollbar 를 붙일 수 없어서 className 이 필요하다.
+   두께/톤은 AG Grid 쪽(GridTable.module.css, ListTable.css)과 같은 계열로 맞춘다. */
+
+.scrollArea {
+    /* 값이 길어도 가로 스크롤을 만들지 않는다 — tdValue 의 overflowWrap:break-word 로 접힌다 */
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.arrayList {
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.scrollArea::-webkit-scrollbar,
+.arrayList::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+}
+
+.scrollArea::-webkit-scrollbar-track,
+.arrayList::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.scrollArea::-webkit-scrollbar-thumb,
+.arrayList::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 2px;
+}
+
+.scrollArea::-webkit-scrollbar-thumb:hover,
+.arrayList::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.28);
+}

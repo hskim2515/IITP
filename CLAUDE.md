@@ -17,7 +17,7 @@ iitp/
 ### 프론트엔드 (`iitp-front/`)
 - **React 18** + **TypeScript** + **Vite 6**
 - **CesiumJS `^1.127.0`** (`vite-plugin-cesium ^1.2.23`) — 3D 지도 (도로 네트워크, 시뮬레이션 가시화)
-- **OpenLayers `^10.8.0`** (`@types/ol ^6.5.3`) — 2D 지도 (레이어 편집, 네트워크 드로우)
+- **OpenLayers `^10.10.0`** (`@types/ol ^6.5.3`) — 2D 지도 (레이어 편집, 네트워크 드로우)
 - **Zustand 5** — 전역 상태 관리 (`subscribeWithSelector` 미들웨어 사용)
 - **AG Grid 33** — 테이블 UI
 - **Ant Design 5** — UI 컴포넌트
@@ -273,7 +273,7 @@ store.getState().setChange(true);           // 3. 변경 플래그
 
 ### 프론트엔드 `.env`
 ```
-VITE_API_URL=http://localhost:8081
+VITE_API_URL=http://localhost:9090
 REACT_APP_FILE_BASE_URL=/file-proxy
 REACT_APP_FILE_ORIGIN=http://seoul.gaia3d.com:10217
 REACT_APP_VWORLD_API_KEY=...

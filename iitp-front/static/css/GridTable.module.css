@@ -1,12 +1,37 @@
+/* 남은 높이를 정확히 받는다 (TS 에서 픽셀을 빼지 않음).
+   overflow 로 잘라내지 않는다 — AG Grid 가 자체 뷰포트/스크롤바를 이 높이 안에서 그린다. */
 .gridWrap {
     width: 100%;
+    flex: 1;
+    min-height: 0;
+    box-sizing: border-box;
+    /* 아래 .ag-root-wrapper 를 이 박스에 정확히 고정하기 위한 기준 */
+    position: relative;
+}
+
+/* AG Grid 루트를 flex 로 계산된 이 박스에 그대로 못박는다.
+   ag-grid.css 는 `.ag-root-wrapper.ag-layout-normal { height: 100% }` 로만 채우는데,
+   이 100% 는 부모(.gridWrap)의 height 가 확정돼 있어야 풀린다. .gridWrap 은 명시 height 없이
+   flex:1 로만 크기가 정해지므로, 부모 높이가 확정되기 전 프레임(첫 렌더/패널 리사이즈 중)에는
+   100% 가 auto 로 떨어져 그리드가 전체 row 높이만큼 커진다 → 마지막 row 와 가로 스크롤바가
+   패널 밖(하단 taskbar 뒤)으로 밀려 보이지 않는다. inset 고정은 이 해석에 의존하지 않는다. */
+.gridWrap > :global(.ag-root-wrapper) {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
 }
 
 /* ── 필드 더보기/접기 바 ─────────────────────────────────────── */
+/* box-sizing:border-box — border-bottom 이 height 밖으로 나가면 실제 점유 높이가 29px 이 되어
+   아래 그리드가 그만큼 밀려 잘린다. flex-shrink:0 으로 압축도 막는다. */
 .fieldToggleBar {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-shrink: 0;
+    box-sizing: border-box;
     height: 28px;
     padding: 0 10px;
     background: rgba(255, 255, 255, 0.02);
@@ -84,14 +109,49 @@
 }
 
 /* ── 스크롤바 ────────────────────────────────────────────────── */
+/* AG Grid 33 은 가로/세로 스크롤을 각각 전용 엘리먼트에서 굴린다:
+   가로 = `.ag-body-horizontal-scroll-viewport { overflow-x: scroll }`,
+   세로 = `.ag-body-vertical-scroll-viewport { overflow-y: scroll }` (ag-grid.css).
+   `.ag-body-viewport`/`.ag-center-cols-viewport` 는 ag-grid.css 가
+   `scrollbar-width: none !important` + `::-webkit-scrollbar { display: none !important }` 로
+   이미 감추므로 여기서 지정하지 않는다(우리 규칙이 !important 에 밀려 죽은 선택자가 된다). */
 :global(.ag-dark-custom .ag-body-horizontal-scroll-viewport)::-webkit-scrollbar,
-:global(.ag-dark-custom .ag-body-viewport)::-webkit-scrollbar {
+:global(.ag-dark-custom .ag-body-vertical-scroll-viewport)::-webkit-scrollbar {
     width: 6px;
     height: 6px;
 }
 
+:global(.ag-dark-custom .ag-body-horizontal-scroll-viewport)::-webkit-scrollbar-track,
+:global(.ag-dark-custom .ag-body-vertical-scroll-viewport)::-webkit-scrollbar-track {
+    background: transparent;
+}
+
 :global(.ag-dark-custom .ag-body-horizontal-scroll-viewport)::-webkit-scrollbar-thumb,
-:global(.ag-dark-custom .ag-body-viewport)::-webkit-scrollbar-thumb {
+:global(.ag-dark-custom .ag-body-vertical-scroll-viewport)::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.15);
     border-radius: 3px;
+}
+
+/* Firefox 는 ::-webkit-scrollbar 를 무시하므로 표준 속성으로 같은 톤을 맞춘다 */
+:global(.ag-dark-custom .ag-body-horizontal-scroll-viewport),
+:global(.ag-dark-custom .ag-body-vertical-scroll-viewport) {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+/* 가로 스크롤 줄은 [좌측 spacer | 실제 scroll viewport | 우측 spacer] 3칸으로 구성되고,
+   ag-grid.css 가 두 spacer 에도 `overflow-x: scroll` 을 준다(스크롤바 높이만큼 자리를 잡기 위함).
+   spacer 폭은 고정 컬럼(pinned) 폭이라 pinned 컬럼이 있으면 그 자리에 **스타일이 안 먹은
+   OS 기본 가로 스크롤바**가 같이 그려진다 — 커스텀 회색 바 옆에 시스템 스크롤이 함께 보이던 원인.
+   높이는 host(.ag-body-horizontal-scroll)의 인라인 height 로 이미 확보되므로 hidden 으로 바꿔도
+   정렬이 깨지지 않는다(ag-grid 자신도 `.ag-scroller-corner` 상태에서 같은 처리를 한다). */
+:global(.ag-dark-custom .ag-horizontal-left-spacer),
+:global(.ag-dark-custom .ag-horizontal-right-spacer) {
+    overflow-x: hidden;
+    scrollbar-width: none;
+}
+
+:global(.ag-dark-custom .ag-horizontal-left-spacer)::-webkit-scrollbar,
+:global(.ag-dark-custom .ag-horizontal-right-spacer)::-webkit-scrollbar {
+    display: none;
 }

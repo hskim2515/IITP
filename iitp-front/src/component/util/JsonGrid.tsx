@@ -200,7 +200,7 @@ const JsonGrid = ({
     const handleSelect = useCallback(
         (selectedRowKeys: React.Key[], selectedRows: any[]) => {
             if (selectedRows.length > 0) {
-                setSelectedGuid(selectedRowKeys);
+                setSelectedGuid(selectedRowKeys, 'grid');
             } else {
                 setSelectedGuid([]);
             }

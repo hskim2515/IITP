@@ -133,22 +133,29 @@ class DataSourceLayerManager {
         stored?.setVisible?.(next);
     }
 
+    /**
+     * 하위 featureType on/off — **부모 DataSource 가시성은 건드리지 않는다.**
+     *
+     * 이전에는 `visible && !ds.show` 이면 `ds.show = true` 로 부모를 되살렸는데,
+     * 전체 off 후 자식 하나를 켜는 순간 부모가 켜지면서 개별 show 가 true 로 남아 있던
+     * **모든 entity 가 한꺼번에 다시 보이는** 문제가 있었다(체크박스는 uncheck 그대로).
+     * 게다가 이 직접 조작은 레이어 인스턴스의 `_layerVisible`/`setVisible()` 경로를 우회해
+     * 인스턴스 상태와 DataSource 상태를 어긋나게 만든다.
+     * 부모 가시성은 호출측(Facility)이 showLayer/hideLayer 로 명시 제어한다.
+     */
     toggleByFeatureType(groupName: string, layerName: string, featureType: string, visible: boolean): void {
         const group = this.layerGroups[groupName];
         const stored = group?.get(layerName) as any;
-        // Primitive 기반 featureType (links, lanes)은 레이어 인스턴스에 위임
+        // Primitive 기반 featureType (links, lanes)은 레이어 인스턴스에 위임.
+        // 자체 구현이 있으면 그 안에서 entity/primitive 를 모두 처리하므로 아래 generic
+        // fallback 은 건너뛴다 (id suffix 규칙이 달라 중복/오동작 소지).
         if (stored?.toggleFeatureTypeVisible) {
             stored.toggleFeatureTypeVisible(featureType, visible);
+            return;
         }
 
         const ds = this.get(groupName, layerName);
         if (!ds) return;
-
-        // 부모 DataSource가 숨겨진 상태면 entity 토글이 무의미함
-        // visible=true일 때 부모도 함께 show
-        if (visible && !ds.show) {
-            ds.show = true;
-        }
 
         ds.entities.values.forEach(entity => {
             // __guid 패턴 "links-0.lanes-0" 에서 마지막 세그먼트의 타입 추출
@@ -159,12 +166,6 @@ class DataSourceLayerManager {
                 entity.show = visible;
             }
         });
-
-        // 모든 entity가 숨겨진 경우 부모 DataSource도 hide
-        if (!visible) {
-            const anyVisible = ds.entities.values.some(e => e.show);
-            if (!anyVisible) ds.show = false;
-        }
     }
 
 

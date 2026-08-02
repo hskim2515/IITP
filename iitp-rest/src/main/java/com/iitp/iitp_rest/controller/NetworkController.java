@@ -254,6 +254,56 @@ public class NetworkController {
     }
 
     /**
+     * 편집 그리드 전체 목록 — viewport 타일과 무관하게 versionId 전체 links/nodes 반환.
+     * 그리드 drilldown 용으로 lanes/ports/connections 및 lane.cells/lane.segments 를 보존,
+     * link/lane shape 문자열만 제외(payload 억제).
+     */
+    @GetMapping("/{versionId}/grid")
+    public ResponseEntity<NetworkResponse> getNetworkGrid(@PathVariable String versionId) {
+        try {
+            NetworkResponse result = networkTileService.queryForGrid(versionId);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                    .body(result);
+        } catch (java.io.FileNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            log.error("[NetworkController] grid 조회 오류 versionId={}", versionId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * feature 단건 조회 — 좌표/원본 확보용.
+     * link/lane/cell/segment → 링크 JSON, node/port/connection → 노드 JSON.
+     * lane 등 하위 feature 는 {@code parentId} 로 부모 링크/노드 id 를 넘긴다.
+     */
+    @GetMapping("/{versionId}/feature")
+    public ResponseEntity<Object> getNetworkFeature(
+            @PathVariable String versionId,
+            @RequestParam String featureType,
+            @RequestParam(required = false) Long id,
+            @RequestParam(required = false) Long parentId) {
+        Long lookupId = parentId != null ? parentId : id;
+        if (lookupId == null || featureType == null || featureType.isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+        try {
+            Object feature = networkTileService.findFeature(versionId, featureType, lookupId);
+            if (feature == null) return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                    .body(feature);
+        } catch (java.io.FileNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            log.error("[NetworkController] feature 조회 오류 versionId={} type={} id={}",
+                    versionId, featureType, lookupId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
      * 네트워크 전체 bbox — 타일 모드에서 카메라를 네트워크 위치로 이동시키는 용도.
      * 응답: { west, south, east, north }. 네트워크 없으면 404.
      */

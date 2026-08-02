@@ -38,6 +38,7 @@ import { getNetworkLodTierByResolution } from '@utils/lodConstants';
 import { useModeStore } from '@stores/useModeStore';
 import { usePropertyStore } from '@stores/usePropertyStore';
 import { useNetworkToolbarStore } from '@stores/useNetworkToolbarStore';
+import { useSelectionStore } from '@stores/useSelectionStore';
 import { Network, Link, Node, Lane, Segment, Coordinates } from '@type/Network';
 import { containsCoordinate } from 'ol/extent';
 import type { Extent } from 'ol/extent';
@@ -187,17 +188,21 @@ export function findNearestLane(links: Link[], coord: Coordinate, threshold: num
         const lanes = link.lanes ?? [];
         const laneCount = lanes.length;
         if (laneCount === 0) continue;
-        const laneW = (link.width ?? 7) / laneCount;
         const c = link.coordinates;
         // 링크 중심선을 3857 점 배열 + 세그먼트 누적거리(종방향 frac 계산용)
         const pts = c.map(p => fromLonLat([p.lng, p.lat]));
+        // 미터→3857: MVT/buildLaneRing3857 과 동일 위도 보정 — 미보정 시 픽이 화면 차선과 어긋남
+        let latSum = 0, latN = 0;
+        for (const p of c) { if (p && isFinite(p.lat)) { latSum += p.lat; latN++; } }
+        const lat = latN > 0 ? latSum / latN : 37;
+        const cos = Math.cos((lat * Math.PI) / 180);
+        const laneW = ((link.width ?? 7) / laneCount) / (cos > 1e-6 ? cos : 1);
         const segLen: number[] = [], cum: number[] = [0];
         for (let si = 0; si < pts.length - 1; si++) {
             const l = Math.hypot(pts[si + 1]![0]! - pts[si]![0]!, pts[si + 1]![1]! - pts[si]![1]!);
             segLen.push(l); cum.push(cum[si]! + l);
         }
         const total = cum[cum.length - 1]! || 1;
-        const roadW = link.width ?? 7;
         for (let li = 0; li < laneCount; li++) {
             // 2D MVT 렌더 정합: 도로는 중심선 기준 중앙정렬([-hw,+hw], dirOffset 없음),
             // 차선 0 = 최좌측(중앙선 쪽). 우측(+) 법선 기준이므로 좌측은 음수: (li - (n-1)/2)
@@ -1448,6 +1453,8 @@ export const useNetworkSelect = () => {
     const selectedNodeIds = useNetworkDrawStore(s => s.selectedNodeIds);
     const connectTargetNodeId = useNetworkDrawStore(s => s.connectTargetNodeId);
     const appMode        = useModeStore(s => s.appMode); // 모드 전환 시 선택 초기화용
+    const gridSelectedGuid = useSelectionStore(s => s.selectedGuid);     // 하단 편집 그리드 선택
+    const selectionSource  = useSelectionStore(s => s.selectionSource);  // 'grid' | 'map' | ...
 
     // (구) 선택 편집 진입 시 mapViewMode='2D' 강제 로직 제거 — 편집모드는 split(2D 편집 + 3D 로드뷰)
     //   유지. 편집은 2D(OL) 전용이라 뷰 강제 불필요.
@@ -1513,6 +1520,33 @@ export const useNetworkSelect = () => {
         }
         return () => { useEditGuideStore.getState().clear(); };
     }, [isSelectActive, selectedLinkId, selectedNodeId, selectedLinkIds, selectedNodeIds, connectTargetNodeId]);
+
+    // ── 하단 편집 그리드 → drawStore(편집 하이라이트) 동기화 ──
+    //   selectedGuid 슬롯 하이라이트(useDefaultSelect)와 편집모드 drawStore 하이라이트는 별개 시스템이다.
+    //   그동안 그리드에서 체크 해제해도(→ setSelectedGuid([], 'grid')) drawStore.selectedLinkId 가 남아
+    //   "상위 링크가 클릭된 채 하이라이트" 되던 문제를, 그리드('grid' 소스) 변경을 drawStore 로 되비쳐 해결한다.
+    //   지도 클릭은 source='map' 이고 이미 drawStore 를 세팅하므로 여기서는 'grid' 소스만 반영(중복/충돌 방지).
+    useEffect(() => {
+        if (!isSelectActive) return;
+        // 'grid-bulk'(헤더 전체 체크/다중 체크)도 그리드발 선택이므로 함께 반영한다 —
+        //   'grid' 와의 차이는 카메라 이동 여부뿐이고(useDefaultSelect), 편집 하이라이트 동기화는
+        //   동일해야 한다. 여기서 빠지면 다중 체크 중에 이전 편집 하이라이트가 그대로 남는다.
+        if (selectionSource !== 'grid' && selectionSource !== 'grid-bulk') return;
+        const raw = gridSelectedGuid?.[0];
+        const guid = raw != null ? String(raw) : '';
+        if (!guid) {
+            // 그리드 체크 해제 → 편집 하이라이트/맥락 툴바도 함께 정리
+            useNetworkDrawStore.getState().clearSelection();
+            useNetworkToolbarStore.getState().hide();
+            return;
+        }
+        // 타일 guid(T_N{id}/T_L{id}/T_L{id}_lane{idx}/...) 를 편집 선택으로 되비침.
+        //   레인/세그먼트는 지도 클릭과 동일하게 링크 레벨 하이라이트로 뭉쳐 일관성 유지.
+        const nodeM = /^T_N(\d+)$/.exec(guid);
+        if (nodeM) { useNetworkDrawStore.getState().setSelectedNode(Number(nodeM[1])); return; }
+        const linkM = /^T_L(\d+)/.exec(guid);
+        if (linkM) { useNetworkDrawStore.getState().setSelectedLink(Number(linkM[1])); return; }
+    }, [gridSelectedGuid, selectionSource, isSelectActive]);
 
     const selSrcRef   = useRef<VectorSource | null>(null);
     const hoverSrcRef = useRef<VectorSource | null>(null);
@@ -2116,6 +2150,11 @@ export const useNetworkSelect = () => {
             if (node) {
                 useNetworkDrawStore.getState().setSelectedNode(node.id);
                 setProps({ ...node, featureType: 'nodes' } as any);
+                // 지도 클릭 → 하단 그리드 행 체크 + 스크롤 동기화 (그리드는 useSelectionStore.selectedGuid 를 구독).
+                // 편집 그리드는 networkGridData(assignTileGuids) 를 쓰므로 행 __guid 가 T_N{id} 타일 규칙 —
+                // id 기반 타일 guid 로 세팅해야 매칭된다 (currentJsonData 의 경로형 __guid 는 안 맞음).
+                // 'map' 소스라 카메라 fly-to 없이 하이라이트만 (grid 소스만 카메라 이동).
+                useSelectionStore.getState().setSelectedGuid([`T_N${node.id}`], 'map');
                 useNetworkToolbarStore.getState().show(clickPos, 'node', { nodeId: String(node.id) });
                 return;
             }
@@ -2145,6 +2184,10 @@ export const useNetworkSelect = () => {
                     const ll = toLonLat(coord);
                     useNetworkDrawStore.getState().setSelectedLink(link0.id);
                     setProps({ ...link0, featureType: 'links' } as any);
+                    // 속성 팝업/툴바는 링크 레벨을 유지하되, 하단 그리드는 클릭한 "레인 depth"까지 진입·체크한다.
+                    // 그리드 레인 행 __guid 는 assignTileGuids 규칙(T_L{id}_lane{배열index}) — findNearestLane.laneIdx
+                    // 가 곧 link.lanes 배열 index 라 그대로 일치한다.
+                    useSelectionStore.getState().setSelectedGuid([`T_L${link0.id}_lane${lane.laneIdx}`], 'map');
                     useNetworkToolbarStore.getState().show(
                         clickPos, 'link',
                         { linkId: String(link0.id), laneIdx: lane.laneIdx },
@@ -2157,6 +2200,7 @@ export const useNetworkSelect = () => {
                 const ll = toLonLat(coord);
                 useNetworkDrawStore.getState().setSelectedLink(link.id);
                 setProps({ ...link, featureType: 'links' } as any);
+                useSelectionStore.getState().setSelectedGuid([`T_L${link.id}`], 'map');
                 useNetworkToolbarStore.getState().show(
                     clickPos, 'link',
                     { linkId: String(link.id) },
@@ -2173,6 +2217,7 @@ export const useNetworkSelect = () => {
             })();
             useNetworkDrawStore.getState().clearSelection();
             usePropertyStore.getState().setSelectedProps(null);
+            useSelectionStore.getState().setSelectedGuid([], 'map'); // 빈 지형 클릭 → 그리드 선택 해제
             useNetworkToolbarStore.getState().hide();
 
             // Alt+빈 지형 클릭: "도로를 그리는 게 아니라 노드 하나만 놓고 싶다"는 실사용 요청 —
@@ -2483,6 +2528,14 @@ export const useNetworkSelect = () => {
             if (!network) return;
             const scene     = v.scene;
             const drawStore = useNetworkDrawStore.getState();
+            // 지도(3D) 클릭 선택 → 하단 그리드 행 체크 + 스크롤 동기화.
+            // 그리드는 useSelectionStore.selectedGuid 를 구독하므로 여기서도 함께 세팅한다
+            // (edit 모드 3D 클릭은 지금까지 useNetworkDrawStore 만 갱신해 그리드가 반응 못 했음).
+            // ⚠ 편집 그리드(PropertyPanel)는 NETWORK_TILING.ENABLED 로 networkGridData(assignTileGuids)를
+            //   쓰므로 행 __guid 는 항상 T_L{id}/T_N{id} 타일 규칙이다. currentJsonData 는
+            //   applyNetworkUpdate 후 경로형(nodes.nodes-N) guid 라 그리드와 안 맞는다 — 반드시 id 기반 타일 guid 로 세팅.
+            const syncGridSelection = (g: string | null) =>
+                useSelectionStore.getState().setSelectedGuid(g ? [g] : [], 'map');
 
             // 1순위: scene.pick() — Entity(노드)만 신뢰
             // 줌 중 LOD tier 전환으로 GroundPrimitive 가 비동기 재생성되는 순간과 겹치면
@@ -2497,6 +2550,7 @@ export const useNetworkSelect = () => {
                 const props = picked.id.properties?.getValue(Cesium.JulianDate.now());
                 if (props?.featureType === 'nodes' && props?.id != null) {
                     drawStore.setSelectedNode(String(props.id));
+                    syncGridSelection(`T_N${props.id}`);
                     return;
                 }
             }
@@ -2505,15 +2559,17 @@ export const useNetworkSelect = () => {
             const hit = pickNetworkAtPosition(scene, e.position);
             if (hit?.props?.id != null) {
                 drawStore.setSelectedLink(String(hit.props.id));
+                syncGridSelection(`T_L${hit.props.id}`);
                 return;
             }
 
             // 2순위: 화면거리 기반 fallback
             const node = findNearestNodeCesium(network.nodes, e.position, scene, 25);
-            if (node) { drawStore.setSelectedNode(node.id); return; }
+            if (node) { drawStore.setSelectedNode(node.id); syncGridSelection(`T_N${node.id}`); return; }
             const link = findNearestLinkCesium(network.links, e.position, scene, 15);
-            if (link) { drawStore.setSelectedLink(link.id); return; }
+            if (link) { drawStore.setSelectedLink(link.id); syncGridSelection(`T_L${link.id}`); return; }
             drawStore.clearSelection();
+            syncGridSelection(null);
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
         return () => { handler.destroy(); };

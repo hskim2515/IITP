@@ -1,10 +1,14 @@
 
 /* Taskbar.css */
+/* taskbar 는 App.tsx 의 flex column 안에서 지도 컨테이너의 형제로 놓인다(position:relative).
+   따라서 패널 위를 덮지 않으며, 하단 앵커 패널들은 taskbar 를 뺀 컨테이너 높이를 그대로 쓴다 —
+   높이를 TS 로 측정해 내려보내는 오프셋 계산이 필요 없다. 값은 여기서만 정의한다. */
 .edit-taskbar {
     position: relative;
     flex-shrink: 0;
     width: 100%;
     height: 32px;
+    /* border-top 이 height 밖으로 나가 실제 33px 을 점유하지 않게 */
     box-sizing: border-box;
     background: rgba(20, 20, 20, 0.95);
     display: flex;

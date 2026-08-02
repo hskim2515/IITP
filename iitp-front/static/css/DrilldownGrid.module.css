@@ -1,7 +1,10 @@
+/* 부모(PropertyPanel .gridWrap)가 flex column 이므로 height:100% 대신 남은 높이를 채운다 —
+   height:100% 는 배너가 있을 때 부모 전체 높이를 요구해 하단이 넘쳐 taskbar 에 가려진다. */
 .container {
     display: flex;
     flex-direction: column;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     width: 100%;
     min-width: 0; /* 이 줄이 없으면 테이블이 압축됩니다 */
 }
@@ -39,18 +42,23 @@
 
 .tableWrap {
     flex: 1;
+    min-height: 0; /* GridToolbar 를 뺀 실제 남은 높이가 되도록 (없으면 내용 높이만큼 커짐) */
     width: 100%;
     min-width: 0; /* 이 줄도 필수입니다 */
     overflow: hidden;
 }
 
 /* ── 빈 데이터 안내 ─────────────────────────────────────────────── */
+/* box-sizing 이 없으면 height:100% 에 상하 padding 80px 이 더해져 부모(패널 body)를 그만큼
+   넘치고, 넘친 아래쪽이 하단 taskbar 뒤로 들어간다. */
 .emptyWrap {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     height: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
     gap: 10px;
     color: #555;
     padding: 40px 20px;

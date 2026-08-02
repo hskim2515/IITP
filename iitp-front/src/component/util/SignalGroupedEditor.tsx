@@ -145,6 +145,8 @@ const SignalRow: React.FC<RowProps> = ({
         setConnectionId(connection ? String(connection.id) : "");
         setEditing(true);
     };
+    /** 행 클릭 = 지도 하이라이트만. source 를 생략해 'map' 으로 두는 것이 의도다 —
+     *  'grid' 로 두면 목록을 훑을 때마다 카메라가 따라 움직여 화면이 계속 튄다. */
     const highlightConnection = () => {
         const guid = connection?.__guid;
         useSelectionStore.getState().setSelectedGuid([

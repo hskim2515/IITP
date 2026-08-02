@@ -1,7 +1,5 @@
 import {create} from "zustand";
 import {MenuTreeResponse} from "@type/openapi.gen";
-import {NETWORK_TILING} from "@utils/lodConstants";
-import {useNetworkTileStore} from "@stores/useNetworkTileStore";
 
 interface EditingSession {
     menuCode: string;
@@ -17,10 +15,6 @@ export const useWorkflowStore = create((set, get) => ({
     openSession: (menu: MenuTreeResponse) => {
         const { sessions } = get();
         const existing = sessions.find(s => s.menuCode === menu.menuCode);
-        // 타일 모드 NETWORK 편집: 그리드가 viewport 동기화 데이터만 보여 의미가 약한데
-        // 화면 하단 40%를 차지 + 편집 가이드 패널과 겹침 → 접힌 상태로 시작 (태스크바에서 펼침)
-        const startMinimized = menu.menuCode === 'NETWORK'
-            && (NETWORK_TILING.ENABLED || useNetworkTileStore.getState().tileMode);
         if (existing) {
             set({
                 activeMenuCode: menu.menuCode,
@@ -34,7 +28,7 @@ export const useWorkflowStore = create((set, get) => ({
                 sessions: [...sessions, {
                     menuCode: menu.menuCode,
                     nameKor: menu.nameKor,
-                    isMinimized: startMinimized,
+                    isMinimized: false,
                     menu: menu,
                 }]
             });

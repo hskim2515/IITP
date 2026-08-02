@@ -5,8 +5,14 @@ import { faClose, faEdit, faChevronDown, faChevronRight } from "@fortawesome/fre
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { useSchemaStore } from "@stores/useSchemaStore";
 import { findMenuCodeBySchemaDefinition } from "@utils/schema";
+import { getStructureByFeatureType } from "@utils/gridUtils";
 import { propertyFormSchema } from "@schema/propertyFormSchema";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
+import { useSelectionStore } from "@stores/useSelectionStore";
+import { useWorkflowStore } from "@stores/useWorkflowStore";
+// 스크롤바(::-webkit-scrollbar / scrollbar-color)는 인라인 style 로 지정할 수 없어
+// 이 두 스크롤 영역만 CSS module 클래스를 함께 붙인다. 레이아웃은 아래 styles 객체가 유지.
+import scrollStyles from "@css/PropertyModal.module.css";
 
 // 모든 스키마에서 fieldName → label 역인덱스 빌드
 function buildFieldLabelMap(): Record<string, string> {
@@ -71,7 +77,7 @@ const ValueCell = ({ propKey, value }: ValueCellProps) => {
                     {value.length}개
                 </button>
                 {expanded && (
-                    <div style={styles.arrayList}>
+                    <div className={scrollStyles.arrayList} style={styles.arrayList}>
                         {value.map((item, i) => (
                             <div key={i} style={styles.arrayItem}>
                                 <span style={styles.arrayIndex}>{i}</span>
@@ -197,12 +203,56 @@ const PropertyModal = () => {
 
     const onClickEdit = () => {
         if (!featureType || !menu) return;
-        const menuCode = findMenuCodeBySchemaDefinition(
+
+        // 편집 그리드를 여는 데 필요한 menuCode 는 두 조건을 동시에 만족해야 한다:
+        //   (a) propertyFormSchema 에 엔트리가 있어야 PropertyPanel/DrilldownGrid 가 그려지고,
+        //   (b) 메뉴 트리(findMenuByCode)에서 찾을 수 있어야 setActiveSubmenu 에 넘길 MenuTreeResponse 를 얻는다.
+        // 그동안은 스키마의 menuCode 필드값(또는 폴백 1건)만 보고 열어서, 그 코드가 메뉴 트리에 없으면
+        // findMenuByCode 가 null → 그리드가 아예 안 뜨는 문제가 있었다. 여기서는 후보를 모아 (a)+(b) 를
+        // 모두 만족하는 첫 후보로 연다.
+        const candidates: string[] = [];
+        const direct = findMenuCodeBySchemaDefinition(
             getSchemaDefinitionBySchemaDefinitionName(featureType)
+        ) as string | undefined;
+        if (direct) candidates.push(direct);
+        // 폴백: lanes/connections/cells/segments 등 하위 타입은 자체 menuCode 필드가 없을 수 있어
+        //   featureType 이 속한 편집 레이어로 역추적(SCHEMA_* 스키마설정 메뉴는 제외).
+        const getStructureByLayerName = useSchemaStore.getState().getStructureByLayerName;
+        for (const [code, schema] of Object.entries(propertyFormSchema)) {
+            if (!schema.layer || code.startsWith("SCHEMA_")) continue;
+            if (getStructureByFeatureType(getStructureByLayerName(schema.layer), featureType)) {
+                candidates.push(code);
+            }
+        }
+
+        let target: ReturnType<typeof findMenuByCode> = null;
+        for (const code of candidates) {
+            if (!propertyFormSchema[code]) continue;         // (a) 그리드가 그려질 수 있는 코드만
+            const found = findMenuByCode(menu, code);        // (b) 메뉴 트리에 실재하는 코드만
+            if (found) { target = found; break; }
+        }
+        if (!target) return;
+
+        // 편집 그리드로 진입 → 모달은 자동으로 닫힘(activeSubmenu 세팅 시 return null).
+        //   그리드(PropertyPanel)는 App.tsx 에서 activeSubmenu 가 아니라 useWorkflowStore 의
+        //   activeSession(= openSession 으로 생성) 기준으로 렌더된다. Submenu 클릭 경로도
+        //   setActiveSubmenu + openSession 을 함께 부른다 — 여기서도 둘 다 호출해야 그리드가 실제로 뜬다.
+        setActiveSubmenu(target);
+        (useWorkflowStore.getState() as { openSession: (m: typeof target) => void }).openSession(target);
+        // 그리드가 이 객체 depth 까지 진입·체크·스크롤하도록 현재 선택을 넘긴다.
+        //   ⚠️ PropertyPanel 은 마운트 시 activeSubmenu effect 로 clearSelected() 를 호출해 selectedGuid 를
+        //   지운다(setTimeout 재세팅은 이펙트 flush 순서에 의존해 불안정). 그래서 clearSelected 에
+        //   지워지지 않는 pendingGridGuid 슬롯에 담아두고, PropertyPanel 이 마운트 직후 이를 소비해
+        //   setSelectedGuid('grid') 로 확정한다(결정적).
+        //   (네트워크는 지도 클릭 때 이미 타일 guid 로 selectedGuid 를 세팅해 뒀으므로 selectedProps.__guid
+        //   (경로형)가 아니라 스토어의 현재 guid 를 그대로 재사용)
+        const restore = useSelectionStore.getState().selectedGuid;
+        useSelectionStore.getState().setPendingGridGuid(
+            restore && restore.length > 0 ? [...restore] : null,
         );
-        if (!menuCode) return;
-        const foundMenu = findMenuByCode(menu, menuCode);
-        if (foundMenu) setActiveSubmenu(foundMenu);
+        // 속성모달에서 이미 보고 있는 객체를 그리드로 열 때 flyTo 는 불필요 — 리렌더 중
+        //   2초 flyToBoundingSphere 가 버벅임만 유발하므로 다음 grid 선택 1회만 억제.
+        useSelectionStore.getState().setSuppressFlyToOnce(true);
     };
 
     const containerStyle: React.CSSProperties = position
@@ -225,7 +275,7 @@ const PropertyModal = () => {
             </div>
 
             {/* 속성 테이블 */}
-            <div style={styles.scrollArea}>
+            <div className={scrollStyles.scrollArea} style={styles.scrollArea}>
                 <table style={styles.table}>
                     <thead>
                         <tr>
@@ -246,12 +296,15 @@ const PropertyModal = () => {
                         ))}
                     </tbody>
                 </table>
-                {hasMoreFields && (
-                    <button style={styles.moreBtn} onClick={() => setExpanded((e) => !e)}>
-                        {expanded ? "간단히 보기" : `+${orderedEntries.length - DEFAULT_VISIBLE_FIELD_COUNT}개 속성 더보기`}
-                    </button>
-                )}
             </div>
+
+            {/* 더보기/간단히 보기 — 스크롤 영역 밖 고정 푸터.
+                스크롤 영역 안에 두면(구 sticky) 확장 시 테이블이 버튼 아래로 흘러 잘린다. */}
+            {hasMoreFields && (
+                <button style={styles.moreBtn} onClick={() => setExpanded((e) => !e)}>
+                    {expanded ? "간단히 보기" : `+${orderedEntries.length - DEFAULT_VISIBLE_FIELD_COUNT}개 속성 더보기`}
+                </button>
+            )}
         </div>
     );
 };
@@ -308,6 +361,9 @@ const styles = {
     scrollArea: {
         overflowY: 'auto' as const,
         flex: 1,
+        // flex 자식은 기본 min-height:auto 라 내용 높이만큼 커진다 —
+        // 0 으로 낮춰야 남은 높이 안에서만 스크롤되고 푸터 버튼을 밀어내지 않는다.
+        minHeight: 0,
     },
     table: {
         width: '100%',
@@ -360,8 +416,7 @@ const styles = {
         cursor: 'pointer',
         fontSize: '11px',
         fontWeight: 600,
-        position: 'sticky' as const,
-        bottom: 0,
+        flexShrink: 0, // 고정 푸터 — 테이블이 이 위까지만 차지한다
     },
     valueText: {
         display: 'block',

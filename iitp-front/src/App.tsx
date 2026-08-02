@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css'
 import Header from "./component/header/Header";
 import LeftPanel from "./component/panel/LeftPanel";
@@ -23,7 +23,6 @@ import DashboardLeft from "@component/panel/DashboardLeft";
 import DashboardRight from "@component/panel/DashboardRight";
 import { menuCodeToStoreMap } from "@hooks/useLayerInit";
 import { useOnboardingStore } from "@stores/useOnboardingStore";
-import { useLogStore } from "@stores/useLogStore";
 import FileImportModal from "@component/modal/FileImportModal";
 import { useBackgroundTaskStore } from "@stores/useBackgroundTaskStore";
 import { runAutoDummyGeneration } from "@utils/dummyGeneration";
@@ -255,6 +254,10 @@ function App() {
 
     const { sessions, activeMenuCode, minimizeSession, closeSession } = useWorkflowStore();
 
+    // 하단 Taskbar 가림 방지는 레이아웃 구조가 담당한다 — main 안의 컨텐츠 컨테이너를
+    // flex column 으로 두고 [지도+패널] 과 [Taskbar] 를 형제로 쌓으면, 지도 컨테이너가
+    // taskbar 위에서 끝나므로 taskbar 높이를 측정해 오프셋으로 내려보낼 필요가 없다.
+
     const {
         menu,
         activeSubmenu,
@@ -322,6 +325,11 @@ function App() {
                 >
                     {!showDashboard && activeDropdownMenu && <LeftPanel/>}
                     {showDashboard && <DashboardLeft onClose={() => setShowDashboard(false)}/>}
+                    {/* 바깥: [지도+하단 패널] 과 [Taskbar] 를 세로로 쌓는다.
+                        taskbar 가 흐름 안의 형제라 안쪽 컨테이너가 taskbar 위에서 끝나고,
+                        그 안의 하단 앵커 패널(PropertyPanel/PropertyPopup/SchemaSetting)은
+                        컨테이너 하단에 붙이기만 하면 taskbar 에 가리지 않는다 — 높이를 측정해
+                        오프셋을 내려보내는 계산이 필요 없다. */}
                     <div
                         style={{
                             flex: "1 1 auto",

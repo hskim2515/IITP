@@ -97,6 +97,16 @@ NetworkTileManager
 - 버퍼: viewport 주변 1링 선읽기(팬 끊김 방지). LRU N타일 유지(되돌아갈 때 재fetch 절약).
 - 2D overview/mid는 OL `VectorTile`(MVT)로, near/detail·Cesium은 JSON→기존 빌더로. 같은 타일 키 공유.
 
+### 5.1 레이어 가시성 규칙 (featureType on/off)
+
+타일 재빌드가 상시 일어나므로 **가시성은 피처 인스턴스 상태가 아니라 렌더/픽 시점 게이트**로 적용한다.
+
+- 상태 보관: `utils/networkPrimitiveShared.ts` 의 `networkPickVisibility`(layer + featureType별) — 2D/3D 공용 단일 출처.
+- 렌더 게이트: `NetworkFeatureLayer.styleFunction` / `NetworkMvtLayer.styleFunction` 이 `isNetworkFeatureTypeVisible(featureType)` 로 숨김이면 빈 스타일을 반환.
+- 픽 게이트: `pickNetwork2DAt`/`pickNetworkMvtAt`(2D), `pickNetworkAtPosition`/`pickLaneAtPosition`(3D)이 같은 함수를 확인.
+- ❌ 금지: `feature.setStyle(new Style({}))` 로 현재 피처만 숨기는 방식 — `addTilePayload`/`fullBuild`/`reconcile` 이 만든 **새 피처에는 적용되지 않아** 줌/팬 시 숨긴 객체가 다시 드러난다.
+- 최종 렌더/픽 조건은 2D·3D 모두 `레이어 visible && featureType visible` 의 AND.
+
 ## 6. 편집/저장 모델 — 기능별 충돌 분석 (코드 기준)
 
 선택/수정/삭제/추가는 모두 **"`currentJsonData`에 들어있는 것"** 을 대상으로 동작한다. `currentJsonData`가 전체든 타일 일부든 **로직 자체는 그대로 돌아간다.**

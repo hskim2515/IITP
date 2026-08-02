@@ -15,10 +15,23 @@ import { Fill, Stroke, Style } from "ol/style";
 import CircleStyle from "ol/style/Circle";
 import { matchesCustomKeyValue } from "@utils/olLayer";
 import { Entity, Viewer } from "cesium";
-import {defaultEventHandlers} from "@handler/defaultEventHandler";
+import {defaultEventHandlers, clearMapHoverArtifacts} from "@handler/defaultEventHandler";
 import {FEATURE_TYPE} from "@type/Signal";
 import {getNetworkGuid} from "@utils/signal";
 import {useLayerStore} from "@stores/useLayerStore";
+import { setNetworkSelectionHighlight, clearNetworkSelectionHighlight } from "@datasource/NetworkDataSourceLayer";
+import { networkPrimitivePropertiesMap } from "@utils/networkPrimitiveShared";
+import {
+    parseTileGuid,
+    flyToNetworkFeatureByGuid,
+    highlightNetworkFeature2DByGuid,
+    clearNetworkHighlight2D,
+} from "@utils/networkFeatureLocator";
+
+// 선택된 Cesium 엔티티 정적 강조의 원복 함수 저장소(guid → 원본 복원).
+// 깜빡임/자동 만료 없이 다음 선택·선택해제 전까지 강조를 유지하고, 해제 시 원본 스타일로 되돌린다.
+const cesiumHighlightReverts = new Map<string, () => void>();
+const SELECTION_HIGHLIGHT_COLOR = Cesium.Color.YELLOW;
 
 const useDefaultSelect = () => {
 
@@ -35,11 +48,8 @@ const useDefaultSelect = () => {
     const selectedGuid = useSelectionStore((state) => state.selectedGuid);
 
     const prevSelectedGuidsRef = useRef<Set<string>>(new Set());
-    const cesiumHighlightStateRef = useRef<Map<string, {
-        entity: Entity;
-        originalMaterial?: Cesium.MaterialProperty;
-        originalColor?: Cesium.Property;
-    }>>(new Map());
+    // 오프스크린 네트워크 링크: fly-to 후 primitive 로드가 끝나야 선택 슬롯 적용 가능 → 재시도 타이머
+    const highlightRetryRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
     useEffect(() => {
         if (!cesiumEventManager || !viewer) return
@@ -57,8 +67,24 @@ const useDefaultSelect = () => {
         };
     }, [olEventManager, olMap]);
 
+    // 커서가 지도 밖으로 나가면 hover 강조를 해제한다.
+    //   hover 슬롯은 pointermove 로만 갱신되므로, 커서가 하단 편집 그리드 쪽으로 빠져나가면
+    //   마지막 hover 가 지도에 그대로 남는다(해제 이벤트가 아예 오지 않음). 이 잔상이
+    //   이후 그리드 선택 변경 때 이전 링크에 주황 계열 하이라이트로 드러난다.
     useEffect(() => {
-        console.log('selectedGuid', selectedGuid)
+        const olViewport = olMap?.getViewport?.() ?? null;
+        const cesiumCanvas = viewer?.canvas ?? null;
+        if (!olViewport && !cesiumCanvas) return;
+        const onLeave = () => clearMapHoverArtifacts();
+        olViewport?.addEventListener('pointerleave', onLeave);
+        cesiumCanvas?.addEventListener('pointerleave', onLeave);
+        return () => {
+            olViewport?.removeEventListener('pointerleave', onLeave);
+            cesiumCanvas?.removeEventListener('pointerleave', onLeave);
+        };
+    }, [olMap, viewer]);
+
+    useEffect(() => {
             if (!activeSubmenu) return;
             const menuCode = activeSubmenu.menuCode;
             if (!menuCode) return;
@@ -68,41 +94,92 @@ const useDefaultSelect = () => {
 
             if (!layerName || !viewer || !olMap) return
 
-            const nextSet = new Set<string>((selectedGuid ?? []).map(String));
-            const prevSet = prevSelectedGuidsRef.current;
+            // ── 신호 레이어는 원격(main) 정책을 따른다 ──────────────────────────
+            //   신호 객체는 자체 지오메트리가 없고 네트워크 커넥션을 참조하므로, 하이라이트 대상
+            //   guid 를 네트워크 guid 로 치환해 'network' 레이어에 그린다. 카메라는 여기서 움직이지
+            //   않는다 — SignalWorkspaceEditor 가 노드 좌표 기준으로 한 번만 flyTo 하며, 여기서
+            //   커넥션마다 zoom 하면 마지막 대상이 카메라를 계속 빼앗는다.
             const isSignalLayer = FEATURE_TYPE.SIGNAL === layerName;
             const highlightLayerName = isSignalLayer ? 'network' : layerName;
             const resolveHighlightGuid = (guid: string) =>
                 isSignalLayer ? (getNetworkGuid(layerManager, guid) ?? guid) : guid;
 
+            // 'grid'(그리드/에디터 **단일** 행 선택)만 카메라 이동 동반 — 지도 클릭('map')과
+            //   다중 체크('grid-bulk')는 하이라이트만 하고 카메라를 고정한다. 다중 선택에서
+            //   guid 마다 fly-to 를 돌리면 화면이 대상 사이를 계속 튀어다니며 버벅인다.
+            // 속성모달 "편집" 진입(suppressFlyToOnce)은 대상이 이미 화면에 보이므로 fly 억제
+            //   (리렌더 중 2초 flyToBoundingSphere 버벅임 방지). 소비 즉시 플래그 해제.
+            //   'grid-bulk' 는 어차피 fly 하지 않으므로 이 1회용 플래그를 소모하지 않는다.
+            const nextSet = new Set<string>((selectedGuid ?? []).map(String));
+            const prevSet = prevSelectedGuidsRef.current;
+
+            const selectionSource = useSelectionStore.getState().selectionSource;
+            // 선택이 2개 이상이면 소스가 'grid' 여도 이동하지 않는다 — 아래 nextSet 루프가 guid
+            //   마다 fly/zoom 을 호출하므로 카메라가 대상 사이를 연쇄로 튀어다닌다. GridTable 외의
+            //   경로(예: PropertyPanel 이 pendingGridGuid 를 여러 개 복원할 때)도 같은 정책을 탄다.
+            let fromGrid = selectionSource === 'grid' && nextSet.size <= 1;
+            if (fromGrid && useSelectionStore.getState().suppressFlyToOnce) {
+                useSelectionStore.getState().setSuppressFlyToOnce(false);
+                fromGrid = false;
+            }
+
+            // 선택이 바뀌는 순간, 지도가 남겨둔 hover 잔상을 먼저 지운다.
+            //   hover 는 pointermove 로만 갱신되므로 커서가 지도 밖(그리드)으로 나가면 마지막
+            //   hover 강조가 그대로 남는다 — 선택이 다른 객체로 옮겨가면 이전 링크를 덮고 있던
+            //   노란 선택 오버레이가 빠지면서 그 아래 주황 계열 hover 오버레이가 드러난다.
+            //   지도 클릭 경로에서도 안전하다: 이 이펙트는 handleXxxSelect 가 선택 강조를 적용한
+            //   뒤에 실행되고, 여기서 지우는 것은 hover 슬롯뿐이라 선택 강조는 유지된다.
+            const selectionChanged =
+                prevSet.size !== nextSet.size || [...nextSet].some((g) => !prevSet.has(g));
+            if (selectionChanged) clearMapHoverArtifacts();
+
             for (const guid of prevSet) {
                 if (!nextSet.has(guid)) {
                     const highlightGuid = resolveHighlightGuid(guid);
-                    clearOlStyleByGuid(olMap, highlightLayerName, highlightGuid, isSignalLayer);
-                    clearCesiumStyleByGuid(highlightLayerName, highlightGuid);
+                    clearCesiumStyleByGuid(highlightGuid); // 3D 엔티티(노드/시설물) 정적 강조 원복
+                    if (!isSignalLayer && layerName === 'network' && parseTileGuid(guid)) {
+                        clearNetworkSelection();
+                    } else {
+                        clearOlStyleByGuid(olMap, highlightLayerName, highlightGuid, isSignalLayer);
+                    }
                 }
             }
 
-            const resolvedHighlightGuids = [...nextSet].map(resolveHighlightGuid);
-            for (const highlightGuid of resolvedHighlightGuids) {
-                highlightOlStyleByGuid(olMap, highlightLayerName, highlightGuid, isSignalLayer);
-            }
-
-            // 신호 편집기에서 교차로를 누르면 카메라 이동과 동시에 detail 타일/Entity가
-            // 비동기로 만들어진다. 선택 순간에 Entity가 아직 없어도 collectionChanged 때
-            // 같은 선택을 다시 적용해 3D 하이라이트가 빠지지 않게 한다.
-            const applyCesiumSelection = () => {
+            // 신호: 대상 guid 를 네트워크 guid 로 치환해 한 번에 적용 (카메라는 고정)
+            const resolvedHighlightGuids = isSignalLayer
+                ? [...nextSet].map(resolveHighlightGuid)
+                : [];
+            const applySignalSelection = () => {
                 for (const highlightGuid of resolvedHighlightGuids) {
-                    // 신호 메뉴의 flyTo는 SignalWorkspaceEditor가 노드 좌표 기준으로 한 번만 수행한다.
-                    // 여기서 개별 커넥션마다 zoom 하면 마지막 대상이 카메라를 계속 빼앗는다.
-                    highlightCesiumStyleByGuid(viewer, highlightLayerName, highlightGuid, !isSignalLayer);
+                    highlightOlStyleByGuid(olMap, highlightLayerName, highlightGuid, true);
+                    highlightCesiumStyleByGuid(viewer, highlightLayerName, highlightGuid, { zoom: false });
                 }
             };
-            applyCesiumSelection();
 
-            const highlightDataSource = viewer.dataSources.getByName(highlightLayerName)[0];
+            if (isSignalLayer) {
+                applySignalSelection();
+            } else {
+                for (const guid of nextSet) {
+                    if (!prevSet.has(guid)) {
+                        if (layerName === 'network' && parseTileGuid(guid)) {
+                            // 타일 모드 네트워크: 3D 선택 슬롯 + 2D 오버레이 (fly-to 는 grid 선택만)
+                            applyNetworkSelection(viewer, olMap, guid, fromGrid);
+                        } else {
+                            highlightOlStyleByGuid(olMap, layerName, guid);
+                            highlightCesiumStyleByGuid(viewer, layerName, guid, { zoom: fromGrid });
+                        }
+                    }
+                }
+            }
+
+            // 신호 편집기에서 교차로를 누르면 카메라 이동과 동시에 detail 타일/Entity 가 비동기로
+            //   만들어진다. 선택 순간에 Entity 가 아직 없어도 collectionChanged 때 같은 선택을 다시
+            //   적용해 3D 하이라이트가 빠지지 않게 한다 (신호 레이어 전용 — 원격 정책).
+            const highlightDataSource = isSignalLayer
+                ? viewer.dataSources.getByName(highlightLayerName)[0]
+                : undefined;
             const removeCollectionListener = highlightDataSource?.entities.collectionChanged.addEventListener(
-                () => applyCesiumSelection(),
+                () => applySignalSelection(),
             );
 
             prevSelectedGuidsRef.current = nextSet;
@@ -112,94 +189,125 @@ const useDefaultSelect = () => {
                 removeCollectionListener?.();
                 for (const guid of prevSelectedGuidsRef.current) {
                     const highlightGuid = resolveHighlightGuid(guid);
-                    clearOlStyleByGuid(olMap, highlightLayerName, highlightGuid, isSignalLayer);
-                    clearCesiumStyleByGuid(highlightLayerName, highlightGuid);
+                    clearCesiumStyleByGuid(highlightGuid); // 3D 엔티티(노드/시설물) 정적 강조 원복
+                    if (!isSignalLayer && layerName === 'network' && parseTileGuid(guid)) {
+                        clearNetworkSelection();
+                    } else {
+                        clearOlStyleByGuid(olMap, highlightLayerName, highlightGuid, isSignalLayer);
+                    }
                 }
                 prevSelectedGuidsRef.current.clear();
             };
         }, [selectedGuid, activeSubmenu, layerManager, olMap, viewer]
     );
 
-    function highlightCesiumStyleByGuid(viewer: Viewer, layerName: string, guid: string, shouldZoom = true): boolean {
-        const entity = viewer.dataSources.getByName(layerName)[0]?.entities.getById(guid);
-        if (!entity) return false;
-
-        const blinkingColor = new Cesium.CallbackProperty(() => {
-            const currentTime = Date.now();
-            const isYellow = Math.floor(currentTime / 500) % 2 === 0;
-            return isYellow
-                ? Cesium.Color.YELLOW.withAlpha(1.0)
-                : Cesium.Color.RED.withAlpha(1.0);
-        }, false);
-        const blinkingMaterial = new Cesium.ColorMaterialProperty(blinkingColor);
-
-        const stateKey = `${layerName}:${guid}`;
-        const previousState = cesiumHighlightStateRef.current.get(stateKey);
-        if (previousState?.entity === entity) {
-            try { viewer.scene.requestRender(); } catch (_) {}
-            return true;
-        }
-        // LOD 재빌드로 같은 GUID의 Entity가 교체됐으면 새 Entity의 원본 재질을 다시 보관한다.
-        if (previousState) cesiumHighlightStateRef.current.delete(stateKey);
-
-        let originalMaterial: Cesium.MaterialProperty | undefined;
-        let originalColor: Cesium.Property | undefined;
-
-        if (entity.polyline) {
-            originalMaterial = entity.polyline.material;
-            entity.polyline.material = blinkingMaterial;
-        } else if (entity.corridor) {
-            originalMaterial = entity.corridor.material;
-            entity.corridor.material = blinkingMaterial;
-        } else if (entity.point) {
-            originalColor = entity.point.color;
-            entity.point.color = blinkingColor;
-        } else if (entity.cylinder) {
-            originalMaterial = entity.cylinder.material;
-            entity.cylinder.material = blinkingMaterial;
-        } else if (entity.polygon) {
-            originalMaterial = entity.polygon.material;
-            entity.polygon.material = blinkingMaterial;
-        } else {
-            return false;
-        }
-
-        cesiumHighlightStateRef.current.set(stateKey, {
-            entity,
-            originalMaterial,
-            originalColor,
-        });
-        // requestRenderMode에서는 카메라가 움직이지 않으면 재질 변경만으로 화면이
-        // 다시 그려지지 않는다. 이동류 선택은 FlyTo를 하지 않으므로 직접 요청한다.
-        try { viewer.scene.requestRender(); } catch (_) {}
-        if (shouldZoom) zoomToEntity(entity, viewer);
+    /** 로드된 링크 primitive 면 3D 선택 슬롯 적용 (성공 여부 반환) */
+    function highlightNetworkLinkByGuid(guid: string): boolean {
+        const parsed = parseTileGuid(guid);
+        if (!parsed || parsed.featureType !== 'links') return false;
+        if (!setNetworkSelectionHighlight || !networkPrimitivePropertiesMap.has(parsed.parentGuid)) return false;
+        setNetworkSelectionHighlight(parsed.parentGuid, parsed.laneIdx);
         return true;
     }
 
-    function clearCesiumStyleByGuid(layerName: string, guid: string) {
-        const stateKey = `${layerName}:${guid}`;
-        const state = cesiumHighlightStateRef.current.get(stateKey);
-        if (!state) return;
-
-        const { entity, originalMaterial, originalColor } = state;
-        if (entity.polyline && originalMaterial) {
-            entity.polyline.material = originalMaterial;
-        } else if (entity.corridor && originalMaterial) {
-            entity.corridor.material = originalMaterial;
-        } else if (entity.point && originalColor) {
-            entity.point.color = originalColor;
-        } else if (entity.cylinder && originalMaterial) {
-            entity.cylinder.material = originalMaterial;
-        } else if (entity.polygon && originalMaterial) {
-            entity.polygon.material = originalMaterial;
+    function cancelHighlightRetry() {
+        if (highlightRetryRef.current) {
+            clearInterval(highlightRetryRef.current);
+            highlightRetryRef.current = null;
         }
-        cesiumHighlightStateRef.current.delete(stateKey);
-        const viewer = useCesiumStore.getState().viewer;
-        try { viewer?.scene.requestRender(); } catch (_) {}
     }
 
-    const SELECTION_COLOR = 'rgb(31,255,0)';
+    /** fly-to 이후 타일 primitive 로드 완료 시점에 선택 슬롯을 적용 (500ms × 10회) */
+    function scheduleHighlightRetry(guid: string) {
+        cancelHighlightRetry();
+        let attempts = 0;
+        highlightRetryRef.current = setInterval(() => {
+            attempts += 1;
+            if (highlightNetworkLinkByGuid(guid) || attempts >= 10) cancelHighlightRetry();
+        }, 500);
+    }
 
+    /** 타일 모드 네트워크 선택: 3D 선택 슬롯(+오프스크린 재시도) + 2D 오버레이.
+     *  flyTo=true(그리드 행 선택)일 때만 두 지도 카메라를 이동한다 — 지도 단순 클릭은
+     *  카메라 고정 (의도치 않은 줌인/시점 재설정 방지). */
+    function applyNetworkSelection(viewer: Viewer, olMap: OLMap, guid: string, flyTo: boolean) {
+        const applied = highlightNetworkLinkByGuid(guid);
+        if (!applied) {
+            // 노드/포트 등 엔티티는 정적 강조(줌은 flyTo 경로가 담당) — 다음 선택/해제 전까지 유지
+            highlightCesiumStyleByGuid(viewer, 'network', guid, { zoom: false });
+        }
+        if (flyTo) {
+            // 두 지도 이동 + 2D 선택 오버레이 (좌표는 캐시 우선, 오프스크린은 /feature 조회)
+            flyToNetworkFeatureByGuid(guid, viewer, olMap);
+            if (!applied && parseTileGuid(guid)?.featureType === 'links') {
+                scheduleHighlightRetry(guid);
+            }
+        } else {
+            // 카메라 고정 — 2D 선택 오버레이만 표시
+            highlightNetworkFeature2DByGuid(guid, olMap);
+        }
+    }
+
+    function clearNetworkSelection() {
+        cancelHighlightRetry();
+        clearNetworkSelectionHighlight?.();
+        clearNetworkHighlight2D();
+    }
+
+    // 정적(비-깜빡임) 강조를 적용하고, 원복 함수를 저장해 선택해제 시 되돌린다.
+    // 자동 만료 setTimeout 을 두지 않아 다음 선택/선택해제 전까지 강조가 유지된다.
+    function highlightCesiumStyleByGuid(viewer: Viewer, layerName: string, guid: string, options?: { zoom?: boolean }): boolean {
+        let found = false;
+        viewer?.dataSources?.getByName(layerName)[0]?.entities.values.forEach(entity => {
+            if (entity.id !== guid) return;
+            found = true;
+
+            // 이미 강조 중이면 원본을 다시 캡처하지 않는다(재선택 시 원본이 노란색으로 덮이는 것 방지).
+            if (!cesiumHighlightReverts.has(guid)) {
+                const highlightMaterial = new Cesium.ColorMaterialProperty(SELECTION_HIGHLIGHT_COLOR);
+                if (entity.polyline) {
+                    const orig = entity.polyline.material;
+                    entity.polyline.material = highlightMaterial;
+                    cesiumHighlightReverts.set(guid, () => { if (entity.polyline) entity.polyline.material = orig; });
+                } else if (entity.corridor) {
+                    const orig = entity.corridor.material;
+                    entity.corridor.material = highlightMaterial;
+                    cesiumHighlightReverts.set(guid, () => { if (entity.corridor) entity.corridor.material = orig; });
+                } else if (entity.point) {
+                    const orig = entity.point.color;
+                    entity.point.color = new Cesium.ConstantProperty(SELECTION_HIGHLIGHT_COLOR);
+                    cesiumHighlightReverts.set(guid, () => { if (entity.point) entity.point.color = orig; });
+                } else if (entity.polygon) {
+                    const orig = entity.polygon.material;
+                    entity.polygon.material = highlightMaterial;
+                    cesiumHighlightReverts.set(guid, () => { if (entity.polygon) entity.polygon.material = orig; });
+                }
+            }
+
+            if (options?.zoom !== false) {
+                zoomToEntity(entity, viewer)
+            }
+        })
+        // requestRenderMode 대응 — 정적 머티리얼 변경은 명시 렌더 요청이 있어야 반영된다.
+        if (found) { try { viewer.scene.requestRender(); } catch { /* noop */ } }
+        return found;
+    }
+
+    /** 선택해제/선택변경 시 정적 강조를 원본 스타일로 되돌린다. */
+    function clearCesiumStyleByGuid(guid: string): void {
+        const revert = cesiumHighlightReverts.get(guid);
+        if (!revert) return;
+        try { revert(); } catch { /* noop */ }
+        cesiumHighlightReverts.delete(guid);
+        try { viewer?.scene.requestRender(); } catch { /* noop */ }
+    }
+
+    // 3D 하이라이트(YELLOW) 기준으로 2D 선택 색상 통일
+    const SELECTION_COLOR = 'rgba(255,255,0,0.95)';
+    const SELECTION_FILL = 'rgba(255,255,0,0.35)';
+
+    /** exact=true 면 접두 일치 후손을 제외하고 그 guid 피처만 강조한다 (신호 레이어 —
+     *  커넥션 단위로 정확히 하나만 칠해야 하므로 원격 정책을 따른다). */
     function highlightOlStyleByGuid(olMap: OLMap, layerName: string, guid: string, exact = false) {
         const olLayer = olMap.getLayers().getArray().find((layer) => {
             return matchesCustomKeyValue(layer, 'layer', layerName)
@@ -214,11 +322,12 @@ const useDefaultSelect = () => {
             .filter(feature => !exact || feature.get('__guid') === guid)
             .forEach((feature) => {
             if (styleFn) {
-                // 레이어 스타일 함수 기반으로 형광 초록 적용 (geometry override 포함)
+                // 레이어 스타일 함수 기반으로 선택 색 적용 (geometry override 포함)
                 feature.setStyle((f, resolution) => {
                     const base = styleFn(f, resolution);
                     if (!base) return undefined;
-                    // 레이어 공용 Style을 직접 바꾸면 다른 커넥션까지 같은 색으로 변한다.
+                    // 레이어 공용 Style 객체를 직접 바꾸면 같은 스타일을 쓰는 다른 피처까지
+                    //   함께 물든다(원격에서 발견된 버그) — 반드시 복제본을 칠한다.
                     const arr = (Array.isArray(base) ? base : [base]).map(style => style.clone());
                     arr.forEach(s => {
                         const image = s.getImage();
@@ -227,16 +336,19 @@ const useDefaultSelect = () => {
                             image.getStroke()?.setColor('white');
                         }
                         s.getStroke()?.setColor(SELECTION_COLOR);
-                        s.getFill()?.setColor(SELECTION_COLOR);
+                        // 외곽선만 바뀌지 않도록 채움색도 함께 강조 (fill 이 없는 스타일이면 생성)
+                        const fill = s.getFill();
+                        if (fill) fill.setColor(SELECTION_FILL);
+                        else s.setFill(new Fill({color: SELECTION_FILL}));
                     });
                     return arr;
                 });
             } else {
                 feature.setStyle(
                     new Style({
-                        stroke: new Stroke({color: SELECTION_COLOR}),
+                        stroke: new Stroke({color: SELECTION_COLOR, width: 4}),
                         zIndex: 200,
-                        fill: new Fill({color: SELECTION_COLOR}),
+                        fill: new Fill({color: SELECTION_FILL}),
                         image: new CircleStyle({
                             radius: 7,
                             fill: new Fill({color: SELECTION_COLOR}),
