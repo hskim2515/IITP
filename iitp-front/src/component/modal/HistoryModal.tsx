@@ -13,11 +13,19 @@ import axiosInstance from "@api/axiosInstance";
 import {assignPropertyToResponseData} from "@utils/guid";
 import {useScenarioStore} from "@stores/useScenarioStore";
 import {useMessageStore} from "@stores/useMessageStore";
+import { HistoryStoreFactoryType } from "@stores/useHistoryStoreFactory";
+import {
+    filterSignalHistoryEntry,
+    hasHistoryEntryChanges,
+    SignalHistoryScope,
+} from "@utils/signalHistory";
 
 interface Props {
-    historySteps: HistoryStep[];
+    historySteps?: HistoryStep[];
     onClose: () => void;
     menuCode: string;
+    historyStoreOverride?: HistoryStoreFactoryType;
+    historyScope?: SignalHistoryScope;
 }
 
 interface HistoryStep {
@@ -29,10 +37,15 @@ interface HistoryStep {
     isCurrent?: boolean;
 }
 
-const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
+const HistoryModal: React.FC<Props> = ({
+    onClose,
+    menuCode,
+    historyStoreOverride,
+    historyScope,
+}) => {
     const [historySteps, setHistorySteps] = useState<HistoryStep[]>([]);
 
-    const historyStore = menuCodeToHistoryStoreMap[menuCode];
+    const historyStore = historyStoreOverride ?? menuCodeToHistoryStoreMap[menuCode];
     const featureStore = menuCodeToStoreMap[menuCode];
 
     const selectedScenario = useScenarioStore((s) => s.selectedScenario);
@@ -45,19 +58,25 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
         if (!originHistoryLogData) return;
         const steps: HistoryStep[] = [...originHistoryLogData]
             .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-            .map((item) => ({
-                id: item.id,
-                versionId: item.versionId,
-                createdAt: item.createdAt,
-                data: item.data,
-                message: `변경사항 #${item.id}`,
-                isCurrent: item.isCurrent,
-            }));
+            .map((item) => {
+                const data = historyScope
+                    ? filterSignalHistoryEntry(item.data ?? {}, historyScope)
+                    : item.data;
+                return {
+                    id: item.id,
+                    versionId: item.versionId,
+                    createdAt: item.createdAt,
+                    data,
+                    message: `변경사항 #${item.id}`,
+                    isCurrent: item.isCurrent,
+                };
+            })
+            .filter(step => !historyScope || hasHistoryEntryChanges(step.data));
 
         setHistorySteps(steps);
 
         getOriginHistoryData();
-    }, [originHistoryLogData]);
+    }, [historyScope, originHistoryLogData]);
 
     const getOriginHistoryData = async () => {
         const store = menuCodeToStoreMap[menuCode];
@@ -101,8 +120,12 @@ const HistoryModal: React.FC<Props> = ({ onClose, menuCode }) => {
                     return;
                 }
                 const originHistoryData = featureStore.getState().originHistoryData;
+                const currentJsonData = featureStore.getState().currentJsonData;
                 const firstKey = Object.keys(originHistoryData)[0];
-                const mergeData = buildMergedDataFromLogs(originHistoryData[firstKey], logsToApply, /*isUndo=*/true);
+                const baseData = historyScope
+                    ? currentJsonData[firstKey]
+                    : originHistoryData[firstKey];
+                const mergeData = buildMergedDataFromLogs(baseData, logsToApply, /*isUndo=*/true);
                 featureStore.getState().setCurrentJsonData({
                     [firstKey]: mergeData,
                 });

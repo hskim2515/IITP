@@ -5,6 +5,8 @@ export interface FieldChange {
     field: string;
     oldValue: any;
     newValue: any;
+    scope?: 'TURN' | 'PLAN' | 'TOD';
+    transactionId?: string;
 }
 
 export interface UpdateLogItem {

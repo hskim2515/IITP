@@ -20,7 +20,11 @@ import { useNetworkEditStore } from '@stores/useNetworkEditStore';
 import { useNetworkUndoStore } from '@stores/useNetworkUndoStore';
 import { useEditGuideStore } from '@stores/useEditGuideStore';
 import { useMessageStore } from '@stores/useMessageStore';
-import { useSignalStore, useSignalHistoryStore } from '@stores/useSignalStore';
+import {
+    useSignalStore,
+    useSignalHistoryStore,
+    useSignalPlanHistoryStore,
+} from '@stores/useSignalStore';
 import { useSignalTodStore, useSignalTodHistoryStore } from '@stores/useSignalTodStore';
 import { useBusStationStore, useBusStationHistoryStore } from '@stores/useBusStationStore';
 import { useRailStationStore, useRailStationHistoryStore } from '@stores/useRailStationStore';
@@ -28,11 +32,14 @@ import { usePavementMarkingStore, usePavementMarkingHistoryStore } from '@stores
 import { assignPropertyToResponseData } from '@utils/guid';
 import { featureUpdateLogs } from '@utils/history';
 import { generateDummySignalsForNode } from '@utils/signal';
+import { generateDefaultSignalTod } from '@utils/signalGenerationRules';
+import { createSignalHistoryTransactionId } from '@utils/signalHistory';
 import { getNetworkLodTierByResolution } from '@utils/lodConstants';
 import { defaultNumCells, synthesizeCells } from '@utils/simType';
 import { useModeStore } from '@stores/useModeStore';
 import { usePropertyStore } from '@stores/usePropertyStore';
 import { useNetworkToolbarStore } from '@stores/useNetworkToolbarStore';
+import { useSelectionStore } from '@stores/useSelectionStore';
 import { Network, Link, Node, Lane, Segment, Coordinates } from '@type/Network';
 import { containsCoordinate } from 'ol/extent';
 import type { Extent } from 'ol/extent';
@@ -182,17 +189,21 @@ export function findNearestLane(links: Link[], coord: Coordinate, threshold: num
         const lanes = link.lanes ?? [];
         const laneCount = lanes.length;
         if (laneCount === 0) continue;
-        const laneW = (link.width ?? 7) / laneCount;
         const c = link.coordinates;
         // 링크 중심선을 3857 점 배열 + 세그먼트 누적거리(종방향 frac 계산용)
         const pts = c.map(p => fromLonLat([p.lng, p.lat]));
+        // 미터→3857: MVT/buildLaneRing3857 과 동일 위도 보정 — 미보정 시 픽이 화면 차선과 어긋남
+        let latSum = 0, latN = 0;
+        for (const p of c) { if (p && isFinite(p.lat)) { latSum += p.lat; latN++; } }
+        const lat = latN > 0 ? latSum / latN : 37;
+        const cos = Math.cos((lat * Math.PI) / 180);
+        const laneW = ((link.width ?? 7) / laneCount) / (cos > 1e-6 ? cos : 1);
         const segLen: number[] = [], cum: number[] = [0];
         for (let si = 0; si < pts.length - 1; si++) {
             const l = Math.hypot(pts[si + 1]![0]! - pts[si]![0]!, pts[si + 1]![1]! - pts[si]![1]!);
             segLen.push(l); cum.push(cum[si]! + l);
         }
         const total = cum[cum.length - 1]! || 1;
-        const roadW = link.width ?? 7;
         for (let li = 0; li < laneCount; li++) {
             // 2D MVT 렌더 정합: 도로는 중심선 기준 중앙정렬([-hw,+hw], dirOffset 없음),
             // 차선 0 = 최좌측(중앙선 쪽). 우측(+) 법선 기준이므로 좌측은 음수: (li - (n-1)/2)
@@ -453,28 +464,272 @@ export function deleteSignalsForNodes(nodeIds: (number | string)[]): void {
     }
 }
 
+export interface SignalNodeSyncResult {
+    mode: 'created' | 'synchronized';
+    signalCount: number;
+    addedConnections: number;
+    removedConnections: number;
+    addedTurns: number;
+    todCreated: boolean;
+}
+
+function nextSignalGuid(signals: any[]): string {
+    const used = new Set(signals.map(signal => String(signal.__guid ?? '')));
+    let index = signals.length;
+    while (used.has(`signals-${index}`)) index += 1;
+    return `signals-${index}`;
+}
+
+function createDefaultTodForNode(
+    nodeId: string,
+    planIds: Array<string | number>,
+    transactionId: string,
+): boolean {
+    const store = useSignalTodStore.getState();
+    const current = store.currentJsonData as { id?: number; nodes?: any[]; [key: string]: any } | undefined;
+    if ((current?.nodes ?? []).some(node => String(node.id) === nodeId)) return false;
+
+    const nodeGuid = `nodes-${Date.now()}`;
+    const defaultSchedule = generateDefaultSignalTod(planIds);
+    if (defaultSchedule.length === 0) return false;
+    const todNode = {
+        id: nodeId,
+        plans: defaultSchedule.map((plan, index) => ({
+            ...plan,
+            __guid: `${nodeGuid}.plans-${index}`,
+            featureType: 'plans',
+            parentGuid: nodeGuid,
+        })),
+        __guid: nodeGuid,
+        featureType: 'nodes',
+    };
+
+    if (current) {
+        store.updateCurrentJsonData(todNode, useSignalTodHistoryStore as any, {
+            scope: 'TOD',
+            transactionId,
+        });
+    } else {
+        store.setCurrentJsonData({ id: 0, nodes: [todNode] } as any);
+        store.setChange(true);
+        featureUpdateLogs(useSignalTodHistoryStore as any, {
+            guid: nodeGuid,
+            updateType: 'added',
+            properties: todNode,
+            scope: 'TOD',
+            transactionId,
+        });
+    }
+    return true;
+}
+
+function filterPlansToTurnIds(plans: any[] | undefined, validTurnIds: Set<string>): any[] | undefined {
+    if (!plans) return undefined;
+    return plans.map(plan => ({
+        ...plan,
+        phases: (plan.phases ?? []).map((phase: any) => ({
+            ...phase,
+            turnList: String(phase.turnList ?? '')
+                .split(/\s+/)
+                .filter(Boolean)
+                .filter((turnId: string) => validTurnIds.has(turnId))
+                .join(' '),
+        })),
+    }));
+}
+
 /**
- * 노드 하나의 신호를 토폴로지(접근로/방위각) 기준으로 통째로 (재)생성한다 — 기존 신호가
- * 있으면 먼저 전부 지운다(부분 병합이 아니라 "이 교차로의 완전한 신호 세트로 교체"가 목표,
- * SignalGroupedEditor의 "자동 생성"과 동일 원칙 — 둘 다 이 함수를 공유). 판정 기준은
- * generateDummySignalsForNode(iitp-rest DummySignalGenerator와 동일 로직)를 그대로 쓰므로
- * 신호 후보 조건(접근로 2개 이상 등) 미충족 노드는 null을 반환하고 아무 것도 하지 않는다.
+ * 신규 교차로는 Signal + 기본 PLAN + 종일 TOD를 최초 생성한다.
+ * 기존 교차로는 사용자가 만든 PLAN/TOD를 보존하면서 현재 Network Connection만 Turn 그룹에
+ * 동기화한다. 기존 그룹의 Turn ID는 유지하고 새 그룹에만 다음 ID를 부여한다.
  */
-export function generateSignalsForNode(network: Network, nodeId: number | string): number | null {
-    const generated = generateDummySignalsForNode(network, String(nodeId));
+export function synchronizeSignalsForNode(
+    network: Network,
+    nodeId: number | string,
+): SignalNodeSyncResult | null {
+    const normalizedNodeId = String(nodeId);
+    const generated = generateDummySignalsForNode(network, normalizedNodeId);
     if (generated.length === 0) return null;
-    deleteSignalsForNodes([nodeId]);
-    const base = (useSignalStore.getState().currentJsonData as { signals?: any[] } | undefined)?.signals?.length ?? 0;
-    generated.forEach((partial, i) => {
-        const newSig = {
+    const transactionId = createSignalHistoryTransactionId('AUTO_SIGNAL');
+    const turnHistoryMetadata = { scope: 'TURN' as const, transactionId };
+    const planHistoryMetadata = { scope: 'PLAN' as const, transactionId };
+
+    const store = useSignalStore.getState();
+    const allSignals = (store.currentJsonData as { signals?: any[] } | undefined)?.signals ?? [];
+    const existing = allSignals.filter(signal => String(signal.nodeId) === normalizedNodeId);
+
+    if (existing.length === 0) {
+        const workingSignals = [...allSignals];
+        generated.forEach(partial => {
+            const signalGuid = nextSignalGuid(workingSignals);
+            const plans = (partial.plans ?? []).map((plan: any, planIndex: number) => {
+                const planGuid = `${signalGuid}.plans-${planIndex}`;
+                return {
+                    ...plan,
+                    __guid: planGuid,
+                    featureType: 'plans',
+                    parentGuid: signalGuid,
+                    phases: (plan.phases ?? []).map((phase: any, phaseIndex: number) => ({
+                        ...phase,
+                        __guid: `${planGuid}.phases-${phaseIndex}`,
+                        featureType: 'phases',
+                        parentGuid: planGuid,
+                    })),
+                };
+            });
+            const newSignal = {
+                featureType: 'signals',
+                ...partial,
+                ...(partial.plans ? { plans } : {}),
+                __guid: signalGuid,
+            };
+            workingSignals.push(newSignal);
+            store.updateCurrentJsonData(
+                newSignal,
+                useSignalHistoryStore as any,
+                turnHistoryMetadata,
+            );
+            (newSignal.plans ?? []).forEach((plan: any) => {
+                featureUpdateLogs(useSignalPlanHistoryStore as any, {
+                    guid: plan.__guid,
+                    updateType: 'added',
+                    properties: plan,
+                    ...planHistoryMetadata,
+                });
+            });
+        });
+        const generatedPlanIds = generated
+            .find(signal => signal.plans?.length)
+            ?.plans
+            ?.map(plan => plan.id) ?? [];
+        const todCreated = createDefaultTodForNode(
+            normalizedNodeId,
+            generatedPlanIds,
+            transactionId,
+        );
+        return {
+            mode: 'created',
+            signalCount: generated.length,
+            addedConnections: generated.length,
+            removedConnections: 0,
+            addedTurns: new Set(generated.map(signal => String(signal.turnId))).size,
+            todCreated,
+        };
+    }
+
+    const generatedByConnection = new Map(
+        generated.map(signal => [String(signal.connectionId), signal]),
+    );
+    const existingByConnection = new Map<string, any>();
+    for (const signal of existing) {
+        if (signal.connectionId == null) continue;
+        const connectionId = String(signal.connectionId);
+        if (!existingByConnection.has(connectionId)) existingByConnection.set(connectionId, signal);
+    }
+
+    // 생성기가 계산한 임시 Turn 그룹별로 기존 Turn ID를 찾아 유지한다.
+    const stableTurnIdByGeneratedTurn = new Map<string, string>();
+    const usedTurnIds = new Set<string>();
+    for (const signal of existing) {
+        if (signal.connectionId == null || signal.turnId == null) continue;
+        const desired = generatedByConnection.get(String(signal.connectionId));
+        if (!desired) continue;
+        const generatedTurnId = String(desired.turnId);
+        if (!stableTurnIdByGeneratedTurn.has(generatedTurnId)) {
+            const stableTurnId = String(signal.turnId);
+            stableTurnIdByGeneratedTurn.set(generatedTurnId, stableTurnId);
+            usedTurnIds.add(stableTurnId);
+        }
+    }
+    let nextTurnId = Math.max(
+        -1,
+        ...existing
+            .map(signal => Number(signal.turnId))
+            .filter(Number.isFinite),
+    ) + 1;
+    for (const signal of generated) {
+        const generatedTurnId = String(signal.turnId);
+        if (stableTurnIdByGeneratedTurn.has(generatedTurnId)) continue;
+        while (usedTurnIds.has(String(nextTurnId))) nextTurnId += 1;
+        stableTurnIdByGeneratedTurn.set(generatedTurnId, String(nextTurnId));
+        usedTurnIds.add(String(nextTurnId));
+        nextTurnId += 1;
+    }
+
+    const matchedExistingGuids = new Set<string>();
+    const finalSignals: any[] = [];
+    const workingSignals = [...allSignals];
+    let addedConnections = 0;
+    for (const partial of generated) {
+        const connectionId = String(partial.connectionId);
+        const previous = existingByConnection.get(connectionId);
+        const synchronized = {
+            ...(previous ?? {}),
             featureType: 'signals',
             ...partial,
-            __guid: `signals-${base + i}`,
+            plans: undefined,
+            nodeId: normalizedNodeId,
+            turnId: stableTurnIdByGeneratedTurn.get(String(partial.turnId))!,
+            connectionId,
+            __guid: previous?.__guid ?? nextSignalGuid(workingSignals),
         };
-        useSignalStore.getState().updateCurrentJsonData(newSig, useSignalHistoryStore as any);
-        featureUpdateLogs(useSignalHistoryStore as any, { guid: newSig.__guid, updateType: 'added', properties: newSig });
-    });
-    return generated.length;
+        if (previous?.__guid) {
+            matchedExistingGuids.add(previous.__guid);
+            store.updateCurrentJsonData(
+                synchronized,
+                useSignalHistoryStore as any,
+                turnHistoryMetadata,
+            );
+        } else {
+            addedConnections += 1;
+            workingSignals.push(synchronized);
+            store.updateCurrentJsonData(
+                synchronized,
+                useSignalHistoryStore as any,
+                turnHistoryMetadata,
+            );
+        }
+        finalSignals.push(synchronized);
+    }
+
+    const removed = existing.filter(signal => !matchedExistingGuids.has(signal.__guid));
+    const removedGuids = removed.map(signal => signal.__guid).filter((guid): guid is string => !!guid);
+    if (removedGuids.length > 0) {
+        store.removeRecordsByGuid(
+            removedGuids,
+            useSignalHistoryStore as any,
+            turnHistoryMetadata,
+        );
+    }
+
+    // PLAN은 재생성하지 않는다. 살아남은 Turn 참조만 유지하고 새 Turn은 현시 미배정으로 둔다.
+    const originalPlans = existing.find(signal => signal.plans?.length)?.plans;
+    const validTurnIds = new Set(finalSignals.map(signal => String(signal.turnId)));
+    const preservedPlans = filterPlansToTurnIds(originalPlans, validTurnIds);
+    if (finalSignals.length > 0 && preservedPlans) {
+        const carrier = { ...finalSignals[0], plans: preservedPlans };
+        store.updateCurrentJsonData(
+            carrier,
+            useSignalPlanHistoryStore as any,
+            planHistoryMetadata,
+        );
+    }
+
+    const previousTurnIds = new Set(existing.map(signal => String(signal.turnId)));
+    const finalTurnIds = new Set(finalSignals.map(signal => String(signal.turnId)));
+    return {
+        mode: 'synchronized',
+        signalCount: finalSignals.length,
+        addedConnections,
+        removedConnections: removed.length,
+        addedTurns: [...finalTurnIds].filter(turnId => !previousTurnIds.has(turnId)).length,
+        todCreated: false,
+    };
+}
+
+/** 기존 호출부 호환용: 신규 생성/기존 동기화 후 현재 이동류 수를 반환한다. */
+export function generateSignalsForNode(network: Network, nodeId: number | string): number | null {
+    return synchronizeSignalsForNode(network, nodeId)?.signalCount ?? null;
 }
 
 // ── 링크 삭제 연쇄: 정류장 정리 ──────────────────────────────────
@@ -1234,6 +1489,8 @@ export const useNetworkSelect = () => {
     const selectedNodeIds = useNetworkDrawStore(s => s.selectedNodeIds);
     const connectTargetNodeId = useNetworkDrawStore(s => s.connectTargetNodeId);
     const appMode        = useModeStore(s => s.appMode); // 모드 전환 시 선택 초기화용
+    const gridSelectedGuid = useSelectionStore(s => s.selectedGuid);     // 하단 편집 그리드 선택
+    const selectionSource  = useSelectionStore(s => s.selectionSource);  // 'grid' | 'map' | ...
 
     // (구) 선택 편집 진입 시 mapViewMode='2D' 강제 로직 제거 — 편집모드는 split(2D 편집 + 3D 로드뷰)
     //   유지. 편집은 2D(OL) 전용이라 뷰 강제 불필요.
@@ -1299,6 +1556,33 @@ export const useNetworkSelect = () => {
         }
         return () => { useEditGuideStore.getState().clear(); };
     }, [isSelectActive, selectedLinkId, selectedNodeId, selectedLinkIds, selectedNodeIds, connectTargetNodeId]);
+
+    // ── 하단 편집 그리드 → drawStore(편집 하이라이트) 동기화 ──
+    //   selectedGuid 슬롯 하이라이트(useDefaultSelect)와 편집모드 drawStore 하이라이트는 별개 시스템이다.
+    //   그동안 그리드에서 체크 해제해도(→ setSelectedGuid([], 'grid')) drawStore.selectedLinkId 가 남아
+    //   "상위 링크가 클릭된 채 하이라이트" 되던 문제를, 그리드('grid' 소스) 변경을 drawStore 로 되비쳐 해결한다.
+    //   지도 클릭은 source='map' 이고 이미 drawStore 를 세팅하므로 여기서는 'grid' 소스만 반영(중복/충돌 방지).
+    useEffect(() => {
+        if (!isSelectActive) return;
+        // 'grid-bulk'(헤더 전체 체크/다중 체크)도 그리드발 선택이므로 함께 반영한다 —
+        //   'grid' 와의 차이는 카메라 이동 여부뿐이고(useDefaultSelect), 편집 하이라이트 동기화는
+        //   동일해야 한다. 여기서 빠지면 다중 체크 중에 이전 편집 하이라이트가 그대로 남는다.
+        if (selectionSource !== 'grid' && selectionSource !== 'grid-bulk') return;
+        const raw = gridSelectedGuid?.[0];
+        const guid = raw != null ? String(raw) : '';
+        if (!guid) {
+            // 그리드 체크 해제 → 편집 하이라이트/맥락 툴바도 함께 정리
+            useNetworkDrawStore.getState().clearSelection();
+            useNetworkToolbarStore.getState().hide();
+            return;
+        }
+        // 타일 guid(T_N{id}/T_L{id}/T_L{id}_lane{idx}/...) 를 편집 선택으로 되비침.
+        //   레인/세그먼트는 지도 클릭과 동일하게 링크 레벨 하이라이트로 뭉쳐 일관성 유지.
+        const nodeM = /^T_N(\d+)$/.exec(guid);
+        if (nodeM) { useNetworkDrawStore.getState().setSelectedNode(Number(nodeM[1])); return; }
+        const linkM = /^T_L(\d+)/.exec(guid);
+        if (linkM) { useNetworkDrawStore.getState().setSelectedLink(Number(linkM[1])); return; }
+    }, [gridSelectedGuid, selectionSource, isSelectActive]);
 
     const selSrcRef   = useRef<VectorSource | null>(null);
     const hoverSrcRef = useRef<VectorSource | null>(null);
@@ -1902,6 +2186,11 @@ export const useNetworkSelect = () => {
             if (node) {
                 useNetworkDrawStore.getState().setSelectedNode(node.id);
                 setProps({ ...node, featureType: 'nodes' } as any);
+                // 지도 클릭 → 하단 그리드 행 체크 + 스크롤 동기화 (그리드는 useSelectionStore.selectedGuid 를 구독).
+                // 편집 그리드는 networkGridData(assignTileGuids) 를 쓰므로 행 __guid 가 T_N{id} 타일 규칙 —
+                // id 기반 타일 guid 로 세팅해야 매칭된다 (currentJsonData 의 경로형 __guid 는 안 맞음).
+                // 'map' 소스라 카메라 fly-to 없이 하이라이트만 (grid 소스만 카메라 이동).
+                useSelectionStore.getState().setSelectedGuid([`T_N${node.id}`], 'map');
                 useNetworkToolbarStore.getState().show(clickPos, 'node', { nodeId: String(node.id) });
                 return;
             }
@@ -1931,6 +2220,10 @@ export const useNetworkSelect = () => {
                     const ll = toLonLat(coord);
                     useNetworkDrawStore.getState().setSelectedLink(link0.id);
                     setProps({ ...link0, featureType: 'links' } as any);
+                    // 속성 팝업/툴바는 링크 레벨을 유지하되, 하단 그리드는 클릭한 "레인 depth"까지 진입·체크한다.
+                    // 그리드 레인 행 __guid 는 assignTileGuids 규칙(T_L{id}_lane{배열index}) — findNearestLane.laneIdx
+                    // 가 곧 link.lanes 배열 index 라 그대로 일치한다.
+                    useSelectionStore.getState().setSelectedGuid([`T_L${link0.id}_lane${lane.laneIdx}`], 'map');
                     useNetworkToolbarStore.getState().show(
                         clickPos, 'link',
                         { linkId: String(link0.id), laneIdx: lane.laneIdx },
@@ -1943,6 +2236,7 @@ export const useNetworkSelect = () => {
                 const ll = toLonLat(coord);
                 useNetworkDrawStore.getState().setSelectedLink(link.id);
                 setProps({ ...link, featureType: 'links' } as any);
+                useSelectionStore.getState().setSelectedGuid([`T_L${link.id}`], 'map');
                 useNetworkToolbarStore.getState().show(
                     clickPos, 'link',
                     { linkId: String(link.id) },
@@ -1959,6 +2253,7 @@ export const useNetworkSelect = () => {
             })();
             useNetworkDrawStore.getState().clearSelection();
             usePropertyStore.getState().setSelectedProps(null);
+            useSelectionStore.getState().setSelectedGuid([], 'map'); // 빈 지형 클릭 → 그리드 선택 해제
             useNetworkToolbarStore.getState().hide();
 
             // Alt+빈 지형 클릭: "도로를 그리는 게 아니라 노드 하나만 놓고 싶다"는 실사용 요청 —
@@ -2269,6 +2564,14 @@ export const useNetworkSelect = () => {
             if (!network) return;
             const scene     = v.scene;
             const drawStore = useNetworkDrawStore.getState();
+            // 지도(3D) 클릭 선택 → 하단 그리드 행 체크 + 스크롤 동기화.
+            // 그리드는 useSelectionStore.selectedGuid 를 구독하므로 여기서도 함께 세팅한다
+            // (edit 모드 3D 클릭은 지금까지 useNetworkDrawStore 만 갱신해 그리드가 반응 못 했음).
+            // ⚠ 편집 그리드(PropertyPanel)는 NETWORK_TILING.ENABLED 로 networkGridData(assignTileGuids)를
+            //   쓰므로 행 __guid 는 항상 T_L{id}/T_N{id} 타일 규칙이다. currentJsonData 는
+            //   applyNetworkUpdate 후 경로형(nodes.nodes-N) guid 라 그리드와 안 맞는다 — 반드시 id 기반 타일 guid 로 세팅.
+            const syncGridSelection = (g: string | null) =>
+                useSelectionStore.getState().setSelectedGuid(g ? [g] : [], 'map');
 
             // 1순위: scene.pick() — Entity(노드)만 신뢰
             // 줌 중 LOD tier 전환으로 GroundPrimitive 가 비동기 재생성되는 순간과 겹치면
@@ -2283,6 +2586,7 @@ export const useNetworkSelect = () => {
                 const props = picked.id.properties?.getValue(Cesium.JulianDate.now());
                 if (props?.featureType === 'nodes' && props?.id != null) {
                     drawStore.setSelectedNode(String(props.id));
+                    syncGridSelection(`T_N${props.id}`);
                     return;
                 }
             }
@@ -2291,15 +2595,17 @@ export const useNetworkSelect = () => {
             const hit = pickNetworkAtPosition(scene, e.position);
             if (hit?.props?.id != null) {
                 drawStore.setSelectedLink(String(hit.props.id));
+                syncGridSelection(`T_L${hit.props.id}`);
                 return;
             }
 
             // 2순위: 화면거리 기반 fallback
             const node = findNearestNodeCesium(network.nodes, e.position, scene, 25);
-            if (node) { drawStore.setSelectedNode(node.id); return; }
+            if (node) { drawStore.setSelectedNode(node.id); syncGridSelection(`T_N${node.id}`); return; }
             const link = findNearestLinkCesium(network.links, e.position, scene, 15);
-            if (link) { drawStore.setSelectedLink(link.id); return; }
+            if (link) { drawStore.setSelectedLink(link.id); syncGridSelection(`T_L${link.id}`); return; }
             drawStore.clearSelection();
+            syncGridSelection(null);
         }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
         return () => { handler.destroy(); };

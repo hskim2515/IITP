@@ -24,7 +24,7 @@ if (fs.existsSync(envPath)) {
 }
 
 // === URL 설정 ===
-const url = (process.env.VITE_API_URL || "http://localhost:8080") + "/api-docs";
+const url = (process.env.VITE_API_URL || "http://localhost:9090") + "/v3/api-docs";
 
 // === 옵션 고정 ===
 const OPTIONS = "--export-type --root-types --root-types-no-schema-prefix";

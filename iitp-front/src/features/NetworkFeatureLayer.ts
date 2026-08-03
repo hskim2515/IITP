@@ -13,6 +13,7 @@ import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import { useModeStore } from "@stores/useModeStore";
 import { useNetworkEditStore } from "@stores/useNetworkEditStore";
 import { usePropertyStore } from "@stores/usePropertyStore";
+import { useSelectionStore } from "@stores/useSelectionStore";
 import {
     getNetworkLodTierByResolution,
     isNetworkFeatureVisibleAtTier,
@@ -27,6 +28,8 @@ import { NETWORK_TILING } from "@utils/lodConstants";
 import { NetworkTileManager, type NetworkTilePayload } from "@managers/NetworkTileManager";
 import { assignTileGuids } from "@utils/tileGuid";
 import { smoothSharpPolyline } from "@utils/polylineSmooth";
+import { buildLaneRing3857 } from "@utils/laneGeometry";
+import { networkPickVisibility, isNetworkFeatureTypeVisible } from "@utils/networkPrimitiveShared";
 import { normalizeTurning } from "@utils/turning";
 import NetworkMvtLayer from "@features/NetworkMvtLayer";
 import { useNetworkTileStore } from "@stores/useNetworkTileStore";
@@ -71,6 +74,12 @@ export default class NetworkFeatureLayer extends VectorLayer {
     /** 타일 매니저가 바라보는 versionId — 세션 중 버전 전환 감지용 */
     private tileVersionId: string | null = null;
     private visChangeKey: EventsKey | null = null;
+    /** 자식 레이어(MVT/편집 오버레이/선택 강조) 가시성 전파 전용 키 — visChangeKey(extent 게이팅)와 별개.
+     *  한 키를 공유하면 게이팅 리스너가 먼저 등록될 때 전파 리스너가 아예 등록되지 않아
+     *  레이어 패널에서 꺼도 2D 에 계속 보이는 문제가 생긴다. */
+    private childVisChangeKey: EventsKey | null = null;
+    /** 하위 featureType 가시성 (레이어 패널 자식 체크박스) — 2D 렌더/픽 게이트 */
+    private featureTypeVisible: Record<string, boolean> = {};
     // 편집 델타 오버레이: editedLinkIds 링크를 MVT 위에 OL 벡터로 그리는 전용 레이어(this.source 와 분리).
     private editOverlaySource: VectorSource | null = null;
     private editOverlayLayer: VectorLayer | null = null;
@@ -186,6 +195,43 @@ export default class NetworkFeatureLayer extends VectorLayer {
     }
 
     /**
+     * 부모(네트워크) 레이어 가시성을 map 에 직접 추가된 자식 레이어들에 전파한다.
+     * 자식은 VectorLayerManager 에 등록되지 않아 manager 의 show/hide 가 닿지 않는다.
+     */
+    private applyChildVisibility(): void {
+        const visible = this.getVisible();
+        networkPickVisibility.layer = visible; // MVT styleFunction / 3D 기하 pick 게이트
+        this.mvtLayer?.setVisible(visible);
+        this.editOverlayLayer?.setVisible(visible);
+        this.selHighlightLayer?.setVisible(visible);
+        try { this.mvtLayer?.changed(); } catch (_) {}
+        try { this.getMapInternal()?.render(); } catch (_) {}
+    }
+
+    /**
+     * 하위 featureType on/off (레이어 패널 자식 체크박스 → VectorLayerManager.toggleByFeatureType).
+     *
+     * ⚠️ 피처 인스턴스에 빈 스타일을 씌우는 방식(구현)은 쓰지 않는다 — 이 레이어는 줌/팬마다
+     * 타일 payload 로 source 를 재구성하므로(addTilePayload/fullBuild/reconcile) 새로 만들어진
+     * 피처에는 그 스타일이 없어 숨김이 풀린다("줌 시 가려진 객체가 순간 드러남").
+     * 상태만 공유 플래그에 기록하고, 실제 숨김은 styleFunction/픽 경로의 게이트가 담당한다.
+     */
+    public toggleFeatureTypeVisible(featureType: string, visible: boolean): void {
+        this.featureTypeVisible[featureType] = visible;
+        if (featureType in networkPickVisibility) {
+            (networkPickVisibility as any)[featureType] = visible;
+        }
+        try { this.mvtLayer?.changed(); } catch (_) {}
+        try { this.changed(); } catch (_) {}   // styleFunction 재평가 → 렌더 게이트 적용
+        try { this.getMapInternal()?.render(); } catch (_) {}
+    }
+
+    /** 현재 featureType 가시성 (기본 true) */
+    public isFeatureTypeVisible(featureType: string): boolean {
+        return this.featureTypeVisible[featureType] ?? true;
+    }
+
+    /**
      * 네트워크 교체(임포트) 후 호출 — MVT 타일 캐시 무효화 + JSON viewport 타일 재fetch.
      * 없으면 OL VectorTile 내부 캐시의 이전 네트워크 타일이 새 데이터와 섞여 표시된다.
      */
@@ -207,21 +253,22 @@ export default class NetworkFeatureLayer extends VectorLayer {
             if (this.mvtLayer) { try { this.mvtLayer.setMap(null); } catch (_) {} this.mvtLayer = null; }
             return;
         }
+        // 자식 레이어 가시성 전파는 MVT 사용 여부와 무관하게 항상 등록한다 —
+        // MVT 블록 안에 두면 USE_MVT_2D=false/versionId 없음일 때 편집·선택 오버레이가
+        // 부모 off 를 따라가지 않는다 (2D 가시화 조절이 안 되던 원인 중 하나).
+        if (!this.childVisChangeKey) {
+            this.childVisChangeKey = this.on('change:visible', () => this.applyChildVisibility());
+        }
         // MVT 레이어 부착 (2D 네트워크 도로/차선, 전 줌 LOD). 가시성은 네트워크 레이어와 동기화.
         if (NETWORK_TILING.USE_MVT_2D && !this.mvtLayer) {
             const versionId = getActiveVersionId();
             const base = import.meta.env.VITE_API_URL ?? "";
             if (versionId) {
                 this.mvtLayer = new NetworkMvtLayer(String(versionId), String(base));
+                // 2D 클릭/호버 픽킹에서 이 레이어를 식별하기 위한 키 (defaultEventHandler)
+                this.mvtLayer.set("layer", "network-mvt");
                 this.mvtLayer.setVisible(this.getVisible());
                 map.addLayer(this.mvtLayer);
-                if (!this.visChangeKey) {
-                    this.visChangeKey = this.on('change:visible', () => {
-                        this.mvtLayer?.setVisible(this.getVisible());
-                        this.editOverlayLayer?.setVisible(this.getVisible());
-                        this.selHighlightLayer?.setVisible(this.getVisible());
-                    });
-                }
             }
         }
         // 편집 델타 오버레이 레이어 부착 (MVT 위, editedLinkIds 링크만 그림).
@@ -271,11 +318,24 @@ export default class NetworkFeatureLayer extends VectorLayer {
             });
             this.selHighlightLayer.setVisible(this.getVisible());
             map.addLayer(this.selHighlightLayer);
-            this.unsubscribeSel = usePropertyStore.subscribe(
+            // selectedProps 뿐 아니라 selectedGuid 변화에도 다시 그린다.
+            //   그리드 행 클릭은 selectedGuid 만 바꾸고 selectedProps 는 그대로 두므로,
+            //   여기에 구독이 없으면 이전 링크의 주황 오버레이가 화면에 그대로 남는다.
+            const unsubProps = usePropertyStore.subscribe(
                 (s: any) => s.selectedProps,
                 () => this.renderSelHighlight(),
                 { equalityFn: (a: any, b: any) => a === b },
             );
+            // useSelectionStore 는 subscribeWithSelector 미들웨어를 쓰지 않으므로(다른 스토어와 달리)
+            // 셀렉터 구독이 불가능하다 — 전체 구독 + 직접 변경 감지로 불필요한 재렌더를 막는다.
+            let prevGuidKey = (useSelectionStore.getState().selectedGuid ?? []).join("|");
+            const unsubGuid = useSelectionStore.subscribe(() => {
+                const key = (useSelectionStore.getState().selectedGuid ?? []).join("|");
+                if (key === prevGuidKey) return;
+                prevGuidKey = key;
+                this.renderSelHighlight();
+            });
+            this.unsubscribeSel = () => { unsubProps(); unsubGuid(); };
             this.renderSelHighlight();
         }
 
@@ -651,6 +711,34 @@ export default class NetworkFeatureLayer extends VectorLayer {
         return [new Style({ stroke: new Stroke({ color: "rgba(255,200,0,0.95)", width: 4 }), zIndex: 126 })];
     }
 
+    /**
+     * selectedProps 가 현재 선택(useSelectionStore.selectedGuid)과 같은 링크를 가리키는지.
+     *
+     * 그리드 guid 는 항상 타일 형식(`T_L{id}` / `T_L{id}_lane{idx}`)이고 selectedProps 의 `__guid`
+     * 는 경로형(`links.links-0`)일 수 있으므로, 양쪽을 "소속 링크 기준"으로 정규화해 비교한다.
+     * ⚠️ 이 정규화는 defaultEventHandler.normalizeNetworkTileSelectionGuid 와 같은 규칙이다 —
+     *    guid 규칙이 바뀌면 양쪽을 함께 고쳐야 한다(핸들러를 import 하면 레이어↔핸들러 모듈
+     *    사이클이 생기므로 의도적으로 중복 유지).
+     *
+     * 선택이 비어 있으면(빈 배열) 기존 동작대로 selectedProps 기준으로 그린다 —
+     * 지도 클릭 직후처럼 selectedGuid 반영이 한 틱 늦는 경로를 깨지 않기 위함.
+     */
+    private matchesCurrentSelection(props: any): boolean {
+        const ft = props?.featureType;
+        if (ft !== "links" && ft !== "lanes" && ft !== "cells") return false;
+        const guids = useSelectionStore.getState().selectedGuid;
+        if (!Array.isArray(guids) || guids.length === 0) return true;
+
+        const linkId = ft === "links" ? props?.id : (props?.linkRef ?? props?.linkId);
+        if (linkId == null) return true; // 판단 불가 — 기존 동작 유지
+        const base = `T_L${String(linkId)}`;
+        // `T_L5` 가 `T_L55` 에 걸리지 않도록 정확히 같거나 `_lane…` 접미사만 허용
+        return guids.some((g) => {
+            const s = String(g);
+            return s === base || s.startsWith(`${base}_`);
+        });
+    }
+
     /** selectedProps(링크/레인)를 좌표 기반으로 선택 오버레이에 그림. 링크/레인만 대상(노드/신호 등은
      *  기존 OL 피처/3D 엔티티 하이라이트가 담당). */
     private renderSelHighlight(): void {
@@ -658,6 +746,10 @@ export default class NetworkFeatureLayer extends VectorLayer {
         this.selHighlightSource.clear();
         const props: any = usePropertyStore.getState().selectedProps;
         const ft = props?.featureType;
+        // selectedProps 는 "마지막으로 지도에서 클릭한 객체"라 그리드 행 클릭으로 선택이 옮겨가도
+        // 그대로 남는다. 현재 선택(selectedGuid)과 다른 대상이면 그리지 않는다 — 없으면 이전 링크에
+        // 주황 계열 오버레이가 계속 남아 새 선택의 노란 강조와 함께 두 개로 보인다.
+        if (!this.matchesCurrentSelection(props)) return;
         try {
             if (ft === "links" && Array.isArray(props.coordinates) && props.coordinates.length >= 2) {
                 const pts = props.coordinates.map((c: any) => fromLonLat([c.lng, c.lat]));
@@ -691,45 +783,11 @@ export default class NetworkFeatureLayer extends VectorLayer {
     }
 
     /** 레인 폴리곤 링(3857) — findNearestLane/렌더와 동일 오프셋 공식.
-     *  fracStart/fracEnd(0~1) 지정 시 종방향 그 구간만(셀 하이라이트용). */
+     *  fracStart/fracEnd(0~1) 지정 시 종방향 그 구간만(셀 하이라이트용).
+     *  ⚠️ 공식은 @utils/laneGeometry.buildLaneRing3857 단일 소스 — 2D hover 도 동일 링을 써
+     *     "선택(클릭)·호버·MVT 렌더"가 항상 정합한다. */
     private buildLaneRing(link: any, laneIdx: number, fracStart = 0, fracEnd = 1): number[][] | null {
-        const lanes = link?.lanes ?? [];
-        const laneCount = lanes.length;
-        if (laneCount === 0 || laneIdx < 0 || laneIdx >= laneCount) return null;
-        const roadW = link.width ?? 7;
-        const laneW = roadW / laneCount;
-        // MVT/3D 렌더 정합: 중앙정렬 + 차선0=최좌측. 우측(+) 법선(아래 nx=dy,ny=-dx) 기준 좌측은 음수.
-        const off = (laneIdx - (laneCount - 1) / 2) * laneW;
-        const half = laneW / 2;
-        let pts: number[][] = (link.coordinates ?? []).map((c: any) => fromLonLat([c.lng, c.lat]));
-        if (pts.length < 2) return null;
-        // 종방향 구간 클립: 누적거리 비율 [fracStart, fracEnd] 에 해당하는 중심선 부분경로 추출.
-        if (fracStart > 0 || fracEnd < 1) {
-            const cum = [0]; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1]! + Math.hypot(pts[i]![0]! - pts[i - 1]![0]!, pts[i]![1]! - pts[i - 1]![1]!));
-            const total = cum[cum.length - 1]! || 1;
-            const dS = fracStart * total, dE = fracEnd * total;
-            const at = (d: number): number[] => {
-                for (let i = 1; i < cum.length; i++) if (d <= cum[i]!) { const t = (d - cum[i - 1]!) / ((cum[i]! - cum[i - 1]!) || 1); return [pts[i - 1]![0]! + (pts[i]![0]! - pts[i - 1]![0]!) * t, pts[i - 1]![1]! + (pts[i]![1]! - pts[i - 1]![1]!) * t]; }
-                return pts[pts.length - 1]!;
-            };
-            const sub: number[][] = [at(dS)];
-            for (let i = 0; i < pts.length; i++) if (cum[i]! > dS && cum[i]! < dE) sub.push(pts[i]!);
-            sub.push(at(dE));
-            pts = sub;
-            if (pts.length < 2) return null;
-        }
-        const left: number[][] = [], right: number[][] = [];
-        for (let i = 0; i < pts.length; i++) {
-            const prev = pts[Math.max(0, i - 1)]!;
-            const next = pts[Math.min(pts.length - 1, i + 1)]!;
-            const sdx = next[0]! - prev[0]!, sdy = next[1]! - prev[1]!;
-            const sl = Math.hypot(sdx, sdy) || 1;
-            const nx = sdy / sl, ny = -sdx / sl; // 우측 법선(3D right 정합)
-            const cx = pts[i]![0]! + nx * off, cy = pts[i]![1]! + ny * off;
-            left.push([cx + nx * half, cy + ny * half]);
-            right.push([cx - nx * half, cy - ny * half]);
-        }
-        return [...left, ...right.reverse(), left[0]!];
+        return buildLaneRing3857(link, laneIdx, fracStart, fracEnd);
     }
 
     /** editedLinkIds 링크를 currentJsonData 에서 뽑아 오버레이 소스에 (재)렌더.
@@ -1018,6 +1076,12 @@ export default class NetworkFeatureLayer extends VectorLayer {
         const styles: Style[] = [];
 
         const featureType = props.featureType ?? "";
+
+        // 가시화 off — **렌더 시점 게이트**. 피처 인스턴스에 빈 스타일을 씌우는 방식은
+        // 줌/팬으로 타일 payload 가 새 Feature 를 만들거나(addTilePayload/fullBuild/reconcile)
+        // source membership 이 바뀌면 적용되지 않아 "가려진 객체가 순간적으로 드러난다".
+        // 여기서 막으면 어떤 재빌드 경로에서도 숨김 상태가 유지된다.
+        if (!isNetworkFeatureTypeVisible(featureType)) return [];
 
         // MVT 모드: 도로/차선/중심선은 MVT(NetworkMvtLayer)가 그림. NetworkFeatureLayer 벡터는
         //   detail(충분히 확대)에서 편집요소(노드/커넥션/포트)만 그린다. detail 미만은 전부 MVT 양보.
@@ -1864,6 +1928,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         this.unsubscribeSel?.();
         if (this.moveEndKey) { unByKey(this.moveEndKey); this.moveEndKey = null; }
         if (this.visChangeKey) { unByKey(this.visChangeKey); this.visChangeKey = null; }
+        if (this.childVisChangeKey) { unByKey(this.childVisChangeKey); this.childVisChangeKey = null; }
         this.tileManager?.clear();
         this.tileManager = null;
         this.lastLoadedExtent = null;

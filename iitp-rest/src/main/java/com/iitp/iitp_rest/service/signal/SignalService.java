@@ -9,14 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
-import org.w3c.dom.NodeList;
-
 import com.iitp.iitp_rest.util.RemoteXmlFetch;
 
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.*;
@@ -101,43 +95,7 @@ public class SignalService {
 
     @Transactional
     public List<SignalResponse> getDataFromXml(String versionId) throws Exception {
-        List<SignalResponse> signalResponses = new ArrayList<>();
-
-        try (InputStream is = RemoteXmlFetch.openStream(remoteUrl + versionId + "/signal.xml")) {
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            DocumentBuilder builder = factory.newDocumentBuilder();
-            Document doc = builder.parse(is);
-
-            NodeList nodeList = doc.getElementsByTagName("node");
-            for (int i = 0; i < nodeList.getLength(); i++) {
-                Element nodeEl = (Element) nodeList.item(i);
-                String nodeId = nodeEl.getAttribute("id");
-
-                NodeList turnNodes = nodeEl.getElementsByTagName("turn");
-                for (int t = 0; t < turnNodes.getLength(); t++) {
-                    Element turnEl = (Element) turnNodes.item(t);
-
-                    String turnId = turnEl.getAttribute("id");
-                    String turning = turnEl.getAttribute("turning");
-                    String type = turnEl.getAttribute("type");
-
-                    String connListStr = turnEl.getAttribute("connList");
-                    List<String> connList = connListStr.isEmpty()
-                            ? new ArrayList<>()
-                            : Arrays.asList(connListStr.trim().split("\\s+"));
-
-                    for (String connId : connList) {
-                        SignalResponse td = new SignalResponse();
-                        td.setTurnId(turnId);
-                        td.setNodeId(nodeId);
-                        td.setTurning(turning);
-                        td.setType(type);
-                        td.setConnectionId(connId);
-                        signalResponses.add(td);
-                    }
-                }
-            }
-        }
+        List<SignalResponse> signalResponses = readSignalResponsesFromXml(versionId);
 
         Optional<SignalVersion> originOpt = signalVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.ORIGIN);
         if (originOpt.isEmpty()) {
@@ -162,6 +120,92 @@ public class SignalService {
             signalVersionsRepository.save(latestVersion);
         }
         return signalResponses;
+    }
+
+    /**
+     * signal.xml을 JAXB 계층 모델로 읽은 뒤 flat 응답으로 변환한다.
+     * turn만 읽던 DOM 경로와 달리 planList/phase를 함께 보존한다.
+     */
+    private List<SignalResponse> readSignalResponsesFromXml(String versionId) throws Exception {
+        try (InputStream is = RemoteXmlFetch.openStream(remoteUrl + versionId + "/signal.xml")) {
+            return fromSignalXml(streamToDto(is));
+        }
+    }
+
+    /**
+     * DB에 신호 이동류는 있으나 과거 손실 파싱으로 Plan만 빠진 노드를 signal.xml 기준으로 보완한다.
+     * 이미 DB Plan이 있는 노드는 사용자가 편집한 값일 수 있으므로 절대 덮어쓰지 않는다.
+     */
+    public List<SignalResponse> hydrateMissingPlansFromXml(
+            String versionId,
+            List<SignalResponse> storedSignals) {
+        if (storedSignals == null || storedSignals.isEmpty()) return storedSignals;
+        Set<String> storedNodeIds = storedSignals.stream()
+                .map(SignalResponse::getNodeId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        Set<String> storedPlanNodeIds = storedSignals.stream()
+                .filter(signal -> signal.getNodeId() != null
+                        && signal.getPlans() != null
+                        && !signal.getPlans().isEmpty())
+                .map(SignalResponse::getNodeId)
+                .collect(Collectors.toSet());
+        boolean hasMissingPlanNode = storedNodeIds.stream()
+                .anyMatch(nodeId -> !storedPlanNodeIds.contains(nodeId));
+        if (!hasMissingPlanNode) return storedSignals;
+
+        try {
+            List<SignalResponse> xmlSignals = readSignalResponsesFromXml(versionId);
+            return mergeMissingPlans(storedSignals, xmlSignals);
+        } catch (Exception e) {
+            log.warn("[SignalService] signal.xml Plan 보완 실패 versionId={}: {}", versionId, e.getMessage());
+            return storedSignals;
+        }
+    }
+
+    /**
+     * nodeId별로 XML Plan을 찾아 저장 데이터의 첫 번째 신호 레코드에만 붙인다.
+     * package-private로 두어 파일 I/O 없이 매핑 규칙을 단위 테스트한다.
+     */
+    List<SignalResponse> mergeMissingPlans(
+            List<SignalResponse> storedSignals,
+            List<SignalResponse> xmlSignals) {
+        if (storedSignals == null || storedSignals.isEmpty()
+                || xmlSignals == null || xmlSignals.isEmpty()) {
+            return storedSignals;
+        }
+
+        Map<String, List<SignalResponse.PlanData>> xmlPlansByNode = new LinkedHashMap<>();
+        for (SignalResponse xmlSignal : xmlSignals) {
+            if (xmlSignal.getNodeId() == null
+                    || xmlSignal.getPlans() == null
+                    || xmlSignal.getPlans().isEmpty()) {
+                continue;
+            }
+            xmlPlansByNode.putIfAbsent(xmlSignal.getNodeId(), xmlSignal.getPlans());
+        }
+
+        Set<String> nodesWithStoredPlans = storedSignals.stream()
+                .filter(signal -> signal.getNodeId() != null
+                        && signal.getPlans() != null
+                        && !signal.getPlans().isEmpty())
+                .map(SignalResponse::getNodeId)
+                .collect(Collectors.toSet());
+        Set<String> hydratedNodes = new HashSet<>();
+
+        for (SignalResponse storedSignal : storedSignals) {
+            String nodeId = storedSignal.getNodeId();
+            if (nodeId == null
+                    || nodesWithStoredPlans.contains(nodeId)
+                    || !hydratedNodes.add(nodeId)) {
+                continue;
+            }
+            List<SignalResponse.PlanData> xmlPlans = xmlPlansByNode.get(nodeId);
+            if (xmlPlans != null && !xmlPlans.isEmpty()) {
+                storedSignal.setPlans(xmlPlans);
+            }
+        }
+        return storedSignals;
     }
 
     public SignalVersion getDataFromDatabase(String versionId) {

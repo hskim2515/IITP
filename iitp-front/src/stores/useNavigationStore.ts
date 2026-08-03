@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { isGuidSelfOrDescendant } from "@utils/guid";
 
 export type DrillFrame = {
   levelName: string;
@@ -83,7 +84,7 @@ export const useNavigationStore = create<NavigationState>((set) => ({
 
       while (safetyCounter < 10) {
         const match = currentRows.find(row =>
-            targetGuid === row.__guid || targetGuid.startsWith(`${row.__guid}.`)
+            isGuidSelfOrDescendant(targetGuid, row.__guid)
         );
 
         if (!match || targetGuid === match.__guid) break;
@@ -91,7 +92,7 @@ export const useNavigationStore = create<NavigationState>((set) => ({
         const childFields = childrenFieldsFinder(currentLevel);
         const nextField = childFields.find(f =>
                 Array.isArray(match[f]) && match[f].some((c: any) =>
-                    targetGuid === c.__guid || targetGuid.startsWith(`${c.__guid}.`)
+                    isGuidSelfOrDescendant(targetGuid, c.__guid)
                 )
         );
 

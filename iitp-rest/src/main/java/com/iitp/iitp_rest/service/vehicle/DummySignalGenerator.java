@@ -40,8 +40,9 @@ import java.util.regex.Pattern;
  *       (2) 이 앱에 이미 붙어있는 네이버 위성 배경(라이브 타일)도 최대 줌에서 해상도 부족으로
  *       줄무늬 식별 불가, (3) 로드뷰는 애초에 각도/가림 문제로 보류 — 이미지 기반 횡단보도
  *       검증은 전부 기각하고 토폴로지 판정만 쓴다.</li>
- *   <li>우회전(R)은 RTOR(상시허용) → 언제나 통과</li>
- *   <li>직진/좌회전은 접근로의 실제 좌표(node의 center, link의 from/to_node)로 방위각을
+ *   <li>우회전(R)은 RTOR 타입으로 분리해 모든 현시에 포함하고, 각 일반 현시 뒤의
+ *       3초 전환 현시는 RTOR만 통과</li>
+ *   <li>이동류는 접근로의 실제 좌표(node의 center, link의 from/to_node)로 방위각을
  *       계산해, 서로 마주보는(≈180도) 접근로끼리 묶어 동시 녹색을 주는 표준 2페이즈로
  *       운영한다. 방위각을 계산할 좌표가 없거나 마주보는 짝을 못 찾은 접근로는 단독
  *       페이즈로 남긴다(잘못 페어링해 직교하는 접근로가 동시 녹색이 되는 것보다 항상 안전).</li>
@@ -125,10 +126,13 @@ public class DummySignalGenerator {
             List<Long> approaches = new ArrayList<>(approachMap.keySet());
 
             // ── turn 할당 ─────────────────────────────────────────────
-            // RTOR: 우회전은 connKeyToTurn에 "" 매핑 (항상 통과)
-            // 비RTOR: 접근 방향당 하나의 turnId 부여
+            // 직진/좌회전은 접근 방향별 일반 turn, 우회전은 접근 방향별 RTOR turn으로 분리한다.
+            // 일반 현시에는 해당 접근 방향의 일반 turn과 모든 RTOR turn을 함께 활성화하고,
+            // 각 3초 전환 현시에는 모든 RTOR turn만 남긴다.
             Map<Long, String> approachToTurnId = new LinkedHashMap<>();
+            Map<Long, String> approachToRtorTurnId = new LinkedHashMap<>();
             int turnIdx = 0;
+            int rtorIdx = 0;
 
             for (Long fromLink : approaches) {
                 List<ConnectionXml> conns = approachMap.get(fromLink);
@@ -137,21 +141,25 @@ public class DummySignalGenerator {
                 for (ConnectionXml conn : conns) {
                     String toLinkStr = String.valueOf(conn.getToLink());
                     String key = nodeId + "_" + fromLinkStr + "_" + toLinkStr;
-
                     if (conn.getTurning() == Turning.Right_Turn) {
-                        // 우회전 → RTOR, 항상 통과
-                        connKeyToTurn.put(key, "");
-                    } else {
-                        // 직진/좌회전 → 접근 방향에 공통 turnId 부여
-                        if (!approachToTurnId.containsKey(fromLink)) {
-                            approachToTurnId.put(fromLink, "t" + turnIdx++);
+                        String rtorTurnId = approachToRtorTurnId.get(fromLink);
+                        if (rtorTurnId == null) {
+                            rtorTurnId = "r" + rtorIdx++;
+                            approachToRtorTurnId.put(fromLink, rtorTurnId);
                         }
-                        connKeyToTurn.put(key, approachToTurnId.get(fromLink));
+                        connKeyToTurn.put(key, rtorTurnId);
+                    } else {
+                        String regularTurnId = approachToTurnId.get(fromLink);
+                        if (regularTurnId == null) {
+                            regularTurnId = "t" + turnIdx++;
+                            approachToTurnId.put(fromLink, regularTurnId);
+                        }
+                        connKeyToTurn.put(key, regularTurnId);
                     }
                 }
             }
 
-            if (approachToTurnId.isEmpty()) continue; // 모두 RTOR이면 신호 불필요
+            if (approachToTurnId.isEmpty()) continue;
 
             // ── 페이즈 구성 ───────────────────────────────────────────
             // generateSignalXml과 동일한 방위각 기반 페어링(마주보는 접근로끼리 동시 녹색,
@@ -168,13 +176,18 @@ public class DummySignalGenerator {
             // 억지로 맞추면 그룹이 많을 때 뒤쪽 페이즈가 사이클 밖으로 밀려 영원히 녹색이 안
             // 되는 경우가 생길 수 있음).
             int n = phaseGroups.size();
-            int greenTime = n <= 1 ? CYCLE : Math.max(MIN_GREEN, (CYCLE - YELLOW * n) / n);
-            int cycle = n <= 1 ? CYCLE : n * (greenTime + YELLOW);
+            int greenTime = n <= 1
+                    ? Math.max(MIN_GREEN, CYCLE - YELLOW)
+                    : Math.max(MIN_GREEN, (CYCLE - YELLOW * n) / n);
+            int cycle = n * (greenTime + YELLOW);
+            Set<String> rtorTurnIds = new HashSet<>(approachToRtorTurnId.values());
 
             List<DummyVehicleGenerator.PhaseInfo> phases = new ArrayList<>();
             for (List<String> group : phaseGroups) {
-                phases.add(new DummyVehicleGenerator.PhaseInfo(greenTime, new HashSet<>(group)));
-                if (n > 1) phases.add(new DummyVehicleGenerator.PhaseInfo(YELLOW, new HashSet<>(group)));
+                Set<String> greenTurns = new HashSet<>(group);
+                greenTurns.addAll(rtorTurnIds);
+                phases.add(new DummyVehicleGenerator.PhaseInfo(greenTime, greenTurns));
+                phases.add(new DummyVehicleGenerator.PhaseInfo(YELLOW, new HashSet<>(rtorTurnIds)));
             }
 
             // offset: 노드 ID 기반 분산 (모든 신호가 동시에 바뀌는 현상 방지)
@@ -191,17 +204,18 @@ public class DummySignalGenerator {
     }
 
     /**
-     * 접근 방향 2개 이상인 노드만 신호 노드로 처리하고, 우회전은 RTOR로 상시 허용,
-     * 나머지 접근은 하나씩 순서대로 단독 녹색을 주는 라운드로빈으로 운영해 실제
+     * 접근 방향 2개 이상인 노드만 신호 노드로 처리하고, 일반 이동류에는 순서대로 녹색을,
+     * 모든 RTOR은 모든 현시에 포함하되 각 일반 현시 뒤의 3초 전환 현시에는 RTOR만 남기는
+     * 라운드로빈으로 운영해 실제
      * signal.xml 텍스트를 생성한다({@link #generate}는 별개 기능(차량 CZML 미리보기용)
      * 이라 이 규칙 변경과 무관). KTDB 등 임포트 직후 신호 데이터가 아예 없을 때 빈
      * 템플릿 대신 이 결과로 채워, {@code buildSampleOdMatrix}와 동일하게 "신호 메뉴에서
      * 다듬을 수 있는 시작점"을 제공한다(신호 유무 무결성 검사를 통과시키는 것이 목적).
      *
-     * <p>RTOR 턴은 항상 통과이므로 모든 페이즈의 turnList에 포함시킨다(실측 배포판
-     * signal.xml 관례와 동일 — RTOR turn id가 모든 phase에 등장함). 노드당 평시(plan 0)/
-     * 혼잡시간대(plan 1) 두 플랜을 만들어, signalTOD가 출퇴근 시간대를 다르게 운영할 수
-     * 있게 한다({@code NextSimInputScaffolder.buildDefaultSignalTod} 참고).
+     * <p>RTOR 턴은 모든 일반 현시와 모든 3초 전환 현시에 포함한다.
+     * 노드당 평시(plan 0)/혼잡시간대(plan 1) 두 플랜을 만들어, signalTOD가
+     * 출퇴근 시간대를 다르게 운영할 수 있게 한다
+     * ({@code NextSimInputScaffolder.buildDefaultSignalTod} 참고).
      */
     public String generateSignalXml(NetworkXml network) {
         Geometry geo = Geometry.fromNetwork(network);
@@ -468,53 +482,74 @@ public class DummySignalGenerator {
         if (isPureThroughPassNode(approachMap, geo, node.getId())) return null;
 
         Map<Long, String> approachToTurnId = new LinkedHashMap<>();
-        Map<String, List<String>> turnConnIds = new LinkedHashMap<>(); // turnId → connection id 목록
-        List<String> rtorConnIds = new ArrayList<>();
+        // 접근로 하나에 직진과 좌회전이 함께 있을 수 있다. Plan 현시는 접근로 단위로
+        // 운영하되 signal.xml의 turn은 방향별로 분리해야 UI/시뮬레이터가 L을 잃지 않는다.
+        Map<String, Map<Turning, List<String>>> turnConnIds = new LinkedHashMap<>();
+        Map<Long, List<String>> rtorConnIdsByApproach = new LinkedHashMap<>();
         int turnIdx = 0;
 
         for (Long fromLink : approachMap.keySet()) {
             for (ConnectionXml conn : approachMap.get(fromLink)) {
                 String connId = String.valueOf(conn.getId());
-                if (conn.getTurning() == Turning.Right_Turn) {
-                    rtorConnIds.add(connId);
+                Turning turning = conn.getTurning() == Turning.Right_Turn
+                        ? Turning.Right_Turn
+                        : conn.getTurning() == Turning.Left_Turn
+                            ? Turning.Left_Turn
+                            : Turning.Straight;
+                if (turning == Turning.Right_Turn) {
+                    rtorConnIdsByApproach
+                            .computeIfAbsent(fromLink, ignored -> new ArrayList<>())
+                            .add(connId);
                     continue;
                 }
-                if (!approachToTurnId.containsKey(fromLink)) {
-                    approachToTurnId.put(fromLink, "t" + turnIdx++);
-                }
                 String tid = approachToTurnId.get(fromLink);
-                turnConnIds.computeIfAbsent(tid, k -> new ArrayList<>()).add(connId);
+                if (tid == null) {
+                    tid = "t" + turnIdx++;
+                    approachToTurnId.put(fromLink, tid);
+                }
+                turnConnIds
+                        .computeIfAbsent(tid, k -> new LinkedHashMap<>())
+                        .computeIfAbsent(turning, k -> new ArrayList<>())
+                        .add(connId);
             }
         }
-        if (approachToTurnId.isEmpty()) return null; // 전부 RTOR → 신호 불필요
+        if (approachToTurnId.isEmpty()) return null;
 
         List<List<String>> phaseGroups = groupApproachesByOppositeBearing(approachToTurnId, geo, node.getId());
 
-        // turn 요소: RTOR 먼저(고정 id "r0","r1"...), 그다음 t0,t1... — xml id는 순번 재부여
+        // 일반 이동류는 접근로별·방향별 turn으로, 우회전은 접근로별 RTOR turn으로 분리한다.
         StringBuilder turnsXml = new StringBuilder();
-        Map<String, String> turnKeyToXmlId = new LinkedHashMap<>();
-        int xmlTurnSeq = 0;
+        Map<String, List<String>> turnKeyToXmlIds = new LinkedHashMap<>();
         List<String> rtorXmlIds = new ArrayList<>();
-        if (!rtorConnIds.isEmpty()) {
+        int xmlTurnSeq = 0;
+        for (String tid : approachToTurnId.values()) {
+            Map<Turning, List<String>> byTurning = turnConnIds.getOrDefault(tid, Map.of());
+            List<String> xmlIds = new ArrayList<>();
+            for (Turning turning : List.of(Turning.Straight, Turning.Left_Turn)) {
+                List<String> connIds = byTurning.get(turning);
+                if (connIds == null || connIds.isEmpty()) continue;
+                String xmlId = String.valueOf(xmlTurnSeq++);
+                xmlIds.add(xmlId);
+                turnsXml.append("      <turn id=\"").append(xmlId)
+                        .append("\" turning=\"").append(turning.getValue())
+                        .append("\" type=\"None\" connList=\"")
+                        .append(String.join(" ", connIds)).append("\"/>\n");
+            }
+            turnKeyToXmlIds.put(tid, xmlIds);
+        }
+        for (List<String> connIds : rtorConnIdsByApproach.values()) {
             String xmlId = String.valueOf(xmlTurnSeq++);
             rtorXmlIds.add(xmlId);
             turnsXml.append("      <turn id=\"").append(xmlId)
                     .append("\" turning=\"R\" type=\"RTOR\" connList=\"")
-                    .append(String.join(" ", rtorConnIds)).append("\"/>\n");
-        }
-        for (String tid : approachToTurnId.values()) {
-            String xmlId = String.valueOf(xmlTurnSeq++);
-            turnKeyToXmlId.put(tid, xmlId);
-            turnsXml.append("      <turn id=\"").append(xmlId)
-                    .append("\" turning=\"S\" type=\"None\" connList=\"")
-                    .append(String.join(" ", turnConnIds.get(tid))).append("\"/>\n");
+                    .append(String.join(" ", connIds)).append("\"/>\n");
         }
 
         // 평시(0)/혼잡(1) 두 플랜 — 페이즈 그룹 구성(어느 접근로끼리 묶이는지)은 시간대와
         // 무관하게 동일하고, 페이즈당 녹색 시간만 다르다(혼잡시간대는 더 길게 줘서 처리용량 확보).
         StringBuilder plansXml = new StringBuilder();
-        plansXml.append(buildPlanXml(0, GREEN_OFFPEAK, phaseGroups, turnKeyToXmlId, rtorXmlIds, node.getId()));
-        plansXml.append(buildPlanXml(1, GREEN_PEAK, phaseGroups, turnKeyToXmlId, rtorXmlIds, node.getId()));
+        plansXml.append(buildPlanXml(0, GREEN_OFFPEAK, phaseGroups, turnKeyToXmlIds, rtorXmlIds, node.getId()));
+        plansXml.append(buildPlanXml(1, GREEN_PEAK, phaseGroups, turnKeyToXmlIds, rtorXmlIds, node.getId()));
 
         return "  <node id=\"" + node.getId() + "\">\n"
                 + "    <turnList>\n" + turnsXml + "    </turnList>\n"
@@ -624,7 +659,8 @@ public class DummySignalGenerator {
      * 안전)일 때만 이 메서드가 호출된다는 전제가 안전성의 근거다.
      */
     private static String buildPlanXml(int planId, int greenPerPhase, List<List<String>> phaseGroups,
-                                        Map<String, String> turnKeyToXmlId, List<String> rtorXmlIds, long nodeId) {
+                                        Map<String, List<String>> turnKeyToXmlIds,
+                                        List<String> rtorXmlIds, long nodeId) {
         int n = phaseGroups.size();
         int cycle = n * (greenPerPhase + YELLOW);
         int offset = (int) (nodeId % Math.max(cycle, 1));
@@ -632,19 +668,21 @@ public class DummySignalGenerator {
         StringBuilder phasesXml = new StringBuilder();
         int phaseId = 0;
         for (List<String> group : phaseGroups) {
-            phasesXml.append(phaseXml(phaseId++, greenPerPhase, group, turnKeyToXmlId, rtorXmlIds, true, greenPerPhase));
-            phasesXml.append(phaseXml(phaseId++, YELLOW, group, turnKeyToXmlId, rtorXmlIds, false, greenPerPhase));
+            List<String> greenTurnIds = new ArrayList<>();
+            for (String key : group) {
+                greenTurnIds.addAll(turnKeyToXmlIds.getOrDefault(key, List.of()));
+            }
+            greenTurnIds.addAll(rtorXmlIds);
+            phasesXml.append(phaseXml(phaseId++, greenPerPhase, greenTurnIds, true, greenPerPhase));
+            phasesXml.append(phaseXml(phaseId++, YELLOW, rtorXmlIds, false, greenPerPhase));
         }
         return "      <plan id=\"" + planId + "\" cycle=\"" + cycle + "\" offset=\"" + offset + "\">\n"
                 + phasesXml
                 + "      </plan>\n";
     }
 
-    private static String phaseXml(int phaseId, int duration, List<String> activeTurnKeys,
-                                    Map<String, String> turnKeyToXmlId, List<String> rtorXmlIds,
+    private static String phaseXml(int phaseId, int duration, List<String> xmlIds,
                                     boolean isGreen, int maxGreenTime) {
-        List<String> xmlIds = new ArrayList<>(rtorXmlIds); // RTOR는 모든 페이즈에서 상시 허용
-        for (String key : activeTurnKeys) xmlIds.add(turnKeyToXmlId.get(key));
         String turnListAttr = String.join(" ", xmlIds);
         StringBuilder sb = new StringBuilder()
                 .append("      <phase id=\"").append(phaseId).append("\" duration=\"").append(duration)

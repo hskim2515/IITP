@@ -510,14 +510,17 @@ export class LayerManager {
 
         const classRegistry: Record<string, any> = {};
 
-        // 클래스명으로 매핑
+        // 클래스명으로 매핑 — 반드시 default export 우선.
+        // ESM 네임스페이스 키는 알파벳 정렬이라 Object.values(mod)[0] 은 "d"(default)보다
+        // 앞서는 이름의 보조 export(상수/let)가 하나라도 생기면 클래스 대신 그 값을 집어
+        // 레이어 등록이 조용히 실패한다 (NetworkDataSourceLayer 3D 미표시 회귀의 실제 원인).
         Object.values(cesiumModules).forEach((mod: any) => {
-            const cls = Object.values(mod)[0];
+            const cls = mod?.default ?? Object.values(mod)[0];
             if (cls && cls.name) classRegistry[cls.name] = cls;
         });
 
         Object.values(olModules).forEach((mod: any) => {
-            const cls = Object.values(mod)[0];
+            const cls = mod?.default ?? Object.values(mod)[0];
             if (cls && cls.name) classRegistry[cls.name] = cls;
         });
 

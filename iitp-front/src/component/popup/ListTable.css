@@ -49,14 +49,44 @@
 }
 
 /* Scrollbar */
+/* 세로는 `.ag-body-vertical-scroll-viewport`, 가로는 `.ag-body-horizontal-scroll-viewport` 가
+   실제 스크롤 주체다. `.ag-body-viewport`/`.ag-center-cols-viewport` 는 ag-grid.css 가
+   `!important` 로 스크롤바를 감추므로 지정하지 않는다.
+   GridTable.module.css 의 같은 규칙과 동일한 이유·동일한 수정 (두께/색만 팝업 톤). */
 .ag-dark-custom .ag-body-horizontal-scroll-viewport::-webkit-scrollbar,
-.ag-dark-custom .ag-body-viewport::-webkit-scrollbar {
+.ag-dark-custom .ag-body-vertical-scroll-viewport::-webkit-scrollbar {
     width: 4px;
     height: 4px;
 }
 
+.ag-dark-custom .ag-body-horizontal-scroll-viewport::-webkit-scrollbar-track,
+.ag-dark-custom .ag-body-vertical-scroll-viewport::-webkit-scrollbar-track {
+    background: transparent;
+}
+
 .ag-dark-custom .ag-body-horizontal-scroll-viewport::-webkit-scrollbar-thumb,
-.ag-dark-custom .ag-body-viewport::-webkit-scrollbar-thumb {
+.ag-dark-custom .ag-body-vertical-scroll-viewport::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.12);
     border-radius: 2px;
+}
+
+/* Firefox 는 ::-webkit-scrollbar 를 무시하므로 표준 속성으로 같은 톤을 맞춘다 */
+.ag-dark-custom .ag-body-horizontal-scroll-viewport,
+.ag-dark-custom .ag-body-vertical-scroll-viewport {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+/* 가로 스크롤 줄의 좌/우 spacer 는 ag-grid.css 에서 `overflow-x: scroll` 이라 pinned 컬럼 폭만큼
+   OS 기본 가로 스크롤바가 커스텀 바 옆에 함께 그려진다. ListTable 은 체크박스/No 컬럼이
+   `pinned: 'left'` 라 항상 해당된다 — GridTable.module.css 의 같은 규칙과 동일 원인·동일 수정. */
+.ag-dark-custom .ag-horizontal-left-spacer,
+.ag-dark-custom .ag-horizontal-right-spacer {
+    overflow-x: hidden;
+    scrollbar-width: none;
+}
+
+.ag-dark-custom .ag-horizontal-left-spacer::-webkit-scrollbar,
+.ag-dark-custom .ag-horizontal-right-spacer::-webkit-scrollbar {
+    display: none;
 }

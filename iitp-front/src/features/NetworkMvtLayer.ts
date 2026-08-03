@@ -8,6 +8,7 @@ import { createXYZ } from "ol/tilegrid";
 import { NETWORK_TILING, getNetworkLodTierByResolution } from "@utils/lodConstants";
 import { useNetworkEditStore } from "@stores/useNetworkEditStore";
 import { getActiveVersionId } from "@utils/versionId";
+import { isNetworkFeatureTypeVisible } from "@utils/networkPrimitiveShared";
 
 /**
  * 네트워크 MVT(PBF) 레이어 (단계 3) — overview/mid 2D 도로망을 OL VectorTile 로 렌더.
@@ -184,6 +185,11 @@ export default class NetworkMvtLayer extends VectorTileLayer {
         // MVT RenderFeature 는 getType()/getId() 가 있으나 FeatureLike 타입엔 없어 any 캐스팅.
         const f = feature as any;
         const tier = getNetworkLodTierByResolution(resolution);
+        // 레이어 패널 가시화 off — MVT 는 per-feature setStyle 이 불가하므로 style 단계에서 제외해야
+        // 실제로 화면에서 사라진다 (레이어 패널에서 껐는데 2D 에 계속 보이던 원인).
+        // 게이트는 NetworkFeatureLayer.styleFunction / 2D·3D 픽 경로와 같은 공유 helper 로 일원화.
+        const isLanePolygon = f.getType?.() === "Polygon" && tier === "detail";
+        if (!isNetworkFeatureTypeVisible(isLanePolygon ? "lanes" : "links")) return undefined;
         // 편집 마스킹: 삭제/수정된 링크(저장 전)는 서버 MVT 에 옛 형상으로 남아있으므로 숨김.
         //   삭제 → 완전 숨김. 수정 → 델타 오버레이가 새 형상을 그리므로 원본을 숨겨 이중 렌더 방지.
         //   feature id: 중심선/도로=linkId, 차선폴리곤=linkId*100+laneIdx → /100 으로 링크 id 복원.

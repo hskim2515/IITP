@@ -1,11 +1,17 @@
 /* ── Bottom Panel Overlay ─────────────────────────────────────── */
+/* bottom 은 App.tsx 컨테이너가 공급하는 --taskbar-height 를 참조 (PropertyPanel 과 동일 규칙) */
 .overlay {
     position: absolute;
-    bottom: 0;
+    bottom: var(--taskbar-height, 0px);
     left: 0;
     right: 0;
     z-index: 1000;
     animation: fadeUp 0.18s ease;
+    /* 내용이 길어도 taskbar 위 영역을 넘지 않게 상한을 둔다 (넘치면 .body 가 스크롤) */
+    max-height: calc(100% - var(--taskbar-height, 0px));
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
 }
 
 @keyframes fadeUp {
@@ -23,15 +29,23 @@
     border-radius: 12px 12px 0 0;
     box-shadow: 0 -6px 30px rgba(0, 0, 0, 0.55);
     overflow: hidden;
+    /* overlay 상한 안에서 body 가 남은 높이를 갖도록 flex 체인 구성 */
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
 }
 
 /* ── Drag Handle ──────────────────────────────────────────────── */
+/* 상한(overlay max-height)이 걸려 패널이 줄어들 때 줄어드는 쪽은 그리드 영역(.body)이어야
+   한다 — 핸들/헤더/부가영역이 먼저 눌리면 헤더가 찌그러진 채 그리드는 그대로 넘쳐서
+   하단 row 가 taskbar 뒤로 들어간다. */
 .handle {
     display: flex;
     justify-content: center;
     align-items: center;
     padding: 6px 0 2px;
     cursor: ns-resize;
+    flex-shrink: 0;
 }
 
 .handleBar {
@@ -48,6 +62,7 @@
     gap: 10px;
     padding: 8px 16px 8px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    flex-shrink: 0;
 }
 
 .titleWrap {
@@ -144,8 +159,13 @@
 }
 
 /* ── Body (ag-grid area) ──────────────────────────────────────── */
+/* ListTable 이 이 요소의 높이를 실측해 AG Grid 픽셀 높이로 쓴다 (고정 240px 제거) */
 .body {
     overflow: hidden;
+    /* grow 는 주지 않는다 — 부모 높이가 content 기반이라 grow 시 ListTable 실측과
+       상호 참조로 진동할 수 있다. 공간이 부족할 때 줄어드는 것만 허용. */
+    flex: 0 1 auto;
+    min-height: 0;
 }
 
 /* ── Extra Section ────────────────────────────────────────────── */
@@ -153,6 +173,7 @@
     border-top: 1px solid rgba(255, 255, 255, 0.07);
     padding: 10px 16px 14px;
     background: rgba(0, 0, 0, 0.15);
+    flex-shrink: 0;
 }
 
 /* ── Form Modal Overlay ───────────────────────────────────────── */
@@ -237,15 +258,20 @@
     color: #fca5a5;
 }
 
+/* 스크롤바 톤은 PropertyModal.module.css / GridTable.module.css 와 동일 계열로 맞춘다 —
+   같은 화면에서 폼 모달만 어두운 회색(#2a2a2a) 바가 떠 보이던 것을 통일. */
 .formBody {
     padding: 18px 20px;
     overflow-y: auto;
     flex: 1;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
 }
 
-.formBody::-webkit-scrollbar { width: 4px; }
+.formBody::-webkit-scrollbar { width: 4px; height: 4px; }
 .formBody::-webkit-scrollbar-track { background: transparent; }
-.formBody::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 2px; }
+.formBody::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 2px; }
+.formBody::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.28); }
 
 /* ── Form Fields ──────────────────────────────────────────────── */
 .formField {

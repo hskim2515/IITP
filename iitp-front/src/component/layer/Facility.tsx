@@ -167,32 +167,72 @@ const Facility = ({ fields }: FacilityProps) => {
     const isChildChecked = (parentKey: string, childKey: string) =>
         activeLayerName?.includes(`${parentKey}.${childKey}`);
 
+    /**
+     * 체크 상태(activeLayerName)를 단일 출처로 삼아 지도 가시성을 맞춘다.
+     *
+     * 최종 렌더 조건은 2D/3D 모두 `부모 visible && 자식 featureType visible` 이다.
+     * 부모를 다시 켜는 순간(showLayer) 이전에 꺼둔 자식이 되살아나지 않도록,
+     * 부모 가시성을 적용한 뒤 **모든 자식**의 featureType 가시성을 다음 체크 상태
+     * 기준으로 재적용한다 (전체 off 후 하나만 on 했는데 전부 보이던 문제의 핵심).
+     */
+    const applyLayerVisibility = (parentKey: string, children: string[], nextActive: Set<string>) => {
+        if (!layerManager) return;
+        const anyChildChecked = children.length === 0
+            ? nextActive.has(parentKey)
+            : children.some(child => nextActive.has(`${parentKey}.${child}`));
+
+        if (anyChildChecked) {
+            layerManager.showLayer('facility', parentKey);
+            // show 이후에 적용해야 부모 show 로 되살아난 unchecked 자식이 다시 숨겨진다
+            children.forEach(child =>
+                layerManager.toggleByFeatureType('facility', parentKey, child, nextActive.has(`${parentKey}.${child}`)));
+        } else {
+            // 자식이 하나도 안 켜졌으면 부모도 실질 off — 자식 상태를 먼저 내리고 부모를 숨긴다
+            children.forEach(child => layerManager.toggleByFeatureType('facility', parentKey, child, false));
+            layerManager.hideLayer('facility', parentKey);
+        }
+    };
+
+    /** 렌더 시점 closure 대신 store 최신 값으로 다음 체크 상태를 계산 (stale 방지) */
+    const nextActiveSet = (add: string[], remove: string[]): Set<string> => {
+        const next = new Set(useLayerStore.getState().activeLayerName ?? []);
+        remove.forEach(k => next.delete(k));
+        add.forEach(k => next.add(k));
+        return next;
+    };
+
     const toggleParent = (parentKey: string, checked: boolean) => {
         const children = nestedArrayFieldsMap[parentKey] || [];
+        const childKeys = children.map(child => `${parentKey}.${child}`);
+        const next = checked
+            ? nextActiveSet([parentKey, ...childKeys], [])
+            : nextActiveSet([], [parentKey, ...childKeys]);
+
         if (checked) {
             addActiveLayerName(parentKey);
-            children.forEach(child => addActiveLayerName(`${parentKey}.${child}`));
-            layerManager?.showLayer('facility', parentKey);
+            childKeys.forEach(addActiveLayerName);
         } else {
             removeActiveLayerName(parentKey);
-            children.forEach(child => removeActiveLayerName(`${parentKey}.${child}`));
-            layerManager?.hideLayer('facility', parentKey);
+            childKeys.forEach(removeActiveLayerName);
         }
+        applyLayerVisibility(parentKey, children, next);
     };
 
     const toggleChild = (parentKey: string, childKey: string, checked: boolean) => {
         const fullKey = `${parentKey}.${childKey}`;
-        if (checked) {
-            addActiveLayerName(fullKey);
-            if (!activeLayerName?.includes(parentKey)) addActiveLayerName(parentKey);
-            layerManager?.toggleByFeatureType('facility', parentKey, childKey, true);
-        } else {
-            removeActiveLayerName(fullKey);
-            layerManager?.toggleByFeatureType('facility', parentKey, childKey, false);
-            const children = nestedArrayFieldsMap[parentKey] || [];
-            const anyChecked = children.some(child => activeLayerName?.includes(`${parentKey}.${child}`));
-            if (!anyChecked) removeActiveLayerName(parentKey);
-        }
+        const children = nestedArrayFieldsMap[parentKey] || [];
+        const next = nextActiveSet(checked ? [fullKey] : [], checked ? [] : [fullKey]);
+        // 자식이 하나라도 켜지면 부모도 켜짐, 전부 꺼지면 부모도 꺼짐 (isParentChecked 와 동일 규칙)
+        const anyChecked = children.some(child => next.has(`${parentKey}.${child}`));
+        if (anyChecked) next.add(parentKey);
+        else next.delete(parentKey);
+
+        if (checked) addActiveLayerName(fullKey);
+        else removeActiveLayerName(fullKey);
+        if (anyChecked) addActiveLayerName(parentKey);
+        else removeActiveLayerName(parentKey);
+
+        applyLayerVisibility(parentKey, children, next);
     };
 
     const handleDelete = async (field: LayerField) => {

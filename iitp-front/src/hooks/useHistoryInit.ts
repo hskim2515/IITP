@@ -9,7 +9,10 @@ import {useScenarioStore} from "@stores/useScenarioStore";
 import {useNetworkHistoryStore} from "@stores/useNetworkStore";
 import {useBusStationHistoryStore} from "@stores/useBusStationStore";
 import { useRailStationHistoryStore } from "@stores/useRailStationStore";
-import {useSignalHistoryStore} from "@stores/useSignalStore";
+import {
+    useSignalHistoryStore,
+    useSignalPlanHistoryStore,
+} from "@stores/useSignalStore";
 import { useSignalTodHistoryStore } from "@stores/useSignalTodStore";
 import { useSimulationScenarioHistoryStore } from "@stores/useSimulationScenarioStore";
 import { useBusPtLineHistoryStore, useBusPtLineWeekdayHistoryStore, useBusPtLineWeekendHistoryStore } from "@stores/useBusPtLineStore";
@@ -66,6 +69,9 @@ const useHistoryInit = (reloadFlag:boolean) => {
 
                     // store를 동적으로 선언하기 때문에, store 메서드를 동적으로 호출
                     store.getState().setOriginHistoryData(response.data);
+                    if (menuCode === "SIGNAL") {
+                        useSignalPlanHistoryStore.getState().setOriginHistoryData(response.data);
+                    }
                     //store.getState().initCurrentData()
                     console.log(`${menuCode} 데이터 초기화 완료`);
                     console.log(`${menuCode} response data:::`, response.data);

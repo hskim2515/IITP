@@ -97,6 +97,13 @@ const useMapInit = (openlayersMapRef: MutableRefObject<HTMLDivElement | null>, c
             // },
         });
 
+        // Cesium Viewer 기본 동작 차단: 엔티티 더블클릭 → trackedEntity 설정 → 카메라가
+        // 줌인하며 해당 엔티티에 시점이 고정(tracking)되는 내장 핸들러 제거.
+        // (selectionIndicator/infoBox=false 는 UI 만 숨길 뿐 이 input action 과는 별개)
+        cesiumViewer.screenSpaceEventHandler.removeInputAction(Cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+        // 이미 걸린 tracking 이 있어도 즉시 해제되도록 방어
+        cesiumViewer.trackedEntity = undefined;
+
         // GroundPolylinePrimitive 배치(clampToGround 도로/신호 커넥션) 갱신 중 팬/줌으로 인한
         // 빈번한 엔티티 추가/제거 churn 때 Cesium 내부에서 드물게 예외가 난다(실측:
         // "Cannot read properties of undefined (reading 'id')" @ StaticGroundPolylinePerMaterialBatch).
