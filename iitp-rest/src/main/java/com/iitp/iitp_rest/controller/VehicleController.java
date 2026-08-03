@@ -78,6 +78,18 @@ public class VehicleController {
     @jakarta.annotation.PostConstruct
     private void registerInvalidationListener() {
         vehicleDataReader.addInvalidationListener(viewportCtxCache::remove);
+        // ⚠️ 실측 확정(2026-08-03): NextSimRunner가 새 시뮬레이션 완료 후 vehicle_sim.db를
+        // SFTP에 업로드하며 vehicleDataReader.invalidateDbCache(versionId)는 호출하지만(원시
+        // DB 파일 캐시만 비움), 그보다 상위의 vehicle_route 테이블(완성된 CZML 캐시)은 전혀
+        // 건드리지 않았다 — 그 결과 새 시뮬레이션을 돌려도 화면은 예전 시뮬레이션으로 만든
+        // CZML을 계속 서빙해, "재생성해도 안 고쳐진 것처럼 보이는" 상황이 반복됐다(같은
+        // 세션에서 수 차례 재현). uploadVehicleSimDb(수동 업로드) 경로는 이미 CZML 캐시를
+        // 직접 지우고 있었지만 NextSimRunner 경로만 빠져 있었다 — invalidateDbCache 리스너에
+        // 걸어두면 호출 경로(NextSim 재실행/수동 업로드/더미 생성 등) 전부를 한 곳에서
+        // 커버하므로, 앞으로 vehicle_sim.db를 갱신하는 새 경로가 생겨도 이 무효화를 놓치지
+        // 않는다.
+        vehicleDataReader.addInvalidationListener(versionId ->
+                vehicleRouteService.getByVersionId(versionId).ifPresent(vehicleRouteService::deleteRoute));
     }
 
     /** 현재 비동기 생성 중인 scenarioKey 집합 */
@@ -347,6 +359,139 @@ public class VehicleController {
         }
     }
 
+    // ⚠️ 실측 확정(vehicle_sim.db 직접 조회, 2026-08 — 커넥션→다음 링크 전환 시 차량이 링크
+    // 진입 지점에 멈춰 서 있다가 순간이동하는 것처럼 보인다는 실사용 보고): NextSim이 링크
+    // 경계(주로 커넥션→일반 링크 전환)에서 pos_x/pos_y를 갱신하지 않고 직전 위치를 그대로
+    // 재사용하는 이벤트를 남긴다 — 그 구간은 이동거리가 0인데 spd 컬럼은 그 시점의 실제
+    // (높은) 속도를 그대로 기록해, "차가 실제로 이동 중인데 좌표만 멈춰있는" 모순 상태가
+    // 된다. 진짜 정차(신호대기 등)는 이동거리 0 + spd도 0으로 같이 기록되므로 이 필터로
+    // 걸리지 않는다. 실측: scenario2_2 40,369건의 "이동거리<0.5m" 이벤트 중 스트릭 길이 1~50
+    // 전반에 걸쳐 spd 8~140km/h가 광범위하게 관측됨(길이 1개짜리만 걸러서는 대부분 못 잡음
+    // — 프론트 czmlPositionWorker.ts의 "고립된 1구간만 병합" 완화로는 부족했던 이유).
+    // spd 컬럼(프론트로는 안 넘어가는 서버 전용 원본 데이터)이 있어야 정확히 판별 가능하므로
+    // 여기(서버, CZML 생성 전)에서 걸러낸다 — 스트릭 길이 제한 없이, "직전 유지 위치" 대비
+    // 이동거리가 미미한데 그 시점 실측 속도가 실제 이동을 뜻하는 이벤트는 통째로 스킵.
+    // 스킵된 이벤트는 CZML positions 배열에 아예 안 실리므로, 그 앞뒤의 실제 위치 이벤트끼리
+    // 직접 선형보간되어(시간은 그대로 유지) 정지 없이 자연스럽게 이어 움직인다.
+    // ⚠️ vehicle_sim.db의 spd 컬럼 단위는 m/s가 아니라 km/h다(network.xml의 max_spd/ff_spd와
+    // 직접 대조해 확정 — 예: 폭 3m 단일차선 링크 20000154의 max_spd=30.0인데 그 링크를 지나는
+    // 차량의 spd도 동일하게 30.0 근방으로 기록됨. m/s라면 그 링크에서 시속 108km라는 뜻이라
+    // 폭 3m 도로엔 비현실적).
+    //
+    // ⚠️ 1차 시도(dist<0.5m && spd>7.2km/h 만으로 판정) 회귀: 커넥션 내부는 0.1초 간격의
+    // 촘촘한 샘플이라, 실제로 정상 주행 중이어도 한 스텝(0.1초)당 이동거리가 쉽게 0.5m
+    // 미만이 된다(예: 15km/h·0.1초 = 0.42m) — 이런 정상 스텝까지 "제자리"로 오판해 통째로
+    // 스킵하면, 남은 두 점 사이를 직선(코드)으로 이으면서 실제 곡선 커넥션 경로를 벗어나
+    // "제자리에서 옆으로 삐져나가는" 것처럼 보였다(실사용 재현, scenario2_2 실측: 1차
+    // 규칙으로 스킵된 33,364건 중 52.6%가 dt≤0.5초의 커넥션 내부 스텝이었음). 절대 거리
+    // 기준만으론 짧은 시간 간격의 정상 저속 이동과 "몇 초씩 좌표가 그대로인" 진짜 결함을
+    // 구분할 수 없어 "그 시간·속도라면 있어야 할 이동거리"(expectedDist)까지 같이 보도록
+    // 고쳤다.
+    //
+    // ⚠️ 2차 시도(직전 "유지된" 이벤트 대비 현재 이벤트 하나만 비교) 회귀: 좌표가 여러
+    // 샘플에 걸쳐 연속으로 고정되는 경우(scenario3_1_V2 실측 — 20초간 4개 샘플 연속 고정),
+    // 중간 샘플들(예: 5·10·15초 시점, spd=50 그대로 기록)은 정확히 걸러졌지만, 그 스트릭의
+    // "마지막" 샘플(20초 시점)에서 하필 spd가 0으로 감쇠해 기록되면 expectedDist=0이 되어
+    // "직전 유지 위치" 비교만으로는 정상적인 도착으로 오판해 통과시켰다 — 그 결과 스트릭
+    // 전체(20초)가 여전히 하나의 "제자리" 구간으로 남아 화면에 차가 멈춰 서 있는 것처럼
+    // 보였다. 개별 이벤트 단위가 아니라 "같은 위치에 머무는 연속 구간(클러스터)" 단위로
+    // 판정해야 한다 — 클러스터 안의 어느 샘플이든 하나라도 "실제 이동 중"이라고 주장하면
+    // (expectedDist가 임계값을 넘으면) 그 클러스터 전체(마지막 샘플 포함)를 결함으로 보고
+    // 통째로 스킵한다. 클러스터 내내 spd가 낮게(=거의 0으로) 유지되면 진짜 정차로 보고
+    // 전부 그대로 유지한다.
+    private static final double STALE_POSITION_DIST_EPS_M = 0.5; // 클러스터 시작점 대비 이동거리가 이 미만이면 "같은 위치"
+    private static final double STALE_POSITION_EXPECTED_DIST_MIN_M = 1.5; // 클러스터 내 한 샘플이라도 속도×경과시간이 이 초과면 결함으로 판정
+
+    private static List<VehicleEvent> dropStalePositionArtifacts(List<VehicleEvent> events) {
+        if (events.size() < 2) return events;
+        List<VehicleEvent> kept = new ArrayList<>(events.size());
+        int n = events.size();
+        int i = 0;
+        while (i < n) {
+            VehicleEvent anchor = events.get(i);
+            kept.add(anchor);
+
+            // anchor와 위치가 사실상 같은(< EPS) 연속 구간을 클러스터로 묶는다. 클러스터 내
+            // 어느 한 샘플이라도 "그 시점까지 있어야 할 이동거리"가 임계값을 넘으면(=실제로는
+            // 움직이고 있었어야 함) 결함으로 판정한다.
+            //
+            // ⚠️ 실측 확정(scenario3_1_V2 재검증 — veh 752): 커넥션을 실제로 빠르게(37.84km/h)
+            // 빠져나온 직후, 다음 링크의 "첫" 샘플 좌표가 소수점 단위까지 그 지점과 동일한데
+            // 정작 그 샘플 자신의 spd는 0으로 기록되는 경우가 있었다 — 클러스터 멤버가 이
+            // 샘플 하나뿐이면(멤버 자신의 spd만 보는 이전 로직으로는) sawRealMotionClaim이
+            // false로 남아 "진짜 정차"로 오판했다. anchor(클러스터 진입 직전 지점) 자체가
+            // 빠르게 움직이던 중이었다면, 그 직후 좌표가 그대로 얼어붙는 것 자체가 이상 신호이므로
+            // anchor의 속도도 함께 판정에 반영한다.
+            //
+            // ⚠️ 회귀(2026-08-03 재재현 — "교차로 커넥션 지나 다음 레인 진입 시 잠시 멈췄다가
+            // 옆 레인으로 서서히 미끄러지듯 이동"): anchor 속도 기반 판정을 클러스터 전체
+            // 구간(dt가 계속 커지는 매 후보)에 반복 적용했더니, 차량이 실제로 서서히 감속해
+            // 자연스럽게 정차하는 정상 구간(다음 신호/정체를 향해 서행하며 멈추는 경우)까지
+            // dt가 충분히 커지는 순간 expectedDistByAnchor가 임계값을 넘어 "결함"으로 오판됐다
+            // — anchor의 순간 속도는 "그 시점"에만 유효한 값이지, 그 뒤로 수 초~수십 초가 지나도
+            // 계속 그 속도로 달리고 있었을 것이라 가정하면 안 된다. anchor 속도 기반 판정은
+            // "클러스터에 진입한 바로 다음 샘플"(진짜 결함이 나타나는 즉시 전환 지점)에만
+            // 적용하고, 그 이후 후보들은 각자 자신의 순간 속도로만 판정한다 — veh 752 사례
+            // (anchor 직후 단 하나의 샘플만 결함)는 이 조건으로도 그대로 잡히고, 서행 후 정차
+            // 같은 점진적·정상적인 구간은 더 이상 오탐되지 않는다.
+            double anchorExpectedDistPerSec = anchor.getSpeed() / 3.6; // km/h → m/s
+            int j = i + 1;
+            boolean sawRealMotionClaim = false;
+            while (j < n) {
+                VehicleEvent cand = events.get(j);
+                double dx = cand.getPosX() - anchor.getPosX();
+                double dy = cand.getPosY() - anchor.getPosY();
+                double dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist >= STALE_POSITION_DIST_EPS_M) break; // 클러스터 종료(실제 이동 재개)
+                double dt = cand.getTimestep() - anchor.getTimestep();
+                double expectedDist = (cand.getSpeed() / 3.6) * dt;
+                if (j == i + 1) {
+                    expectedDist = Math.max(expectedDist, anchorExpectedDistPerSec * dt);
+                }
+                if (expectedDist > STALE_POSITION_EXPECTED_DIST_MIN_M) {
+                    sawRealMotionClaim = true;
+                }
+                j++;
+            }
+
+            if (j > i + 1) {
+                if (!sawRealMotionClaim) {
+                    // 진짜 정차 — 클러스터 멤버 전부 그대로 유지
+                    for (int k = i + 1; k < j; k++) kept.add(events.get(k));
+                } else if (j < n) {
+                    // ⚠️ 회귀(2026-08-03 재재현 — "커넥션 지나 다음 레인 진입 시 정지 후 옆으로
+                    // 미끄러짐", "잘 가다가 사라짐"): 결함 클러스터를 통째로 스킵(삭제)하면 그
+                    // 자리의 시간 간격이 원래 5초(또는 0.1초) 간격 대신 anchor~다음 실제 지점
+                    // 사이의 훨씬 긴 간격(수 초~수십 초)으로 벌어진다. 프론트(czmlPositionWorker.ts)
+                    // 는 이 벌어진 간격이 GAP_THRESHOLD(7초)나 MAX_PLAUSIBLE_SPEED를 넘으면 "차량이
+                    // 순간이동한 구간"으로 보고 그 사이 통째로 차량을 숨기고(=사라짐), 안 넘으면
+                    // 그 긴 간격을 직선 하나로 이어버려(=곡선 구간을 가로질러 옆으로 미끄러지듯
+                    // 보임) 둘 다 부자연스러웠다. 삭제 대신 anchor→다음 실제 지점(j) 사이를
+                    // "원래 있던 타임스텝은 그대로 유지한 채" 시간 비례 직선으로 재배치한다 —
+                    // filterQueueJitter의 잡음 제거와 동일한 기법이지만 여기서는 결함으로 판정된
+                    // 좌표만 대상으로 한다. 샘플 밀도(및 간격)가 원본과 같게 유지되므로 프론트의
+                    // gap 판정 기준을 건드리지 않으면서, 큰 직선 한 방이 아니라 원래 있던 여러
+                    // 작은 스텝으로 나뉘어 훨씬 자연스럽게 이어진다.
+                    VehicleEvent nextReal = events.get(j);
+                    double totalDuration = nextReal.getTimestep() - anchor.getTimestep();
+                    for (int k = i + 1; k < j; k++) {
+                        VehicleEvent e = events.get(k);
+                        double localT = totalDuration > 0 ? (e.getTimestep() - anchor.getTimestep()) / totalDuration : 0;
+                        e.setPosX((float) (anchor.getPosX() + (nextReal.getPosX() - anchor.getPosX()) * localT));
+                        e.setPosY((float) (anchor.getPosY() + (nextReal.getPosY() - anchor.getPosY()) * localT));
+                        kept.add(e);
+                    }
+                }
+                // sawRealMotionClaim이 true인데 j>=n(클러스터가 마지막까지 이어짐)이면 재배치
+                // 기준으로 삼을 다음 실제 지점이 없다 — 트립 종료 직전이라 영향이 적으므로 그냥 스킵.
+                i = j;
+            } else {
+                i++;
+            }
+        }
+        return kept;
+    }
+
     /**
      * [start, endExclusive) 구간(같은 링크, 전부 mode="None")이 단조 전진이 아니면(=왕복 잡음)
      * 첫/끝 지점만 원본 그대로 두고 그 사이는 시간 비례 직선(등속 크리프)으로 대체한다.
@@ -355,21 +500,63 @@ public class VehicleController {
         if (endExclusive - start < 3) return; // 점 2개 이하는 왕복 여부를 판별할 수 없음 — 그대로 둠
 
         VehicleEvent first = events.get(start);
-        final double NOISE_TOLERANCE_M = 1.0; // 실측 잡음 규모 이하의 뒷걸음은 허용(진짜 전진으로 간주)
-        double maxDistSoFar = 0;
-        boolean monotonic = true;
+
+        // ⚠️ 실측 확정(vehicle_sim.db 직접 조회, scenario3_1_V2 veh 4326 — "커넥션 지나 다음
+        // 레인 진입 후에도 여전히 뚝뚝 끊겨 움직인다" 재현): 같은 링크 안에서 좌표가 "멈춤(수 초
+        // 고정)-점프-멈춤-점프" 식으로 계단처럼 기록되는데, 매 구간 spd는 계속 0으로 일관되고
+        // (dropStalePositionArtifacts는 spd 기반 판정이라 못 잡음), 위치도 항상 앞으로만
+        // 진행(뒤로 안 감)이라 아래 monotonic 판정도 "왕복 잡음 아님"으로 통과시켜 그대로
+        // 뒀었다 — 그 결과 이 계단식 구간은 어떤 필터도 손대지 않고 원본 그대로 남아 "멈췄다
+        // 점프했다"를 반복하는 것처럼 보였다. 왕복 여부와 무관하게, 구간 내 "연속된 두 샘플이
+        // 사실상 같은 위치(홀드)"인 곳이 하나라도 있으면 — 거칠게(성긴 해상도로) 기록된
+        // 구간이라는 신호이므로 매끄럽게 펴야 한다. 반대로 홀드 구간이 전혀 없으면(예: 커넥션
+        // 내부 0.1초 간격 연속 곡선 주행처럼 매 스텝이 실제로 다른 위치) 이미 충분히 매끄러운
+        // 원본이니 손대지 않는다(직선으로 펴면 오히려 실제 곡선 경로를 깎아버림).
+        boolean hasHeldRun = false;
         for (int k = start + 1; k < endExclusive; k++) {
-            VehicleEvent e = events.get(k);
-            double dx = e.getPosX() - first.getPosX();
-            double dy = e.getPosY() - first.getPosY();
-            double dist = Math.sqrt(dx * dx + dy * dy);
-            if (dist < maxDistSoFar - NOISE_TOLERANCE_M) {
-                monotonic = false;
+            VehicleEvent prev = events.get(k - 1);
+            VehicleEvent cur = events.get(k);
+            double hdx = cur.getPosX() - prev.getPosX();
+            double hdy = cur.getPosY() - prev.getPosY();
+            if (Math.sqrt(hdx * hdx + hdy * hdy) < STALE_POSITION_DIST_EPS_M) {
+                hasHeldRun = true;
                 break;
             }
-            maxDistSoFar = Math.max(maxDistSoFar, dist);
         }
-        if (monotonic) return;
+
+        if (!hasHeldRun) {
+            final double NOISE_TOLERANCE_M = 1.0; // 실측 잡음 규모 이하의 뒷걸음은 허용(진짜 전진으로 간주)
+            double maxDistSoFar = 0;
+            boolean monotonic = true;
+            for (int k = start + 1; k < endExclusive; k++) {
+                VehicleEvent e = events.get(k);
+                double dx = e.getPosX() - first.getPosX();
+                double dy = e.getPosY() - first.getPosY();
+                double dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < maxDistSoFar - NOISE_TOLERANCE_M) {
+                    monotonic = false;
+                    break;
+                }
+                maxDistSoFar = Math.max(maxDistSoFar, dist);
+            }
+            if (monotonic) return; // 홀드 구간 없는 매끄러운 연속 이동 — 그대로 둠
+
+            // ⚠️ 실측 확정(vehicle_sim.db 직접 조회, scenario3_1_V2 — dropStalePositionArtifacts
+            // 적용 후에도 여전히 차가 멈춰 서 있는 것처럼 보인다는 재현): first와 last가 우연히
+            // (거의) 같은 위치면 "첫/끝을 잇는 직선"이 길이 0인 점 하나로 쭈그러든다 — 그러면 아래
+            // 루프가 중간 지점 전부를 그 한 점으로 덮어써서, 실제로 있었던 왕복 이동(예: 3m 옆으로
+            // 갔다가 되돌아옴)까지 통째로 지워지고 구간 전체가 "몇 초씩 정지"한 것처럼 보인다.
+            // 단, 이 가드는 hasHeldRun이 false인 경우(진짜 짧은 왕복 — 홀드 구간 없이 매 스텝이
+            // 다른 위치)에만 적용한다. hasHeldRun이 true인 경우(veh 962 재현 — 정지구간 안에서
+            // 20~30m 떨어진 2~3개 지점을 오가며 튀다가 우연히 출발점으로 되돌아온 경우)는 first
+            // ≈ last라도 반드시 collapse해야 한다 — 그렇지 않으면 정지 중 옆 차선으로 튀었다가
+            // 되돌아오는 잡음이 그대로 노출돼 "멈췄다 옆으로 슬라이드했다 출발"처럼 보인다.
+            VehicleEvent last0 = events.get(endExclusive - 1);
+            final double DEGENERATE_COLLAPSE_EPS_M = 0.5;
+            double lastDx0 = last0.getPosX() - first.getPosX();
+            double lastDy0 = last0.getPosY() - first.getPosY();
+            if (Math.sqrt(lastDx0 * lastDx0 + lastDy0 * lastDy0) < DEGENERATE_COLLAPSE_EPS_M) return;
+        }
 
         VehicleEvent last = events.get(endExclusive - 1);
         double totalDuration = last.getTimestep() - first.getTimestep();
@@ -454,7 +641,7 @@ public class VehicleController {
 
         grouped.entrySet().parallelStream().forEach(entry -> {
             String vehicleId = entry.getKey();
-            List<VehicleEvent> vehicles = entry.getValue();
+            List<VehicleEvent> vehicles = dropStalePositionArtifacts(entry.getValue());
             if (vehicles.isEmpty()) return;
             filterQueueJitter(vehicles);
 

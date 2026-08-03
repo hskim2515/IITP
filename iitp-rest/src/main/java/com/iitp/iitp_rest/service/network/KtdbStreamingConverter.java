@@ -226,10 +226,13 @@ public class KtdbStreamingConverter {
         List<Long> sourceTerminalIds = new ArrayList<>();
         List<Long> sinkTerminalIds = new ArrayList<>();
         for (ClusterInfo ci : clusters.values()) {
-            NodeResponse nr = new NodeResponse();
-            nr.setId(ci.id());
             List<ExtLink> ins = clusterIn.getOrDefault(ci.id(), List.of());
             List<ExtLink> outs = clusterOut.getOrDefault(ci.id(), List.of());
+            // writeXml()과 동일하게 완전 고립 포인트는 응답에서도 제외 (network.xml과 일관성 유지 —
+            // 응답에만 남아있으면 프론트가 network.xml에 없는 노드를 참조하게 됨)
+            if (ins.isEmpty() && outs.isEmpty()) continue;
+            NodeResponse nr = new NodeResponse();
+            nr.setId(ci.id());
             NodeType nType = nodeTypeOf(ci, ins, outs);
             nr.setType(nType);
             if (nType == NodeType.Terminal) {
@@ -693,6 +696,11 @@ public class KtdbStreamingConverter {
             for (ClusterInfo ci : clusters.values()) {
                 List<ExtLink> ins  = clusterIn.getOrDefault(ci.id(), List.of());
                 List<ExtLink> outs = clusterOut.getOrDefault(ci.id(), List.of());
+                // 링크가 하나도 없는 완전 고립 포인트(속성변화점 등 KTDB 원본의 비-위상 마커) —
+                // classifyNodeType()이 진짜 막다른 터미널(degree=1)과 똑같이 Terminal로 묶어버려서
+                // 그대로 쓰면 실제 도로에 안 붙은 노드가 network.xml에 남는다. 어떤 link도
+                // from_node/to_node로 참조 안 하므로 emit 자체를 건너뛰어도 댕글링 참조가 생기지 않는다.
+                if (ins.isEmpty() && outs.isEmpty()) continue;
                 List<ConnTuple> conns = clusterConns.getOrDefault(ci.id(), List.of());
 
                 Set<Long> inPortIds  = new LinkedHashSet<>();

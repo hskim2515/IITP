@@ -165,6 +165,20 @@ public class NetworkService {
         return scenario == null || scenario.getLatitude() == null || scenario.getLongitude() == null;
     }
 
+    /**
+     * network.xml 저장(diff/전체 저장)에서 base_lat/base_lon이 비어 있을 때 쓸 폴백 원점.
+     * transformNetworkCoordinates의 우선순위(network.xml base 우선, 없으면 시나리오 좌표)와
+     * 동일한 기준을 "쓰기" 쪽에서도 그대로 재사용 — 두 값이 서로 다른 기준으로 갈라지면
+     * shape 인코딩/디코딩이 어긋난다.
+     */
+    public double[] resolveScenarioBaseLatLon(String versionKey) {
+        Scenario scenario = scenarioVersionRepository.findByKey(versionKey)
+                .map(ScenarioVersion::toEffectiveScenario)
+                .orElseGet(() -> scenarioRepository.findByKey(versionKey).orElse(null));
+        if (scenario == null || scenario.getLatitude() == null || scenario.getLongitude() == null) return null;
+        return new double[]{scenario.getLatitude(), scenario.getLongitude()};
+    }
+
     public NetworkXml transformNetworkCoordinates(String versionKey, NetworkXml dto) {
         return transformNetworkCoordinates(versionKey, dto, null, null);
     }

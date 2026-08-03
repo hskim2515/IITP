@@ -143,8 +143,12 @@ public class VehicleDataReader {
 
                 String inClause = String.join(",", Collections.nCopies(limitedIds.size(), "?"));
 
+                // ⚠️ spd는 신형(VehicleEvent) 스키마에도 실제 컬럼으로 존재하는데(실측 확인),
+                // 예전엔 구형(VehicleEventDebugging) 전용인 줄 알고 신형 SELECT에서 빠져있었다
+                // — 그 결과 VehicleController.dropStalePositionArtifacts가 항상 speed=0(기본값)
+                // 만 보게 되어 커넥션→링크 전환 시 좌표 고정 아티팩트를 전혀 못 걸렀다.
                 String dataQuery = isNewSchema
-                        ? "SELECT veh_id, timestep, link_id, lane_id, pos_x, pos_y, mode FROM vehicle_sim_db.VehicleEvent WHERE veh_id IN (" + inClause + ") ORDER BY veh_id, timestep"
+                        ? "SELECT veh_id, timestep, link_id, lane_id, pos_x, pos_y, spd, mode FROM vehicle_sim_db.VehicleEvent WHERE veh_id IN (" + inClause + ") ORDER BY veh_id, timestep"
                         : "SELECT veh_id, type, timestep, link_id, lane_id, pos_x, pos_y, spd, acc, spacing, mode, leader_id, target_lane_id FROM vehicle_sim_db.VehicleEventDebugging WHERE veh_id IN (" + inClause + ")";
 
                 try (PreparedStatement pstmt = conn.prepareStatement(dataQuery)) {
@@ -161,10 +165,10 @@ public class VehicleDataReader {
                             v.setLaneId(rs.getString("lane_id"));
                             v.setPosX(rs.getFloat("pos_x"));
                             v.setPosY(rs.getFloat("pos_y"));
+                            v.setSpeed(rs.getFloat("spd"));
                             v.setDriveMode(rs.getString("mode"));
                             if (!isNewSchema) {
                                 v.setType(rs.getString("type"));
-                                v.setSpeed(rs.getFloat("spd"));
                                 v.setAcc(rs.getFloat("acc"));
                                 v.setSpacing(rs.getString("spacing"));
                                 v.setLeaderId(rs.getString("leader_id"));
@@ -267,8 +271,9 @@ public class VehicleDataReader {
                 // 3) 선별 차량의 시간창 내 전체 이벤트 (링크 무관)
                 // mode(=driveMode)는 정체 구간(큐 모델, "None") 판별용 — buildVehiclePackets의
                 // filterQueueJitter가 이 값으로 차선 왕복 튐 구간을 잡아낸다. 신형/구형 스키마
-                // 모두 mode 컬럼 보유.
-                String dataSql = "SELECT e.veh_id, e.timestep, e.link_id, e.lane_id, e.pos_x, e.pos_y, e.mode " +
+                // 모두 mode 컬럼 보유. spd는 dropStalePositionArtifacts(커넥션→링크 전환 시
+                // 좌표 고정 아티팩트 판별)가 필요로 한다 — readVehicleEvent와 동일 이유로 추가.
+                String dataSql = "SELECT e.veh_id, e.timestep, e.link_id, e.lane_id, e.pos_x, e.pos_y, e.spd, e.mode " +
                         "FROM vehicle_sim_db." + tableName + " e JOIN sel_vehicles s ON e.veh_id = s.id " +
                         "WHERE 1=1" + timeFilter + " ORDER BY e.veh_id, e.timestep";
                 try (ResultSet rs = stmt.executeQuery(dataSql)) {
@@ -280,6 +285,7 @@ public class VehicleDataReader {
                         v.setLaneId(rs.getString("lane_id"));
                         v.setPosX(rs.getFloat("pos_x"));
                         v.setPosY(rs.getFloat("pos_y"));
+                        v.setSpeed(rs.getFloat("spd"));
                         v.setDriveMode(rs.getString("mode"));
                         out.add(v);
                     }

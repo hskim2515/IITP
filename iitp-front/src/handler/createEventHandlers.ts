@@ -9,10 +9,11 @@ import { useBusStationHistoryStore, useBusStationStore } from "@stores/useBusSta
 import { fromLonLat } from "ol/proj";
 import { useRailStationHistoryStore, useRailStationStore } from "@stores/useRailStationStore";
 import { Coordinates } from "@type/openapi.gen";
-import { projectPointOntoSegmentCesium, projectPointOntoSegmentOl } from "@utils/offset";
+import { projectPointOntoSegmentCesium, projectPointOntoSegmentOl, projectPointOntoPolylineOl } from "@utils/offset";
 import { pickFromCesium, pickFromOpenLayers } from "@utils/pick";
 import { createCoordinatesFromCesium, createCoordinatesFromOl } from "@utils/coordinates";
 import { getFeaturesByProperties } from "@utils/feature";
+import { Coordinate } from "ol/coordinate";
 import Collection from "ol/Collection";
 import Feature from "ol/Feature";
 import Geometry from "ol/geom/Geometry";
@@ -103,11 +104,11 @@ const featureTypeHandlersInternal = {
 
         const cleanup = () => {
             try { olEventManager?.unbind(`draw:${record.featureType}:end`, olDrawHandler); } catch {}
-            try { cesiumEventManager?.unbind("singleclick", cesiumClickHandler); } catch {}
+            try { cesiumEventManager?.unbind(`singleclick:${record.featureType}`, cesiumClickHandler); } catch {}
         };
 
         olEventManager?.bind(`draw:${record.featureType}:end`, olDrawHandler, { drawGeometryType: GeometryType.POINT });
-        cesiumEventManager?.bind("singleclick", cesiumClickHandler);
+        cesiumEventManager?.bind(`singleclick:${record.featureType}`, cesiumClickHandler);
 
         return cleanup;
     },
@@ -175,12 +176,12 @@ const featureTypeHandlersInternal = {
 
         const cleanup = () => {
             try { olEventManager?.unbind(`draw:${record.featureType}:end`, olDrawHandler); } catch {}
-            try { cesiumEventManager?.unbind("singleclick", cesiumLeftClick); } catch {}
+            try { cesiumEventManager?.unbind(`singleclick:${record.featureType}`, cesiumLeftClick); } catch {}
             try { cesiumEventManager?.unbind("rightClick", cesiumRightClick); } catch {}
         };
 
         olEventManager?.bind(`draw:${record.featureType}:end`, olDrawHandler, { drawGeometryType: GeometryType.LINE_STRING });
-        cesiumEventManager?.bind("singleclick", cesiumLeftClick);
+        cesiumEventManager?.bind(`singleclick:${record.featureType}`, cesiumLeftClick);
         cesiumEventManager?.bind("rightClick", cesiumRightClick);
 
         return cleanup;
@@ -236,8 +237,10 @@ const featureTypeHandlersInternal = {
             }
             const laneData = laneFeature.getProperties();
 
-            const laneStart = laneData.laneSource;
-            const laneEnd = laneData.laneTarget;
+            // laneAllPts(전체 폴리라인)가 있으면 그걸로 다중 세그먼트 투영 — 곡선 차선에서
+            // laneSource/laneTarget(첫/끝 점만)로 투영하면 클릭 지점과 수십 m씩 어긋난다
+            // (실측: scenario2_1 최대 굽은 링크 기준 약 54m). 없으면 기존 2점 방식으로 폴백.
+            const laneAllPts: Coordinate[] | undefined = laneData.laneAllPts;
             const parentLink = network.links.find(link => link.lanes.some(lane => lane.__guid === laneData.__guid));
 
             if (!parentLink) {
@@ -245,7 +248,9 @@ const featureTypeHandlersInternal = {
                 return;
             }
 
-            const {offset, offsetPosition} = projectPointOntoSegmentOl(laneStart, laneEnd, coord);
+            const {offset, offsetPosition} = laneAllPts && laneAllPts.length >= 2
+                ? projectPointOntoPolylineOl(laneAllPts, coord)
+                : projectPointOntoSegmentOl(laneData.laneSource, laneData.laneTarget, coord);
             const coordinates = createCoordinatesFromOl(offsetPosition)
             if (!coordinates) return;
             processAndStoreStation(parentLink.id, laneData.id, offset, coordinates);
@@ -321,7 +326,7 @@ const featureTypeHandlersInternal = {
                 console.error(error)
             }
             try {
-                cesiumEventManager?.unbind("singleclick", cesiumSingleClickHandler);
+                cesiumEventManager?.unbind(`singleclick:${record.featureType}`, cesiumSingleClickHandler);
             } catch (error) {
                 console.error(error)
             }
@@ -331,7 +336,7 @@ const featureTypeHandlersInternal = {
         const snapLayer = useLayerStore.getState().layerManager?.getLayerByName(snapLayerName);
         const snapFeatures = getFeaturesByProperties(snapLayer ?? undefined, {featureType: snapFeatureType})
         olEventManager?.bind(`snap:${record.featureType}`, olSnap, {features: snapFeatures ?? new Collection<Feature<Geometry>>});
-        cesiumEventManager?.bind("singleclick", cesiumSingleClickHandler);
+        cesiumEventManager?.bind(`singleclick:${record.featureType}`, cesiumSingleClickHandler);
 
         return cleanup;
     },
@@ -399,14 +404,14 @@ const featureTypeHandlersInternal = {
                 console.error(error)
             }
             try {
-                cesiumEventManager?.unbind("singleclick", cesiumSingleClickHandler);
+                cesiumEventManager?.unbind(`singleclick:${record.featureType}`, cesiumSingleClickHandler);
             } catch (error) {
                 console.error(error)
             }
         };
 
         olEventManager?.bind(`draw:${record.featureType}:end`, olDrawHandler, {drawGeometryType: GeometryType.POINT});
-        cesiumEventManager?.bind("singleclick", cesiumSingleClickHandler);
+        cesiumEventManager?.bind(`singleclick:${record.featureType}`, cesiumSingleClickHandler);
         return cleanup;
     },
     exits: (record: RailStationExitData) => {
@@ -454,10 +459,14 @@ const featureTypeHandlersInternal = {
             }
 
             const linkData = linkFeature.getProperties();
-            const linkStart = fromLonLat([linkData.coordinates[0].lng, linkData.coordinates[0].lat]);
-            const linkEnd = fromLonLat([linkData.coordinates[1].lng, linkData.coordinates[1].lat]);
+            // 링크 좌표점 전체(2점 이상)를 다중 세그먼트 투영 — 첫/끝 점만 쓰면 곡선 링크에서
+            // 클릭 지점과 어긋난다(busStations/pavementMarkings와 동일 조치).
+            const linkAllPts: Coordinate[] = (linkData.coordinates as Array<{ lng: number; lat: number }>)
+                .map((c) => fromLonLat([c.lng, c.lat]) as Coordinate);
 
-            const {offset, offsetPosition} = projectPointOntoSegmentOl(linkStart, linkEnd, coord);
+            const {offset, offsetPosition} = linkAllPts.length >= 2
+                ? projectPointOntoPolylineOl(linkAllPts, coord)
+                : projectPointOntoSegmentOl(linkAllPts[0] ?? coord, linkAllPts[0] ?? coord, coord);
             const coordinates = createCoordinatesFromOl(offsetPosition)
             if (!coordinates) return;
             processAndStoreExit(linkData.id, offset, coordinates);
@@ -524,7 +533,7 @@ const featureTypeHandlersInternal = {
                 console.error(error)
             }
             try {
-                cesiumEventManager?.unbind("singleclick", cesiumSingleClickHandler);
+                cesiumEventManager?.unbind(`singleclick:${record.featureType}`, cesiumSingleClickHandler);
             } catch (error) {
                 console.error(error)
             }
@@ -534,7 +543,7 @@ const featureTypeHandlersInternal = {
         const snapLayer = useLayerStore.getState().layerManager?.getLayerByName(snapLayerName);
         const snapFeatures = getFeaturesByProperties(snapLayer ?? undefined, {featureType: snapFeatureType})
         olEventManager?.bind(`snap:${record.featureType}`, olSnap, {features: snapFeatures ?? new Collection<Feature<Geometry>>});
-        cesiumEventManager?.bind("singleclick", cesiumSingleClickHandler);
+        cesiumEventManager?.bind(`singleclick:${record.featureType}`, cesiumSingleClickHandler);
 
         return cleanup;
     },
@@ -585,8 +594,8 @@ const featureTypeHandlersInternal = {
             }
             const laneData = laneFeature.getProperties();
 
-            const laneStart = laneData.laneSource;
-            const laneEnd = laneData.laneTarget;
+            // laneAllPts(전체 폴리라인)로 다중 세그먼트 투영 — busStations와 동일 조치.
+            const laneAllPts: Coordinate[] | undefined = laneData.laneAllPts;
             const parentLink = network.links.find(link => link.lanes.some(lane => lane.__guid === laneData.__guid));
 
             if (!parentLink) {
@@ -594,7 +603,9 @@ const featureTypeHandlersInternal = {
                 return;
             }
 
-            const {offset, offsetPosition} = projectPointOntoSegmentOl(laneStart, laneEnd, coord);
+            const {offset, offsetPosition} = laneAllPts && laneAllPts.length >= 2
+                ? projectPointOntoPolylineOl(laneAllPts, coord)
+                : projectPointOntoSegmentOl(laneData.laneSource, laneData.laneTarget, coord);
             const coordinates = createCoordinatesFromOl(offsetPosition)
             if (!coordinates) return;
             processAndStorepavementMarking(parentLink.id, laneData.id, offset, coordinates);
@@ -670,7 +681,7 @@ const featureTypeHandlersInternal = {
                 console.error(error)
             }
             try {
-                cesiumEventManager?.unbind("singleclick", cesiumSingleClickHandler);
+                cesiumEventManager?.unbind(`singleclick:${record.featureType}`, cesiumSingleClickHandler);
             } catch (error) {
                 console.error(error)
             }
@@ -680,7 +691,7 @@ const featureTypeHandlersInternal = {
         const snapLayer = useLayerStore.getState().layerManager?.getLayerByName(snapLayerName);
         const snapFeatures = getFeaturesByProperties(snapLayer ?? undefined, {featureType: snapFeatureType})
         olEventManager?.bind(`snap:${record.featureType}`, olSnap, {features: snapFeatures ?? new Collection<Feature<Geometry>>});
-        cesiumEventManager?.bind("singleclick", cesiumSingleClickHandler);
+        cesiumEventManager?.bind(`singleclick:${record.featureType}`, cesiumSingleClickHandler);
 
         return cleanup;
     },
@@ -785,7 +796,7 @@ const featureTypeHandlersInternal = {
         const cleanup = () => {
             try { olEventManager?.unbind(`draw:${record.featureType}:end`, olDrawHandler); } catch {}
             try { olEventManager?.unbind(`snap:${record.featureType}`, olSnap); } catch {}
-            try { cesiumEventManager?.unbind("singleclick", cesiumClickHandler); } catch {}
+            try { cesiumEventManager?.unbind(`singleclick:${record.featureType}`, cesiumClickHandler); } catch {}
         };
 
         const snapLayerName = "network";
@@ -794,7 +805,7 @@ const featureTypeHandlersInternal = {
         // in 포트에 스냅 (정지선 포인트 피처)
         const snapFeatures = getFeaturesByProperties(snapLayer ?? undefined, { featureType: "ports", type: "in" });
         olEventManager?.bind(`snap:${record.featureType}`, olSnap, { features: snapFeatures ?? new Collection<Feature<Geometry>>() });
-        cesiumEventManager?.bind("singleclick", cesiumClickHandler);
+        cesiumEventManager?.bind(`singleclick:${record.featureType}`, cesiumClickHandler);
 
         return cleanup;
     },

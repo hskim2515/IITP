@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useRouteDrawStore, BusLineSet } from '@stores/useRouteDrawStore';
+import React, { useRef, useState } from 'react';
+import { useRouteDrawStore, BusLineSet, RouteDrawStop } from '@stores/useRouteDrawStore';
 import { useMenuStore, findMenuByCode } from '@stores/useMenuStore';
 import { useWorkflowStore } from '@stores/useWorkflowStore';
 import { useMessageStore } from '@stores/useMessageStore';
@@ -8,6 +8,8 @@ import { generateGuidWithParentGuid } from '@utils/guid';
 import { createEventHandlers } from '@handler/createEventHandlers';
 import { getActiveVersionId } from '@utils/versionId';
 import axiosInstance from '@api/axiosInstance';
+import { useBusStationStore } from '@stores/useBusStationStore';
+import { useRailStationStore } from '@stores/useRailStationStore';
 
 const barStyle: React.CSSProperties = {
     position: 'fixed', top: 54, left: '50%', transform: 'translateX(-50%)', zIndex: 3500,
@@ -70,28 +72,66 @@ function addRouteRecord(layerName: string, featureType: 'lines' | 'routes', fiel
     createEventHandlers(record); // lines/routes 핸들러 → addTabularRecord: store 삽입 + isChanged 설정 + 포커스 이동
 }
 
+/**
+ * draft는 클릭 시점의 스냅샷(guid/id/linkRef)이라, 노선을 그리는 도중 그 정류장/역이
+ * 삭제되면(Delete 키 등) "완료" 시점엔 이미 존재하지 않는 정류장 id가 그대로 stationSeq/
+ * railStationSeq에 박혀 저장될 수 있다 — 버스 경로는 백엔드가 station 존재가 아니라 linkRef
+ * (도로)만 확인하므로 이 경우도 조용히 성공해버려 더 위험하다. "완료" 직전에 각 draft 항목의
+ * __guid가 지금도 해당 스토어에 살아있는지 재검증해, 하나라도 사라졌으면 완료를 막고 다시
+ * 그리게 한다(부분 완료로 조용히 진행하지 않음 — 사용자가 의도한 정류장 순서가 달라질 수 있어).
+ */
+function validateDraftFreshness(draft: RouteDrawStop[], liveStations: any[] | undefined): boolean {
+    const liveGuids = new Set((liveStations ?? []).map((s: any) => s.__guid));
+    const staleCount = draft.filter((d) => !liveGuids.has(d.guid)).length;
+    if (staleCount > 0) {
+        useMessageStore.getState().setMessage({
+            type: 'error',
+            text: `그리는 도중 정류장/역 ${staleCount}개가 삭제되어 완료할 수 없습니다. 초기화 후 다시 그려주세요.`,
+        });
+        return false;
+    }
+    return true;
+}
+
 const RouteDrawToolbar: React.FC = () => {
     const mode = useRouteDrawStore((s) => s.mode);
     const draft = useRouteDrawStore((s) => s.draft);
     const busLineSet = useRouteDrawStore((s) => s.busLineSet);
     const [submitting, setSubmitting] = useState(false);
+    // setSubmitting(true)는 리액트 상태 갱신이라 버튼의 disabled 속성이 다음 렌더 전까지
+    // DOM에 반영 안 된다 — 그 사이(특히 handleFinishBus의 await 이전 구간) 빠른 연타/더블클릭이
+    // 들어오면 두 번째 호출도 아직 활성화된 버튼을 통과해 노선이 중복 생성될 수 있다
+    // (2026-07-31 실사용 지적으로 발견). ref는 동기적으로 즉시 반영되므로 그 창을 막는다.
+    const finishingRef = useRef(false);
 
     if (mode === 'none') return null;
 
     const canFinish = draft.length >= 2 && !submitting;
 
     const handleFinishRail = () => {
-        addRouteRecord('railRoute', 'routes', {
-            name: '', railStationSeq: draft.map((d) => d.id).join(' '),
-            fee: '0', departureTime: '', timeOffsetSeq: '',
-        });
-        openLineSession('RAIL_PT_LINE');
-        useRouteDrawStore.getState().reset();
+        if (finishingRef.current) return;
+        finishingRef.current = true;
+        try {
+            const liveStations = useRailStationStore.getState().currentJsonData?.railStations;
+            if (!validateDraftFreshness(draft, liveStations)) return;
+            addRouteRecord('railRoute', 'routes', {
+                name: '', railStationSeq: draft.map((d) => d.id).join(' '),
+                fee: '0', departureTime: '', timeOffsetSeq: '',
+            });
+            openLineSession('RAIL_PT_LINE');
+            useRouteDrawStore.getState().reset();
+        } finally {
+            finishingRef.current = false;
+        }
     };
 
     const handleFinishBus = async () => {
+        if (finishingRef.current) return;
+        finishingRef.current = true;
         const scenarioKey = getActiveVersionId();
-        if (!scenarioKey) return;
+        if (!scenarioKey) { finishingRef.current = false; return; }
+        const liveStations = useBusStationStore.getState().currentJsonData?.busStations;
+        if (!validateDraftFreshness(draft, liveStations)) { finishingRef.current = false; return; }
         setSubmitting(true);
         try {
             const res = await axiosInstance.post(`/public-transit/line/bus/${encodeURIComponent(scenarioKey)}/compute-path`, {
@@ -108,6 +148,7 @@ const RouteDrawToolbar: React.FC = () => {
             useMessageStore.getState().setMessage({ type: 'error', text: msg });
         } finally {
             setSubmitting(false);
+            finishingRef.current = false;
         }
     };
 

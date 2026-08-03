@@ -43,6 +43,16 @@ export default class NetworkFeatureLayer extends VectorLayer {
     private prevNetwork: Network | null = null;
     private linkFeaturesMap: Map<string, Feature[]> = new Map(); // linkId → features
     private nodeFeaturesMap: Map<string, Feature[]> = new Map(); // nodeId → features
+    // nodeId → nodeEditHash(node) at the time nodeFeaturesMap[id] 가 마지막으로 빌드된 시점의 값.
+    // updateEditDeltas 가 "편집됨"을 cachedNodeMap(정적 서버 타일 baseline)만 기준으로 판단하면,
+    // 한 번 편집(또는 이웃 노드 삭제 cascade)으로 재빌드된 뒤 undo 로 baseline 과 다시 정확히
+    // 같아지는 노드는 "편집 아님"으로 오판돼 재빌드가 트리거되지 않는다 — 이미 지워진(또는
+    // stale 한) OL 피처(포트/커넥션 포함)가 데이터는 복원됐는데도 화면엔 영원히 안 돌아온다
+    // (실사용 재현: 노드 삭제 → Ctrl+Z). baseline 대신 "마지막으로 실제 렌더된 해시"와 비교하면
+    // 이 클래스의 버그 전체(삭제한 노드 자신 + cascade 로 포트/커넥션이 잘린 이웃 노드 모두)가
+    // undo 시 자동으로 해결된다 — id 가 nodeFeaturesMap 에서 지워지면 해시도 같이 지워지므로
+    // "마지막 렌더 없음" 상태가 자동으로 "편집됨"으로 잡힌다.
+    private lastBuiltNodeHash: Map<string, string> = new Map();
     private laneMap: Map<string, Feature> = new Map();           // `${linkId}_${laneIdx}` → lane feature
     private lastImportEpoch = 0;  // 마지막으로 처리한 importEpoch
     // 캐시 Map: fullBuild에서 생성, incrementalUpdate에서 증분 갱신
@@ -371,6 +381,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
             if (rc === 1) {
                 const feats = this.buildNodeFeatures(node, this.cachedLinkMap);
                 this.nodeFeaturesMap.set(id, feats);
+                this.lastBuiltNodeHash.set(id, NetworkFeatureLayer.nodeEditHash(node));
                 addBuffer.push(...feats);
             }
         }
@@ -409,6 +420,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 this.nodeRefCount.delete(id);
                 const feats = this.nodeFeaturesMap.get(id);
                 if (feats) { rmBuffer.push(...feats); this.nodeFeaturesMap.delete(id); }
+                this.lastBuiltNodeHash.delete(id);
                 this.cachedNodeMap.delete(id);
             } else {
                 this.nodeRefCount.set(id, rc);
@@ -467,23 +479,35 @@ export default class NetworkFeatureLayer extends VectorLayer {
             try { useNetworkEditStore.getState().setEdits(edited, deleted); } catch (_) {}
         }
 
-        // 노드 편집 감지 (이동·포트 재배선·커넥션 편집) — 서버 타일 노드와 해시 비교.
-        // 미추적 시 타일 동기화(scheduleStoreSync)가 노드 편집을 서버 원본으로 되돌린다.
-        // 양쪽에 존재하는 id 만 내용 비교(신규 노드는 동기화가 어차피 prev 보존 경로로 유지).
+        // 노드 편집 감지 (이동·포트 재배선·커넥션 편집·삭제-후-undo 복원) — 이 레이어가
+        // 마지막으로 실제 렌더한 상태(lastBuiltNodeHash)와 비교한다. 서버 타일 baseline
+        // (cachedNodeMap)과 비교하던 예전 방식은, 한 번 재빌드된 노드(직접 편집 또는 이웃
+        // 노드 삭제로 인한 포트/커넥션 cascade 절단)가 undo 로 baseline 과 다시 정확히
+        // 같아지면 "편집 아님"으로 오판해 재빌드를 건너뛰었다 — 데이터(currentJsonData)는
+        // 복원됐는데 화면의 OL 피처(포트/커넥션 포함)는 마지막으로 빌드됐던(잘린) 상태로
+        // 영원히 남는 버그였다(실사용 재현: 노드 삭제 → Ctrl+Z → 포트/커넥션 안 돌아옴).
+        // lastBuiltNodeHash 는 삭제 시 함께 지워지므로(refreshEditedNodeFeatures.removeFeats),
+        // 삭제→undo 로 되살아난 노드는 자동으로 "마지막 렌더 없음(undefined)"→편집됨으로 잡힌다.
         const nodes: any[] = (store?.getState() as any)?.currentJsonData?.nodes ?? [];
         const editedNodes = new Set<string>();
         const sigParts: string[] = [];
         for (const n of nodes) {
             if (!n) continue; // null 요소 방어
             const id = String(n.id);
-            const cached = this.cachedNodeMap.get(id);
             const hash = NetworkFeatureLayer.nodeEditHash(n);
-            if (!cached) { editedNodes.add(id); sigParts.push(id + ':' + hash); continue; } // 신규(그리기/분할) 노드
-            if (NetworkFeatureLayer.nodeEditHash(cached) !== hash) {
+            if (this.lastBuiltNodeHash.get(id) !== hash) {
                 editedNodes.add(id);
                 sigParts.push(id + ':' + hash);
             }
         }
+
+        // 노드 삭제 마스크 정합 (링크와 동일 — 스냅샷 undo 복원분 해제). 렌더 재빌드는 위에서
+        // 이미 lastBuiltNodeHash 비교로 처리되므로, 여기선 deletedNodeIds 마스크(동기화 제외용)만
+        // 정리하면 된다.
+        const cur = useNetworkEditStore.getState();
+        const restoredNodeIds = [...cur.deletedNodeIds].filter((id) =>
+            nodes.some((n) => n && String(n.id) === id));
+
         // id 집합이 아니라 내용 시그니처로 비교 — 같은 노드를 연속 편집(커넥션 추가→또 추가)해도
         // 집합은 동일하므로, 내용 변화까지 봐야 재빌드(refreshEditedNodeFeatures)가 발동한다.
         const sig = sigParts.sort().join('|');
@@ -492,10 +516,6 @@ export default class NetworkFeatureLayer extends VectorLayer {
             try { useNetworkEditStore.getState().setNodeEdits(editedNodes); } catch (_) {}
         }
 
-        // 노드 삭제 마스크 정합 (링크와 동일 — 스냅샷 undo 복원분 해제)
-        const cur = useNetworkEditStore.getState();
-        const restoredNodeIds = [...cur.deletedNodeIds].filter((id) =>
-            nodes.some((n) => n && String(n.id) === id));
         if (restoredNodeIds.length > 0) {
             try { cur.removeDeletedNodes(restoredNodeIds); } catch (_) { /* noop */ }
         }
@@ -547,6 +567,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
                 for (const f of feats) if (this.source.hasFeature(f)) this.source.removeFeature(f);
                 this.nodeFeaturesMap.delete(id);
             }
+            this.lastBuiltNodeHash.delete(id);
             this.addedNodeFeatures.delete(id); // extent 게이팅 버킷도 정리 (이중 관리 방지)
         };
 
@@ -561,6 +582,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
             try {
                 const feats = this.buildNodeFeatures(node, linkMap);
                 this.nodeFeaturesMap.set(id, feats);
+                this.lastBuiltNodeHash.set(id, NetworkFeatureLayer.nodeEditHash(node));
                 this.source.addFeatures(feats);
                 touched = true;
             } catch (_) { /* 좌표 불완전 등 — 스킵 */ }

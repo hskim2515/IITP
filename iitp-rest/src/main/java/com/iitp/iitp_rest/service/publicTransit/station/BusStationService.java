@@ -38,7 +38,13 @@ public class BusStationService {
      * DB(최신 버전)가 있으면 DB에서, 없으면 XML에서 반환 (Signal과 동일한 패턴)
      */
     public PublicTransitResponse getBusStationsByVersionId(String versionId) throws IOException {
-        return busStationVersionsRepository.findByVersionId(versionId)
+        // ⚠️ findByVersionId(role 미지정)가 아니라 반드시 이걸 써야 한다 — 과거 uq 제약 부재로
+        // 실제 중복 행이 쌓인 적이 있고(2026-08-03 실측, database/bus_rail_signal_versions_
+        // constraint_fix.sql 참고), role을 안 좁히면 결과가 여러 건일 때
+        // IncorrectResultSizeDataAccessException으로 죽어 이 메서드 전체가 조용히 실패한다
+        // (그 실패가 buildRoadPtLineXml 등 호출부의 넓은 try/catch에 삼켜지며 "정류장 조회가
+        // 항상 실패"로 이어진 것이 실제 크래시 원인이었다).
+        return busStationVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST)
                 .filter(v -> v.getData() != null && !v.getData().isEmpty())
                 .map(v -> {
                     PublicTransitResponse res = new PublicTransitResponse();
@@ -72,7 +78,7 @@ public class BusStationService {
 
     @Transactional
     public void saveBusStationsByVersionId(BusStationSaveRequest request, String versionId) {
-        BusStationVersion entity = busStationVersionsRepository.findByVersionId(versionId)
+        BusStationVersion entity = busStationVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST)
                 .orElseGet(() -> {
                     BusStationVersion v = new BusStationVersion();
                     v.setVersionRole(BaseVersion.VersionRole.LATEST);
@@ -180,6 +186,7 @@ public class BusStationService {
             d.setParkingLots(r.getParkingLots());
             d.setAddress(r.getAddress());
             d.setCenter(r.getCenter());
+            d.setMedianLane(r.getMedianLane());
             d.setLine(r.getLine());
             return d;
         }).toList();
@@ -218,6 +225,7 @@ public class BusStationService {
             r.setParkingLots(d.getParkingLots());
             r.setAddress(d.getAddress());
             r.setCenter(d.getCenter());
+            r.setMedianLane(d.getMedianLane());
             r.setLine(d.getLine());
             return r;
         }).toList();

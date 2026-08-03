@@ -16,7 +16,7 @@ import {
     countSignalsForNodes, deleteSignalsForNodes, generateSignalsForNode,
     isPassThroughNode, mergeLinksAtNode, batchDeleteOrMergeNodes,
     reconcileSignalConnectionIds, farNodeIdsForCascadeDelete, cleanupOrphanNodes,
-    toggleSegmentBlock, splitSegmentInNetwork, mergeSegmentInNetwork,
+    toggleSegmentBlock, splitSegmentInNetwork, mergeSegmentInNetwork, setLaneEndBlock,
     getEffectiveSegments,
     countStationsForLinks, countStationsForNodes, deleteStationsForLinks, deletePavementMarkingsForLinks,
     deletePavementMarkingsForShrunkLanes,
@@ -149,6 +149,9 @@ const NetworkEditToolbar: React.FC = () => {
     const [batchOpen, setBatchOpen] = useState(false);
     const [batchNumLane, setBatchNumLane] = useState(2);
     const [batchMaxSpd,  setBatchMaxSpd]  = useState(50);
+
+    // ── 레인 끝 차단 구간 자동 생성(회전전용차로 등) 입력 상태 ──────────
+    const [endBlockLength, setEndBlockLength] = useState('');
 
     const linkId  = toolbar.linkId;
     const nodeId  = toolbar.nodeId;
@@ -548,6 +551,23 @@ const NetworkEditToolbar: React.FC = () => {
         const lane = link?.lanes?.[laneIdx];
         if (!link || !lane) return null;
 
+        // 레거시 참조 구현(source_code/frontend/RoadProperty.js extrudeLength) 반영 —
+        // 회전전용차로처럼 "끝(또는 시작)에서 N미터만 차단"인 흔한 케이스를, 분할→토글 두
+        // 단계 대신 길이 하나 입력으로 바로 만든다(setLaneEndBlock — 기존 세그먼트 구성은
+        // 버리고 2구간으로 재구성됨을 사용자에게 라벨로 알림).
+        const handleSetEndBlock = (fromEnd: 'start' | 'end') => {
+            const cur = useNetworkStore.getState().currentJsonData;
+            if (!cur) return;
+            const lenM = Number(endBlockLength);
+            if (!(lenM > 0) || !(lenM < link.length)) return;
+            applyNetworkUpdate(setLaneEndBlock(cur, linkId, laneIdx, lenM, fromEnd));
+            useNetworkToolbarStore.getState().setLevel('lane', { linkId, laneIdx });
+            useMessageStore.getState().setMessage({
+                type: 'info',
+                text: `레인 L${laneIdx} ${fromEnd === 'start' ? '시작' : '끝'}부터 ${lenM}m 차단 구간 생성(기존 구간 구성은 대체됨)`,
+            });
+        };
+
         return (
             <div style={{ position: 'fixed', left, top, zIndex: 4000 }}>
                 <div style={barStyle}>
@@ -563,6 +583,16 @@ const NetworkEditToolbar: React.FC = () => {
                     <div style={infoRowStyle}><span>왼쪽 인접</span><span style={{ color: '#888' }}>{String(lane.leftLaneId ?? '-')}</span></div>
                     <div style={infoRowStyle}><span>오른쪽 인접</span><span style={{ color: '#888' }}>{String(lane.rightLaneId ?? '-')}</span></div>
                     <div style={infoRowStyle}><span>구간(세그먼트) 수</span><span style={{ color: '#888' }}>{getEffectiveSegments(lane, link).length}개</span></div>
+                    <div className={styles.settingRow}>
+                        <span className={styles.settingLabel}>차단 구간 자동 생성 (m)</span>
+                        <input type="number" min={0} max={link.length} step={1} value={endBlockLength}
+                               placeholder="예: 30"
+                               onChange={(e) => setEndBlockLength(e.target.value)} style={inputStyle} />
+                    </div>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                        <Btn onClick={() => handleSetEndBlock('start')} title="레인 시작부터 입력한 길이만큼 차단">시작부터 차단</Btn>
+                        <Btn onClick={() => handleSetEndBlock('end')} title="레인 끝부터 입력한 길이만큼 차단">끝부터 차단</Btn>
+                    </div>
                 </div>
             </div>
         );

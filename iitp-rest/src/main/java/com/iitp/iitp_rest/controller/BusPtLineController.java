@@ -8,6 +8,8 @@ import com.iitp.iitp_rest.model.xmllayer.XmlLayerSaveRequest;
 import com.iitp.iitp_rest.service.network.NetworkService;
 import com.iitp.iitp_rest.service.network.OsmFacilityConverter;
 import com.iitp.iitp_rest.service.publicTransit.line.BusPtLineService;
+import com.iitp.iitp_rest.service.publicTransit.line.PtLineNestedSchemaConverter;
+import com.iitp.iitp_rest.service.publicTransit.line.PtLineValidation;
 import com.iitp.iitp_rest.service.xmllayer.XmlLayerConverter;
 import com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService;
 import lombok.RequiredArgsConstructor;
@@ -45,6 +47,7 @@ public class BusPtLineController {
     private final XmlLayerVersionService xmlLayerVersionService;
     private final NetworkService networkService;
     private final OsmFacilityConverter facilityConverter;
+    private final PtLineNestedSchemaConverter nestedSchemaConverter;
 
     // ── default ─────────────────────────────────────────────────────
     @GetMapping("/{scenarioKey}")
@@ -63,7 +66,7 @@ public class BusPtLineController {
     }
 
     @PostMapping("/{scenarioKey}")
-    public ResponseEntity<Void> save(@PathVariable String scenarioKey, @RequestBody XmlLayerSaveRequest req) {
+    public ResponseEntity<?> save(@PathVariable String scenarioKey, @RequestBody XmlLayerSaveRequest req) {
         return saveResp(LAYER_KEY_DEFAULT, scenarioKey, req);
     }
 
@@ -99,9 +102,18 @@ public class BusPtLineController {
             return ResponseEntity.status(HttpStatus.NOT_FOUND)
                     .body(Map.of("message", "저장된 도로망(network.xml)이 없습니다. 도로망을 먼저 저장하세요."));
         }
-        facilityConverter.prepareLinkIndex(xml.getLinks());
-        facilityConverter.prepareTerminalNodes(xml.getNodes());
-        var remap = facilityConverter.remapBusRouteByStationAnchors(stationLinkRefs);
+        // OsmFacilityConverter는 @Service 싱글턴이라 prepareLinkIndex→prepareTerminalNodes→
+        // remapBusRouteByStationAnchors 세 호출 사이에 다른 요청(동시에 노선을 완료하는 다른
+        // 사용자, 또는 KTDB 재임포트)이 끼어들면 그 사이에 인스턴스 상태가 다른 네트워크로
+        // 바뀌어버릴 수 있다 — 각 메서드 자체는 synchronized지만 그것만으론 이 세 호출
+        // "시퀀스"가 원자적이지 않으므로, 호출부인 여기서 전체를 한 번에 락을 잡아 묶는다
+        // (OsmFacilityConverter 클래스 상단 주석 참고, 2026-07-31 실사용 지적으로 발견).
+        OsmFacilityConverter.RemappedRoute remap;
+        synchronized (facilityConverter) {
+            facilityConverter.prepareLinkIndex(xml.getLinks());
+            facilityConverter.prepareTerminalNodes(xml.getNodes());
+            remap = facilityConverter.remapBusRouteByStationAnchors(stationLinkRefs);
+        }
         if (remap == null) {
             return ResponseEntity.unprocessableEntity()
                     .body(Map.of("message", "정류장 사이 경로를 네트워크에서 찾을 수 없습니다. 정류장 사이가 실제로 도로로 연결되어 있는지 확인하세요."));
@@ -126,7 +138,7 @@ public class BusPtLineController {
     }
 
     @PostMapping("/weekday/{scenarioKey}")
-    public ResponseEntity<Void> saveWeekday(@PathVariable String scenarioKey, @RequestBody XmlLayerSaveRequest req) {
+    public ResponseEntity<?> saveWeekday(@PathVariable String scenarioKey, @RequestBody XmlLayerSaveRequest req) {
         return saveResp(LAYER_KEY_WEEKDAY, scenarioKey, req);
     }
 
@@ -158,7 +170,7 @@ public class BusPtLineController {
     }
 
     @PostMapping("/weekend/{scenarioKey}")
-    public ResponseEntity<Void> saveWeekend(@PathVariable String scenarioKey, @RequestBody XmlLayerSaveRequest req) {
+    public ResponseEntity<?> saveWeekend(@PathVariable String scenarioKey, @RequestBody XmlLayerSaveRequest req) {
         return saveResp(LAYER_KEY_WEEKEND, scenarioKey, req);
     }
 
@@ -198,10 +210,21 @@ public class BusPtLineController {
         }
     }
 
-    private ResponseEntity<Void> saveResp(String layerKey, String key, XmlLayerSaveRequest req) {
+    private ResponseEntity<?> saveResp(String layerKey, String key, XmlLayerSaveRequest req) {
         log.info("[BusPtLineController] POST layerKey={} key={}", layerKey, key);
         try {
-            xmlLayerVersionService.save(layerKey, key, req.getData(), req.getLogs());
+            // ⚠️ link/node/station seq가 비어있는 Line은 경로 정보가 없어 쓸모없으므로 저장에서
+            // 제외한다. 예전엔 "NextSim이 반드시 크래시한다"는 근거로 파일 전체를 거부했으나,
+            // 실측(2026-08-03) 결과 이런 라인이 있어도 NextSim은 크래시 없이 그냥 건너뛰는
+            // 것으로 확인돼 완화했다(PtLineValidation.dropBusLinesMissingRouting 참고).
+            BusPtLinesXml xml = XmlLayerConverter.fromMap(req.getData(), BusPtLinesXml.class);
+            List<String> droppedLines = PtLineValidation.dropBusLinesMissingRouting(xml);
+            if (!droppedLines.isEmpty()) {
+                log.warn("[BusPtLineController] 경로 정보 없는 노선 제외 layerKey={} key={}: {}",
+                        layerKey, key, droppedLines);
+            }
+            Map<String, Object> cleanData = XmlLayerConverter.toMap(xml);
+            xmlLayerVersionService.save(layerKey, key, cleanData, req.getLogs());
             // DB 저장과 동시에 실제 roadPTline(-weekday/-weekend).xml 파일도 SFTP에 동기화한다
             // (SignalController.saveSignal의 "DB 저장과 동시에 signal.xml 파일도 동기화"와
             // 동일 패턴). 이 동기화가 없으면 앱에서 버스 노선을 편집/저장해도 DB 캐시
@@ -210,7 +233,6 @@ public class BusPtLineController {
             // 전혀 갱신되지 않아 시뮬레이션에 절대 반영되지 않는 문제가 있었다(실사용 발견 —
             // 지금까지 import(파일 업로드)로만 실제 roadPTline.xml이 생성되고 있었음).
             try {
-                BusPtLinesXml xml = XmlLayerConverter.fromMap(req.getData(), BusPtLinesXml.class);
                 syncXmlByLayerKey(layerKey, key, xml);
             } catch (Exception e) {
                 log.warn("[BusPtLineController] XML 파일 동기화 실패(DB는 정상 저장됨) layerKey={} key={}: {}",
@@ -260,11 +282,56 @@ public class BusPtLineController {
                                                              MultipartFile file, FileSyncer syncer) {
         log.info("[BusPtLineController] IMPORT layerKey={} scenarioKey={} size={}bytes", layerKey, scenarioKey, file.getSize());
         try {
-            BusPtLinesXml xml = busPtLineService.parse(file.getInputStream());
+            byte[] bytes = file.getBytes(); // 중첩 스키마 재파싱 대비 — 재사용을 위해 미리 전량 읽음
+            BusPtLinesXml xml = busPtLineService.parse(new java.io.ByteArrayInputStream(bytes));
+            // ⚠️ link/node/station seq가 비어있는 Line은 경로 정보가 없어 쓸모없으므로 가져오기
+            // 대상에서 제외한다. 예전엔 이런 파일 전체를 거부했으나(스키마가 다르면 JAXB가
+            // 전부 null로 조용히 파싱된다는 우려 때문), 실측(2026-08-03) 결과 이런 라인이
+            // 있어도 NextSim은 크래시 없이 건너뛰는 것으로 확인돼 완화했다 — 유효한 나머지
+            // 노선까지 통째로 막을 이유는 없다(PtLineValidation.dropBusLinesMissingRouting).
+            // drop 호출 전에 재야 한다 — 호출 후에는 xml.getLines()가 이미 kept만 남은 목록이라
+            // "원래 총 개수"가 아니게 된다.
+            int totalLineCount = (xml.getLines() != null ? xml.getLines().size() : 0);
+            List<String> droppedLines = PtLineValidation.dropBusLinesMissingRouting(xml);
+
+            // ⚠️ 실측(2026-08-03, 부천 배포판 roadPTline.xml): 원본이 이 앱의 평평한
+            // <link seq=".."/> 스키마가 아니라 <links><link id=".." station=".."/></links>
+            // 중첩 스키마면 위 파싱에서 노선 전체가 경로 정보 없이 조용히 드롭된다(31개 중
+            // 31개). 이 경우(파싱 결과가 있었는데 전부 드롭됨) 중첩 스키마 변환을 시도해
+            // 실제 노선 데이터를 복구한다 — 그냥 경고만 띄우는 것과 달리 사용자가 원하는
+            // "노선이 실제로 생기는" 결과를 만든다(PtLineNestedSchemaConverter 참고).
+            if (totalLineCount > 0 && droppedLines.size() == totalLineCount) {
+                NetworkXml network = null;
+                try {
+                    network = networkService.getNetworkXmlByVersionId(scenarioKey);
+                } catch (Exception e) {
+                    log.warn("[BusPtLineController] 중첩 스키마 변환용 network.xml 조회 실패(변환 생략) scenarioKey={}: {}",
+                            scenarioKey, e.getMessage());
+                }
+                BusPtLinesXml converted = nestedSchemaConverter.tryConvertBus(bytes, network);
+                if (converted != null) {
+                    xml = converted;
+                    totalLineCount = xml.getLines() != null ? xml.getLines().size() : 0;
+                    droppedLines = PtLineValidation.dropBusLinesMissingRouting(xml);
+                    log.info("[BusPtLineController] 중첩 스키마 변환 성공 layerKey={} scenarioKey={}: {}개 노선 복구",
+                            layerKey, scenarioKey, totalLineCount);
+                }
+            }
+
+            if (!droppedLines.isEmpty()) {
+                log.warn("[BusPtLineController] 경로 정보 없는 노선 제외 layerKey={} scenarioKey={}: {}",
+                        layerKey, scenarioKey, droppedLines);
+            }
+
             Map<String, Object> data = XmlLayerConverter.toMap(xml);
             xmlLayerVersionService.save(layerKey, scenarioKey, data, new LogsData());
             syncer.save(scenarioKey, xml);
-            return ResponseEntity.ok(data);
+
+            Map<String, Object> body = new java.util.HashMap<>();
+            body.put("data", data);
+            body.put("totalLineCount", totalLineCount);
+            body.put("droppedLineIds", droppedLines);
+            return ResponseEntity.ok(body);
         } catch (Exception e) {
             log.error("[BusPtLineController] 임포트 오류 layerKey={}", layerKey, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();

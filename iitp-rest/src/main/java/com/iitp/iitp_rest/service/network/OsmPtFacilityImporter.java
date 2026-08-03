@@ -36,11 +36,21 @@ import java.util.Map;
  *   n/highway=bus_stop \
  *   n/railway=station,halt,tram_stop,subway_entrance,stop \
  *   r/route=bus,trolleybus,subway,train,tram,rail \
+ *   w/highway=busway \
+ *   w/busway,busway:right,busway:left,busway:both \
+ *   w/lanes:bus,lanes:psv,bus:lanes,psv:lanes \
  *   -o filtered.osm.pbf
  * osmium cat filtered.osm.pbf -o filtered.osm.xml
  * </pre>
  * (osmium tags-filter는 기본적으로 매칭된 relation/way가 참조하는 노드·way도 함께
  * 포함한다 — {@code -R}/{@code --omit-referenced}를 주면 이 동작이 꺼지므로 주지 않는다.)
+ *
+ * <p>⚠️ 2026-08-03 발견: 원래 필터엔 {@code w/highway=busway}, {@code w/busway*},
+ * {@code w/lanes:bus} 등이 없어서, 버스 노선 relation 멤버가 아닌 독립적인 중앙버스전용차로
+ * way(실제로 흔함 — relation은 보통 일반 도로를 따라가고 중앙차로는 별도로만 그려짐)가
+ * 소스 .osm.pbf 추출 단계에서부터 통째로 빠졌다. 위 필터를 추가해 재추출 + 재임포트해야
+ * OsmFacilityConverter의 중앙차로(medianLane) 감지가 동작한다 — 기존에 이미 임포트된 DB는
+ * way tags 컬럼이 전부 NULL이라 이 재추출 없이는 코드만 고쳐도 효과가 없다.
  */
 @Slf4j
 @Service
@@ -138,7 +148,7 @@ public class OsmPtFacilityImporter {
                         if (nodeBatch.size() >= BATCH_SIZE) { flushNodes(nodeBatch); nodeBatch.clear(); }
                     } else if (name.equals("way") && "way".equals(currentElement)) {
                         if (curNodeIds != null && !curNodeIds.isEmpty()) {
-                            wayBatch.add(new Object[]{curId, toIdArrayJson(curNodeIds)});
+                            wayBatch.add(new Object[]{curId, toIdArrayJson(curNodeIds), toJson(curTags)});
                             counts[1]++;
                         }
                         currentElement = null;
@@ -188,7 +198,7 @@ public class OsmPtFacilityImporter {
 
     private void flushWays(List<Object[]> batch) {
         jdbc.batchUpdate(
-                "INSERT INTO osm_pt_way (id, node_ids) VALUES (?, ?::jsonb) ON CONFLICT (id) DO NOTHING",
+                "INSERT INTO osm_pt_way (id, node_ids, tags) VALUES (?, ?::jsonb, ?::jsonb) ON CONFLICT (id) DO NOTHING",
                 batch);
     }
 

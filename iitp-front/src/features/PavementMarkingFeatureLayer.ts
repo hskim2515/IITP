@@ -13,7 +13,7 @@ import {
 import {
     getAngleByCoordinate, getCellOffsetRelativeToCell,
 } from "@utils/feature";
-import { toLonLat } from "ol/proj";
+import { toLonLat, fromLonLat } from "ol/proj";
 import { Point } from "ol/geom";
 import { Coordinate } from "ol/coordinate";
 import { generateGUIDWithType } from "@utils/guid";
@@ -27,6 +27,7 @@ import { PavementMarkingTileMembership } from "@managers/pavementMarkingTileMemb
 import { diffRecordEditsById } from "@utils/tileEditDiff";
 import { unByKey } from "ol/Observable";
 import type { EventsKey } from "ol/events";
+import { buildFileUrl } from "@utils/fileUrl";
 
 export class PavementMarkingFeatureLayer extends VectorLayer {
     public readonly source: VectorSource;
@@ -54,7 +55,7 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
                 const scale = 0.05 * (baseResolution / resolution);
                 const markingType = feature.get("markingType");
                 const iconFile = PavementMarkingType[markingType];
-                const url = `${ process.env.REACT_APP_FILE_BASE_URL }models/${ iconFile }`;
+                const url = buildFileUrl(`models/${ iconFile }`);
 
                 const angle = feature.get("angle") || 0;
                 return new Style({
@@ -199,7 +200,13 @@ export class PavementMarkingFeatureLayer extends VectorLayer {
             featureType: data.featureType ?? FEATURE_TYPE.PAVEMENT_MARKING,
         };
 
-        const geom = new Point([0, 0]); // 임시
+        // 서버(PavementMarkingCoordinateResolver)가 이미 실좌표를 계산해 저장해뒀으면 그걸 바로
+        // 쓴다 — interpolateByOffset의 차선 지오메트리 재계산(2D 'detail' 줌에서만 가능)에
+        // 의존하지 않아도 되므로, 줌 레벨과 무관하게 즉시 표시된다. 좌표가 아직 없는 경우
+        // (드물게, 재계산 실패나 구버전 데이터)에만 [0,0] placeholder로 두고 재계산에 맡긴다.
+        const coord = data.coordinates?.[0];
+        const hasValidCoordinate = typeof coord?.lng === 'number' && typeof coord?.lat === 'number';
+        const geom = hasValidCoordinate ? new Point(fromLonLat([coord!.lng!, coord!.lat!])) : new Point([0, 0]);
         const feature = new Feature<Point>(geom);
 
         feature.setProperties(props);

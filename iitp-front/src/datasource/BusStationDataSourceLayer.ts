@@ -3,7 +3,7 @@ import * as Cesium from "cesium";
 import { Color, Entity, CustomDataSource, Viewer } from "cesium";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { BusPublicStationResponse } from "@type/Station";
-import { computePositionAtOffsetCesium } from "@utils/offset";
+import { computePositionAtOffsetPolylineCesium, computeLaneCenterlineCesium, computeMedianCenterlineCesium } from "@utils/offset";
 import { PublicTransitResponse } from "@type/openapi.gen";
 import { LOD_ALT, BUS_STATION_TILING } from "@utils/lodConstants";
 import { CesiumFacilityCluster } from "@datasource/cesiumFacilityCluster";
@@ -14,6 +14,7 @@ import { diffRecordEditsById } from "@utils/tileEditDiff";
 
 /* ── 치수 ── */
 const PARKING_LOT_LEN_M = 14;
+const DEFAULT_SHELTER_LEN_M = 5.0; // parkingLots 미지정 시 기본 쉼터 길이(실제 표준 쉼터 1칸 정도)
 const POLE_HEIGHT        = 4.0;
 const POLE_RADIUS        = 0.07;
 const SIGN_W             = 0.8;
@@ -23,13 +24,26 @@ const PLATFORM_H         = 0.3;
 const PLATFORM_W         = 3.2;
 const SHELTER_H          = 2.6;
 const SHELTER_THICK      = 0.12;
+const SHELTER_W          = PLATFORM_W + 0.6;
+const LEG_RADIUS         = 0.06;
+const LEG_INSET          = 0.25;   // 지붕 모서리에서 살짝 안쪽으로 다리 배치
+const WALL_H              = SHELTER_H - 0.35; // 지붕 아래 살짝 공간을 남김(환기/채광 느낌)
+const BENCH_H             = 0.45;
+const BENCH_D             = 0.42;
+const BENCH_W_MARGIN      = 1.0;   // 벤치가 승강장 양끝에서 떨어지는 여유
 
 /* ── 색상 ── */
 const C_POLE      = Color.fromCssColorString("#607d8b");
 const C_SIGN      = Color.fromCssColorString("#00838f");
 const C_SIGN_TOP  = Color.fromCssColorString("#ffe082");
 const C_PLATFORM  = Color.fromCssColorString("#e0e0e0").withAlpha(0.9);
-const C_SHELTER   = Color.fromCssColorString("#b3e5fc").withAlpha(0.55);
+const C_SHELTER   = Color.fromCssColorString("#cfe8f5").withAlpha(0.38);
+const C_FRAME     = Color.fromCssColorString("#37474f");
+const C_GLASS     = Color.fromCssColorString("#bbdefb").withAlpha(0.28);
+const C_BENCH     = Color.fromCssColorString("#8d6e63");
+/* 디버깅용 — medianLane(중앙버스전용차로) 정류장 승강장을 다른 색으로 표시해 실제로
+ * 어떤 정류장이 중앙차로로 분류됐는지 지도에서 바로 구분할 수 있게 한다. */
+const C_PLATFORM_MEDIAN = Color.fromCssColorString("#ff4081").withAlpha(0.9);
 
 /* ── LOD 거리 조건 ── */
 const DETAIL_DIST    = new Cesium.DistanceDisplayCondition(0.0, LOD_ALT.FACILITY_DETAIL);
@@ -62,6 +76,8 @@ interface BusStationEntry {
     lng: number; lat: number; baseH: number;
     offsetPosition: Cesium.Cartesian3;
     parkingEnd: Cesium.Cartesian3;
+    /** offsetPosition→parkingEnd 진행방향 단위벡터 — 쉼터 다리/유리벽 배치용 */
+    dir: Cesium.Cartesian3;
     platformLength: number;
     stationName: string;
     station: any;
@@ -218,31 +234,21 @@ export default class BusStationDataSourceLayer {
         const networkData: any = networkStore.getState().currentJsonData;
         if (!networkData?.links) return;
 
-        /* ── 링크별 레인 중심선 사전 계산 ── */
-        const linkLaneMap = new Map<string, { source: Cesium.Cartesian3; target: Cesium.Cartesian3 }[]>();
+        /* ── 링크별 레인 중심선(전체 폴리라인) 사전 계산 ──
+         * 첫/끝 점만 쓰면 곡선 링크에서 정류장 위치가 실제 저장 지점과 어긋난다
+         * (2D BusStationFeatureLayer와 동일 조치 — computeLaneCenterlineCesium 참고). */
+        const linkLaneMap = new Map<string, Cesium.Cartesian3[][]>();
+        const linkById = new Map<string, any>();
         for (const link of networkData.links) {
             if (!link.coordinates || link.coordinates.length < 2) continue;
-            const p1   = Cesium.Cartesian3.fromDegrees(link.coordinates[0].lng, link.coordinates[0].lat);
-            const last = link.coordinates[link.coordinates.length - 1];
-            const p2   = Cesium.Cartesian3.fromDegrees(last.lng, last.lat);
-
-            const dir   = Cesium.Cartesian3.subtract(p1, p2, new Cesium.Cartesian3());
-            Cesium.Cartesian3.normalize(dir, dir);
-            const right = Cesium.Cartesian3.cross(dir, Cesium.Cartesian3.UNIT_Z, new Cesium.Cartesian3());
-            Cesium.Cartesian3.normalize(right, right);
-
+            linkById.set(String(link.id), link);
             const laneCount = link.lanes?.length ?? 0;
             if (laneCount === 0) continue;
-            const laneWidth = (link.width ?? 0) / laneCount;
 
-            const lanes: { source: Cesium.Cartesian3; target: Cesium.Cartesian3 }[] = [];
+            const lanes: Cesium.Cartesian3[][] = [];
             for (let i = 0; i < laneCount; i++) {
-                const offsetCenter = ((laneCount - 1) / 2 - i) * laneWidth;
-                const offsetVec    = Cesium.Cartesian3.multiplyByScalar(right, offsetCenter, new Cesium.Cartesian3());
-                lanes.push({
-                    source: Cesium.Cartesian3.add(p1, offsetVec, new Cesium.Cartesian3()),
-                    target: Cesium.Cartesian3.add(p2, offsetVec, new Cesium.Cartesian3()),
-                });
+                const centerline = computeLaneCenterlineCesium(link, i);
+                if (centerline) lanes.push(centerline);
             }
             linkLaneMap.set(String(link.id), lanes);
         }
@@ -252,23 +258,31 @@ export default class BusStationDataSourceLayer {
 
         for (const station of busStationsAll) {
             const linkRef = String(station.linkRef);
-            const laneRef = Number(station.laneRef);
-            const lanes   = linkLaneMap.get(linkRef);
-            if (!lanes || laneRef < 0 || laneRef >= lanes.length) continue;
-
-            const lane = lanes[laneRef];
-            if (!lane) continue;
-            const { source: laneSource, target: laneTarget } = lane;
             if (!station.offset) continue;
 
-            const { offsetPosition } = computePositionAtOffsetCesium(laneSource, laneTarget, station.offset);
-            const dir    = Cesium.Cartesian3.subtract(laneTarget, laneSource, new Cesium.Cartesian3());
-            const segLen = Cesium.Cartesian3.magnitude(dir);
-            if (segLen === 0) continue;
-            Cesium.Cartesian3.normalize(dir, dir);
+            // 중앙버스전용차로(medianLane) 정류장 — 이 링크 혼자만의 차선 배열이 아니라
+            // 상하행 링크 사이 실제 물리적 중앙(중앙분리대)에 배치한다(실사용 지적: "중앙차선일
+            // 경우 링크의 중앙이 아닌 상하행의 중간에 있어야 함").
+            let laneAllPts: Cesium.Cartesian3[] | null = null;
+            if (station.medianLane) {
+                const link = linkById.get(linkRef);
+                if (link) laneAllPts = computeMedianCenterlineCesium(link, networkData.links);
+            }
+            if (!laneAllPts) {
+                const laneRef = Number(station.laneRef);
+                const lanes   = linkLaneMap.get(linkRef);
+                if (!lanes || laneRef < 0 || laneRef >= lanes.length) continue;
+                laneAllPts = lanes[laneRef] ?? null;
+            }
+            if (!laneAllPts) continue;
 
+            const { offsetPosition, direction: dir } = computePositionAtOffsetPolylineCesium(laneAllPts, station.offset);
+
+            // ⚠️ 실측: parkingLots가 현재 데이터에 전부 null/0 — 그대로 두면 platformLength가
+            // 항상 0이 돼 쉼터(승강장+지붕+다리+유리벽+벤치)가 단 한 번도 그려지지 않는다.
+            // parkingLots가 있으면 그 값대로 크기를 정하고, 없으면 표준 쉼터 1칸 크기로 폴백.
             const parkingLots    = station.parkingLots ?? 0;
-            const platformLength = parkingLots * PARKING_LOT_LEN_M;
+            const platformLength = parkingLots > 0 ? parkingLots * PARKING_LOT_LEN_M : DEFAULT_SHELTER_LEN_M;
             const parkingEnd     = Cesium.Cartesian3.add(
                 offsetPosition,
                 Cesium.Cartesian3.multiplyByScalar(dir, -platformLength, new Cesium.Cartesian3()),
@@ -281,7 +295,7 @@ export default class BusStationDataSourceLayer {
             const stationName = (station as any).name ?? (station as any).stationName ?? "";
             const key         = String(station.id ?? (station as any).__guid ?? `${lng.toFixed(6)},${lat.toFixed(6)}`);
 
-            rawEntries.push({ key, lng, lat, offsetPosition, parkingEnd, platformLength, stationName, station });
+            rawEntries.push({ key, lng, lat, offsetPosition, parkingEnd, dir, platformLength, stationName, station });
         }
         if (!rawEntries.length) return;
 
@@ -382,7 +396,7 @@ export default class BusStationDataSourceLayer {
     }
 
     private addStation(e: BusStationEntry): void {
-        const { lng, lat, baseH, offsetPosition, parkingEnd, platformLength, stationName, station } = e;
+        const { lng, lat, baseH, offsetPosition, parkingEnd, dir, platformLength, stationName, station } = e;
         const entities: Cesium.Entity[] = [];
 
         /* ① 원거리 아이콘 빌보드 */
@@ -455,7 +469,8 @@ export default class BusStationDataSourceLayer {
         (bandE as any).distanceDisplayCondition = DETAIL_DIST;
         entities.push(this.dataSource.entities.add(bandE));
 
-        /* ⑥ 승강장 + 지붕 */
+        /* ⑥ 승강장 + 쉼터(지붕·유리벽·다리·벤치) — 실제 버스쉼터처럼 지붕이 다리 없이
+         * 붕 떠 보이던 것을 프레임 구조물로 보강 (2026-08-03 "실제와 유사하게" 요청). */
         if (platformLength > 0) {
             const platformE = new Entity({
                 corridor: {
@@ -463,7 +478,7 @@ export default class BusStationDataSourceLayer {
                     width: PLATFORM_W,
                     height: baseH,
                     extrudedHeight: baseH + PLATFORM_H,
-                    material: C_PLATFORM,
+                    material: station.medianLane ? C_PLATFORM_MEDIAN : C_PLATFORM,
                     cornerType: Cesium.CornerType.MITERED,
                 },
             });
@@ -473,15 +488,95 @@ export default class BusStationDataSourceLayer {
             const shelterE = new Entity({
                 corridor: {
                     positions: [offsetPosition, parkingEnd],
-                    width: PLATFORM_W + 0.6,
+                    width: SHELTER_W,
                     height: baseH + SHELTER_H,
                     extrudedHeight: baseH + SHELTER_H + SHELTER_THICK,
                     material: C_SHELTER,
+                    outline: true, outlineColor: C_FRAME,
                     cornerType: Cesium.CornerType.MITERED,
                 },
             });
             (shelterE as any).distanceDisplayCondition = DETAIL_DIST;
             entities.push(this.dataSource.entities.add(shelterE));
+
+            // 진행방향(dir)에 수직한 "우측" 법선 — NetworkFeatureLayer의 우측(+) 법선 규약과
+            // 통일(nx=dy,ny=-dx / cross(dir,up)). 지붕 모서리·유리벽·벤치 배치 기준축.
+            const up = Cesium.Cartesian3.normalize(offsetPosition, new Cesium.Cartesian3());
+            const lateral = Cesium.Cartesian3.normalize(
+                Cesium.Cartesian3.cross(dir, up, new Cesium.Cartesian3()), new Cesium.Cartesian3());
+            const halfW = SHELTER_W / 2 - LEG_INSET;
+            const lateralOffset = (base: Cesium.Cartesian3, sign: 1 | -1) => Cesium.Cartesian3.add(
+                base, Cesium.Cartesian3.multiplyByScalar(lateral, sign * halfW, new Cesium.Cartesian3()),
+                new Cesium.Cartesian3());
+
+            /* 지붕을 받치는 4개 다리 */
+            const corners = [
+                lateralOffset(offsetPosition, 1), lateralOffset(offsetPosition, -1),
+                lateralOffset(parkingEnd, 1),     lateralOffset(parkingEnd, -1),
+            ];
+            for (const c of corners) {
+                const legCarto = Cesium.Cartographic.fromCartesian(c);
+                const legLng = Cesium.Math.toDegrees(legCarto.longitude);
+                const legLat = Cesium.Math.toDegrees(legCarto.latitude);
+                const legE = new Entity({
+                    position: Cesium.Cartesian3.fromDegrees(legLng, legLat, baseH + SHELTER_H / 2),
+                    cylinder: {
+                        length: SHELTER_H, topRadius: LEG_RADIUS, bottomRadius: LEG_RADIUS,
+                        material: C_FRAME, outline: false,
+                    },
+                });
+                (legE as any).distanceDisplayCondition = DETAIL_DIST;
+                entities.push(this.dataSource.entities.add(legE));
+            }
+
+            /* 양끝 유리벽 — 앞(도로 쪽)은 뚫려있는 실제 쉼터처럼 짧은 두 변만 막는다 */
+            const wallEnds: Array<[Cesium.Cartesian3, Cesium.Cartesian3]> = [
+                [lateralOffset(offsetPosition, 1), lateralOffset(offsetPosition, -1)],
+                [lateralOffset(parkingEnd, 1),     lateralOffset(parkingEnd, -1)],
+            ];
+            for (const [wa, wb] of wallEnds) {
+                const wallE = new Entity({
+                    wall: {
+                        positions: [wa, wb],
+                        minimumHeights: [baseH, baseH],
+                        maximumHeights: [baseH + WALL_H, baseH + WALL_H],
+                        material: C_GLASS,
+                        outline: true, outlineColor: C_FRAME.withAlpha(0.7),
+                    },
+                });
+                (wallE as any).distanceDisplayCondition = DETAIL_DIST;
+                entities.push(this.dataSource.entities.add(wallE));
+            }
+
+            /* 벤치 — 승강장 안쪽 한 변을 따라 배치. 박스 dimensions는 기본적으로 로컬
+             * East-North-Up 기준이라, dir(진행방향)에 맞춰 세우려면 heading을 구해 회전해야
+             * 한다 — dir은 ECEF Cartesian3라 x/y를 그대로 동/북으로 쓸 수 없으므로(전역 축과
+             * 지역 동/북 축은 다르다), SignalDataSourceLayer.headingRad와 동일하게 lng/lat
+             * 델타 기반 평면 근사로 계산한다(벤치는 대칭이라 ±180° 방향 오차는 무관). */
+            const benchLen = Math.max(0, platformLength - BENCH_W_MARGIN * 2);
+            if (benchLen > 0.5) {
+                const mid = Cesium.Cartesian3.lerp(offsetPosition, parkingEnd, 0.5, new Cesium.Cartesian3());
+                const benchCenter = lateralOffset(mid, -1);
+                const benchCarto = Cesium.Cartographic.fromCartesian(benchCenter);
+                const startCarto = Cesium.Cartographic.fromCartesian(offsetPosition);
+                const endCarto   = Cesium.Cartographic.fromCartesian(parkingEnd);
+                const dLng = endCarto.longitude - startCarto.longitude;
+                const dLat = endCarto.latitude  - startCarto.latitude;
+                const heading = Math.atan2(dLng * Math.cos(benchCarto.latitude), dLat);
+                const benchPos = Cesium.Cartesian3.fromRadians(benchCarto.longitude, benchCarto.latitude, baseH + BENCH_H / 2);
+                const orientation = Cesium.Transforms.headingPitchRollQuaternion(
+                    benchPos, new Cesium.HeadingPitchRoll(heading, 0, 0));
+                const benchE = new Entity({
+                    position: benchPos,
+                    orientation,
+                    box: {
+                        dimensions: new Cesium.Cartesian3(BENCH_D, benchLen, BENCH_H),
+                        material: C_BENCH, outline: false,
+                    },
+                });
+                (benchE as any).distanceDisplayCondition = DETAIL_DIST;
+                entities.push(this.dataSource.entities.add(benchE));
+            }
         }
 
         this.activeRecords.set(e.key, { billboard, label, entities });

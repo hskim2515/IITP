@@ -1,8 +1,10 @@
 package com.iitp.iitp_rest.service.simulation;
 
 import com.iitp.iitp_rest.model.network.NetworkXml;
+import com.iitp.iitp_rest.model.publicTransit.bus.BusStationResponse;
 import com.iitp.iitp_rest.repository.ScenarioVersionRepository;
 import com.iitp.iitp_rest.service.network.NetworkReachabilityService;
+import com.iitp.iitp_rest.service.publicTransit.station.BusStationService;
 import com.iitp.iitp_rest.service.vehicle.DummySignalGenerator;
 import com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService;
 import com.iitp.iitp_rest.util.FileStorageService;
@@ -55,6 +57,7 @@ public class NextSimInputScaffolder {
     private final XmlLayerVersionService xmlLayerVersionService;
     private final DummySignalGenerator dummySignalGenerator;
     private final NetworkReachabilityService networkReachabilityService;
+    private final BusStationService busStationService;
 
     /** 러너 폴백과 동일한 기본 시나리오 (06시 시작 60분, OD 0번, TOD 0번) */
     private static final String SCENARIO_TEMPLATE = xml(
@@ -179,6 +182,34 @@ public class NextSimInputScaffolder {
                     content -> odMatrixValid(content, sourceIdSet, sinkIdSet),
                     buildSampleOdMatrix(sourceTerminalIds, sinkTerminalIds, terminalLocalCoords, isReachable, odParams),
                     "od_matrix");
+
+            // passenger.xml(승객 OD 수요) — odmatrix.xml과 동일한 "없거나 낡으면(새 정류장 집합과
+            // 안 맞으면) 재생성" 정책. ⚠️ 이걸 채우면 NextSimRunner.hasPassengerDemand()가 true가
+            // 되어 footpathNetwork.xml이 실제로 생성되고 pax-route-generator/nextsim의 정류장 수
+            // 안전검사(MAX_SAFE_PT_STATION_COUNT_WITH_DEMAND)가 활성화된다 — 정류장이 25개를
+            // 넘는 네트워크(KTDB 재가져오기로는 흔함)는 이제 이 지점에서 명확한 에러로 막힌다.
+            // 이건 의도된 동작이다: 승객 수요가 계속 비어있어 PT가 조용히 배차 0건이던 것보다,
+            // "정류장이 너무 많아 못 돌린다"는 명확한 신호를 주는 편이 낫다.
+            try {
+                List<BusStationResponse> busStations = busStationService.getBusStationsByVersionId(versionId).getBusStations();
+                if (busStations != null && !busStations.isEmpty()) {
+                    List<String> stationIds = new java.util.ArrayList<>();
+                    java.util.Map<String, double[]> stationCoords = new java.util.HashMap<>();
+                    for (BusStationResponse s : busStations) {
+                        if (s.getId() == null) continue;
+                        stationIds.add(s.getId());
+                        double[] xy = parseCenter(s.getCenter());
+                        if (xy != null) stationCoords.put(s.getId(), xy);
+                    }
+                    Set<String> stationIdSet = Set.copyOf(stationIds);
+                    ensureValidOrRegenerate(lookupDirs, versionId, "passenger.xml",
+                            content -> passengerOdValid(content, stationIdSet),
+                            buildSamplePassengerOd(stationIds, stationCoords),
+                            "passenger");
+                }
+            } catch (Exception e) {
+                log.warn("[NextSimScaffold] {} passenger.xml 정비 실패 (무시): {}", versionId, e.getMessage());
+            }
 
             // signalTOD 검증에 signal.xml 의 "실제 플랜 보유 노드" 집합이 필요 — 재생성 전에
             // 미리 읽어둔다(재생성되면 아래에서 무조건 signalTOD 도 같이 재생성하므로 무관해짐).
@@ -384,6 +415,101 @@ public class NextSimInputScaffolder {
             if (!sinkIdSet.contains(km.group(1))) return false;
         }
         return any;
+    }
+
+    private static final Pattern PAX_ORIGIN_REF = Pattern.compile("\\borigin=\"([^\"]+)\"");
+    private static final Pattern PAX_DEST_REF   = Pattern.compile("\\bdest=\"([^\"]+)\"");
+
+    /** 승객 OD: od_pax 안에 수요가 1건 이상 있고, origin/dest 전부 현재 정류장 집합에 존재해야
+     *  유효 — odMatrixValid와 동일 정책(재임포트로 정류장 id가 바뀌면 낡음 처리). */
+    public static boolean passengerOdValid(String content, Set<String> stationIdSet) {
+        boolean any = false;
+        Matcher om = PAX_ORIGIN_REF.matcher(content);
+        while (om.find()) {
+            any = true;
+            if (!stationIdSet.contains(om.group(1))) return false;
+        }
+        Matcher dm = PAX_DEST_REF.matcher(content);
+        while (dm.find()) {
+            if (!stationIdSet.contains(dm.group(1))) return false;
+        }
+        return any;
+    }
+
+    private static final int MAX_PAX_OD_SOURCES = 60;
+    private static final int PAX_SINKS_PER_SOURCE = 3;
+    private static final int PAX_MIN_FLOW = 10;
+    private static final int PAX_MAX_FLOW = 40;
+    private static final double PAX_REF_DIST_M = 500.0;
+
+    /**
+     * 샘플 승객 OD 수요 — 버스정류장 id를 origin/dest로 쓴다(부천 배포판 실측 관례: 실제
+     * passenger.xml의 od_pax 수요는 전부 버스정류장 id 기준이고 철도역 id는 등장하지 않음 —
+     * 철도 환승은 footpathNetwork.xml 경유로 자동 처리됨). buildSampleOdMatrix와 동일하게
+     * 거리 인지 생성(가까운 정류장 쌍 우선, 거리 반비례 flow) — 임포트 직후 눈에 보이는
+     * 결과를 내기 위한 자리표시자이며, 실제 수요는 승객 수요 메뉴에서 편집한다.
+     */
+    public static String buildSamplePassengerOd(List<String> stationIds, java.util.Map<String, double[]> stationCoords) {
+        StringBuilder demands = new StringBuilder();
+        if (stationIds != null && stationIds.size() >= 2) {
+            List<String> selectedSources = stationIds.size() <= MAX_PAX_OD_SOURCES
+                    ? stationIds : strideSampleStrings(stationIds, MAX_PAX_OD_SOURCES);
+            for (String src : selectedSources) {
+                double[] srcXy = stationCoords.get(src);
+                List<String> picked = nearestStationIds(src, srcXy, stationIds, stationCoords, PAX_SINKS_PER_SOURCE);
+                for (String dst : picked) {
+                    double[] dstXy = stationCoords.get(dst);
+                    int flow = (srcXy != null && dstXy != null)
+                            ? distanceDecayFlow(Math.hypot(srcXy[0] - dstXy[0], srcXy[1] - dstXy[1]),
+                                    PAX_MIN_FLOW, PAX_MAX_FLOW, PAX_REF_DIST_M)
+                            : PAX_MIN_FLOW;
+                    demands.append("        <demand origin=\"").append(src).append("\" dest=\"").append(dst)
+                            .append("\" dist=\"Poisson\" flow=\"").append(flow).append("\"/>\n");
+                }
+            }
+        }
+        return xml(
+                "<!-- 네트워크 가져오기 시 자동 생성된 샘플 승객 수요입니다. 승객 수요 메뉴에서 수정하세요. -->\n" +
+                "<Passenger>\n" +
+                "    <od_pax>\n" +
+                demands +
+                "    </od_pax>\n" +
+                "</Passenger>");
+    }
+
+    /** src에서 가까운 정류장 id 최대 count개(가까운 순) — 좌표 없는 정류장은 뒤로 밀림(제외 아님) */
+    private static List<String> nearestStationIds(String src, double[] srcXy, List<String> allIds,
+                                                    java.util.Map<String, double[]> coords, int count) {
+        List<String> candidates = new java.util.ArrayList<>();
+        for (String id : allIds) {
+            if (!id.equals(src)) candidates.add(id);
+        }
+        if (srcXy != null) {
+            candidates.sort(java.util.Comparator.comparingDouble(id -> {
+                double[] xy = coords.get(id);
+                return xy == null ? Double.MAX_VALUE : Math.hypot(srcXy[0] - xy[0], srcXy[1] - xy[1]);
+            }));
+        }
+        return candidates.subList(0, Math.min(count, candidates.size()));
+    }
+
+    private static List<String> strideSampleStrings(List<String> items, int count) {
+        List<String> result = new java.util.ArrayList<>(count);
+        double stride = (double) items.size() / count;
+        for (int i = 0; i < count; i++) result.add(items.get((int) (i * stride)));
+        return result;
+    }
+
+    /** BusStationResponse.center("x y") → 로컬 좌표 배열, 파싱 실패/누락 시 null */
+    private static double[] parseCenter(String center) {
+        if (center == null || center.isBlank()) return null;
+        String[] parts = center.trim().split("\\s+");
+        if (parts.length < 2) return null;
+        try {
+            return new double[]{Double.parseDouble(parts[0]), Double.parseDouble(parts[1])};
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /** 신호: 참조 노드가 없으면(빈 템플릿) 유효, 있으면 전부 새 노드 집합에 존재해야 유효 */

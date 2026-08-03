@@ -7,6 +7,7 @@ import com.iitp.iitp_rest.model.xmllayer.XmlLayerLog;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerSaveRequest;
 import com.iitp.iitp_rest.service.network.NetworkReachabilityService;
 import com.iitp.iitp_rest.service.network.NetworkService;
+import com.iitp.iitp_rest.service.network.NetworkTileService;
 import com.iitp.iitp_rest.service.odmatrix.OdMatrixService;
 import com.iitp.iitp_rest.service.odmatrix.OdTerminalIdBandService;
 import com.iitp.iitp_rest.service.xmllayer.XmlLayerConverter;
@@ -34,6 +35,11 @@ public class OdMatrixController {
     private final OdTerminalIdBandService odTerminalIdBandService;
     private final NetworkService networkService;
     private final NetworkReachabilityService networkReachabilityService;
+    // ⚠️ odTerminalIdBandService.reconcileTerminalIds()가 터미널/일반 id 대역 재배정 시
+    // network.xml을 직접 재업로드한다(id 재배정) — 이때 네트워크 타일 캐시를 무효화하지
+    // 않으면 재배정 전의 옛 node/link id로 계속 서빙된다(KtdbImportController 버스정류장
+    // 타일 캐시 버그와 동일 패턴).
+    private final NetworkTileService networkTileService;
 
     @GetMapping("/{versionId}")
     public ResponseEntity<Map<String, Object>> getOdMatrix(@PathVariable String versionId) {
@@ -96,6 +102,11 @@ public class OdMatrixController {
                 Map<String, String> idRemap = odTerminalIdBandService.reconcileTerminalIds(versionId, oldOd, newOd);
                 if (!idRemap.isEmpty()) {
                     odTerminalIdBandService.applyRemapToOdMatrix(newOd, idRemap);
+                    try {
+                        networkTileService.invalidate(versionId);
+                    } catch (Exception e) {
+                        log.warn("[OdMatrixController] 네트워크 타일 캐시 무효화 실패 (무시): {}", e.getMessage());
+                    }
                 }
             } catch (Exception idErr) {
                 log.warn("[OdMatrixController] 터미널 id 대역 보정 실패(무시하고 저장 계속): {}", idErr.getMessage());

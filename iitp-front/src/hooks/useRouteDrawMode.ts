@@ -28,6 +28,16 @@ export function useRouteDrawMode(): void {
         }
     }, [isEditMode, mode]);
 
+    // ⚠️ lastHandledGuidRef는 훅(컴포넌트) 수명 내내 유지되는데, mode가 바뀔 때(노선 1 완료
+    // → 노선 2 새로 시작) 리셋하지 않으면 "노선 1의 마지막 클릭 정류장"이 그대로 남아있는
+    // 값으로 취급된다 — 만약 노선 2에서 (여러 노선이 공유하는 허브 역처럼) 그 정류장을 다시
+    // 클릭하면 selectedGuid가 우연히 그 낡은 ref 값과 같아져 dedup에 걸려 **조용히 추가되지
+    // 않는다**(2026-07-31 실사용 지적으로 발견). 새 그리기 세션이 시작될 때마다(mode 전환)
+    // ref를 비워 이 오탐을 없앤다.
+    useEffect(() => {
+        lastHandledGuidRef.current = null;
+    }, [mode]);
+
     useEffect(() => {
         if (!isEditMode || mode === 'none') return;
         const guid = selectedGuid[0];

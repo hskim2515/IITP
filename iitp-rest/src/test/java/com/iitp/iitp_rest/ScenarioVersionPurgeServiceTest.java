@@ -12,7 +12,11 @@ import com.iitp.iitp_rest.repository.VehicleRouteRepository;
 import com.iitp.iitp_rest.repository.XmlLayerLogRepository;
 import com.iitp.iitp_rest.repository.XmlLayerVersionRepository;
 import com.iitp.iitp_rest.service.network.NetworkTileService;
+import com.iitp.iitp_rest.service.pavementMarking.PavementMarkingTileService;
+import com.iitp.iitp_rest.service.publicTransit.station.BusStationTileService;
+import com.iitp.iitp_rest.service.publicTransit.station.RailStationTileService;
 import com.iitp.iitp_rest.service.scenario.ScenarioVersionPurgeService;
+import com.iitp.iitp_rest.service.signal.SignalTileService;
 import com.iitp.iitp_rest.util.FileStorageService;
 import org.junit.jupiter.api.Test;
 
@@ -40,6 +44,10 @@ class ScenarioVersionPurgeServiceTest {
     private final PavementMarkingLogsRepository pavementMarkingLogsRepository = mock(PavementMarkingLogsRepository.class);
     private final VehicleRouteRepository vehicleRouteRepository = mock(VehicleRouteRepository.class);
     private final NetworkTileService networkTileService = mock(NetworkTileService.class);
+    private final BusStationTileService busStationTileService = mock(BusStationTileService.class);
+    private final RailStationTileService railStationTileService = mock(RailStationTileService.class);
+    private final SignalTileService signalTileService = mock(SignalTileService.class);
+    private final PavementMarkingTileService pavementMarkingTileService = mock(PavementMarkingTileService.class);
 
     private ScenarioVersionPurgeService service() {
         return new ScenarioVersionPurgeService(
@@ -48,7 +56,8 @@ class ScenarioVersionPurgeServiceTest {
                 busStationVersionsRepository, busStationLogsRepository,
                 railStationVersionsRepository, railStationLogsRepository,
                 pavementMarkingVersionsRepository, pavementMarkingLogsRepository,
-                vehicleRouteRepository, networkTileService);
+                vehicleRouteRepository, networkTileService,
+                busStationTileService, railStationTileService, signalTileService, pavementMarkingTileService);
     }
 
     @Test
@@ -68,6 +77,10 @@ class ScenarioVersionPurgeServiceTest {
         verify(pavementMarkingLogsRepository).deleteByVersionId("v1");
         verify(vehicleRouteRepository).deleteByVersionId("v1");
         verify(networkTileService).invalidate("v1");
+        verify(busStationTileService).invalidate("v1");
+        verify(railStationTileService).invalidate("v1");
+        verify(signalTileService).invalidate("v1");
+        verify(pavementMarkingTileService).invalidate("v1");
         verify(fileStorage).deleteDirectory("v1");
     }
 
@@ -88,6 +101,7 @@ class ScenarioVersionPurgeServiceTest {
     void ignores_blank_version_key() throws Exception {
         service().purgeVersionData("");
         service().purgeVersionData(null);
-        verifyNoInteractions(fileStorage, xmlLayerVersionRepository, networkTileService);
+        verifyNoInteractions(fileStorage, xmlLayerVersionRepository, networkTileService,
+                busStationTileService, railStationTileService, signalTileService, pavementMarkingTileService);
     }
 }

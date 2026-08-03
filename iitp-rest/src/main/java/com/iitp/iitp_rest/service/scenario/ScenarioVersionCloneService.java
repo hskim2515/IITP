@@ -10,6 +10,7 @@ import com.iitp.iitp_rest.repository.ScenarioVersionRepository;
 import com.iitp.iitp_rest.repository.SignalVersionsRepository;
 import com.iitp.iitp_rest.service.signal.SignalJaxbParser;
 import com.iitp.iitp_rest.service.signal.SignalService;
+import com.iitp.iitp_rest.service.signal.SignalTileService;
 import com.iitp.iitp_rest.util.FileStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -46,6 +47,10 @@ public class ScenarioVersionCloneService {
     private final SignalService signalService;
     private final SignalVersionsRepository signalVersionsRepository;
     private final SignalJaxbParser signalJaxbParser;
+    // ⚠️ destVersionKey가 과거 삭제된 버전 key를 재사용하는 경우, 그 key로 남아있던 신호
+    // 타일 캐시가 있으면 무효화 없이는 방금 복사한 신호가 아니라 옛 데이터가 계속 서빙된다
+    // (KtdbImportController의 signal.xml 재생성 시 무효화 누락과 동일한 이유로 추가).
+    private final SignalTileService signalTileService;
 
     /** true인 파일은 (network.xml처럼) 자기 버전 폴더에 없으면 실패 — 폴백 없음.
      *  false인 파일은 OdMatrixService 등과 동일하게 "버전 폴더 → 시나리오 base key" 순으로 찾는다.
@@ -127,6 +132,12 @@ public class ScenarioVersionCloneService {
             SignalXml xml = signalService.toSignalXml(signals);
             byte[] xmlBytes = signalJaxbParser.marshal(xml);
             fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), destVersionKey, "signal.xml");
+            try {
+                signalTileService.invalidate(destVersionKey);
+                signalTileService.ingest(destVersionKey, signals);
+            } catch (Exception e) {
+                log.warn("[ScenarioVersionCloneService] 신호 타일 캐시 재빌드 실패 (lazy 빌드로 폴백): {}", e.getMessage());
+            }
             log.info("[ScenarioVersionCloneService] signal 복사 완료 ({}건): {} -> {}", signals.size(), sourceVersionKey, destVersionKey);
         } catch (Exception e) {
             log.warn("[ScenarioVersionCloneService] signal 복사 실패(건너뜀): {} -> {}: {}",

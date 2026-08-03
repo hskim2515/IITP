@@ -14,8 +14,9 @@ import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import { ModifyEvent } from "ol/interaction/Modify";
 import { pickFromOpenLayers } from "@utils/pick";
 import { fromLonLat } from "ol/proj";
-import { projectPointOntoSegmentOl } from "@utils/offset";
+import { projectPointOntoSegmentOl, projectPointOntoPolylineOl } from "@utils/offset";
 import { createCoordinatesFromOl } from "@utils/coordinates";
+import { Coordinate } from "ol/coordinate";
 import Geometry from "ol/geom/Geometry";
 import { useRailStationHistoryStore, useRailStationStore } from "@stores/useRailStationStore";
 import { setModifyingFeature, clearModifyingFeature, reapplySelectionHighlight } from "@handler/defaultEventHandler";
@@ -96,8 +97,10 @@ const modifyFeatureHandlersInternal = {
                 return;
             }
             const laneData = laneFeature.getProperties();
-            const laneStart = laneData.laneSource
-            const laneEnd = laneData.laneTarget
+            // laneAllPts(전체 폴리라인)로 다중 세그먼트 투영 — createEventHandlers.ts의 배치
+            // 로직과 동일 조치. laneSource/laneTarget(첫/끝 점만)만 쓰면 곡선 차선에서 드래그한
+            // 지점과 실제 반영 위치가 어긋난다.
+            const laneAllPts: Coordinate[] | undefined = laneData.laneAllPts;
 
             const parentLink = network.links.find(link => link.lanes.some(lane => lane.__guid === laneData.__guid));
 
@@ -106,7 +109,9 @@ const modifyFeatureHandlersInternal = {
                 return;
             }
 
-            const {offset} = projectPointOntoSegmentOl(laneStart, laneEnd, coord);
+            const {offset} = laneAllPts && laneAllPts.length >= 2
+                ? projectPointOntoPolylineOl(laneAllPts, coord)
+                : projectPointOntoSegmentOl(laneData.laneSource, laneData.laneTarget, coord);
 
             // store 갱신 → load() 가 단일 경로로 source를 재구성 (하향식)
             clearModifyingFeature();
@@ -351,10 +356,14 @@ const modifyFeatureHandlersInternal = {
                 return;
             }
             const linkData = linkFeature.getProperties();
-            const linkStart = fromLonLat([linkData.coordinates[0].lng, linkData.coordinates[0].lat]);
-            const linkEnd = fromLonLat([linkData.coordinates[1].lng, linkData.coordinates[1].lat]);
+            // 링크 좌표점 전체(2점 이상)를 다중 세그먼트 투영 — createEventHandlers.ts의 exits
+            // 배치 로직과 동일 조치.
+            const linkAllPts: Coordinate[] = (linkData.coordinates as Array<{ lng: number; lat: number }>)
+                .map((c) => fromLonLat([c.lng, c.lat]) as Coordinate);
 
-            const {offset} = projectPointOntoSegmentOl(linkStart, linkEnd, coord);
+            const {offset} = linkAllPts.length >= 2
+                ? projectPointOntoPolylineOl(linkAllPts, coord)
+                : projectPointOntoSegmentOl(linkAllPts[0] ?? coord, linkAllPts[0] ?? coord, coord);
 
             // store 갱신 → load() 가 단일 경로로 source를 재구성 (하향식)
             clearModifyingFeature();

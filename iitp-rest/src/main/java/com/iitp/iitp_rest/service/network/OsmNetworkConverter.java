@@ -59,12 +59,17 @@ public class OsmNetworkConverter {
         final long toOsmId;
         final List<Long> shapeNodeIds; // from → ... → to
         final OsmWay way;
+        /** true면 이 엣지가 way의 원본 노드 순서와 반대 방향으로 순회한다 — busway:left/right
+         *  같은 방향성 태그는 way 원본 순서 기준이라, 역방향 엣지에 적용할 땐 좌우를 뒤집어야
+         *  한다({@link #laneIndexForSide}). */
+        final boolean reversedFromWay;
 
-        GraphEdge(long fromOsmId, long toOsmId, List<Long> shapeNodeIds, OsmWay way) {
+        GraphEdge(long fromOsmId, long toOsmId, List<Long> shapeNodeIds, OsmWay way, boolean reversedFromWay) {
             this.fromOsmId = fromOsmId;
             this.toOsmId = toOsmId;
             this.shapeNodeIds = shapeNodeIds;
             this.way = way;
+            this.reversedFromWay = reversedFromWay;
         }
     }
 
@@ -218,16 +223,16 @@ public class OsmNetworkConverter {
                     // 유효한 노드만 처리
                     if (nodeMap.containsKey(fromId) && nodeMap.containsKey(toId) && fromId != toId) {
                         if (!way.isReverseOneway()) {
-                            edges.add(new GraphEdge(fromId, toId, new ArrayList<>(segment), way));
+                            edges.add(new GraphEdge(fromId, toId, new ArrayList<>(segment), way, false));
                         }
                         if (!way.isOneway()) {
                             List<Long> rev = new ArrayList<>(segment);
                             Collections.reverse(rev);
-                            edges.add(new GraphEdge(toId, fromId, rev, way));
+                            edges.add(new GraphEdge(toId, fromId, rev, way, true));
                         } else if (way.isReverseOneway()) {
                             List<Long> rev = new ArrayList<>(segment);
                             Collections.reverse(rev);
-                            edges.add(new GraphEdge(toId, fromId, rev, way));
+                            edges.add(new GraphEdge(toId, fromId, rev, way, true));
                         }
                     }
                     segment.clear();
@@ -365,15 +370,20 @@ public class OsmNetworkConverter {
             // lanes
             int nCells = Math.max(1, (int) Math.ceil(length / BASE_CELL_LEN));
             double cellLen = length / nCells;
+            Integer busLaneId = OsmWay.laneIndexForSide(e.way.busLaneSide(), numLanes, e.reversedFromWay);
 
             for (int laneId = 0; laneId < numLanes; laneId++) {
                 String leftId  = laneId > 0             ? String.valueOf(laneId - 1) : "None";
                 String rightId = laneId < numLanes - 1  ? String.valueOf(laneId + 1) : "None";
+                // busway/lanes:bus 등 OSM 태그로 이 차선이 버스전용차로로 식별되면 표시 —
+                // OsmFacilityConverter가 정류장/노선을 스냅할 때 이 값을 우선 참고한다.
+                String laneAccessType = (busLaneId != null && busLaneId == laneId) ? "bus" : "";
 
                 sb.append("      <lane id=\"").append(laneId).append("\"")
                   .append(" num_cell=\"").append(nCells).append("\"")
                   .append(" left_lane_id=\"").append(leftId).append("\"")
                   .append(" right_lane_id=\"").append(rightId).append("\"")
+                  .append(" lane_access_type=\"").append(laneAccessType).append("\"")
                   .append(">\n");
 
                 double offset = 0.0;

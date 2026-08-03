@@ -92,6 +92,13 @@ public class NextSimRunner {
     private static final String BRANCH = "mesopt";
     private static final String NETWORK_NAME = "iitp";
 
+    /** 승객 수요가 있을 때 PT 정류장(버스+철도) 총합의 실측 위험 임계치 — pax-route-generator/
+     *  nextsim hang 최소 재현치(29개, footpath 1087노드 기준)보다 낮게 잡은 보수적 값. 실행을
+     *  막지는 않고(2026-08-03, 사용자 요청 — nextsim 본체도 동일 결함을 재현해 이 단계만 막아도
+     *  근본 해결이 안 됨) 경고 로그만 남긴다. {@link #buildFootpathNetworkFromNodes}/
+     *  {@link #countPtStations} 참고. */
+    private static final int MAX_SAFE_PT_STATION_COUNT_WITH_DEMAND = 25;
+
     private final FileStorageService fileStorage;
     private final VehicleDataReader vehicleDataReader;
     private final ScenarioVersionRepository scenarioVersionRepository;
@@ -228,6 +235,26 @@ public class NextSimRunner {
                 // 취급(기본 OFF)한다 — 실제 승객 수요가 있을 때만 돌리고, 없으면 스키마만 맞는
                 // 빈 stub 을 직접 써서 파일 부재로 인한 크래시만 막는다(계산 비용 0, OOM 위험 없음).
                 if (hasPassengerDemand(networkDir.resolve("passenger.xml"))) {
+                    // ⚠️ 실측 확정(2026-08-03, gdb): 승객 수요가 있어 footpathNetwork.xml이 존재하는
+                    // 상태에서 PT 정류장(버스+철도) 총합이 일정 수를 넘으면 pax-route-generator
+                    // 뿐 아니라 nextsim 본체(ExecuteSimulation → NetInitializer → PaxRouteGenerator)
+                    // 도 Captain::footpath::FindNearestFootpathLinkPoint 에서 영원히 안 끝나는
+                    // 무한루프에 빠진다(닫힌소스 결함, memcmp 반복 호출 확인). 이진탐색으로
+                    // 확정: footpath 1087노드 기준 28개는 성공/29개부터 hang, 다른 29개 조합으로도
+                    // 재현 — 정류장 정체성과 무관한 순수 개수 임계치. footpathNetwork.xml을
+                    // intersection 전용으로 축소(buildFootpathNetworkFromNodes 참고)하면 임계치가
+                    // 올라가지만(부천 실측 17노드 기준 35개 성공/45개부터 hang) 축소 후 정확한
+                    // 임계치는 네트워크마다 달라 예측 불가능하다.
+                    // ⚠️ 사전 차단은 넣지 않는다(2026-08-03, 사용자 요청) — nextsim 본체가 정류장
+                    // 수와 무관하게 자체적으로 같은 결함을 재현하므로(위 gdb 확인), 이 단계만 막아도
+                    // 근본 해결이 안 되고 정상 규모 네트워크까지 막을 위험이 크다. 대신 로그로
+                    // 위험 신호만 남겨 hang 발생 시 원인 파악에 쓴다.
+                    int stationCount = countPtStations(networkDir.resolve("roadStation.xml"), networkDir.resolve("railStation.xml"));
+                    if (stationCount > MAX_SAFE_PT_STATION_COUNT_WITH_DEMAND) {
+                        log.warn("[NextSimRunner] {} 버스+철도 정류장이 {}개로 실측 안전선({}개)을 초과 — " +
+                                "pax-route-generator/nextsim이 정류장 좌표 조회 단계에서 무한 대기에 빠질 위험이 있습니다.",
+                                versionId, stationCount, MAX_SAFE_PT_STATION_COUNT_WITH_DEMAND);
+                    }
                     // pax-route-generator 는 route-generator 와 다른 크래시 클래스(터미널 격리로
                     // 해결되는 문제가 아님)라 크래시 복구 이분탐색 래퍼는 적용하지 않는다.
                     runStage(versionId, workDir, "pax-route-generator", "PaxRouteGenerator", progress);
@@ -297,17 +324,56 @@ public class NextSimRunner {
             saveRouteCache(cacheDir, routeGenHash, routeJsonSnapshot,
                     ptRouteJsonSnapshot != null ? ptRouteJsonSnapshot : ptRouteJson,
                     paxRouteJsonSnapshot != null ? paxRouteJsonSnapshot : paxRouteJson);
-            Files.deleteIfExists(routeJsonSnapshot);
-            if (ptRouteJsonSnapshot != null) Files.deleteIfExists(ptRouteJsonSnapshot);
-            if (paxRouteJsonSnapshot != null) Files.deleteIfExists(paxRouteJsonSnapshot);
+            // ⚠️ 실측 확인(2026-08-03): 여기서 .snapshot 을 바로 지우면 finally 블록의
+            // persistGeneratedArtifactsForInspection() 이 실행되는 시점엔 이미 없어져서, 정작
+            // 그 함수가 우선 사용하려던 "route-generator 직후 유효한" 스냅샷을 못 쓰고 nextsim이
+            // 건드렸을 수 있는 networkDir 라이브 파일로 폴백해버린다(성공 실행에서도 재현 —
+            // saveRouteCache 로 route_cache 엔 정상 저장되는데 generated/ 스냅샷만 빈 배열이 되는
+            // 버그였음). 명시적으로 안 지워도 다음 run() 호출 시작의 deleteDir(workDir)(위 164행)가
+            // workDir 전체를 지우므로 정리는 자동으로 된다 — 여기서 굳이 먼저 지울 필요가 없다.
 
             log.info("[NextSimRunner] 완료: versionId={}, result={} bytes", versionId, Files.size(resultDb));
             return tail(simLog, 2000);
         } finally {
+            // 성공/실패 무관하게 그 시점까지 생성된 JSON 산출물을 정식 저장 위치에 스냅샷
+            // (확인용 — 다음 실행의 입력으로 재사용하지 않음, 경로 캐시(route_cache, 재사용
+            // 목적)와는 별개). workDir는 다음 run() 호출 시작 시 deleteDir로 지워지므로, 여기서
+            // 옮겨두지 않으면 실패한 실행을 다시 실행하는 순간 그 증거(config_scenario.json/
+            // Route.json 등)가 사라진다 — 사용자가 크래시 원인 파악을 위해 직접 열어볼 수
+            // 있게 남긴다.
+            persistGeneratedArtifactsForInspection(versionId, networkDir);
             activeVersionId = null;
             activeProcess = null;
             activeContainer = null;
             // 결과 회수 후 워크스페이스 정리 (실패 시엔 디버깅용으로 보존)
+        }
+    }
+
+    /** 실행 중 생성된 JSON 산출물(config_scenario.json/Route.json/PTRoute.json/PaxRoute.json)을
+     *  {@code {versionId}/generated/} 아래에 스냅샷으로 남긴다 — 순수 확인/디버깅용이라 이후
+     *  어떤 실행도 이 스냅샷을 다시 읽지 않는다(캐시 아님, 무효화 로직 불필요). 존재하는
+     *  파일만 복사하고, 그 시점에 아직 안 만들어졌으면 조용히 건너뛴다 — 실행 자체를 절대
+     *  막으면 안 되므로 실패해도 로그만 남기고 삼킨다.
+     *
+     * <p>⚠️ 실측 확인(2026-08-03): Route.json/PTRoute.json은 {@code networkDir}에서 직접 읽으면
+     * 안 된다 — nextsim 단계(위 runStageWithCrashRecovery)가 자체 크래시 복구 재시도 중에 이
+     * 파일들을 쓰기 모드로 열었다가 실패해 0바이트/빈 배열로 잘라먹는 현상이 실측으로 이미
+     * 알려져 있다(위 routeGenHash 스냅샷 로직이 이 문제를 회피하려고 만들어진 것과 동일 원인).
+     * 이 메서드가 그 사실을 놓치고 있어서 route-generator가 실제로 60개 노선을 전부 성공
+     * 계산했는데도(route_cache에는 정상 저장됨) {@code generated/PTRoute.json}에는 빈 배열이
+     * 저장되는 버그가 있었다 — routeGenHash 스냅샷({@code Route.json.snapshot}/
+     * {@code PTRoute.json.snapshot})이 있으면 그쪽을 우선 사용한다. */
+    private void persistGeneratedArtifactsForInspection(String versionId, Path networkDir) {
+        String[] artifacts = { "config_scenario.json", "Route.json", "PTRoute.json", "PaxRoute.json" };
+        for (String name : artifacts) {
+            Path snapshot = networkDir.resolveSibling(name + ".snapshot");
+            Path src = Files.exists(snapshot) ? snapshot : networkDir.resolve(name);
+            if (!Files.exists(src)) continue;
+            try (InputStream in = new FileInputStream(src.toFile())) {
+                fileStorage.uploadFile(in, versionId + "/generated", name);
+            } catch (Exception e) {
+                log.warn("[NextSimRunner] {} 산출물 스냅샷 저장 실패(무시) {}: {}", versionId, name, e.getMessage());
+            }
         }
     }
 
@@ -387,6 +453,9 @@ public class NextSimRunner {
         //   Debugging(26컬럼/차량/timestep)·UniformEvent(CellEvent: 셀×timestep, 대규모에서 행 수 폭발)는
         //   미소비 기록이라 끔 → 시뮬 쓰기 부하·결과 DB 크기 절감. Statistics(집계)는 가벼워 유지
         //   (NEXTSIM_DATA_STRUCTURE.md: recordMode.xml 이 기록 테이블 제어 지점).
+        //   SignalEvent/SignalControlEvent는 2026-08-03 signalControl.active=true 활성화와 함께
+        //   켬 — 신호 반영이 실제로 적용되는지 SignalControlEvent 테이블로 검증하려는 목적
+        //   (기존엔 신호 자체를 안 봤으니 로그도 의미가 없어 꺼져 있었음).
         Files.writeString(dstParam.resolve("recordMode.xml"), xml(
                 "<RecordModes>\n" +
                 "    <VehicleEvent>\n" +
@@ -398,8 +467,8 @@ public class NextSimRunner {
                 "    <UniformEvent active=\"f\" />\n" +
                 "    <StationEvent active=\"t\" />\n" +
                 "    <SinkEvent active=\"t\" />\n" +
-                "    <SignalEvent active=\"f\" />\n" +
-                "    <SignalControlEvent active=\"f\" />\n" +
+                "    <SignalEvent active=\"t\" />\n" +
+                "    <SignalControlEvent active=\"t\" />\n" +
                 "</RecordModes>"), StandardCharsets.UTF_8);
 
         // vehicletypes.xml: "교통수단 유형" 편집 화면(VehicleType/VehicleTypeParameter)의
@@ -428,7 +497,14 @@ public class NextSimRunner {
         //   11,895 터미널 = ~3,500만 쌍으로 77분+ 미완의 근본 원인). OD 가 참조하지 않는
         //   터미널을 normal 로 바꾸면 OD 관련 쌍만 계산된다. 미사용 터미널은 막다른 경계
         //   노드라 어떤 경로도 통과하지 않음 → 수요가 참조하지 않는 한 시뮬 결과 불변.
+        // ⚠️ 실측 크래시(2026-08-03, scenario3_1): "OD 미참조 = 안전하게 가지치기 가능"이라는
+        // 전제는 차량 OD 수요 관점에서만 성립한다 — 버스 노선(roadPTline.xml)의 실제 경로
+        // 시작/끝 노드도 route-generator가 반드시 type="terminal"로 요구하는데(문서화된 별개
+        // 결함: #roadptline-xml), 그 노드가 OD에 안 걸리면 이 가지치기가 terminal→garage로
+        // 바꿔버려 터미널 조합과 무관하게 항상 크래시했다(31개 이분탐색 전부 실패로 재현).
+        // OD source/sink 집합에 버스 노선 종점도 합쳐서 가지치기 대상에서 제외한다.
         Set<String> odNodeIds = pruneUnusedTerminals ? extractOdNodeIds(networkDir.resolve("odmatrix.xml")) : null;
+        if (odNodeIds != null) odNodeIds.addAll(extractBusRouteEndpointNodeIds(versionId));
         injectRequiredNetworkAttrs(networkDir.resolve("network.xml"), odNodeIds);
         // 방향성(일방통행) 기준 도달 불가능한 OD 수요 제거 (실측 확정 근본원인 — gdb):
         // route-generator 는 도달 불가능한 (source,sink) 쌍도 에러 없이 빈 경로로 처리해
@@ -449,9 +525,11 @@ public class NextSimRunner {
         }
         if (!copyOptional(versionId, "scenario.xml", networkDir)) {
             // 기본: 06시 시작 60분, OD 0번, TOD 0번 (시뮬레이션 시나리오 메뉴에서 관리 가능)
+            // ⚠️ signalControl="True": 2026-08-03 사용자 확정 — 부천 데이터로 hang이 재현됨을
+            // 알고도 신호 반영 시뮬레이션을 켜기로 결정(NextSim 바이너리 버그 위험 감수).
             Files.writeString(networkDir.resolve("scenario.xml"), xml(
                     "<Scenarios>\n" +
-                    "\t<Scenario id=\"0\" startTime=\"06:00:00\" duration=\"60\" BGTduration=\"0\" odMatrixID=\"0\" todID=\"0\" signalControl=\"False\"/>\n" +
+                    "\t<Scenario id=\"0\" startTime=\"06:00:00\" duration=\"60\" BGTduration=\"0\" odMatrixID=\"0\" todID=\"0\" signalControl=\"True\"/>\n" +
                     "</Scenarios>"), StandardCharsets.UTF_8);
         }
         writeConfigScenarioJson(networkDir);
@@ -555,9 +633,20 @@ public class NextSimRunner {
     }
 
     /**
-     * footpathNetwork.xml: network.xml의 모든 노드를 그대로 미러링한다(같은 id, center의
-     * "x y"를 x_coord/y_coord로 분리). NEXTSIM_DATA_STRUCTURE.md 예시(node id="10000507"가
-     * 실제 network.xml 노드 id와 동일)에 따른 구조.
+     * footpathNetwork.xml: network.xml의 **intersection 타입 노드만** 미러링한다(같은 id,
+     * center의 "x y"를 x_coord/y_coord로 분리).
+     *
+     * <p>⚠️ 실측 확정(2026-08-03, gdb): 원래는 network.xml의 전체 노드(수백~수천 개, terminal/
+     * garage/normal 포함)를 그대로 미러링했는데, {@code pax-route-generator}/{@code nextsim}이
+     * 내부적으로 호출하는 {@code Captain::footpath::FindNearestFootpathLinkPoint}가 이 footpath
+     * 노드 수와 PT 정류장 수의 조합이 일정 규모를 넘으면(우리 KTDB 네트워크 1087노드 기준
+     * 정류장 29개부터) 무한루프에 빠지는 닫힌소스 결함이 gdb로 확인됨(문자열 키 체인 조회가
+     * 종료 안 됨, memcmp 반복 호출로 스핀). 부천 배포판 실측 예시의 footpathNetwork.xml은
+     * 애초에 intersection 타입만(17개, 전체 253노드 중) 담고 있었다 — 이 관례를 따르면 같은
+     * 정류장 수 기준으로 안전 임계치가 크게 올라간다(부천 방식 17노드 기준 임계치 35~45,
+     * vs 전체 미러링 1087노드 기준 28). terminal/garage/normal은 원래도 이 함수의 대상이
+     * 아니라고 추정되며(교차로만 있어도 부천 데이터가 실제로 정상 라우팅됨, PaxRoute.json
+     * 1056건 생성 확인) 제외해도 기능 손실이 없다.
      */
     private String buildFootpathNetworkFromNodes(Path networkXml) throws IOException {
         StringBuilder sb = new StringBuilder(xml("<Network id=\"0\">\n    <nodes>\n"));
@@ -568,10 +657,13 @@ public class NextSimRunner {
             String carry = "";
             int n;
             int count = 0;
+            int totalScanned = 0;
             while ((n = reader.read(buf)) > 0) {
                 String chunk = carry + new String(buf, 0, n);
                 Matcher m = p.matcher(chunk);
                 while (m.find()) {
+                    totalScanned++;
+                    if (!"intersection".equals(m.group(2))) continue; // terminal/garage/normal 제외 (위 주석 참고)
                     String[] xy = m.group(5).trim().split("\\s+");
                     if (xy.length < 2) continue;
                     sb.append("        <node id=\"").append(m.group(1))
@@ -585,7 +677,8 @@ public class NextSimRunner {
                 }
                 carry = chunk.length() > 512 ? chunk.substring(chunk.length() - 512) : chunk;
             }
-            log.info("[NextSimRunner] footpathNetwork.xml 생성: 노드 {}개(전체 network.xml 노드 미러링)", count);
+            log.info("[NextSimRunner] footpathNetwork.xml 생성: intersection 노드 {}개 (전체 {}개 중 — pax-route-generator hang 완화를 위해 축소)",
+                    count, totalScanned);
         }
         sb.append("    </nodes>\n    <links>\n    </links>\n</Network>");
         return sb.toString();
@@ -598,13 +691,18 @@ public class NextSimRunner {
         List<String> items = new ArrayList<>();
         while (m.find()) {
             String attrs = m.group(1);
+            // ⚠️ 2026-08-03: signalControl만 scenario.xml 실제 값을 안 읽고 항상 false로 박아
+            // 넣던 회귀 — id/startTime/duration 등 다른 필드는 전부 attr()로 읽는데 이것만
+            // 리터럴이었다. scenario.xml의 signalControl 속성을 읽어 그대로 반영한다.
+            boolean signalControlActive = "true".equalsIgnoreCase(attr(attrs, "signalControl", "False"));
             items.add(String.format(
                     "        {\n            \"id\": %s,\n            \"startTime\": \"%s\",\n            \"duration\": %s,\n" +
                     "            \"BGTduration\": %s,\n            \"odMatrixID\": %s,\n            \"todID\": %s,\n" +
-                    "            \"trafficCenter\": {\n                \"signalControl\": { \"active\": false, \"interval\": 1.0 },\n" +
+                    "            \"trafficCenter\": {\n                \"signalControl\": { \"active\": %s, \"interval\": 1.0 },\n" +
                     "                \"v2x\": { \"active\": false, \"interval\": 1.0 }\n            }\n        }",
                     attr(attrs, "id", "0"), attr(attrs, "startTime", "06:00:00"), attr(attrs, "duration", "60"),
-                    attr(attrs, "BGTduration", "0"), attr(attrs, "odMatrixID", "0"), attr(attrs, "todID", "0")));
+                    attr(attrs, "BGTduration", "0"), attr(attrs, "odMatrixID", "0"), attr(attrs, "todID", "0"),
+                    signalControlActive));
         }
         Files.writeString(networkDir.resolve("config_scenario.json"),
                 "{\n    \"Scenarios\": [\n" + String.join(",\n", items) + "\n    ]\n}\n", StandardCharsets.UTF_8);
@@ -994,6 +1092,18 @@ public class NextSimRunner {
         return Pattern.compile("<demand\\b").matcher(xml).find();
     }
 
+    /** roadStation.xml + railStation.xml 의 정류장/역 총합 (MAX_SAFE_PT_STATION_COUNT_WITH_DEMAND 사전 검사용) */
+    private static int countPtStations(Path roadStationXml, Path railStationXml) throws IOException {
+        int count = 0;
+        if (Files.exists(roadStationXml)) {
+            count += countMatches(Pattern.compile("<station\\b"), Files.readString(roadStationXml, StandardCharsets.UTF_8));
+        }
+        if (Files.exists(railStationXml)) {
+            count += countMatches(Pattern.compile("<railStation\\b"), Files.readString(railStationXml, StandardCharsets.UTF_8));
+        }
+        return count;
+    }
+
     /** odmatrix.xml 에 flow>0 인 수요가 하나라도 있는지 검증 (없으면 실행 무의미) */
     private static void requirePositiveDemand(Path odmatrixXml) throws IOException {
         String xml = Files.readString(odmatrixXml, StandardCharsets.UTF_8);
@@ -1012,6 +1122,35 @@ public class NextSimRunner {
         String xml = Files.readString(odmatrixXml, StandardCharsets.UTF_8);
         Matcher m = Pattern.compile("\\b(?:source|sink)=\"([^\"]+)\"").matcher(xml);
         while (m.find()) ids.add(m.group(1));
+        return ids;
+    }
+
+    /**
+     * 버스 노선(roadPTline.xml, "버스 노선" 편집 화면 — getDefault만 실제 시뮬레이션에 쓰임,
+     * weekday/weekend 변형은 NextSimRunner가 아직 참조 안 함)의 실제 경로(node.seq) 시작/끝
+     * 노드 id 집합 — 가지치기가 잘못 garage로 바꾸면 안 되는 대상.
+     *
+     * <p>⚠️ node.seq(경로가 실제로 지나는 노드 체인)에서만 추출한다 — station.seq(정류장 id,
+     * 네트워크 노드 id와 다른 별도 네임스페이스)나 garage.seq(진짜 차고지, 원래도 이미
+     * type="garage"라 가지치기가 손대지 않고 앞으로도 손대면 안 됨)는 절대 포함하지 않는다.
+     * 조회 실패(노선 없음 등)는 조용히 빈 집합으로 — 이 메서드는 순수 보조 최적화라 실패해도
+     * 시뮬레이션 자체를 막으면 안 된다.
+     */
+    private Set<String> extractBusRouteEndpointNodeIds(String versionId) {
+        Set<String> ids = new LinkedHashSet<>();
+        try {
+            var lines = busPtLineService.getDefault(versionId);
+            if (lines == null || lines.getLines() == null) return ids;
+            for (var line : lines.getLines()) {
+                String nodeSeq = line.getNode() != null ? line.getNode().getSeq() : null;
+                if (nodeSeq == null || nodeSeq.isBlank()) continue;
+                String[] nodes = nodeSeq.trim().split("\\s+");
+                ids.add(nodes[0]);
+                ids.add(nodes[nodes.length - 1]);
+            }
+        } catch (Exception e) {
+            log.warn("[NextSimRunner] {} 버스 노선 종점 조회 실패(가지치기 보호 없이 진행): {}", versionId, e.getMessage());
+        }
         return ids;
     }
 

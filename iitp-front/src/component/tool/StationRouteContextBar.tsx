@@ -48,29 +48,39 @@ const StationRouteContextBar: React.FC = () => {
     let label: string | null = null;
     let start: (() => void) | null = null;
 
+    // ⚠️ 여기서 정류장 데이터를 읽어 label/버튼 표시 여부만 결정한다 — 실제 start() 클로저
+    // 안에서는 이 값을 재사용하지 않고 클릭 시점에 다시 조회한다(아래 참고). 이 컴포넌트는
+    // selectedGuid가 바뀔 때만 리렌더되고 정류장 스토어를 리액티브 구독하지 않으므로, 버튼이
+    // 뜬 채로 그 정류장을 드래그해 linkRef가 바뀌면(선택은 유지됨) 렌더 시점 값이 곧바로
+    // 낡아진다 — start()가 그 낡은 linkRef를 그대로 써버리면 노선이 정류장의 실제 현재
+    // 위치와 다른 도로 기준으로 계산된다(2026-07-31 실사용 지적으로 발견).
     if (featureType === FEATURE_TYPE.BUS_STATION) {
         const station = useBusStationStore.getState().currentJsonData?.busStations
             ?.find((s: any) => s.__guid === guid);
         if (station?.id != null) {
-            const stationId = station.id;
-            const linkRef = station.linkRef;
-            label = `🚌 버스정류장 #${stationId}부터 노선 그리기 시작`;
+            label = `🚌 버스정류장 #${station.id}부터 노선 그리기 시작`;
             start = () => {
+                // 클릭 시점에 다시 조회 — 렌더 이후 드래그 등으로 linkRef가 바뀌었을 수 있음.
+                const fresh = useBusStationStore.getState().currentJsonData?.busStations
+                    ?.find((s: any) => s.__guid === guid);
+                if (fresh?.id == null) return; // 그 사이 삭제됨
                 const store = useRouteDrawStore.getState();
                 store.start('bus');
-                store.addStop({ guid, id: stationId, linkRef });
+                store.addStop({ guid, id: fresh.id, linkRef: fresh.linkRef });
             };
         }
     } else if (featureType === FEATURE_TYPE.RAIL_STATION) {
         const station = useRailStationStore.getState().currentJsonData?.railStations
             ?.find((s: any) => s.__guid === guid);
         if (station?.id != null) {
-            const stationId = station.id;
-            label = `🚆 철도역 #${stationId}부터 노선 그리기 시작`;
+            label = `🚆 철도역 #${station.id}부터 노선 그리기 시작`;
             start = () => {
+                const fresh = useRailStationStore.getState().currentJsonData?.railStations
+                    ?.find((s: any) => s.__guid === guid);
+                if (fresh?.id == null) return; // 그 사이 삭제됨
                 const store = useRouteDrawStore.getState();
                 store.start('rail');
-                store.addStop({ guid, id: stationId });
+                store.addStop({ guid, id: fresh.id });
             };
         }
     }

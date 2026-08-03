@@ -51,6 +51,11 @@ public class OsmImportController {
     private final FileStorageService fileStorage;
     private final ScenarioService     scenarioService;
     private final com.iitp.iitp_rest.service.xmllayer.XmlLayerVersionService xmlLayerVersionService;
+    // ⚠️ 실측(KtdbImportController 버스정류장 타일 캐시 버그와 동일 패턴): 이 컨트롤러가 지금까지
+    // NetworkTileService를 전혀 참조하지 않아, OSM으로 network.xml을 새로 저장해도 네트워크
+    // 타일 캐시(파일로 영속화되어 백엔드 재시작에도 살아남음)가 무효화되지 않고 예전 네트워크를
+    // 계속 서빙했다.
+    private final NetworkTileService networkTileService;
 
     // ── 공통 변환 로직 ────────────────────────────────────────────────────────
 
@@ -208,6 +213,13 @@ public class OsmImportController {
                 log.info("SFTP 업로드 완료: {}/network.xml ({} bytes)", versionId, xmlBytes.length);
                 // GET /network 은 DB(xml_layer_versions) 우선 — 옛 편집본 레코드를 지워야 새 XML이 반영된다
                 xmlLayerVersionService.deleteVersion("network", versionId);
+                // 네트워크가 통째로 재생성됐으므로 이전 캘리브레이션(회전/축척)은 무의미하다 —
+                // KtdbImportController/NetworkController.importNetworkXml과 동일 이유(scenario3_1 실측).
+                try {
+                    scenarioService.clearCalibration(versionId);
+                } catch (Exception e) {
+                    log.warn("캘리브레이션 초기화 실패 (무시): {}", e.getMessage());
+                }
                 try {
                     scenarioService.updateCoordinatesByKey(versionId, ctx.originLat(), ctx.originLon());
                     log.info("시나리오 좌표 업데이트: ({}, {})", ctx.originLat(), ctx.originLon());
@@ -217,6 +229,15 @@ public class OsmImportController {
             }
 
             NetworkResponse networkResponse = networkMapper.toResponse(networkXml);
+
+            if (versionId != null && !versionId.isBlank()) {
+                try {
+                    networkTileService.invalidate(versionId);
+                    networkTileService.ingest(versionId, networkResponse);
+                } catch (Exception e) {
+                    log.warn("[importAndSave] 네트워크 타일 재빌드 실패 (lazy 빌드로 폴백): {}", e.getMessage());
+                }
+            }
 
             // 시설물 추출
             OsmOverpassService.FacilityQueryResult facilityRaw =

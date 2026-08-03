@@ -562,6 +562,15 @@ public class KtdbNetworkConverter {
             List<KtdbLink> ins  = clusterIn.getOrDefault(rep,  List.of());
             List<KtdbLink> outs = clusterOut.getOrDefault(rep, List.of());
 
+            // 어떤 링크(유효/무효 후보 전부 포함)도 이 클러스터를 가리키지 않는 완전 고립 포인트
+            // (속성변화점 등 KTDB 원본의 비-위상 마커) — classifyNodeType()이 진짜 막다른 터미널
+            // (degree=1)과 똑같이 Terminal로 묶어버려서 그대로 두면 도로에 안 붙은 노드가
+            // network.xml에 남는다. 아래 포트 유효성 검사(coords/length/shape)를 통과 못 한
+            // 링크만 있는 경우는 그 링크가 §11 링크 생성 루프에서 그대로 linkList 에 들어갈 수
+            // 있으므로(포트 검사보다 느슨함) 여기서는 건드리지 않고, 후보 링크 자체가 0개인
+            // 경우만 제외해 댕글링 참조를 만들지 않는다.
+            if (ins.isEmpty() && outs.isEmpty()) continue;
+
             // 포트 등록 (유효한 링크만)
             List<PortXml> ports = new ArrayList<>();
             Set<Long> inPortIds  = new HashSet<>();

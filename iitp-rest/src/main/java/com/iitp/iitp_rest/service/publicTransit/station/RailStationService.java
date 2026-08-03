@@ -52,7 +52,10 @@ public class RailStationService {
     private String remoteUrl;
 
     public RailStationVersion getByVersionId(String id) {
-        return railStationVersionsRepository.findByVersionId(id).orElse(new RailStationVersion());
+        // ⚠️ findByVersionId(role 미지정)가 아니라 반드시 이걸 써야 한다 — BusStationService와
+        // 동일 이유(2026-08-03 실측, database/bus_rail_signal_versions_constraint_fix.sql 참고).
+        return railStationVersionsRepository.findByVersionIdAndVersionRole(id, BaseVersion.VersionRole.LATEST)
+                .orElse(new RailStationVersion());
     }
 
     public List<RailStationLogs> getLogsByVersion(String id) {
@@ -61,7 +64,7 @@ public class RailStationService {
 
     @Transactional
     public void saveRailStationByVersionId(RailStationSaveRequest request, String versionId) {
-        RailStationVersion entity = railStationVersionsRepository.findByVersionId(versionId)
+        RailStationVersion entity = railStationVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST)
                 .orElseGet(() -> {
                     RailStationVersion v = new RailStationVersion();
                     v.setVersionRole(BaseVersion.VersionRole.LATEST);

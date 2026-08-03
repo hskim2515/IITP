@@ -153,4 +153,35 @@ public class CoordinateUtils {
         double y = (-rx * sin + ry * cos) / scale;
         return new double[]{x, y};
     }
+
+    /**
+     * WGS84 다중 좌표(링크 등)를 network.xml의 shape 속성 형식("x,y x,y ...", 소수 5자리)으로
+     * 인코딩 — inverseTransform의 역방향 짝. KtdbNetworkConverter.buildShape와 동일 포맷.
+     */
+    public static String encodeShape(
+            List<Coordinates> coords, double baseLongitude, double baseLatitude, double rotationRad, double scale
+    ) {
+        if (coords == null || coords.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (Coordinates c : coords) {
+            if (c == null || c.getLng() == null || c.getLat() == null) continue;
+            double[] xy = inverseTransform(baseLongitude, baseLatitude, c.getLng(), c.getLat(), rotationRad, scale);
+            if (sb.length() > 0) sb.append(' ');
+            sb.append(String.format("%.5f", xy[0])).append(',').append(String.format("%.5f", xy[1]));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * WGS84 단일 좌표(노드 center)를 network.xml의 center 속성 형식("x y", 콤마 없이 공백
+     * 구분, 소수 3자리)으로 인코딩 — KtdbNetworkConverter.setCenter와 동일 포맷(isSinglePointFormat
+     * 이 콤마 없는 문자열을 단일 포인트로 판별하므로 shape 와 구분됨).
+     */
+    public static String encodeCenter(
+            Coordinates c, double baseLongitude, double baseLatitude, double rotationRad, double scale
+    ) {
+        if (c == null || c.getLng() == null || c.getLat() == null) return "";
+        double[] xy = inverseTransform(baseLongitude, baseLatitude, c.getLng(), c.getLat(), rotationRad, scale);
+        return String.format("%.3f", xy[0]) + " " + String.format("%.3f", xy[1]);
+    }
 }

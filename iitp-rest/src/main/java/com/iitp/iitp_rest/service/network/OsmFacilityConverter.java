@@ -1,6 +1,7 @@
 package com.iitp.iitp_rest.service.network;
 
 import com.iitp.iitp_rest.model.network.NetworkXml;
+import com.iitp.iitp_rest.model.network.lane.LaneXml;
 import com.iitp.iitp_rest.model.network.link.LinkXml;
 import com.iitp.iitp_rest.model.network.node.NodeType;
 import com.iitp.iitp_rest.model.network.node.NodeXml;
@@ -78,6 +79,18 @@ public class OsmFacilityConverter {
     // 터미널(type="terminal") 노드 id 집합 — convertBusRoutes가 노선 양끝을 터미널까지
     // 연장하는 데 사용(아래 extendToTerminal 참고).
     private final Set<Long> terminalNodeIds = new HashSet<>();
+    // OSM way 원본(태그 포함) 캐시 — busLaneSide() 등 태그 조회에 필요. osmWayNodes는
+    // nodeIds만 들고 있어 태그를 조회할 수 없어 별도로 둔다.
+    private final Map<Long, OsmWay> osmWayById = new LinkedHashMap<>();
+    // 버스전용차로 관련 태그(busway/lanes:bus/bus:lanes 등)가 붙은 way만 골라 로컬좌표
+    // 폴리라인을 미리 계산해둔 것 — resolveBusLaneIndex가 정류장/노선 주변에서 가장 가까운
+    // "버스차로 신호가 있는 way"를 찾는 데 쓴다. 태그 없는 way는 애초에 신호가 없어 걸러도
+    // 무방하므로, 전체 way가 아니라 이 부분집합만 인덱싱해 스캔 비용을 줄인다.
+    private record TaggedWay(OsmWay way, List<double[]> localPts) {}
+    private final List<TaggedWay> taggedBusWays = new ArrayList<>();
+    /** 정류장/링크 주변에서 태그 있는 way를 "같은 도로"로 인정할 최대 거리(m) — 링크 스냅
+     *  거리(50m)보다 훨씬 좁게 잡아 옆 도로의 태그를 잘못 가져오는 걸 막는다. */
+    private static final double BUS_LANE_TAG_MAX_DIST_M = 15.0;
 
     /**
      * @param facilities Overpass에서 조회한 시설물 원시 데이터
@@ -100,7 +113,20 @@ public class OsmFacilityConverter {
         return convert(facilities, networkXml, baseLat, baseLon, bbox, FacilityGenerationOptions.DEFAULT);
     }
 
-    public FacilityResult convert(
+    // ⚠️ 이 클래스는 @Service 싱글턴인데 linkGrid/linkById/terminalNodeIds 등을 인스턴스
+    // 필드에 저장하고 각 진입점이 clear() 후 다시 채우는 구조라 — 두 요청(예: 다른 시나리오의
+    // 노선 그리기 완료 + KTDB 재임포트)이 동시에 어느 진입점이든 호출하면 한쪽이 지운 상태를
+    // 다른 쪽이 마저 쓰는 레이스가 생긴다(2026-07-31 실사용 지적으로 발견 — compute-path가
+    // 사용자가 자주 직접 누르는 대화형 기능이라 노출 빈도가 KTDB 임포트보다 훨씬 높아짐).
+    // 상태를 건드리는 공개 진입점(convert/prepareLinkIndex/prepareTerminalNodes/
+    // resnapByLocalCoord/remapBusRouteByStationAnchors)을 전부 synchronized로 묶어 최소한
+    // "둘 이상이 동시에 이 인스턴스 상태를 건드리는 것"만은 막는다 — 클래스를 상태 없는
+    // 구조로 바꾸는 근본 리팩터링은 이 시점에 범위 밖(다른 세션이 동시에 이 파일 주변을
+    // 수정 중이라 큰 변경은 위험도가 큼). 완전한 보장은 아니다: 호출부가 여러 메서드를
+    // 순차 호출하는 구간(예: prepareLinkIndex→remapBusRouteByStationAnchors) 사이는 이 메서드
+    // 레벨 synchronized만으로는 원자적이지 않으므로, BusPtLineController.computePath()처럼
+    // 그 시퀀스 전체를 synchronized(facilityConverter){...}로 감싸는 호출부 쪽 책임이 남는다.
+    public synchronized FacilityResult convert(
             OsmOverpassService.FacilityQueryResult facilities,
             NetworkXml networkXml,
             double baseLat, double baseLon,
@@ -125,12 +151,28 @@ public class OsmFacilityConverter {
         osmNodeWgs84.clear();
         osmNodeById.clear();
         osmWayNodes.clear();
+        osmWayById.clear();
+        taggedBusWays.clear();
         for (OsmNode n : facilities.allNodes()) {
             osmNodeWgs84.put(n.getId(), new double[]{n.getLon(), n.getLat()});
             osmNodeById.put(n.getId(), n);
         }
-        for (OsmWay w : facilities.allWays())
+        for (OsmWay w : facilities.allWays()) {
             osmWayNodes.put(w.getId(), w.getNodeIds());
+            osmWayById.put(w.getId(), w);
+        }
+        // busway/lanes:bus 등 태그가 있는 way만 골라 로컬좌표 폴리라인을 미리 계산 —
+        // resolveBusLaneIndex가 정류장 스냅 시 참고한다(아래 참고).
+        for (OsmWay w : facilities.allWays()) {
+            if (w.busLaneSide() == OsmWay.BusLaneSide.NONE) continue;
+            List<double[]> pts = new ArrayList<>();
+            for (Long nid : w.getNodeIds()) {
+                double[] wgs = osmNodeWgs84.get(nid);
+                if (wgs == null) continue;
+                pts.add(new double[]{(wgs[0] - baseLon) * SCALE_X, (wgs[1] - baseLat) * SCALE_Y});
+            }
+            if (pts.size() >= 2) taggedBusWays.add(new TaggedWay(w, pts));
+        }
 
         PublicTransitResponse busStations;
         Map<String, Object> busRoutes;
@@ -197,6 +239,7 @@ public class OsmFacilityConverter {
             station.setLinkRef(snap.linkId());
             station.setLaneRef((long) snap.laneId());
             station.setOffset(round2(snap.offset()));
+            if (snap.medianLane()) station.setMedianLane(true);
 
             String name = stop.getTag("name");
             if (name != null) station.setAddress(name);
@@ -466,7 +509,7 @@ public class OsmFacilityConverter {
      * @return 실패(유효 앵커 2개 미만, 정류장 사이 경로 연결 불가, 터미널 미도달)하면
      *         null — 그 노선은 수동 재작업이 필요하다는 뜻.
      */
-    public RemappedRoute remapBusRouteByStationAnchors(List<Long> stationLinkRefsInOrder) {
+    public synchronized RemappedRoute remapBusRouteByStationAnchors(List<Long> stationLinkRefsInOrder) {
         if (stationLinkRefsInOrder == null) return null;
         List<Long> anchors = new ArrayList<>();
         for (Long id : stationLinkRefsInOrder) {
@@ -929,7 +972,10 @@ public class OsmFacilityConverter {
 
     // ── 링크 스냅 (최근접 링크 매핑) ─────────────────────────────────────────
 
-    private record SnapResult(long linkId, int laneId, double offset) {}
+    /** medianLane: OSM 중앙버스전용차로 신호로 스냅됐는지 — 프론트가 이 링크 자체가 아니라
+     *  상하행 링크 사이(중앙분리대)에 렌더링해야 하는지 판단하는 데 쓴다(laneId는 NextSim
+     *  호환을 위한 유효 차선 인덱스일 뿐, 실제 물리 위치를 담지 못한다). */
+    private record SnapResult(long linkId, int laneId, double offset, boolean medianLane) {}
 
     private static long gridKey(int gx, int gy) {
         return (((long) gx) << 32) ^ (gy & 0xFFFFFFFFL);
@@ -1036,11 +1082,11 @@ public class OsmFacilityConverter {
 
                         if (d < bestDist) {
                             bestDist = d;
-                            best = new SnapResult(link.getId(), 0, offset);
+                            best = new SnapResult(link.getId(), 0, offset, false);
                         }
                         if (isPreferred && d < bestPreferredDist) {
                             bestPreferredDist = d;
-                            bestPreferred = new SnapResult(link.getId(), 0, offset);
+                            bestPreferred = new SnapResult(link.getId(), 0, offset, false);
                         }
                         cumLen += segLen;
                     }
@@ -1048,7 +1094,13 @@ public class OsmFacilityConverter {
             }
         }
 
-        if (bestPreferred != null && bestPreferredDist <= MAX_SNAP_DIST_M) return bestPreferred;
+        // ⚠️ laneId는 루프 안에서 매 후보마다 계산하면 낭비이므로(resolveBusLaneIndex가
+        // taggedBusWays를 스캔) 최종 승자에 대해서만 여기서 한 번 계산한다. best/bestPreferred는
+        // (linkId, offset)만 확정된 placeholder(laneId=0)로 루프에서 만들어졌다.
+        if (bestPreferred != null && bestPreferredDist <= MAX_SNAP_DIST_M) {
+            LaneResolution lr = resolveBusLaneIndex(bestPreferred.linkId(), lx, ly);
+            return new SnapResult(bestPreferred.linkId(), lr.laneId(), bestPreferred.offset(), lr.median());
+        }
         // ⚠️ 실측 크래시: preferredLinkIds가 있다는 건 이미 직전 링크가 확정된 상태라는 뜻인데,
         // 그 위상 후보 중 임계거리 이내가 없다고 전체 최근접(위상 무관)으로 폴백하면 실제로는
         // 안 이어진 링크를 골라버릴 수 있다(scenario2_1 실측: 링크 25개 중 6곳에서 발생, 뒤이어
@@ -1058,7 +1110,99 @@ public class OsmFacilityConverter {
         // 한다. preferredLinkIds가 없는(경로 시작점) 경우에만 전체 최근접 폴백을 허용한다.
         if (preferredLinkIds != null) return null;
         if (best == null || bestDist > MAX_SNAP_DIST_M) return null;
-        return best;
+        LaneResolution lr = resolveBusLaneIndex(best.linkId(), lx, ly);
+        return new SnapResult(best.linkId(), lr.laneId(), best.offset(), lr.median());
+    }
+
+    /** laneId: NextSim 호환을 위한 유효 차선 인덱스(항상 [0, numLanes-1]). median=true면
+     *  실제 물리 위치는 이 링크 자체가 아니라 상하행 링크 사이(중앙분리대)이므로, laneId는
+     *  단지 "유효한 값"일 뿐 실제 렌더링 위치가 아니다 — 프론트가 상하행 링크 쌍을 찾아
+     *  둘의 중간으로 다시 계산한다({@link BusStationResponse#getMedianLane()} 참고). */
+    private record LaneResolution(int laneId, boolean median) {}
+
+    /**
+     * 링크 위 (lx, ly) 지점에서 실제로 사용해야 할 차선 인덱스(+중앙차로 여부)를 구한다.
+     * 과거엔 항상 0(= 프론트 규약상 최좌측/중앙선 쪽)을 반환해, 모든 버스정류장/노선이
+     * 실제 위치와 무관하게 도로 중앙 쪽에 렌더링되는 버그가 있었다(실사용 지적: "버스 노선이
+     * 중앙에만 위치").
+     *
+     * <p>1순위: 링크 자체에 OSM 유래 lane_access_type="bus" 차선이 있으면(순수 OSM
+     * 네트워크로 생성된 경우, {@link OsmNetworkConverter}가 채움) 그 차선을 그대로 쓴다 —
+     * 이 링크를 만든 원본 OSM way와 정확히 같은 정보라 가장 신뢰도가 높다(RIGHT/LEFT/BOTH
+     * 모두 이 방향 자신의 커브 인덱스로 이미 정해져 있음 — DEDICATED는 거의 항상 numLanes
+     * &lt;=1인 별도 way라 그 케이스에서 lane_access_type 자체가 안 채워짐, 아래 numLanes&lt;=1
+     * 분기가 대신 처리).
+     * <p>2순위: 지점 주변(15m 이내)에서 버스전용차로 태그가 있는 OSM way를 찾아 그 태그의
+     * 방향을 링크 진행방향과 비교해 판단한다(KTDB 네트워크처럼 링크 자체엔 OSM 태그가 없어도,
+     * 인근 OSM way 태그로 유추 가능한 경우). RIGHT/LEFT/BOTH는 이 방향 자신의 커브/좌측
+     * 인덱스로 계산되고(BOTH="상하행 각자 자기 커브에 버스전용차로" — 상하행 공유 중앙차로가
+     * 아니므로 이 방향만 보면 됨), DEDICATED(물리적으로 분리된 전용 way, 상하행이 공유하거나
+     * 그 자체가 유일한 차로일 수 있음)만 median=true — laneId는 0(placeholder)만 반환하고,
+     * 실제 좌표는 프론트가 상하행 링크 쌍의 중간으로 계산한다.
+     * <p>3순위(신호 없음): 커브(최우측, numLanes-1)를 기본값으로 쓴다 — 도로 중앙(0)보다
+     * 실제 정류장 위치(대부분 커브 쪽)에 훨씬 가까운 가정이다.
+     */
+    private LaneResolution resolveBusLaneIndex(long linkId, double lx, double ly) {
+        LinkXml link = linkById.get(linkId);
+        int numLanes = link != null && link.getLanes() != null && !link.getLanes().isEmpty()
+                ? link.getLanes().size() : 1;
+        if (numLanes <= 1) return new LaneResolution(0, false);
+
+        if (link != null) {
+            for (LaneXml lane : link.getLanes()) {
+                if ("bus".equals(lane.getLaneAccessType()) && lane.getId() != null) {
+                    long laneIdVal = lane.getId();
+                    int idx = (int) Math.max(0L, Math.min((long) (numLanes - 1), laneIdVal));
+                    return new LaneResolution(idx, false);
+                }
+            }
+        }
+
+        List<double[]> linkPts = linkShapeCache.get(linkId);
+        TaggedWay nearest = null;
+        double nearestDist = BUS_LANE_TAG_MAX_DIST_M;
+        double[] nearestSegDir = null;
+        for (TaggedWay tw : taggedBusWays) {
+            List<double[]> pts = tw.localPts();
+            for (int i = 0; i < pts.size() - 1; i++) {
+                double[] a = pts.get(i), b = pts.get(i + 1);
+                double[] proj = projectPointOnSegment(lx, ly, a[0], a[1], b[0], b[1]);
+                double d = dist(lx, ly, proj[0], proj[1]);
+                if (d < nearestDist) {
+                    nearestDist = d;
+                    nearest = tw;
+                    nearestSegDir = new double[]{b[0] - a[0], b[1] - a[1]};
+                }
+            }
+        }
+        if (nearest == null) return new LaneResolution(numLanes - 1, false); // 신호 없음 — 커브 기본값
+
+        OsmWay.BusLaneSide side = nearest.way().busLaneSide();
+        if (side == OsmWay.BusLaneSide.DEDICATED) {
+            return new LaneResolution(0, true); // 실제 위치는 프론트가 상하행 링크 중간으로 재계산
+        }
+
+        // way 태그는 way 원본 노드 순서 기준이므로, 이 링크의 진행 방향과 비교해 반대면
+        // reversedFromWay=true로 좌우를 뒤집는다(가장 가까운 링크 세그먼트의 접선과 내적).
+        boolean reversedFromWay = false;
+        if (linkPts != null && linkPts.size() >= 2 && nearestSegDir != null) {
+            double bestSegDist = Double.MAX_VALUE;
+            double[] linkSegDir = null;
+            for (int i = 0; i < linkPts.size() - 1; i++) {
+                double[] a = linkPts.get(i), b = linkPts.get(i + 1);
+                double[] proj = projectPointOnSegment(lx, ly, a[0], a[1], b[0], b[1]);
+                double d = dist(lx, ly, proj[0], proj[1]);
+                if (d < bestSegDist) { bestSegDist = d; linkSegDir = new double[]{b[0] - a[0], b[1] - a[1]}; }
+            }
+            if (linkSegDir != null) {
+                double dot = linkSegDir[0] * nearestSegDir[0] + linkSegDir[1] * nearestSegDir[1];
+                reversedFromWay = dot < 0;
+            }
+        }
+
+        Integer idx = OsmWay.laneIndexForSide(side, numLanes, reversedFromWay);
+        if (idx == null) return new LaneResolution(numLanes - 1, false);
+        return new LaneResolution(Math.max(0, Math.min(numLanes - 1, idx)), false);
     }
 
     // ── 기존 시설물 재스냅 (KTDB 재임포트, 자동생성 토글 꺼짐/OSM 재조회 실패) ──────────
@@ -1066,10 +1210,11 @@ public class OsmFacilityConverter {
     // (id/이름/부가정보 보존), 이미 저장된 좌표(center)만 새 네트워크의 링크에 다시 스냅한다.
     // convert()가 OSM 노드 좌표로 하던 것과 동일한 snapToLink를 저장된 좌표에 대해 재사용.
 
-    public record ResnapResult(long linkId, int laneId, double offset) {}
+    public record ResnapResult(long linkId, int laneId, double offset, boolean medianLane) {}
 
-    /** 링크 인덱스를 주어진 네트워크로 재구성한다 — resnapByLocalCoord 호출 전에 한 번 필요. */
-    public void prepareLinkIndex(List<LinkXml> links) {
+    /** 링크 인덱스를 주어진 네트워크로 재구성한다 — resnapByLocalCoord 호출 전에 한 번 필요.
+     *  synchronized: convert()의 클래스 주석 참고 — 인스턴스 상태를 건드리는 진입점 공통 규칙. */
+    public synchronized void prepareLinkIndex(List<LinkXml> links) {
         buildLinkGrid(links);
     }
 
@@ -1080,7 +1225,7 @@ public class OsmFacilityConverter {
      * convert()는 OSM 변환 중 이 집합을 함께 채우지만, remapBusRouteByStationAnchors만 단독으로
      * 쓰는 경로(예: "노선 그리기")는 convert()를 거치지 않으므로 별도 진입점이 필요하다.
      */
-    public void prepareTerminalNodes(List<NodeXml> nodes) {
+    public synchronized void prepareTerminalNodes(List<NodeXml> nodes) {
         terminalNodeIds.clear();
         if (nodes == null) return;
         for (NodeXml n : nodes) {
@@ -1090,11 +1235,12 @@ public class OsmFacilityConverter {
 
     /** center 문자열("lx ly", 로컬좌표)을 prepareLinkIndex로 준비된 네트워크에 재스냅한다.
      *  50m 밖이라 스냅 실패하거나 좌표 파싱 실패면 null. */
-    public ResnapResult resnapByLocalCoord(String center) {
+    public synchronized ResnapResult resnapByLocalCoord(String center) {
         double[] xy = parseLocalCoord(center);
         if (xy == null) return null;
         SnapResult snap = snapToLink(xy[0], xy[1]);
-        return snap == null ? null : new ResnapResult(snap.linkId(), snap.laneId(), round2(snap.offset()));
+        return snap == null ? null
+                : new ResnapResult(snap.linkId(), snap.laneId(), round2(snap.offset()), snap.medianLane());
     }
 
     private static double[] parseLocalCoord(String center) {

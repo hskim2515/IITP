@@ -21,6 +21,7 @@ import { useMessageStore } from '@stores/useMessageStore';
 import { useNetworkToolbarStore } from '@stores/useNetworkToolbarStore';
 import { generateGUID, assignPropertyToResponseData } from '@utils/guid';
 import { normalizeTurning } from '@utils/turning';
+import { defaultNumCells } from '@utils/simType';
 import { Network, Node, Link, Lane, Cell, Segment, Port, Connection, Coordinates } from '@type/Network';
 import { UpdateLogEntry } from '@type/HistoryTypes';
 import { LAYER_CONFIG } from '@component/tool/DataIOPanel';
@@ -599,7 +600,7 @@ function makeNode(id: number | string, coord: Coordinates, ports: Port[] = []): 
         featureType: 'nodes',
         id, type: 'normal',
         numPort: ports.length, numConnection: 0,
-        v2x: '', center: '', coordinates: coord,
+        v2x: 'off', center: '', coordinates: coord,
         ports, connections: [],
     } as Node;
 }
@@ -668,6 +669,14 @@ function linkDepartureBearing(link: Link): number {
 // ── 회전 방향별 차선 연결 생성 ──────────────────────────────────
 // 차선 번호: 0 = 가장 왼쪽(내측), numLane-1 = 가장 오른쪽(외측)
 // S: 1:1 동일 인덱스 / R: 우측(외측) 차선 / L: 좌측(내측) 차선
+// 백엔드 Turning enum(@JsonValue)은 짧은 코드("S"/"R"/"L")로만 역직렬화된다(turning.ts 주석
+// 참고 — 읽기 쪽엔 이미 normalizeTurning 정규화가 있었지만, 새로 만드는 커넥션을 저장할 때
+// 쓰는 이 전체 단어 → 코드 변환은 빠져 있었다: 도로 그리기로 교차로가 생기면 그 즉시
+// "Cannot construct instance of Turning, Unsupported value: Straight" 로 diff 저장이 실패함).
+const TURNING_TO_BACKEND_CODE: Record<TurningType, string> = {
+    Straight: 'S', Right_Turn: 'R', Left_Turn: 'L', U_Turn: 'U',
+};
+
 function makeConnections(
     fromLink: Link,
     toLink: Link,
@@ -694,7 +703,7 @@ function makeConnections(
         fromLaneCoordinates: fromEnd,
         toLink: toLink.id, toLane,
         toLaneCoordinates: toStart,
-        turning,
+        turning: TURNING_TO_BACKEND_CODE[turning],
         length: connLength,
         width: laneWidth,
         ffSpd,
@@ -731,8 +740,6 @@ function makeConnections(
     return [conn(fLanes - 1, tLanes - 1, 0)];
 }
 
-const DEFAULT_CELL_LENGTH = 5; // 셀 기본 길이 (m)
-
 function makeLink(
     id: number | string,
     fromNodeId: number | string,
@@ -744,7 +751,7 @@ function makeLink(
     maxSpd: number,
 ): Link {
     const length = getDistance([from.lng, from.lat], [to.lng, to.lat]);
-    const numCells = Math.max(1, Math.ceil(length / DEFAULT_CELL_LENGTH));
+    const numCells = defaultNumCells(length, 0); // 새로 만드는 링크는 항상 simType:0(Meso)
 
     const lanes: Lane[] = Array.from({ length: laneCount }, (_, i) => {
         // cells는 시뮬레이션 모델 데이터로 서버 저장 포맷에 필요하지만
@@ -772,7 +779,7 @@ function makeLink(
         id, fromNode: fromNodeId, toNode: toNodeId,
         numLane: laneCount, length, width: linkWidth,
         maxSpd, minSpd: 0, ffSpd: maxSpd, waveSpd: 20,
-        qmax: 1800, maxVeh: 60, simType: 0, type: 'car',
+        qmax: 1800, maxVeh: 60, simType: 0, type: 'straight',
         layer: '0', stopLine: 0, shape: '',
         coordinates: [from, to], lanes,
     } as Link;
@@ -797,7 +804,7 @@ function makeLinkFromCoords(
     for (let i = 0; i < coords.length - 1; i++) {
         length += getDistance([coords[i]!.lng, coords[i]!.lat], [coords[i + 1]!.lng, coords[i + 1]!.lat]);
     }
-    const numCells = Math.max(1, Math.ceil(length / DEFAULT_CELL_LENGTH));
+    const numCells = defaultNumCells(length, 0); // 새로 만드는 링크는 항상 simType:0(Meso)
     const from = coords[0]!;
     const to   = coords[coords.length - 1]!;
 
@@ -825,7 +832,7 @@ function makeLinkFromCoords(
         id, fromNode: fromNodeId, toNode: toNodeId,
         numLane: laneCount, length, width: linkWidth,
         maxSpd, minSpd: 0, ffSpd: maxSpd, waveSpd: 20,
-        qmax: 1800, maxVeh: 60, simType: 0, type: 'car',
+        qmax: 1800, maxVeh: 60, simType: 0, type: 'straight',
         layer: '0', stopLine: 0, shape: '',
         coordinates: coords, lanes,
     } as Link;
@@ -1001,7 +1008,7 @@ function setbackNewLinks(
         for (let i = 0; i < trimmedOl.length - 1; i++) {
             newLength += Math.hypot(trimmedOl[i + 1]![0]! - trimmedOl[i]![0]!, trimmedOl[i + 1]![1]! - trimmedOl[i]![1]!);
         }
-        const newNumCell = Math.max(1, Math.ceil(newLength / DEFAULT_CELL_LENGTH));
+        const newNumCell = defaultNumCells(newLength, link.simType);
         const firstWgs = trimmedWgs84[0]!, lastWgs = trimmedWgs84[trimmedWgs84.length - 1]!;
 
         if (links === network.links) links = [...network.links]; // copy-on-write
@@ -2639,7 +2646,7 @@ export const useNetworkDraw = () => {
                     fromLaneCoordinates: fromLaneCoord,
                     toLink: p.toLink.id, toLane: p.toLane,
                     toLaneCoordinates: toLaneCoord,
-                    turning, length: connLength, width: laneWidth,
+                    turning: TURNING_TO_BACKEND_CODE[turning], length: connLength, width: laneWidth,
                     ffSpd: Math.min(p.fromLink.maxSpd, p.toLink.maxSpd),
                     shape: '', coordinates: [],
                 } as Connection);
@@ -3463,7 +3470,7 @@ export const useNetworkDraw = () => {
                         fromLaneCoordinates: fromLaneCoord,
                         toLink: toLink.id, toLane,
                         toLaneCoordinates: toLaneCoord,
-                        turning, length: connLength, width: laneWidth,
+                        turning: TURNING_TO_BACKEND_CODE[turning], length: connLength, width: laneWidth,
                         ffSpd: Math.min(fromLink.maxSpd, toLink.maxSpd),
                         shape: '', coordinates: [],
                     } as Connection;

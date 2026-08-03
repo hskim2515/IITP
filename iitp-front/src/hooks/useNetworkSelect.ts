@@ -29,6 +29,7 @@ import { assignPropertyToResponseData } from '@utils/guid';
 import { featureUpdateLogs } from '@utils/history';
 import { generateDummySignalsForNode } from '@utils/signal';
 import { getNetworkLodTierByResolution } from '@utils/lodConstants';
+import { defaultNumCells, synthesizeCells } from '@utils/simType';
 import { useModeStore } from '@stores/useModeStore';
 import { usePropertyStore } from '@stores/usePropertyStore';
 import { useNetworkToolbarStore } from '@stores/useNetworkToolbarStore';
@@ -293,20 +294,34 @@ export function isPassThroughNode(network: Network, nodeId: number | string): bo
 }
 
 // 두 레인을 이어붙임 — segments는 뒤쪽 것을 오프셋만큼 밀어서 concat, cells는 양쪽 다 있을 때만 유지(그 외 빈 배열 규약 준수).
-function concatLaneDerived(laneIn: any, laneOut: any, lenIn: number, lenOut: number, coords: Coordinates[]): any {
+function concatLaneDerived(laneIn: any, laneOut: any, lenIn: number, lenOut: number, coords: Coordinates[], simType: unknown): any {
     const segsIn  = laneIn.segments?.length  > 0 ? laneIn.segments  : [{ featureType: 'segments', id: 0, block: false, initPoint: 0, endPoint: lenIn }];
     const segsOut = laneOut.segments?.length > 0 ? laneOut.segments : [{ featureType: 'segments', id: 0, block: false, initPoint: 0, endPoint: lenOut }];
     const segments = [
         ...segsIn,
         ...segsOut.map((s: any, i: number) => ({ ...s, id: segsIn.length + i, initPoint: s.initPoint + lenIn, endPoint: s.endPoint + lenIn })),
     ];
-    const cells = (laneIn.cells?.length > 0 && laneOut.cells?.length > 0)
-        ? [...laneIn.cells, ...laneOut.cells.map((c: any, i: number) => ({ ...c, id: laneIn.cells.length + i, offset: c.offset + lenIn }))]
-        : [];
+    // rescaleLaneDerived(노드 이동 시 사용)와 동일 규약: "채워져 있으면(KTDB 임포트 실측
+    // 데이터) 보존, 둘 다 비어 있으면(그린 도로) 빈 배열 유지". 기존엔 "양쪽 다 채워진
+    // 경우만" 합치고 한쪽이라도 비면 통째로 []로 버려, KTDB 실측 링크 + 새로 그린 링크가
+    // 만나는 통과노드를 삭제(병합)하면 KTDB 쪽의 실측 cell 경계까지 조용히 사라졌다 —
+    // 비어 있는 쪽만 simType 규약(Micro=전체 1셀, Meso=60m 단위 — synthesizeCells 참고,
+    // 레거시 백엔드 parseXML.py의 cellDistance 규약과 동일)으로 합성해 채워서 실측 쪽을 보존한다.
+    const hasCellsIn = laneIn.cells?.length > 0;
+    const hasCellsOut = laneOut.cells?.length > 0;
+    let cells: any[] = [];
+    if (hasCellsIn || hasCellsOut) {
+        const cellsIn = hasCellsIn ? laneIn.cells : synthesizeCells(lenIn, simType);
+        const cellsOut = hasCellsOut ? laneOut.cells : synthesizeCells(lenOut, simType);
+        cells = [
+            ...cellsIn,
+            ...cellsOut.map((c: any, i: number) => ({ ...c, id: cellsIn.length + i, offset: c.offset + lenIn })),
+        ];
+    }
     const newLength = lenIn + lenOut;
     return {
         ...laneIn, coordinates: coords, segments, cells,
-        numCell: cells.length > 0 ? cells.length : Math.max(1, Math.ceil(newLength / 100)),
+        numCell: cells.length > 0 ? cells.length : defaultNumCells(newLength, simType),
     };
 }
 
@@ -325,7 +340,7 @@ export function mergeLinksAtNode(network: Network, nodeId: number | string): Net
         const laneOut = linkOut.lanes[i];
         if (!laneOut) return laneIn;
         const laneCoords = [...laneIn.coordinates, ...laneOut.coordinates.slice(1)];
-        return concatLaneDerived(laneIn, laneOut, lenIn, lenOut, laneCoords);
+        return concatLaneDerived(laneIn, laneOut, lenIn, lenOut, laneCoords, linkIn.simType);
     });
 
     // linkIn의 id를 그대로 유지 → toNode 쪽 끝점(endNode)만 linkOut→linkIn 참조 갱신하면 됨
@@ -596,9 +611,9 @@ export function reconcileSignalConnectionIds(network: Network, nodeIds: (number 
  * - segments: 비율 스케일 — 다중 세그먼트(block 구간 등)의 개수·속성 보존
  * - cells: 채워져 있으면 비율 스케일(개수·속성 보존, KTDB 임포트 링크),
  *          비어 있으면 빈 배열 유지(그린 도로 — 서버 생성 규약)
- * - numCell: cells 와 동기 (없으면 100m 균등 분할 규약)
+ * - numCell: cells 와 동기 (없으면 simType 규약 — Micro=1, Meso=60m 단위, defaultNumCells 참고)
  */
-function rescaleLaneDerived(lane: any, oldLen: number, newLen: number, coords: Coordinates[]): any {
+function rescaleLaneDerived(lane: any, oldLen: number, newLen: number, coords: Coordinates[], simType: unknown): any {
     const f = oldLen > 0 && newLen > 0 ? newLen / oldLen : null;
     const segs = (lane.segments?.length > 0 && f != null)
         ? lane.segments.map((s: any) => ({
@@ -616,7 +631,7 @@ function rescaleLaneDerived(lane: any, oldLen: number, newLen: number, coords: C
         : (lane.cells ?? []);
     return {
         ...lane, coordinates: coords, segments: segs, cells,
-        numCell: cells.length > 0 ? cells.length : Math.max(1, Math.ceil(newLen / 100)),
+        numCell: cells.length > 0 ? cells.length : defaultNumCells(newLen, simType),
     };
 }
 
@@ -637,7 +652,7 @@ function rebuildLanes(link: Link, numLane: number): Lane[] {
     return Array.from({ length: numLane }, (_, i) => ({
         featureType: 'lanes' as any, id: i, linkRef: link.id as number,
         leftLaneId: i > 0 ? i-1 : -1, rightLaneId: i < numLane-1 ? i+1 : -1,
-        numCell: Math.max(1, Math.ceil(length/100)),
+        numCell: defaultNumCells(length, link.simType),
         rightLC: true, leftLC: true, laneAccessType: null,
         shape: '', coordinates: [from, to],
         segments: [{ featureType: 'segments' as any, id: 0, block: false, initPoint: 0, endPoint: length }],
@@ -721,6 +736,27 @@ export function mergeSegmentInNetwork(network: Network, linkId: number | string,
     });
 }
 
+// 레인 시작/끝에서 일정 길이(m)를 차단(block) 구간으로 지정 — 레거시 참조 구현
+// (source_code/frontend/RoadProperty.js의 extrudeLength/extrudeLengthLeft, 회전전용차로처럼
+// "끝에서 N미터만 차단"인 흔한 케이스를 위한 링크 속성 입력 하나로 세그먼트 분할까지 자동 처리)
+// 의 UX를 반영. 기존엔 분할(splitSegmentInNetwork로 중간 지점 클릭) → 토글(toggleSegmentBlock)
+// 두 단계를 거쳐야 했는데, 이 함수는 숫자 하나로 그 두 단계를 대체한다 — 기존 세그먼트 구성은
+// 버리고 항상 2구간(차단/비차단)으로 새로 만든다(레거시 extrudeLength도 마찬가지로 전체
+// 세그먼트를 이 값 기준으로 재계산하지, 기존 분할과 합성하지 않는다).
+export function setLaneEndBlock(
+    network: Network, linkId: number | string, laneIdx: number, lengthM: number, fromEnd: 'start' | 'end',
+): Network {
+    return updateLaneSegments(network, linkId, laneIdx, (segs) => {
+        const total = segs.length > 0 ? segs[segs.length - 1]!.endPoint : 0;
+        if (!(lengthM > 0) || !(lengthM < total)) return segs; // 0 이하 또는 전체 길이 이상이면 의미 없음
+        const split = fromEnd === 'end' ? total - lengthM : lengthM;
+        const base = segs[0] ?? { featureType: 'segments' as any, id: 0, block: false, initPoint: 0, endPoint: total };
+        const first: Segment = { ...base, id: 0, initPoint: 0, endPoint: split, block: fromEnd === 'start' };
+        const second: Segment = { ...base, id: 1, initPoint: split, endPoint: total, block: fromEnd === 'end' };
+        return [first, second];
+    });
+}
+
 export function updateLinkInNetwork(
     network: Network, linkId: number | string,
     patch: Partial<Pick<Link, 'numLane' | 'width' | 'maxSpd' | 'minSpd'>>,
@@ -795,7 +831,7 @@ export function updateLinkCoordinates(network: Network, linkId: number | string,
                 } else {
                     laneCoords = newCoords;
                 }
-                return rescaleLaneDerived(lane, oldLen, length, laneCoords);
+                return rescaleLaneDerived(lane, oldLen, length, laneCoords, l.simType);
             }),
         };
     });
@@ -921,7 +957,7 @@ export function mergeNodesInNetwork(
                 let laneCoords = lane.coordinates;
                 if (fromMoved) laneCoords = shiftEndpoint(laneCoords, true, deltaLat, deltaLng);
                 if (toMoved)   laneCoords = shiftEndpoint(laneCoords, false, deltaLat, deltaLng);
-                return rescaleLaneDerived(lane, oldLen, newLen, laneCoords);
+                return rescaleLaneDerived(lane, oldLen, newLen, laneCoords, l.simType);
             }),
         };
     });
@@ -1025,7 +1061,7 @@ export function moveNode(network: Network, nodeId: number | string, newCoord: Co
                 let laneCoords = lane.coordinates;
                 if (isFrom) laneCoords = shiftEndpoint(laneCoords, true, deltaLat, deltaLng);
                 if (isTo)   laneCoords = shiftEndpoint(laneCoords, false, deltaLat, deltaLng);
-                return rescaleLaneDerived(lane, oldLen, length, laneCoords);
+                return rescaleLaneDerived(lane, oldLen, length, laneCoords, l.simType);
             }),
         };
     });

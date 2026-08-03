@@ -159,6 +159,33 @@ function extractSampledPositionsFromFlatArray(flatArray) {
         raw.push({ startTime, endTime, startPos, endPos, dist, duration, candidateHeading });
     }
 
+    // ⚠️ 실측(vehicle_sim.db 직접 조회, scenario2_2 표본): 커넥션→다음 링크로 넘어가는 첫
+    // 샘플에서 NextSim이 좌표를 갱신하지 않고 직전(커넥션 종료) 좌표를 그대로 재사용하는
+    // 경우가 있다 — 그 구간(최대 수 초)만 이동거리가 0이고 앞뒤 구간은 정상 이동 중이라,
+    // 화면에서는 차가 링크 진입 지점에 멈춰 서 있다가 갑자기 다음 위치로 순간이동하는
+    // 것처럼 보였다(11598건의 커넥션→링크 전환 중 63건 확인, "속도는 기록됐는데 좌표만
+    // 그대로"인 패턴 — 진짜 정차는 속도도 0으로 같이 기록되어 있어 구분됨). 앞뒤 모두
+    // 실이동이 있는 "고립된" 0거리 구간만 골라 다음 실이동 구간에 흡수시켜, 그 사이 시간
+    // 전체를 하나의 연속 이동으로 선형보간한다 — 연속된 여러 0거리 구간(진짜 신호 대기 등)
+    // 은 이 조건(양옆 모두 실이동)을 만족하지 않아 그대로 정차로 남는다.
+    const STALE_DIST_EPS = 0.5; // heading 판정과 동일 기준(0.5m 미만 = 정지/노이즈)
+    for (let i = raw.length - 2; i >= 1; i--) {
+        const seg = raw[i]!;
+        const prev = raw[i - 1]!;
+        const next = raw[i + 1]!;
+        if (seg.dist < STALE_DIST_EPS && prev.dist >= STALE_DIST_EPS && next.dist >= STALE_DIST_EPS) {
+            next.startTime = seg.startTime;
+            next.startPos = seg.startPos; // seg.startPos === seg.endPos(정지)이므로 next.endPos만 실제 목적지
+            const dx = next.endPos[0]! - next.startPos[0]!;
+            const dy = next.endPos[1]! - next.startPos[1]!;
+            const dz = next.endPos[2]! - next.startPos[2]!;
+            next.dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+            next.duration = next.endTime - next.startTime;
+            next.candidateHeading = next.dist > 0.5 ? computeHeadingFromEcef(next.startPos, next.endPos) : next.candidateHeading;
+            raw.splice(i, 1);
+        }
+    }
+
     // idx의 후보 heading이 노이즈가 아니라 "확정된 방향전환"인지 — 이후 실제로 움직인
     // 첫 샘플이 비슷한 방향이면 확정, 다르거나 그 전까지 계속 정지 상태면 미확정(노이즈로 처리)
     const isConfirmed = (idx: number, candidateHeading: number): boolean => {

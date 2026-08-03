@@ -134,6 +134,29 @@ public class ScenarioServiceImpl implements ScenarioService {
     }
 
     @Override
+    public void clearCalibration(String key) {
+        // updateCoordinatesByKey와 동일한 versionKey 우선 조회 패턴 — 캘리브레이션은 부모
+        // Scenario가 아니라 버전별로 저장되므로 같은 우선순위로 지워야 한다.
+        java.util.Optional<ScenarioVersion> versionOpt = versionRepository.findByKey(key);
+        if (versionOpt.isPresent()) {
+            ScenarioVersion version = versionOpt.get();
+            if (version.getBaseRotation() == null && version.getBaseScale() == null) return; // 이미 없음
+            version.setBaseRotation(null);
+            version.setBaseScale(null);
+            versionRepository.save(version);
+            log.info("[ScenarioService] 캘리브레이션(회전/축척) 초기화: versionKey={}", key);
+            return;
+        }
+        Scenario scenario = scenarioRepository.findByKey(key).orElse(null);
+        if (scenario == null) return;
+        if (scenario.getBaseRotation() == null && scenario.getBaseScale() == null) return;
+        scenario.setBaseRotation(null);
+        scenario.setBaseScale(null);
+        scenarioRepository.save(scenario);
+        log.info("[ScenarioService] 캘리브레이션(회전/축척) 초기화: key={}", scenario.getKey());
+    }
+
+    @Override
     public ScenarioVersion createVersion(Long scenarioId, String key, String label, String sourceVersionKey) {
         if (!key.matches("[A-Za-z0-9_]+")) {
             throw new IllegalArgumentException("버전 키는 영문자, 숫자, 밑줄(_)만 허용됩니다.");

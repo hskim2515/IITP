@@ -5,15 +5,16 @@
  * - 인도 오프셋 = link의 lane 수 × LANE_WIDTH + SIDEWALK_MARGIN
  * - station centroid = 해당 역 모든 exit 위치의 평균
  */
-import { computePositionAtOffsetOl } from "@utils/offset";
+import { computePositionAtOffsetPolylineOl } from "@utils/offset";
 import { fromLonLat, toLonLat } from "ol/proj";
+import { Coordinate } from "ol/coordinate";
 
 const LANE_WIDTH      = 3.5;  // 차선 폭 (m)
 const SIDEWALK_MARGIN = 2.0;  // 인도 여유 폭 (m)
 
 interface LinkEntry {
-    start: [number, number];
-    end:   [number, number];
+    /** 링크 좌표점 전체(EPSG:3857) — 첫/끝 점만 쓰면 곡선 링크에서 출구 위치가 어긋난다. */
+    allPts: Coordinate[];
     laneCount: number;
 }
 
@@ -24,14 +25,9 @@ export function buildLinkMapOl(networkData: any): Map<string, LinkEntry> {
 
     for (const link of networkData.links) {
         if (!link.coordinates || link.coordinates.length < 2) continue;
-        const first = link.coordinates[0];
-        const last  = link.coordinates[link.coordinates.length - 1];
+        const allPts = link.coordinates.map((c: any) => fromLonLat([c.lng, c.lat]) as Coordinate);
         const laneCount = Array.isArray(link.lanes) ? link.lanes.length : 1;
-        map.set(String(link.id), {
-            start: fromLonLat([first.lng, first.lat]) as [number, number],
-            end:   fromLonLat([last.lng,  last.lat])  as [number, number],
-            laneCount,
-        });
+        map.set(String(link.id), { allPts, laneCount });
     }
     return map;
 }
@@ -41,13 +37,14 @@ export function computeExitPositionOl(
     link: LinkEntry,
     offsetMeters: number
 ): [number, number] {
-    const { offsetPosition: onLinkPos } = computePositionAtOffsetOl(link.start, link.end, offsetMeters);
+    const { offsetPosition: onLinkPos, direction } = computePositionAtOffsetPolylineOl(link.allPts, offsetMeters);
 
-    const dx = link.end[0] - link.start[0];
-    const dy = link.end[1] - link.start[1];
-    const len = Math.sqrt(dx * dx + dy * dy);
-    const perpX = len > 0 ? -dy / len : 0;
-    const perpY = len > 0 ?  dx / len : 0;
+    // 우측(+) 법선 — RailStationDataSourceLayer(3D)는 cross(dir,up)로 우측을 쓰는데 여기는
+    // (-dy,dx)로 반대(좌측) 부호였다 — exit이 2D/3D에서 도로 반대편에 그려지던 원인
+    // (NetworkFeatureLayer.buildLinkFeatures의 "3D right 정합"(nx=dy,ny=-dx) 규약과 통일,
+    // 2026-08-03 실사용 재현: "버스정류장/rail exit 위치가 2D, 3D 다르게 표시됨").
+    const perpX =  direction[1];
+    const perpY = -direction[0];
 
     const sidewalkOffset = link.laneCount * LANE_WIDTH + SIDEWALK_MARGIN;
     return [

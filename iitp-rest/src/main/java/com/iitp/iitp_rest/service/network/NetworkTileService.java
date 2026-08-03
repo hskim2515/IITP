@@ -588,6 +588,12 @@ public class NetworkTileService {
                                      List<LinkResponse> upsertLinks, List<NodeResponse> upsertNodes,
                                      List<Long> deleteLinkIds, List<Long> deleteNodeIds) throws IOException {
         NetworkXml xml = networkService.getNetworkXmlByVersionId(versionId);
+        // ensureDb()와 동일하게 coordinates 보정 — 안 하면 LinkXml.coordinates가 XmlTransient라
+        // upsert 되지 않은(뷰포트 밖) 기존 링크/노드는 이 merge 결과에서 coordinates가 계속
+        // null로 남는다. diff 저장 후 network.xml을 다시 쓸 때(NetworkController) 이 결과를
+        // 기준으로 shape를 재인코딩하므로, 여기서 채워두지 않으면 뷰포트 밖 링크의 shape가
+        // 빈 문자열로 저장돼 다음 재파싱에서 좌표를 잃는다.
+        NetworkTileService.applyCoordinatesIfMissing(xml);
         NetworkResponse net = networkMapper.toResponse(xml);
 
         Set<Long> delLinks = new HashSet<>(deleteLinkIds != null ? deleteLinkIds : List.of());

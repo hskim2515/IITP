@@ -229,6 +229,15 @@ public class OsmOverpassService {
         // 강남역~역삼~선릉 정도 bbox에서 180초 타임아웃). node(r.세트)는 relation의 **노드**
         // 멤버만 뽑아오는 별도 필터라 way 멤버는 안 건드리므로 이 문제가 없다 — 정류장/역
         // node 멤버만 필요한 우리 목적엔 이걸로 충분.
+        // ⚠️ 실측 발견(2026-08-03): 중앙버스전용차로처럼 물리적으로 분리된 도로는 실제 OSM에서
+        // 흔히 "highway=busway"나 "busway(:right/:left/:both)"/"lanes:bus" 등 태그를 가진
+        // **별도 way**로 매핑되는데, 이 way가 버스 노선 relation의 멤버가 "아닌" 경우가 많다
+        // (relation은 보통 일반 도로 경로를 따라가고, 중앙차로는 지도에 그려지기만 함).
+        // 기존 쿼리는 .routeWays(=relation 멤버 way)만 가져와서, 이런 관계 없는 버스전용차로
+        // way는 OsmFacilityConverter의 taggedBusWays에 아예 안 잡혀 medianLane이 영원히
+        // true가 될 수 없었다("버스노선이 주황색만 보임" — 중앙차로 색이 전혀 안 나타남).
+        // bbox로 스코프를 좁혀 버스전용차로 태그가 있는 way를 relation 멤버십과 무관하게
+        // 별도로 가져온다.
         String query = String.format(
             "[out:json][timeout:90];\n" +
             "(\n" +
@@ -238,14 +247,22 @@ public class OsmOverpassService {
             "way(r.routes)(%.7f,%.7f,%.7f,%.7f)->.routeWays;\n" +
             "node(r.routes)->.routeNodes;\n" +
             "(\n" +
+            "  way[\"highway\"=\"busway\"](%.7f,%.7f,%.7f,%.7f);\n" +
+            "  way[~\"^(busway|busway:right|busway:left|busway:both|lanes:bus|lanes:psv|bus:lanes|psv:lanes)$\"~\".\"](%.7f,%.7f,%.7f,%.7f);\n" +
+            ")->.busLaneWays;\n" +
+            "(\n" +
             "  .routes;\n" +
             "  .routeWays;\n" +
             "  .routeWays >;\n" +
             "  .routeNodes;\n" +
+            "  .busLaneWays;\n" +
+            "  .busLaneWays >;\n" +
             "  node[\"highway\"=\"bus_stop\"](%.7f,%.7f,%.7f,%.7f);\n" +
             "  node[\"railway\"~\"^(station|halt|tram_stop|subway_entrance)$\"](%.7f,%.7f,%.7f,%.7f);\n" +
             ");\n" +
             "out body;",
+            south, west, north, east,
+            south, west, north, east,
             south, west, north, east,
             south, west, north, east,
             south, west, north, east,

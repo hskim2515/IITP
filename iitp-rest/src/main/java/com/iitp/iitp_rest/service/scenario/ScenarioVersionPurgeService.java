@@ -12,6 +12,10 @@ import com.iitp.iitp_rest.repository.VehicleRouteRepository;
 import com.iitp.iitp_rest.repository.XmlLayerLogRepository;
 import com.iitp.iitp_rest.repository.XmlLayerVersionRepository;
 import com.iitp.iitp_rest.service.network.NetworkTileService;
+import com.iitp.iitp_rest.service.pavementMarking.PavementMarkingTileService;
+import com.iitp.iitp_rest.service.publicTransit.station.BusStationTileService;
+import com.iitp.iitp_rest.service.publicTransit.station.RailStationTileService;
+import com.iitp.iitp_rest.service.signal.SignalTileService;
 import com.iitp.iitp_rest.util.FileStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -53,6 +57,15 @@ public class ScenarioVersionPurgeService {
     private final PavementMarkingLogsRepository pavementMarkingLogsRepository;
     private final VehicleRouteRepository vehicleRouteRepository;
     private final NetworkTileService networkTileService;
+    // ⚠️ 이 클래스 자체 docstring이 경고하는 "같은 key 재사용 시 새 데이터가 덮어써서 눈에
+    // 안 띄던 문제"가 network 타일 캐시만 다뤄지고 나머지 4개(신호/버스/철도/노면표시)엔
+    // 그대로 남아있었다 — 버전이 삭제된 뒤 같은 key로 재임포트하면 DB/파일은 새로 저장되지만
+    // 타일 캐시만 이전 버전의 스냅샷을 계속 서빙한다(2026-08-03 실사용 발견, 버스정류장
+    // 타일 캐시 버그와 동일 계열).
+    private final BusStationTileService busStationTileService;
+    private final RailStationTileService railStationTileService;
+    private final SignalTileService signalTileService;
+    private final PavementMarkingTileService pavementMarkingTileService;
 
     /** 버전 key(versionId)에 딸린 모든 산출물 정리. 각 단계 실패는 무시(로그만). */
     public void purgeVersionData(String versionKey) {
@@ -82,8 +95,12 @@ public class ScenarioVersionPurgeService {
         });
         runQuiet(versionKey, "vehicleRoute", () -> vehicleRouteRepository.deleteByVersionId(versionKey));
 
-        // 2) 네트워크 타일 SQLite (메모리 캐시 + 영속 파일)
+        // 2) 타일 SQLite 전부 (메모리 캐시 + 영속 파일) — network 외 4개도 동일하게 무효화
         runQuiet(versionKey, "networkTile", () -> networkTileService.invalidate(versionKey));
+        runQuiet(versionKey, "busStationTile", () -> busStationTileService.invalidate(versionKey));
+        runQuiet(versionKey, "railStationTile", () -> railStationTileService.invalidate(versionKey));
+        runQuiet(versionKey, "signalTile", () -> signalTileService.invalidate(versionKey));
+        runQuiet(versionKey, "pavementMarkingTile", () -> pavementMarkingTileService.invalidate(versionKey));
 
         // 3) 파일 스토리지의 버전 폴더 통째 삭제 — vehicle_sim.db, 노선 파일 등 위 DB 정리가
         //    모르는 파일까지 전부 여기서 함께 사라진다.

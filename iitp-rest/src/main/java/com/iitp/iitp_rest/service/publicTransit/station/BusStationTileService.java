@@ -96,6 +96,12 @@ public class BusStationTileService {
             } catch (IOException e) {
                 throw e;
             } catch (Exception e) {
+                // BusStationService.getBusStationsByVersionId()는 XML 미존재 시 IOException을
+                // RuntimeException으로 감싸 던진다(BusStationController.getBusStationsByVersionId
+                // 참고) — 원인이 IOException이면 그대로 풀어서 컨트롤러의 FileNotFoundException
+                // 분기(404)가 정상 동작하게 한다. 그 외에는 기존대로 감싸서 500.
+                Throwable cause = e.getCause();
+                if (cause instanceof IOException ioe) throw ioe;
                 throw new IOException("busStation 로드 실패: " + versionId, e);
             }
             return ingest(versionId, stations);

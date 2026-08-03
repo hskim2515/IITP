@@ -30,7 +30,7 @@ import { useSimulationStore } from '@stores/useSimulationStore';
 import { useSignalTimelineStore } from '@stores/useSignalTimelineStore';
 
 // ── 타입 ──────────────────────────────────────────────────────────────────────
-type Tab = 'file' | 'osm' | 'ktdb' | 'reanchor';
+type Tab = 'file' | 'ktdb' | 'reanchor';
 type ImportType = 'osm' | 'ktdb';
 type LayerCfg = (typeof LAYER_CONFIG)[number];
 
@@ -63,6 +63,12 @@ const XML_IMPORT_SUPPORTED_KEYS = new Set<string>([
  */
 const STORELESS_XML_IMPORTS: Record<string, { url: string; label: string; rootTag: string }> = {
     odmatrix: { url: '/od-matrix', label: 'OD 매트릭스', rootTag: 'Demands' },
+    // passenger.xml — "승객 수요"(PassengerModal)도 OD 매트릭스와 동일하게 지도 레이어가 아니라
+    // 자체 로컬 state로 관리되는 스토어 없는 데이터라 여기 등록해야 ZIP/단일 XML 가져오기가
+    // 인식한다. 백엔드 PassengerController에 /passenger/{versionId}/import가 이미 있었는데
+    // 프론트에 매핑이 없어 "레이어를 인식할 수 없는 XML 파일"로 항상 건너뛰어지고 있었다
+    // (실사용 재현: 부천 배포판 zip 가져오기 결과에서 passenger.xml만 스킵됨).
+    passenger: { url: '/passenger', label: '승객 수요', rootTag: 'Passenger' },
 };
 
 /** 단일 레이어 JSON 데이터를 스토어에 반영 (GUID 부여 + 전체 빌드 + 변경 플래그) */
@@ -113,6 +119,11 @@ function xmlRootElementName(text: string): string | null {
 
 /** 스키마(루트 엘리먼트)로 먼저 판별하고, 실패하거나 모호(Lines)하면 파일명 힌트로 보완 */
 function detectLayerFromXml(filename: string, text: string): LayerCfg | null {
+    // footpathNetwork.xml은 network.xml과 루트 엘리먼트가 똑같이 <Network>라 아래 루트태그
+    // 매칭으로는 구분이 안 돼, 도로망 네트워크로 오인돼 링크 0개(보행자 전용이라 원래 없음)로
+    // 거부되던 문제가 있었다 — 이 앱은 보행자 전용 네트워크를 별도로 다루지 않으므로(NextSim
+    // 스테이징 시 파일 그대로 전달만 함, NextSimRunner 참고) 애초에 가져오기 대상이 아니다.
+    if (filename.toLowerCase().replace(/\s/g, '_').includes('footpathnetwork')) return null;
     const root = xmlRootElementName(text);
     if (root === 'Lines') {
         const lower = filename.toLowerCase();
@@ -137,8 +148,10 @@ function detectStorelessXmlImport(text: string): { key: string; url: string; lab
     return null;
 }
 
-/** XML 파일을 서버로 업로드해 파싱시키고, 응답을 해당 레이어 스토어에 반영 */
-async function importXmlToLayer(cfg: LayerCfg, file: File, versionId: string): Promise<void> {
+/** XML 파일을 서버로 업로드해 파싱시키고, 응답을 해당 레이어 스토어에 반영.
+ *  반환값은 버스/철도 노선처럼 "경로 정보 없는 라인은 조용히 제외"하는 레이어에서, 제외된
+ *  라인이 있을 때 사용자에게 보여줄 경고 문구(그 외 레이어는 항상 undefined). */
+async function importXmlToLayer(cfg: LayerCfg, file: File, versionId: string): Promise<{ warning?: string }> {
     if (!cfg.xmlExportUrl) throw new Error(`${cfg.label}은(는) XML 가져오기를 지원하지 않습니다`);
     if (!XML_IMPORT_SUPPORTED_KEYS.has(cfg.key)) {
         throw new Error(`${cfg.label}은(는) 아직 XML 업로드를 지원하지 않습니다 (JSON으로 내보내 가져오세요)`);
@@ -162,6 +175,40 @@ async function importXmlToLayer(cfg: LayerCfg, file: File, versionId: string): P
     const data = await res.json();
     const responseData = data.network ?? data.data ?? data;
 
+    // 버스/철도 노선(BusPtLineController/RailPtLineController.import*)은 경로 정보(link/node/
+    // station seq, railStationSeq)가 없는 라인을 조용히 제외하고 저장한다 — NextSim이 이런
+    // 라인이 섞여 있어도 크래시 없이 건너뛰는 것으로 확인됐기 때문이다. 문제는 원본 파일의
+    // XML 구조 자체가 이 앱의 평평한 스키마와 다르면(예: 외부 배포판의 중첩 <links><link
+    // id=".." station=".."/></links> 스키마) 라인 전부가 매칭 실패해 0개가 되는데, 그래도
+    // HTTP 200으로 "성공"이 오니 사용자는 노선이 통째로 비었다는 걸 알 방법이 없었다(실사용
+    // 재현: 부천 원본 roadPTline.xml 31개 노선을 zip으로 가져왔는데 "✓ 버스 노선 (XML)"로
+    // 표시되고 실제로는 0개). totalLineCount/droppedLineIds가 있으면(버스/철도 노선 임포트만
+    // 해당 필드를 실어 보냄) 제외 비율에 따라 경고 문구를 만든다.
+    let warning: string | undefined;
+    const droppedIds: string[] | undefined = data.droppedLineIds;
+    const totalLineCount: number | undefined = data.totalLineCount;
+    if (typeof totalLineCount === 'number') {
+        // ⚠️ totalLineCount === 0(파싱된 노선 자체가 0개)은 droppedIds도 항상 빈 배열이라
+        // (제외할 대상 자체가 없음) 위 "N개 중 M개 제외" 분기를 아예 안 타서 경고 없이 조용히
+        // "성공"으로만 표시됐다 — 실측 확인(철도 노선): 원본 railPTline.xml의 실제 구조가
+        // <Lines><Line .../></Lines>인데 이 앱 스키마는 <routes><route .../></routes> 래퍼를
+        // 기대해 xml.getRoutes()가 통째로 null로 파싱됨(DB에 저장된 값 자체가
+        // {"routes": null}). 버스 쪽의 "전부 제외" 케이스보다 더 조용한 실패라 반드시
+        // 별도로 잡아야 한다 — 파일을 업로드한 이상 사용자는 노선이 들어있길 기대하므로,
+        // 원인(진짜 빈 파일 vs 스키마 불일치)을 굳이 구분하지 않고 0건이면 항상 알린다.
+        if (totalLineCount === 0) {
+            warning = `⚠ 노선이 0개 저장됨 — 원본 파일이 실제로 비어있거나, XML 구조가 이 앱과 ` +
+                `다를 수 있습니다(스키마 불일치 의심).`;
+        } else if (Array.isArray(droppedIds) && droppedIds.length > 0) {
+            if (droppedIds.length === totalLineCount) {
+                warning = `⚠ ${totalLineCount}개 노선 전부 경로 정보가 없어 제외됨 — 원본 파일의 XML 구조가 ` +
+                    `이 앱과 다를 수 있습니다(스키마 불일치 의심).`;
+            } else {
+                warning = `⚠ ${totalLineCount}개 중 ${droppedIds.length}개 노선이 경로 정보 없어 제외됨.`;
+            }
+        }
+    }
+
     // 타일 모드에서 network 를 그대로 store 에 전체 반영하면 안 된다 — 서버는 이미
     // XML 저장 + 타일 재적재까지 끝냈는데, currentJsonData 에 전체 네트워크(수만 링크)를
     // 채우는 순간 NetworkFeatureLayer.updateEditDeltas() 가 "타일 캐시에 아직 없는 링크"를
@@ -171,9 +218,10 @@ async function importXmlToLayer(cfg: LayerCfg, file: File, versionId: string): P
     // 새로 fetch 해 정상 반영된다(호출부의 refreshNetworkTiles 가 트리거).
     if (cfg.key === 'network' && (NETWORK_TILING.ENABLED || useNetworkTileStore.getState().tileMode)) {
         useNetworkStore.getState().setCurrentJsonData({ id: 0, name: null, nodes: [], links: [] } as any);
-        return;
+        return { warning };
     }
     applyLayerData(cfg, responseData);
+    return { warning };
 }
 
 /** 스토어 없는 레이어(odmatrix)의 XML 업로드 — 서버 저장만 하고 화면에는 반영하지 않는다 */
@@ -309,7 +357,7 @@ const FileImportModal: React.FC<Props> = ({ onClose }) => {
 
                 {/* 탭 */}
                 <div style={tabBarStyle}>
-                    {([['ktdb', 'KTDB'], ['osm', 'OSM'], ['file', '파일'], ['reanchor', '기준점']] as [Tab, string][]).map(([key, label]) => (
+                    {([['ktdb', '자동생성'], ['file', '파일'], ['reanchor', '기준점']] as [Tab, string][]).map(([key, label]) => (
                         <button
                             key={key}
                             onClick={() => setTab(key)}
@@ -323,7 +371,6 @@ const FileImportModal: React.FC<Props> = ({ onClose }) => {
                 {/* 탭 콘텐츠 */}
                 <div style={bodyStyle}>
                     {tab === 'file'     && <FileTab onClose={onClose} />}
-                    {tab === 'osm'      && <BboxTab type="osm"  onClose={onClose} />}
                     {tab === 'ktdb'     && <BboxTab type="ktdb" onClose={onClose} />}
                     {tab === 'reanchor' && (
                         <ReanchorTab
@@ -346,7 +393,7 @@ const FileImportModal: React.FC<Props> = ({ onClose }) => {
 const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isDragging, setIsDragging] = useState(false);
-    const [status, setStatus] = useState<{ type: 'ok' | 'error'; text: string } | null>(null);
+    const [status, setStatus] = useState<{ type: 'ok' | 'warning' | 'error'; text: string } | null>(null);
     const [xmlImport, setXmlImport] = useState<{
         file: File;
         detectedLayer: ReturnType<typeof detectLayerFromFilename>;
@@ -355,7 +402,7 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
     } | null>(null);
     const [zipProcessing, setZipProcessing] = useState(false);
     const [zipProgress, setZipProgress] = useState('');
-    const [zipResults, setZipResults] = useState<{ name: string; status: 'ok' | 'error' | 'skipped'; text: string }[] | null>(null);
+    const [zipResults, setZipResults] = useState<{ name: string; status: 'ok' | 'warning' | 'error' | 'skipped'; text: string }[] | null>(null);
     const [dbImport, setDbImport] = useState<{ file: File } | null>(null);
     const [dbUploading, setDbUploading] = useState(false);
 
@@ -423,7 +470,7 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         setZipProcessing(true);
         setZipProgress('압축 해제 중...');
         const versionId = getActiveVersionId() ?? '';
-        const results: { name: string; status: 'ok' | 'error' | 'skipped'; text: string }[] = [];
+        const results: { name: string; status: 'ok' | 'warning' | 'error' | 'skipped'; text: string }[] = [];
         try {
             if (!versionId) throw new Error('시나리오가 선택되지 않았습니다');
             const zip = await JSZip.loadAsync(file);
@@ -499,10 +546,14 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                     if (m.kind === 'xml') {
                         const base = m.entry.name.split('/').pop() ?? m.entry.name;
                         const file = new File([m.text], base, { type: 'application/xml' });
-                        await importXmlToLayer(m.cfg, file, versionId);
+                        const { warning } = await importXmlToLayer(m.cfg, file, versionId);
                         if (m.cfg.key === 'network') { networkLoaded = true; refreshNetworkTiles(); }
                         if (m.cfg.key === 'signal') signalLoaded = true;
-                        results.push({ name: m.entry.name, status: 'ok', text: `${m.cfg.label} (XML)` });
+                        results.push({
+                            name: m.entry.name,
+                            status: warning ? 'warning' : 'ok',
+                            text: warning ? `${m.cfg.label} (XML) — ${warning}` : `${m.cfg.label} (XML)`,
+                        });
                     } else if (m.kind === 'combined') {
                         const result = applyCombinedExport(m.parsed.data);
                         if (result.networkLoaded) { networkLoaded = true; refreshNetworkTiles(); }
@@ -529,7 +580,7 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 }
             }
 
-            if (results.some(r => r.status === 'ok')) {
+            if (results.some(r => r.status === 'ok' || r.status === 'warning')) {
                 setZipProgress('저장 중...');
                 await autoSaveChangedLayers(versionId);
                 if (networkLoaded && !signalLoaded) void runAutoDummyGeneration();
@@ -612,13 +663,15 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         if (!cfg?.xmlExportUrl) return;
         try {
             if (xmlImport.selectedKey === 'network' && versionId) await backupAndResetDependentLayers(versionId);
-            await importXmlToLayer(cfg, xmlImport.file, versionId);
+            const { warning } = await importXmlToLayer(cfg, xmlImport.file, versionId);
             if (versionId) await autoSaveChangedLayers(versionId);
             if (xmlImport.selectedKey === 'network') {
                 refreshNetworkTiles(); // 타일 모드: 2D/3D 타일 캐시 무효화 (없으면 이전 네트워크 잔존)
                 void runAutoDummyGeneration(); // network XML만 가져온 경우 — 신호는 없으므로 자동 생성
             }
-            setStatus({ type: 'ok', text: `${cfg.label} XML 가져오기 완료` });
+            setStatus(warning
+                ? { type: 'warning', text: `${cfg.label} XML 가져오기 완료 — ${warning}` }
+                : { type: 'ok', text: `${cfg.label} XML 가져오기 완료` });
             setXmlImport(null);
         } catch (e) {
             setStatus({ type: 'error', text: e instanceof Error ? e.message : 'XML 가져오기 실패' });
@@ -663,15 +716,15 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             {zipResults && (
                 <div style={xmlPanelStyle}>
                     <div style={{ fontSize: 11, color: '#ccc', marginBottom: 6, fontWeight: 600 }}>
-                        ZIP 가져오기 결과 ({zipResults.filter(r => r.status === 'ok').length}/{zipResults.length}개 성공)
+                        ZIP 가져오기 결과 ({zipResults.filter(r => r.status === 'ok' || r.status === 'warning').length}/{zipResults.length}개 성공)
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 180, overflowY: 'auto' }}>
                         {zipResults.map((r, i) => (
                             <div key={i} style={{
                                 fontSize: 10, display: 'flex', gap: 6,
-                                color: r.status === 'ok' ? '#6fcf97' : r.status === 'error' ? '#ff6b6b' : '#888',
+                                color: r.status === 'ok' ? '#6fcf97' : r.status === 'warning' ? '#f0c040' : r.status === 'error' ? '#ff6b6b' : '#888',
                             }}>
-                                <span>{r.status === 'ok' ? '✓' : r.status === 'error' ? '✗' : '—'}</span>
+                                <span>{r.status === 'ok' ? '✓' : r.status === 'warning' ? '⚠' : r.status === 'error' ? '✗' : '—'}</span>
                                 <span style={{ color: '#aaa', flexShrink: 0 }}>{r.name}</span>
                                 <span>{r.text}</span>
                             </div>
@@ -727,8 +780,8 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             )}
 
             {status && (
-                <div style={{ fontSize: 11, color: status.type === 'ok' ? '#6fcf97' : '#ff6b6b', padding: '6px 10px', background: 'rgba(255,255,255,0.04)', borderRadius: 5 }}>
-                    {status.type === 'ok' ? '✓ ' : '✗ '}{status.text}
+                <div style={{ fontSize: 11, color: status.type === 'ok' ? '#6fcf97' : status.type === 'warning' ? '#f0c040' : '#ff6b6b', padding: '6px 10px', background: 'rgba(255,255,255,0.04)', borderRadius: 5 }}>
+                    {status.type === 'ok' ? '✓ ' : status.type === 'warning' ? '⚠ ' : '✗ '}{status.text}
                 </div>
             )}
         </div>
@@ -1203,7 +1256,17 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <p style={descStyle}>{label} 데이터로 네트워크를 생성합니다.</p>
+            {isKtdb ? (
+                <p style={descStyle}>
+                    선택한 영역의 데이터를 자동으로 생성합니다.<br/>
+                    · <strong>네트워크(도로망)</strong>: KTDB 표준노드링크<br/>
+                    · <strong>신호·교차로</strong>: 도로망 지오메트리 기반 추론<br/>
+                    · <strong>대중교통 데이터</strong>(버스/철도 정류장·노선): OSM<br/>
+                    · <strong>OD 등 수요 데이터</strong>: 랜덤 생성
+                </p>
+            ) : (
+                <p style={descStyle}>{label} 데이터로 네트워크를 생성합니다.</p>
+            )}
 
             {isKtdb ? (
                 <div style={{ display: 'flex', gap: 8 }}>
@@ -1234,24 +1297,28 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
                 </button>
             )}
 
-            {isKtdb && !polygons && (
-                <p style={{ fontSize: 10, color: '#666', margin: 0 }}>폴리곤을 그리거나 파일을 업로드하세요.</p>
+            {isKtdb ? (
+                polygons ? (
+                    <p style={{ fontSize: 11, color: '#6fcf97', margin: 0 }}>✓ 경계가 지정되었습니다.</p>
+                ) : (
+                    <p style={{ fontSize: 10, color: '#666', margin: 0 }}>폴리곤을 그리거나 파일을 업로드하세요.</p>
+                )
+            ) : (
+                <div style={gridStyle}>
+                    {[['남쪽 (South)', south, setSouth, '37.49'], ['서쪽 (West)', west, setWest, '126.75'],
+                      ['북쪽 (North)', north, setNorth, '37.52'], ['동쪽 (East)', east, setEast, '126.80']].map(
+                        ([lbl, val, setter, ph]) => (
+                            <React.Fragment key={String(lbl)}>
+                                <label style={labelStyle}>{String(lbl)}</label>
+                                <input style={inputStyle}
+                                       type="number" step="any"
+                                       placeholder={`예: ${String(ph)}`} value={String(val)}
+                                       onChange={e => (setter as React.Dispatch<React.SetStateAction<string>>)(e.target.value)} />
+                            </React.Fragment>
+                        )
+                    )}
+                </div>
             )}
-
-            <div style={gridStyle}>
-                {[['남쪽 (South)', south, setSouth, '37.49'], ['서쪽 (West)', west, setWest, '126.75'],
-                  ['북쪽 (North)', north, setNorth, '37.52'], ['동쪽 (East)', east, setEast, '126.80']].map(
-                    ([lbl, val, setter, ph]) => (
-                        <React.Fragment key={String(lbl)}>
-                            <label style={labelStyle}>{String(lbl)}</label>
-                            <input style={isKtdb ? { ...inputStyle, opacity: 0.6, cursor: 'default' } : inputStyle}
-                                   type="number" step="any" readOnly={isKtdb}
-                                   placeholder={isKtdb ? '경계에서 자동 계산' : `예: ${String(ph)}`} value={String(val)}
-                                   onChange={e => isKtdb ? undefined : (setter as React.Dispatch<React.SetStateAction<string>>)(e.target.value)} />
-                        </React.Fragment>
-                    )
-                )}
-            </div>
 
             {error && <div style={{ fontSize: 11, color: '#ff6b6b', padding: '6px 8px', background: 'rgba(255,107,107,0.08)', borderRadius: 4 }}>{error}</div>}
 
@@ -1261,7 +1328,7 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
                 <button style={cancelBtnStyle} onClick={onClose} disabled={loading}>취소</button>
                 <button style={loading ? { ...importBtnStyle, opacity: 0.6 } : importBtnStyle}
                         onClick={handleImport} disabled={loading}>
-                    {loading ? '변환 중...' : `${isOsm ? 'OSM' : 'KTDB'} 가져오기`}
+                    {loading ? '변환 중...' : `${isOsm ? 'OSM' : '자동생성'} 가져오기`}
                 </button>
             </div>
         </div>

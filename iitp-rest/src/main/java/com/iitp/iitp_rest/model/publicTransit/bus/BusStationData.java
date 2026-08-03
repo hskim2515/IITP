@@ -15,5 +15,7 @@ public class BusStationData {
     private Integer parkingLots;
     private String address;
     private String center;
+    /** {@link BusStationResponse#getMedianLane()} 참고 — DB/프론트 왕복 보존용, NextSim XML엔 매핑 안 함. */
+    private Boolean medianLane;
     private BusLineResponse line;
 }

@@ -751,6 +751,22 @@ export default class SignalDataSourceLayer {
             pos(lng, lat, poleTopH), new Cesium.HeadingPitchRoll(headingRad, 0, 0),
         );
 
+        /* 배경판 — 실제 신호등처럼 하우징 뒤에 검은 배경판을 둬 하늘/배경과의 대비를 준다
+         * (2026-08-03 "실제와 유사하게" 요청, 배경판 없이는 밝은 하늘 아래서 밋밋해 보였음). */
+        const backboardBack = fwdOffset(lng, lat, headingRad, -(HOUSING_D / 2 + 0.015));
+        const backboard = new Cesium.Entity({
+            id: `signal-backboard-${nodeId}-${fromLinkId}`,
+            position: pos(backboardBack.lng, backboardBack.lat, poleTopH + HOUSING_H / 2 + 0.05),
+            orientation,
+            box: {
+                dimensions: new Cesium.Cartesian3(HOUSING_W + 0.12, 0.03, HOUSING_H + 0.12),
+                material: Cesium.Color.BLACK.withAlpha(0.85), outline: false,
+            },
+            properties: sharedProps,
+        });
+        (backboard as any).distanceDisplayCondition = ddc3d;
+        entities.push(this.dataSource.entities.add(backboard));
+
         /* 본체(R/Y/G 3구) */
         const housingCtrH = poleTopH + HOUSING_H / 2 + 0.05;
         const housing = new Cesium.Entity({

@@ -91,6 +91,7 @@ public class OsmPtFacilityRepository {
 
         List<OsmWay> allWays = new ArrayList<>();
         Set<Long> nodeIdsNeeded = new LinkedHashSet<>();
+        Set<Long> loadedWayIds = new LinkedHashSet<>();
         if (!referencedWayIds.isEmpty()) {
             // ⚠️ 실측 성능 문제: 버스 노선 많은 지역(강남 일대)은 relation member(주로 way id)가
             // 2만개를 넘는다 — NamedParameterJdbcTemplate의 IN (:ids)는 이걸 위치 파라미터
@@ -98,21 +99,38 @@ public class OsmPtFacilityRepository {
             // 타임아웃 재현). = ANY(string_to_array(...)::bigint[])로 배열 파라미터 1개만
             // 바인딩하도록 바꿔 해결.
             List<Map<String, Object>> wayRows = named().queryForList(
-                    "SELECT id, node_ids FROM osm_pt_way WHERE id = ANY(string_to_array(:idsCsv, ',')::bigint[]) " +
+                    "SELECT id, node_ids, tags FROM osm_pt_way WHERE id = ANY(string_to_array(:idsCsv, ',')::bigint[]) " +
                             "AND bbox && ST_MakeEnvelope(:west, :south, :east, :north, 4326)",
                     new MapSqlParameterSource()
                             .addValue("idsCsv", toCsv(referencedWayIds)).addValues(bboxParams.getValues()));
             for (var row : wayRows) {
-                long wayId = ((Number) row.get("id")).longValue();
-                JSONArray idsJson = new JSONArray(row.get("node_ids").toString());
-                List<Long> ids = new ArrayList<>(idsJson.length());
-                for (int i = 0; i < idsJson.length(); i++) ids.add(idsJson.getLong(i));
-                OsmWay way = new OsmWay();
-                way.setId(wayId);
-                way.setNodeIds(ids);
+                OsmWay way = mapWayRow(row);
                 allWays.add(way);
-                nodeIdsNeeded.addAll(ids);
+                nodeIdsNeeded.addAll(way.getNodeIds());
+                loadedWayIds.add(way.getId());
             }
+        }
+
+        // ⚠️ 실측 발견(2026-08-03): 중앙버스전용차로처럼 물리적으로 분리된 도로는 버스 노선
+        // relation의 멤버가 "아닌" 별도 way로 매핑되는 경우가 흔하다(relation은 보통 일반
+        // 도로를 따라가고, 중앙차로는 지도에 그려지기만 함) — 위 referencedWayIds만으로는
+        // 이런 way를 절대 못 찾아 medianLane이 영원히 true가 될 수 없었다("버스노선이
+        // 주황색만 보임"). bbox 안에서 버스전용차로 관련 태그가 있는 way를 relation 멤버십과
+        // 무관하게 별도로 가져온다(OsmFacilityConverter.resolveBusLaneIndex의 2순위 판정용).
+        List<Map<String, Object>> busLaneWayRows = named().queryForList(
+                "SELECT id, node_ids, tags FROM osm_pt_way " +
+                        "WHERE (tags->>'highway' = 'busway' " +
+                        "    OR tags ?? 'busway' OR tags ?? 'busway:right' OR tags ?? 'busway:left' " +
+                        "    OR tags ?? 'busway:both' OR tags ?? 'lanes:bus' OR tags ?? 'lanes:psv' " +
+                        "    OR tags ?? 'bus:lanes' OR tags ?? 'psv:lanes') " +
+                        "AND bbox && ST_MakeEnvelope(:west, :south, :east, :north, 4326)",
+                bboxParams);
+        for (var row : busLaneWayRows) {
+            long wayId = ((Number) row.get("id")).longValue();
+            if (!loadedWayIds.add(wayId)) continue; // 이미 referencedWayIds로 로드됨 — 중복 방지
+            OsmWay way = mapWayRow(row);
+            allWays.add(way);
+            nodeIdsNeeded.addAll(way.getNodeIds());
         }
 
         // relation의 직접 node 멤버(철도 "stop" role 등, way 자식이 아닌 노드)도 필요 — bbox
@@ -141,6 +159,21 @@ public class OsmPtFacilityRepository {
 
         return new OsmOverpassService.FacilityQueryResult(
                 busStops, railStations, busRoutes, railRoutes, allNodes, allWays, railExits);
+    }
+
+    /** queryForList() 행(Map)에서 way를 만든다 — node_ids/tags 둘 다 jsonb라 PGobject로
+     *  채워지므로(mapRelation의 동일 경고 참고) toString()으로 안전하게 문자열화한다. */
+    private OsmWay mapWayRow(Map<String, Object> row) {
+        long wayId = ((Number) row.get("id")).longValue();
+        JSONArray idsJson = new JSONArray(row.get("node_ids").toString());
+        List<Long> ids = new ArrayList<>(idsJson.length());
+        for (int i = 0; i < idsJson.length(); i++) ids.add(idsJson.getLong(i));
+        OsmWay way = new OsmWay();
+        way.setId(wayId);
+        way.setNodeIds(ids);
+        Object tagsObj = row.get("tags");
+        way.setTags(jsonToTags(tagsObj == null ? null : tagsObj.toString()));
+        return way;
     }
 
     private OsmNode mapNode(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {

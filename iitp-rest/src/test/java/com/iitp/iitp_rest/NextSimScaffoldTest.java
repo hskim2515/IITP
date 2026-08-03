@@ -264,6 +264,8 @@ class NextSimScaffoldTest {
         ScenarioVersionRepository scenarioVersionRepository = mock(ScenarioVersionRepository.class);
         XmlLayerVersionService xmlLayerVersionService = mock(XmlLayerVersionService.class);
         DummySignalGenerator dummySignalGenerator = new DummySignalGenerator();
+        com.iitp.iitp_rest.service.publicTransit.station.BusStationService busStationService =
+                mock(com.iitp.iitp_rest.service.publicTransit.station.BusStationService.class);
 
         when(scenarioVersionRepository.findByKeyWithScenario("v1")).thenReturn(java.util.Optional.empty());
         when(storage.exists("v1/odmatrix.xml")).thenReturn(false);
@@ -281,7 +283,7 @@ class NextSimScaffoldTest {
 
         NextSimInputScaffolder scaffolder = new NextSimInputScaffolder(
                 storage, scenarioVersionRepository, xmlLayerVersionService, dummySignalGenerator,
-                new com.iitp.iitp_rest.service.network.NetworkReachabilityService());
+                new com.iitp.iitp_rest.service.network.NetworkReachabilityService(), busStationService);
 
         scaffolder.scaffoldForImport("v1", Set.of("10000001"), List.of(), List.of(), null, network, null);
 
@@ -315,6 +317,8 @@ class NextSimScaffoldTest {
         ScenarioVersionRepository scenarioVersionRepository = mock(ScenarioVersionRepository.class);
         XmlLayerVersionService xmlLayerVersionService = mock(XmlLayerVersionService.class);
         DummySignalGenerator dummySignalGenerator = new DummySignalGenerator();
+        com.iitp.iitp_rest.service.publicTransit.station.BusStationService busStationService =
+                mock(com.iitp.iitp_rest.service.publicTransit.station.BusStationService.class);
 
         when(scenarioVersionRepository.findByKeyWithScenario("v1")).thenReturn(java.util.Optional.empty());
         when(storage.exists("v1/signal.xml")).thenReturn(true);
@@ -325,7 +329,7 @@ class NextSimScaffoldTest {
 
         NextSimInputScaffolder scaffolder = new NextSimInputScaffolder(
                 storage, scenarioVersionRepository, xmlLayerVersionService, dummySignalGenerator,
-                new com.iitp.iitp_rest.service.network.NetworkReachabilityService());
+                new com.iitp.iitp_rest.service.network.NetworkReachabilityService(), busStationService);
 
         boolean repaired = scaffolder.repairSignalTod("v1");
         assertTrue(repaired, "플랜은 있는데 TOD가 없으면 복구를 수행해야 함");
@@ -348,6 +352,8 @@ class NextSimScaffoldTest {
         ScenarioVersionRepository scenarioVersionRepository = mock(ScenarioVersionRepository.class);
         XmlLayerVersionService xmlLayerVersionService = mock(XmlLayerVersionService.class);
         DummySignalGenerator dummySignalGenerator = new DummySignalGenerator();
+        com.iitp.iitp_rest.service.publicTransit.station.BusStationService busStationService =
+                mock(com.iitp.iitp_rest.service.publicTransit.station.BusStationService.class);
 
         when(scenarioVersionRepository.findByKeyWithScenario("v1")).thenReturn(java.util.Optional.empty());
         when(storage.exists("v1/signal.xml")).thenReturn(true);
@@ -360,7 +366,7 @@ class NextSimScaffoldTest {
 
         NextSimInputScaffolder scaffolder = new NextSimInputScaffolder(
                 storage, scenarioVersionRepository, xmlLayerVersionService, dummySignalGenerator,
-                new com.iitp.iitp_rest.service.network.NetworkReachabilityService());
+                new com.iitp.iitp_rest.service.network.NetworkReachabilityService(), busStationService);
 
         boolean repaired = scaffolder.repairSignalTod("v1");
         assertFalse(repaired, "이미 유효하면 손대지 않아야 함");
@@ -372,9 +378,11 @@ class NextSimScaffoldTest {
         FileStorageService storage = mock(FileStorageService.class);
         ScenarioVersionRepository scenarioVersionRepository = mock(ScenarioVersionRepository.class);
         XmlLayerVersionService xmlLayerVersionService = mock(XmlLayerVersionService.class);
+        com.iitp.iitp_rest.service.publicTransit.station.BusStationService busStationService =
+                mock(com.iitp.iitp_rest.service.publicTransit.station.BusStationService.class);
         NextSimInputScaffolder scaffolder = new NextSimInputScaffolder(
                 storage, scenarioVersionRepository, xmlLayerVersionService, new DummySignalGenerator(),
-                new com.iitp.iitp_rest.service.network.NetworkReachabilityService());
+                new com.iitp.iitp_rest.service.network.NetworkReachabilityService(), busStationService);
 
         assertFalse(scaffolder.repairSignalTod(""));
         assertFalse(scaffolder.repairSignalTod(null));

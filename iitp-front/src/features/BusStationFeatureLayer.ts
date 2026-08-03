@@ -4,7 +4,6 @@ import VectorSource from "ol/source/Vector";
 import { Feature } from "ol";
 import { LineString, Point } from "ol/geom";
 import { Circle as CircleStyle, Fill, Stroke, Style } from "ol/style";
-import { fromLonLat } from "ol/proj";
 import { getFacilityLodTierByResolution } from "@utils/lodConstants";
 import { FacilityClusterOverlay } from "@features/facilityCluster";
 import type OLMap from "ol/Map";
@@ -15,7 +14,8 @@ import { FeatureLike } from "ol/Feature";
 import { useSchemaStore } from "@stores/useSchemaStore";
 import { PublicTransitResponse } from "@type/openapi.gen";
 import { diff } from "deep-object-diff";
-import { computePositionAtOffsetOl } from "@utils/offset";
+import { computePositionAtOffsetPolylineOl } from "@utils/offset";
+import { computeLaneCenterlineOl, computeMedianCenterlineOl } from "@utils/interpolateByOffset";
 import { Coordinate } from "ol/coordinate";
 import { getDistance } from "ol/sphere";
 import { toLonLat } from "ol/proj";
@@ -146,12 +146,16 @@ export default class BusStationFeatureLayer extends VectorLayer {
         // 해상도에 비례한 마커 크기 (정류장 물리폭 ~3m 기준, 최소 3px ↔ 최대 6px)
         const radius = Math.min(6, Math.max(3, 3 / resolution));
         const opacity = tier === 'detail' ? 1.0 : 0.75;
+        // 디버깅용 — medianLane(중앙버스전용차로) 정류장을 다른 색으로 표시(3D 승강장 색과
+        // 동일 계열: #ff4081)해 실제로 어떤 정류장이 중앙차로로 분류됐는지 바로 구분한다.
+        const isMedian = feature.get('medianLane') === true;
+        const fillColor = isMedian ? `rgba(255,64,129,${opacity})` : `rgba(255,0,0,${opacity})`;
 
         styles.push(
             new Style({
                 image: new CircleStyle({
                     radius,
-                    fill: new Fill({ color: `rgba(255,0,0,${opacity})` }),
+                    fill: new Fill({ color: fillColor }),
                     stroke: new Stroke({ color: "rgba(0,0,0,0)", width: 0 }),
                 }),
             })
@@ -222,30 +226,22 @@ export default class BusStationFeatureLayer extends VectorLayer {
             return;
         }
 
-        // linkId → link 매핑 및 lane 중심선 좌표 사전 계산
-        const linkLaneMap = new Map<string, { source: Coordinate; target: Coordinate }[]>();
+        // linkId → link 매핑 및 lane 중심선(전체 폴리라인) 사전 계산.
+        // 링크가 3점 이상(곡선)인 경우 첫/끝 점만으로는 오프셋 위치가 실제 클릭/저장 지점과
+        // 어긋난다(실측 최대 54m) — computeLaneCenterlineOl은 정점마다 법선 오프셋을 적용해
+        // 곡선을 그대로 따라가는 전체 점열을 만든다(interpolateByOffset.ts와 동일 로직 재사용).
+        const linkLaneMap = new Map<string, Coordinate[][]>();
+        const linkById = new Map<string, any>();
         for (const link of networkData.links) {
             if (!link.coordinates || link.coordinates.length < 2) continue;
-            const p1 = fromLonLat([link.coordinates[0].lng, link.coordinates[0].lat]);
-            const p1b = fromLonLat([link.coordinates[1].lng, link.coordinates[1].lat]);
-            const lastCoord = link.coordinates[link.coordinates.length - 1];
-            const p2 = fromLonLat([lastCoord.lng, lastCoord.lat]);
-
-            const dx = p1b[0] - p1[0];
-            const dy = p1b[1] - p1[1];
-            const len = Math.hypot(dx, dy);
-            const unitNormal: [number, number] = len > 0 ? [-dy / len, dx / len] : [0, 0];
-
+            linkById.set(String(link.id), link);
             const laneCount = link.lanes?.length ?? 0;
             if (laneCount === 0) continue;
-            const laneWidth = (link.width ?? 0) / laneCount;
 
-            const lanes: { source: Coordinate; target: Coordinate }[] = [];
+            const lanes: Coordinate[][] = [];
             for (let i = 0; i < laneCount; i++) {
-                const offsetCenter = ((laneCount - 1) / 2 - i) * laneWidth;
-                const centerP1: Coordinate = [p1[0] + unitNormal[0] * offsetCenter, p1[1] + unitNormal[1] * offsetCenter];
-                const centerP2: Coordinate = [p2[0] + unitNormal[0] * offsetCenter, p2[1] + unitNormal[1] * offsetCenter];
-                lanes.push({ source: centerP1, target: centerP2 });
+                const centerline = computeLaneCenterlineOl(link, i);
+                if (centerline) lanes.push(centerline);
             }
             linkLaneMap.set(String(link.id), lanes);
         }
@@ -254,15 +250,6 @@ export default class BusStationFeatureLayer extends VectorLayer {
 
         for (const busStation of busStationsAll) {
             const linkRef = String(busStation.linkRef);
-            const laneRef = Number(busStation.laneRef);
-
-            const lanes = linkLaneMap.get(linkRef);
-            if (!lanes || laneRef < 0 || laneRef >= lanes.length) {
-                console.warn(`[busStation] ${busStation.id}: link ${linkRef} lane ${laneRef} 를 찾을 수 없음`);
-                continue;
-            }
-
-            const { source: laneStart, target: laneEnd } = lanes[laneRef];
 
             const offset = busStation.offset;
             if (!offset) {
@@ -270,22 +257,39 @@ export default class BusStationFeatureLayer extends VectorLayer {
                 continue;
             }
 
-            const { offsetPosition } = computePositionAtOffsetOl(laneStart, laneEnd, offset);
+            // 중앙버스전용차로(medianLane) 정류장 — 이 링크 혼자만의 차선 배열이 아니라
+            // 상하행 링크 사이 실제 물리적 중앙(중앙분리대)에 배치한다(실사용 지적: "중앙차선일
+            // 경우 링크의 중앙이 아닌 상하행의 중간에 있어야 함").
+            let laneAllPts: Coordinate[] | null = null;
+            if ((busStation as any).medianLane) {
+                const link = linkById.get(linkRef);
+                if (link) laneAllPts = computeMedianCenterlineOl(link, networkData.links);
+            }
+            if (!laneAllPts) {
+                const laneRef = Number(busStation.laneRef);
+                const lanes = linkLaneMap.get(linkRef);
+                if (!lanes || laneRef < 0 || laneRef >= lanes.length) {
+                    console.warn(`[busStation] ${busStation.id}: link ${linkRef} lane ${laneRef} 를 찾을 수 없음`);
+                    continue;
+                }
+                laneAllPts = lanes[laneRef] ?? null;
+            }
+            if (!laneAllPts) continue;
 
-            // 방향 벡터 및 m→EPSG:3857 변환 계수
-            const dx = laneEnd[0] - laneStart[0];
-            const dy = laneEnd[1] - laneStart[1];
-            const epsg3857Len = Math.sqrt(dx * dx + dy * dy);
-            const realLenM = getDistance(toLonLat(laneStart), toLonLat(laneEnd));
-            const laneUx = epsg3857Len > 0 ? dx / epsg3857Len : 1;
-            const laneUy = epsg3857Len > 0 ? dy / epsg3857Len : 0;
-            const unitsPerMeter = (epsg3857Len > 0 && realLenM > 0) ? epsg3857Len / realLenM : 1;
+            const { offsetPosition, direction } = computePositionAtOffsetPolylineOl(laneAllPts, offset);
+
+            // 방향 벡터(투영좌표계 단위벡터) + m→EPSG:3857 변환 계수(해당 지점 인근 실측 기준)
+            const laneUx = direction[0];
+            const laneUy = direction[1];
+            const probe: Coordinate = [offsetPosition[0]! + laneUx, offsetPosition[1]! + laneUy];
+            const realLenPerUnit = getDistance(toLonLat(offsetPosition), toLonLat(probe));
+            const unitsPerMeter = realLenPerUnit > 0 ? 1 / realLenPerUnit : 1;
 
             const parkingLots = busStation.parkingLots ?? 0;
             const totalLen = parkingLots * PARKING_LOT_LENGTH_M * unitsPerMeter;
             const lineEnd2: Coordinate = [
-                offsetPosition[0] - laneUx * totalLen,
-                offsetPosition[1] - laneUy * totalLen,
+                offsetPosition[0]! - laneUx * totalLen,
+                offsetPosition[1]! - laneUy * totalLen,
             ];
 
             const busStationPointFeature = new Feature(new Point(offsetPosition));

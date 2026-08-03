@@ -5,6 +5,11 @@ import com.iitp.iitp_rest.model.network.NetworkDiffRequest;
 import com.iitp.iitp_rest.model.network.NetworkResponse;
 import com.iitp.iitp_rest.model.network.NetworkXml;
 import com.iitp.iitp_rest.model.network.OsmSaveResponse;
+import com.iitp.iitp_rest.model.network.link.LinkResponse;
+import com.iitp.iitp_rest.model.network.link.LinkXml;
+import com.iitp.iitp_rest.model.network.node.NodeResponse;
+import com.iitp.iitp_rest.model.network.node.NodeXml;
+import com.iitp.iitp_rest.util.CoordinateUtils;
 import com.iitp.iitp_rest.model.odmatrix.OdMatrixXml;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerLog;
 import com.iitp.iitp_rest.model.xmllayer.XmlLayerSaveRequest;
@@ -62,6 +67,15 @@ public class NetworkController {
     private final NetworkService networkService;
     private final NetworkTileService networkTileService;
     private final NetworkReachabilityService networkReachabilityService;
+    // ⚠️ deleteDependentData가 signal/busStation/railStation/pavementMarking DB 레코드를
+    // 지우면서도 그 4개 타일 캐시는 무효화하지 않아, 재임포트 사이 시점에 타일 요청이 오면
+    // 삭제 전 옛 데이터를 계속 서빙하고(재임포트가 뒤따르지 않는 경우 무기한) — 이후 재임포트로
+    // 각 도메인 컨트롤러가 스스로 invalidate 하기 전까지 그 상태가 남는다(버스정류장 타일
+    // 캐시 버그와 동일 계열, 2026-08-03 발견).
+    private final com.iitp.iitp_rest.service.signal.SignalTileService signalTileService;
+    private final com.iitp.iitp_rest.service.publicTransit.station.BusStationTileService busStationTileService;
+    private final com.iitp.iitp_rest.service.publicTransit.station.RailStationTileService railStationTileService;
+    private final com.iitp.iitp_rest.service.pavementMarking.PavementMarkingTileService pavementMarkingTileService;
     private final com.iitp.iitp_rest.service.network.NetworkStreamingDiffService networkStreamingDiffService;
     private final NetworkIdNormalizer networkIdNormalizer;
     private final OdTerminalIdBandService odTerminalIdBandService;
@@ -381,6 +395,12 @@ public class NetworkController {
             int prunedOdDemandCount = 0;
             try {
                 NetworkXml networkXml = networkMapper.fromResponse(merged);
+                // NetworkResponse → NetworkXml 매핑은 coordinates(WGS84)를 shape/center(로컬
+                // 좌표 문자열)로 자동 변환해주지 않는다(LinkXml.coordinates/NodeXml.coordinates는
+                // @XmlTransient) — 여기서 직접 인코딩하지 않으면 모든 링크/노드의 shape가 빈
+                // 문자열로 저장돼 다음 재파싱(SQLite 타일 인덱스 재빌드 등)에서 좌표를 복원할
+                // 방법이 없어져 네트워크 전체가 사라진 것처럼 보인다(2026-08-03 실사용 재현).
+                recomputeShapesForXmlSync(networkXml, merged, versionId);
 
                 // 1c) OD 매트릭스가 이미 source/sink로 참조 중인 노드가 이번 네트워크 편집으로
                 // degree 드리프트를 일으켜 id 대역(터미널 11xxxxxx/일반 10xxxxxx)이 실제와 안
@@ -426,10 +446,60 @@ public class NetworkController {
                     "odNodeIdRemap", odBandRemap,
                     "odPrunedDemandCount", prunedOdDemandCount));
         } catch (java.io.FileNotFoundException e) {
+            log.warn("[NetworkController] diff 저장 실패 — 기준 network.xml 없음 versionId={}: {}", versionId, e.getMessage());
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (Exception e) {
             log.error("[NetworkController] diff 저장 오류 versionId={}", versionId, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * network.xml로 마샬링하기 전, response(WGS84 coordinates 보유)를 기준으로 networkXml의
+     * 링크 shape/노드 center(로컬 좌표 문자열)를 재계산해 채운다.
+     *
+     * <p>base_lat/base_lon이 response에 없으면(이번 편집 이전에 이미 유실된 파일이었거나,
+     * NetworkResponse에 해당 필드가 없던 구버전 데이터) 시나리오 좌표로 폴백해 자가 복구한다 —
+     * NetworkService.transformNetworkCoordinates(읽기 쪽)와 동일한 우선순위 기준을 재사용해야
+     * 인코딩(쓰기)·디코딩(읽기) 원점이 어긋나지 않는다.
+     */
+    private void recomputeShapesForXmlSync(NetworkXml networkXml, NetworkResponse response, String versionId) {
+        Double baseLat = response.getBaseLat();
+        Double baseLon = response.getBaseLon();
+        if (baseLat == null || baseLon == null) {
+            double[] fallback = networkService.resolveScenarioBaseLatLon(versionId);
+            if (fallback == null) {
+                log.warn("[NetworkController] base_lat/base_lon 없음(시나리오 좌표도 없음) — " +
+                        "shape 인코딩 생략, versionId={}", versionId);
+                return;
+            }
+            baseLat = fallback[0];
+            baseLon = fallback[1];
+            // 다음 저장부터는 network.xml 자체가 기준점을 갖도록 반영 (재유실 방지)
+            response.setBaseLat(baseLat);
+            response.setBaseLon(baseLon);
+            networkXml.setBaseLat(baseLat);
+            networkXml.setBaseLon(baseLon);
+            log.info("[NetworkController] base_lat/base_lon 시나리오 좌표로 복구 versionId={} lat={} lon={}",
+                    versionId, baseLat, baseLon);
+        }
+        double rotationRad = Math.toRadians(response.getBaseRotation() != null ? response.getBaseRotation() : 0.0);
+        double scale = response.getBaseScale() != null ? response.getBaseScale() : 1.0;
+
+        Map<Long, LinkResponse> linkById = new java.util.HashMap<>();
+        for (LinkResponse l : response.getLinks()) if (l.getId() != null) linkById.put(l.getId(), l);
+        for (LinkXml lx : networkXml.getLinks()) {
+            LinkResponse src = linkById.get(lx.getId());
+            if (src == null) continue;
+            lx.setShape(CoordinateUtils.encodeShape(src.getCoordinates(), baseLon, baseLat, rotationRad, scale));
+        }
+
+        Map<Long, NodeResponse> nodeById = new java.util.HashMap<>();
+        for (NodeResponse n : response.getNodes()) if (n.getId() != null) nodeById.put(n.getId(), n);
+        for (NodeXml nx : networkXml.getNodes()) {
+            NodeResponse src = nodeById.get(nx.getId());
+            if (src == null) continue;
+            nx.setCenter(CoordinateUtils.encodeCenter(src.getCoordinates(), baseLon, baseLat, rotationRad, scale));
         }
     }
 
@@ -470,6 +540,7 @@ public class NetworkController {
             try {
                 NetworkResponse response = XmlLayerConverter.fromMap(cleanData, NetworkResponse.class);
                 NetworkXml networkXml = networkMapper.fromResponse(response);
+                recomputeShapesForXmlSync(networkXml, response, versionId);
                 byte[] xmlBytes = networkJaxbParser.marshal(networkXml);
                 fileStorage.uploadFile(new ByteArrayInputStream(xmlBytes), versionId, "network.xml");
                 log.info("[NetworkController] network.xml 파일 저장 완료: {}/network.xml", versionId);
@@ -562,6 +633,14 @@ public class NetworkController {
         // (scenarioKey 쪽도 과거에 거기 쓰던 시절의 낡은 DB 오버라이드가 남아있을 수 있어 함께 정리)
         xmlLayerVersionService.deleteVersion(LAYER_KEY, versionId);
         if (!scenarioKey.equals(versionId)) xmlLayerVersionService.deleteVersion(LAYER_KEY, scenarioKey);
+
+        // ⚠️ network.xml이 통째로 새로 들어왔으므로, 이전(다른) 네트워크 기준으로 계산된
+        // 회전/축척 캘리브레이션은 이제 의미가 없다 — 지우지 않으면 도로(새 network.xml 자체
+        // 값 우선, 없으면 0°/1.0)와 차량(network.xml에 없으면 이 낡은 시나리오 값으로 폴백)이
+        // 서로 다른 회전/축척을 적용받아 지도 전체에 걸쳐 어긋나 보인다(실측 확인: scenario3_1
+        // — 파일로 원본 network.xml을 그대로 들여왔는데 예전 2점 캘리브레이션 값이 그대로
+        // 남아있어 차량만 회전·확대된 좌표로 재생됨).
+        scenarioService.clearCalibration(versionId);
 
         // 좌표를 파라미터로 받았다면 DB에 영구 저장 (이후 로드 시에도 동일 좌표 사용)
         if (latitude != null && longitude != null) {
@@ -814,21 +893,29 @@ public class NetworkController {
             xmlLayerVersionRepository.deleteByLayerKeyAndVersionId(layerKey, versionId);
         }
 
-        // signal 버전/로그
+        // signal 버전/로그 (+ 타일 캐시 — 삭제만 하고 재임포트가 뒤따르지 않는 경우를 대비)
         signalLogsRepository.deleteByVersionId(versionId);
         signalVersionsRepository.deleteByVersionId(versionId);
+        try { signalTileService.invalidate(versionId); }
+        catch (Exception e) { log.warn("[NetworkController] 신호 타일 캐시 무효화 실패(무시): {}", e.getMessage()); }
 
-        // busStation 버전/로그
+        // busStation 버전/로그 (+ 타일 캐시)
         busStationLogsRepository.deleteByVersionId(versionId);
         busStationVersionsRepository.deleteByVersionId(versionId);
+        try { busStationTileService.invalidate(versionId); }
+        catch (Exception e) { log.warn("[NetworkController] 버스정류장 타일 캐시 무효화 실패(무시): {}", e.getMessage()); }
 
-        // railStation 버전/로그
+        // railStation 버전/로그 (+ 타일 캐시)
         railStationLogsRepository.deleteByVersionId(versionId);
         railStationVersionsRepository.deleteByVersionId(versionId);
+        try { railStationTileService.invalidate(versionId); }
+        catch (Exception e) { log.warn("[NetworkController] 철도역 타일 캐시 무효화 실패(무시): {}", e.getMessage()); }
 
-        // pavementMarking 버전/로그
+        // pavementMarking 버전/로그 (+ 타일 캐시)
         pavementMarkingLogsRepository.deleteByVersionId(versionId);
         pavementMarkingVersionsRepository.deleteByVersionId(versionId);
+        try { pavementMarkingTileService.invalidate(versionId); }
+        catch (Exception e) { log.warn("[NetworkController] 노면표시 타일 캐시 무효화 실패(무시): {}", e.getMessage()); }
 
         // vehicle route (DB 캐시)
         vehicleRouteRepository.deleteByVersionId(versionId);

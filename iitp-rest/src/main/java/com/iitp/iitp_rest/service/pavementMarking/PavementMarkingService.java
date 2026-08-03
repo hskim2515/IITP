@@ -33,6 +33,7 @@ public class PavementMarkingService {
 
     private final PavementMarkingVersionsRepository pavementMarkingVersionsRepository;
     private final PavementMarkingLogsRepository pavementMarkingLogsRepository;
+    private final PavementMarkingCoordinateResolver coordinateResolver;
 
     @Value("${database.vehicle_sim.remoteUrl}")
     private String remoteUrl;
@@ -48,6 +49,10 @@ public class PavementMarkingService {
     @Transactional
     public void savePavementMarking(PavementMarkingSaveRequest request, String versionId) {
         PavementMarkingVersion latest = pavementMarkingVersionsRepository.findByVersionIdAndVersionRole(versionId, BaseVersion.VersionRole.LATEST).orElse(new PavementMarkingVersion());
+
+        // 좌표가 비어있는 항목(자동생성 직후 등)을 실제 위경도로 채운다 — 실패해도 저장 자체는
+        // 계속 진행(PavementMarkingCoordinateResolver 참고).
+        coordinateResolver.resolveCoordinates(versionId, request.getData());
 
         latest.setVersionId(versionId);
         latest.setVersionRole(BaseVersion.VersionRole.LATEST);

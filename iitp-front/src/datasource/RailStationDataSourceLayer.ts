@@ -2,7 +2,7 @@ import * as Cesium from "cesium";
 import { Color, Entity, CustomDataSource, Viewer } from "cesium";
 import { layerNameToStoreMap } from "@hooks/useLayerInit";
 import { FEATURE_TYPE, RailPublicStationResponse, TRANSIT_MODE } from "@type/Station";
-import { computePositionAtOffsetCesium } from "@utils/offset";
+import { computePositionAtOffsetPolylineCesium } from "@utils/offset";
 import { LOD_ALT, RAIL_STATION_TILING } from "@utils/lodConstants";
 import { CesiumFacilityCluster } from "@datasource/cesiumFacilityCluster";
 import { getActiveVersionId } from "@utils/versionId";
@@ -225,18 +225,14 @@ export default class RailStationDataSourceLayer {
         const networkData: any = networkStore.getState().currentJsonData;
         if (!networkData?.links) return;
 
-        /* ── linkId → {start, end, laneCount} ── */
-        const linkCoordMap = new Map<string, { start: Cesium.Cartesian3; end: Cesium.Cartesian3; laneCount: number }>();
+        /* ── linkId → {allPts, laneCount} ── 첫/끝 점만 쓰면 곡선 링크에서 출구 위치가
+         * 어긋난다(2D railStationPosition.ts와 동일 조치). */
+        const linkCoordMap = new Map<string, { allPts: Cesium.Cartesian3[]; laneCount: number }>();
         for (const link of networkData.links) {
             if (!link.coordinates || link.coordinates.length < 2) continue;
-            const first = link.coordinates[0];
-            const last  = link.coordinates[link.coordinates.length - 1];
+            const allPts = link.coordinates.map((c: any) => Cesium.Cartesian3.fromDegrees(c.lng, c.lat));
             const laneCount = Array.isArray(link.lanes) ? link.lanes.length : 1;
-            linkCoordMap.set(String(link.id), {
-                start: Cesium.Cartesian3.fromDegrees(first.lng, first.lat),
-                end:   Cesium.Cartesian3.fromDegrees(last.lng,  last.lat),
-                laneCount,
-            });
+            linkCoordMap.set(String(link.id), { allPts, laneCount });
         }
 
         /* ── 역별 exit 위치 계산 ── */
@@ -249,11 +245,9 @@ export default class RailStationDataSourceLayer {
             for (const exit of rawExits) {
                 const link = linkCoordMap.get(String(exit.linkRef));
                 if (!link || exit.offset == null) continue;
-                const { offsetPosition: onLinkPos } = computePositionAtOffsetCesium(link.start, link.end, exit.offset);
+                const { offsetPosition: onLinkPos, direction: dir } = computePositionAtOffsetPolylineCesium(link.allPts, exit.offset);
 
                 const sidewalkOffset = link.laneCount * LANE_WIDTH + SIDEWALK_MARGIN;
-                const dir = Cesium.Cartesian3.subtract(link.end, link.start, new Cesium.Cartesian3());
-                Cesium.Cartesian3.normalize(dir, dir);
                 const up   = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(onLinkPos, new Cesium.Cartesian3());
                 const perp = Cesium.Cartesian3.cross(dir, up, new Cesium.Cartesian3());
                 Cesium.Cartesian3.normalize(perp, perp);
@@ -450,13 +444,13 @@ export default class RailStationDataSourceLayer {
                 disableDepthTestDistance: Number.POSITIVE_INFINITY,
             }) as unknown as Cesium.PointPrimitive);
 
-            /* 지면 슬래브 */
+            /* 지면 슬래브 — 테두리를 줘서 포장재 경계가 또렷해 보이게 함 */
             const slabE = new Entity({
                 position: Cesium.Cartesian3.fromDegrees(lng, lat, exitH),
                 ellipse: {
                     semiMajorAxis: SLAB_R_MAJ, semiMinorAxis: SLAB_R_MIN,
                     height: exitH, extrudedHeight: exitH + SLAB_H,
-                    material: C_SLAB, outline: false,
+                    material: C_SLAB, outline: true, outlineColor: C_SUBWAY_BLUE.withAlpha(0.9),
                 },
                 properties: { featureType: FEATURE_TYPE.RAIL_STATION_EXIT, exitId },
             });
@@ -474,14 +468,25 @@ export default class RailStationDataSourceLayer {
             (poleE as any).distanceDisplayCondition = LOD_3D;
             entities.push(this.dataSource.entities.add(poleE));
 
-            /* 원형 표지판 */
+            /* 폴 캡 — 폴이 표지판 속으로 그냥 파묻히지 않고 마감된 것처럼 보이게 하는 작은 돔 */
+            const capE = new Entity({
+                position: Cesium.Cartesian3.fromDegrees(lng, lat, exitH + SLAB_H + POLE_HEIGHT),
+                ellipsoid: {
+                    radii: new Cesium.Cartesian3(POLE_RADIUS * 1.8, POLE_RADIUS * 1.8, POLE_RADIUS * 1.8),
+                    material: C_POLE,
+                },
+            });
+            (capE as any).distanceDisplayCondition = LOD_3D;
+            entities.push(this.dataSource.entities.add(capE));
+
+            /* 원형 표지판 — 서울교통공사 출구 표지판처럼 흰 테두리 링으로 마감 */
             const discTop = exitH + SLAB_H + POLE_HEIGHT + DISC_R;
             const discE = new Entity({
                 position: Cesium.Cartesian3.fromDegrees(lng, lat, discTop),
                 ellipse: {
                     semiMajorAxis: DISC_R, semiMinorAxis: DISC_R,
                     height: discTop - DISC_THICK, extrudedHeight: discTop,
-                    material: C_SUBWAY_BLUE, outline: false,
+                    material: C_SUBWAY_BLUE, outline: true, outlineColor: C_DISC_INNER,
                 },
             });
             (discE as any).distanceDisplayCondition = LOD_3D;

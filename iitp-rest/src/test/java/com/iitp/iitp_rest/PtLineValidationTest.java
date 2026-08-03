@@ -1,8 +1,11 @@
 package com.iitp.iitp_rest;
 
+import com.iitp.iitp_rest.model.publicTransit.bus.BusPtLinesXml;
+import com.iitp.iitp_rest.model.publicTransit.rail.RailPtLineXml;
 import com.iitp.iitp_rest.service.publicTransit.line.PtLineValidation;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -79,5 +82,81 @@ class PtLineValidationTest {
         assertTrue(PtLineValidation.railRouteValid("", Set.of()));
         // 대조할 정류장 집합 자체를 모르면(null) 보수적으로 유지
         assertTrue(PtLineValidation.railRouteValid(ROUTES_XML, null));
+    }
+
+    // ── findBusLinesMissingRouting / findRailRoutesMissingStationSeq ──────────
+    // 부천 원본 roadPTline.xml(중첩 <links><link id=".." station=".."/></links> 스키마)을
+    // 이 앱의 평평한 스키마로 그대로 파싱하면 link/node/station이 전부 null이 되어 NextSim이
+    // 터미널 조합과 무관하게 크래시하던 실사용 버그의 회귀 방지 테스트.
+
+    private static BusPtLinesXml.SeqXml seq(String s) {
+        BusPtLinesXml.SeqXml x = new BusPtLinesXml.SeqXml();
+        x.setSeq(s);
+        return x;
+    }
+
+    private static BusPtLinesXml.LineXml busLine(String id, BusPtLinesXml.SeqXml link, BusPtLinesXml.SeqXml node, BusPtLinesXml.SeqXml station) {
+        BusPtLinesXml.LineXml l = new BusPtLinesXml.LineXml();
+        l.setId(id);
+        l.setLink(link);
+        l.setNode(node);
+        l.setStation(station);
+        return l;
+    }
+
+    @Test
+    void findBusLinesMissingRouting_flags_null_link_node_station() {
+        // 중첩 스키마 파싱 후처럼 link/node/station이 전부 null인 경우
+        BusPtLinesXml xml = new BusPtLinesXml();
+        xml.setLines(List.of(busLine("Bus6-2_out", null, null, null)));
+
+        List<String> bad = PtLineValidation.findBusLinesMissingRouting(xml);
+        assertEquals(List.of("Bus6-2_out"), bad);
+    }
+
+    @Test
+    void findBusLinesMissingRouting_flags_blank_seq_values() {
+        BusPtLinesXml xml = new BusPtLinesXml();
+        xml.setLines(List.of(busLine("1", seq("20000001 20000002"), seq("10000001 10000002"), seq(""))));
+
+        List<String> bad = PtLineValidation.findBusLinesMissingRouting(xml);
+        assertEquals(List.of("1"), bad);
+    }
+
+    @Test
+    void findBusLinesMissingRouting_passes_when_fully_populated() {
+        BusPtLinesXml xml = new BusPtLinesXml();
+        xml.setLines(List.of(busLine("1", seq("20000001 20000002"), seq("10000001 10000002"), seq("1 2"))));
+
+        assertTrue(PtLineValidation.findBusLinesMissingRouting(xml).isEmpty());
+    }
+
+    @Test
+    void findBusLinesMissingRouting_empty_for_no_lines() {
+        BusPtLinesXml xml = new BusPtLinesXml();
+        assertTrue(PtLineValidation.findBusLinesMissingRouting(xml).isEmpty());
+        assertTrue(PtLineValidation.findBusLinesMissingRouting(null).isEmpty());
+    }
+
+    private static RailPtLineXml.RouteXml railRoute(Integer id, String railStationSeq) {
+        RailPtLineXml.RouteXml r = new RailPtLineXml.RouteXml();
+        r.setId(id);
+        r.setRailStationSeq(railStationSeq);
+        return r;
+    }
+
+    @Test
+    void findRailRoutesMissingStationSeq_flags_null_and_blank() {
+        RailPtLineXml xml = new RailPtLineXml();
+        xml.setRoutes(List.of(railRoute(1, null), railRoute(2, ""), railRoute(3, "1 2 3")));
+
+        List<String> bad = PtLineValidation.findRailRoutesMissingStationSeq(xml);
+        assertEquals(List.of("1", "2"), bad);
+    }
+
+    @Test
+    void findRailRoutesMissingStationSeq_empty_for_no_routes() {
+        assertTrue(PtLineValidation.findRailRoutesMissingStationSeq(new RailPtLineXml()).isEmpty());
+        assertTrue(PtLineValidation.findRailRoutesMissingStationSeq(null).isEmpty());
     }
 }
