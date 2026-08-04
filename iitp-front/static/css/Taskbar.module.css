@@ -10,14 +10,14 @@
     height: 32px;
     /* border-top 이 height 밖으로 나가 실제 33px 을 점유하지 않게 */
     box-sizing: border-box;
-    background: rgba(20, 20, 20, 0.95);
+    background: var(--surface-3);
     display: flex;
     align-items: center;
     padding: 0 8px;
     gap: 6px;
     z-index: 1100;
-    border-top: 1px solid #444;
-    box-shadow: 0 -1px 4px rgba(0,0,0,0.25);
+    border-top: 1px solid var(--text-disabled);
+    box-shadow: 0 -1px 4px rgba(var(--surface-overlay-rgb), 0.25);
 }
 .task-chip {
     display: inline-flex;
@@ -25,9 +25,9 @@
     gap: 5px;
     padding: 3px 8px;
     border-radius: 6px;
-    border: 0.5px solid rgba(255, 255, 255, 0.12);
-    background: rgba(255, 255, 255, 0.04);
-    color: rgba(255, 255, 255, 0.45);
+    border: 0.5px solid rgba(var(--overlay-rgb), 0.12);
+    background: rgba(var(--overlay-rgb), 0.04);
+    color: rgba(var(--overlay-rgb), 0.45);
     font-size: 12px;
     cursor: pointer;
     transition: background 0.15s, border-color 0.15s, color 0.15s;
@@ -35,28 +35,28 @@
 }
 
 .task-chip:hover {
-    background: rgba(255, 255, 255, 0.08);
-    border-color: rgba(255, 255, 255, 0.2);
-    color: rgba(255, 255, 255, 0.75);
+    background: var(--fill-hover);
+    border-color: rgba(var(--overlay-rgb), 0.2);
+    color: rgba(var(--overlay-rgb), 0.75);
 }
 
 .task-chip.active {
-    background: rgba(0, 122, 255, 0.18);
-    border-color: rgba(0, 122, 255, 0.5);
-    color: #60aaff;
+    background: rgba(var(--accent-alt-rgb), 0.18);
+    border-color: rgba(var(--accent-alt-rgb), 0.5);
+    color: var(--accent-taskbar);
 }
 
 .chip-dot {
     width: 5px;
     height: 5px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.25);
+    background: rgba(var(--overlay-rgb), 0.25);
     flex-shrink: 0;
     transition: background 0.15s;
 }
 
 .task-chip.active .chip-dot {
-    background: #60aaff;
+    background: var(--accent-taskbar);
 }
 
 .chip-close {
@@ -73,5 +73,5 @@
 
 .chip-close:hover {
     opacity: 1;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--overlay-rgb), 0.1);
 }

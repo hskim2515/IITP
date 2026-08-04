@@ -229,6 +229,12 @@ export default class NetworkDataSourceLayer {
     private tileVersionId: string | null = null;
     /** 편집 델타 오버레이 프리미티브 (타일 모드에서 미저장 편집 링크의 새 형상 — 2D 오버레이의 3D 대응) */
     private editOverlayPrims: (Cesium.GroundPrimitive | Cesium.GroundPolylinePrimitive)[] = [];
+    /** 차단 구간(segment.block=true) 오버레이 프리미티브 — NetworkFeatureLayer(2D)의
+     *  blockedSegSource와 동일 목적의 3D 대응. 청크 프리미티브는 서버 타일 페이로드 기준으로
+     *  빌드돼(segments 원본 데이터 자체가 없거나 커스터마이즈 안 됨) 편집한 차단 구간이
+     *  청크 재빌드로는 반영되지 않으므로, editOverlayPrims와 같은 방식(별도 오버레이,
+     *  currentJsonData 직접 읽음)으로 둔다. */
+    private blockedSegPrims: Cesium.GroundPrimitive[] = [];
     private unsubscribeEdit: (() => void) | undefined;
     private applyVisDebounce: ReturnType<typeof setTimeout> | null = null; // 타일 다중 로드 시 applyVisibility 1회로 합침
     // 3D 줌아웃(overview/mid): 간선 중심선 폴리라인 1회 fetch (2D MVT 대응). near로 줌인하면 타일로 전환.
@@ -1278,6 +1284,9 @@ export default class NetworkDataSourceLayer {
             // 편집 중 형상 변경(드래그/undo)은 editedLinkIds 집합이 안 변해도 좌표가 변한다
             // → store 데이터 변경마다 오버레이 재구성 (집합 변경은 edit 구독이 청크 마스킹까지 처리)
             this.rebuildEditOverlay();
+            // 차단 구간(segment.block)은 링크 geo hash에 반영 안 되는 lane 내부 속성이라
+            // editedLinkIds 집합과 무관하게 store 데이터가 바뀔 때마다 다시 그린다(위와 동일 이유).
+            this.rebuildBlockedSegmentOverlay();
             return;
         }
         const store = layerNameToStoreMap[this.LAYER_NAME];
@@ -1633,6 +1642,108 @@ export default class NetworkDataSourceLayer {
         for (const p of this.editOverlayPrims) this.viewer.scene.groundPrimitives.add(p);
         this.pumpUntilReady(this.editOverlayPrims as any);
         (globalThis as any).__netEditOverlay3D = this.editOverlayPrims.length;
+        try { this.viewer.scene.requestRender(); } catch (_) { /* noop */ }
+    }
+
+    /** lanePositions(누적 거리 기준)에서 [startM, endM] 구간만 잘라낸 하위 폴리라인.
+     *  경계점은 선형보간(Cartesian3.lerp)으로 정확히 계산 — createRectangleAlongLane(2D,
+     *  단일 직선 구간 전용)의 3D+다중정점 버전. */
+    private static sliceByDistance(positions: Cesium.Cartesian3[], startM: number, endM: number): Cesium.Cartesian3[] {
+        if (positions.length < 2 || !(endM > startM)) return [];
+        const out: Cesium.Cartesian3[] = [];
+        let acc = 0;
+        for (let i = 0; i < positions.length - 1; i++) {
+            const a = positions[i]!, b = positions[i + 1]!;
+            const segLen = Cesium.Cartesian3.distance(a, b);
+            const segStart = acc, segEnd = acc + segLen;
+            if (segEnd > startM && segStart < endM && segLen > 0) {
+                const clipStart = Math.max(startM, segStart);
+                const clipEnd = Math.min(endM, segEnd);
+                const tStart = (clipStart - segStart) / segLen;
+                const tEnd = (clipEnd - segStart) / segLen;
+                const pStart = Cesium.Cartesian3.lerp(a, b, tStart, new Cesium.Cartesian3());
+                const pEnd = Cesium.Cartesian3.lerp(a, b, tEnd, new Cesium.Cartesian3());
+                const last = out[out.length - 1];
+                if (!last || !Cesium.Cartesian3.equalsEpsilon(last, pStart, Cesium.Math.EPSILON7)) out.push(pStart);
+                out.push(pEnd);
+            }
+            acc = segEnd;
+            if (acc >= endM) break;
+        }
+        return out;
+    }
+
+    /**
+     * segment.block=true 인 구간을 지도 위에 노란 코리도(폴리곤)로 표시 — 2D
+     * NetworkFeatureLayer.renderBlockedSegmentsOverlay의 3D 대응. buildLinkInstances와
+     * 동일한 lateralOffset 규약((i-(n-1)/2)*laneWidth)과 computeOffsetPositions로 실제
+     * 렌더되는 레인 중심선을 그대로 재사용해(2D는 직선 근사만 가능했던 것과 달리) 커브 도로에서도
+     * 정확한 위치에 그려진다.
+     */
+    private rebuildBlockedSegmentOverlay(): void {
+        for (const p of this.blockedSegPrims) {
+            try { this.viewer.scene.groundPrimitives.remove(p); } catch (_) { /* noop */ }
+        }
+        this.blockedSegPrims = [];
+        if (this.destroyed) return;
+        if (!NETWORK_TILING.ENABLED && !useNetworkTileStore.getState().tileMode) return;
+
+        const store = layerNameToStoreMap[this.LAYER_NAME];
+        const net: any = store?.getState()?.currentJsonData;
+        if (!net?.links) { try { this.viewer.scene.requestRender(); } catch (_) {} return; }
+
+        const instances: Cesium.GeometryInstance[] = [];
+        for (const link of net.links) {
+            if (!link?.lanes?.length) continue;
+            if (!Array.isArray(link.coordinates) || link.coordinates.length < 2) continue;
+            const roadWidth = link.width ?? 7;
+            const laneCount = link.lanes.length || 2;
+            const laneWidth = roadWidth / laneCount;
+            for (let i = 0; i < link.lanes.length; i++) {
+                const lane = link.lanes[i];
+                const segs = lane?.segments;
+                if (!Array.isArray(segs) || segs.length === 0) continue;
+                const blocked = segs.filter((s: any) => s?.block === true);
+                if (blocked.length === 0) continue;
+                const lateralOffset = (i - (laneCount - 1) / 2) * laneWidth;
+                const lanePositions = this.computeOffsetPositions(link.coordinates, lateralOffset);
+                for (const seg of blocked) {
+                    const init = seg.initPoint ?? 0;
+                    const end = seg.endPoint ?? init;
+                    const startM = Math.min(init, end), endM = Math.max(init, end);
+                    if (!(endM > startM)) continue;
+                    const sliced = NetworkDataSourceLayer.sliceByDistance(lanePositions, startM, endM);
+                    if (sliced.length < 2) continue;
+                    try {
+                        instances.push(new Cesium.GeometryInstance({
+                            id: `blocked_${link.id}_${i}_${seg.id ?? startM}`,
+                            geometry: new Cesium.CorridorGeometry({
+                                positions: sliced,
+                                width: laneWidth * 0.8,
+                                cornerType: Cesium.CornerType.MITERED,
+                                vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
+                            }),
+                            attributes: {
+                                color: Cesium.ColorGeometryInstanceAttribute.fromColor(
+                                    Cesium.Color.fromBytes(255, 196, 0, 200)
+                                ),
+                            },
+                        }));
+                    } catch (_) { /* 좌표 불충분 등 — 스킵 */ }
+                }
+            }
+        }
+        if (instances.length === 0) { try { this.viewer.scene.requestRender(); } catch (_) {} return; }
+
+        const prim = new Cesium.GroundPrimitive({
+            geometryInstances: instances,
+            appearance: new Cesium.PerInstanceColorAppearance({ flat: true, translucent: true }),
+            asynchronous: true,
+            classificationType: Cesium.ClassificationType.BOTH,
+        });
+        this.blockedSegPrims.push(prim);
+        this.viewer.scene.groundPrimitives.add(prim);
+        this.pumpUntilReady(this.blockedSegPrims as any);
         try { this.viewer.scene.requestRender(); } catch (_) { /* noop */ }
     }
 
@@ -2228,6 +2339,10 @@ export default class NetworkDataSourceLayer {
             try { this.viewer.scene.groundPrimitives.remove(p); } catch (_) { /* noop */ }
         }
         this.editOverlayPrims = [];
+        for (const p of this.blockedSegPrims) {
+            try { this.viewer.scene.groundPrimitives.remove(p); } catch (_) { /* noop */ }
+        }
+        this.blockedSegPrims = [];
         if (this.highlightPrimitive) {
             try { this.viewer.scene.groundPrimitives.remove(this.highlightPrimitive); } catch (_) {}
             this.highlightPrimitive = null;

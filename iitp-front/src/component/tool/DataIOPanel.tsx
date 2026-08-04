@@ -495,7 +495,7 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
             />
             {!hideHeader && (
                 <div className={styles.panelHeader}>
-                    <span className={styles.tab} style={{ color: '#7aa2ff', fontWeight: 600, cursor: 'default' }}>
+                    <span className={styles.tab} style={{ color: 'var(--accent-text)', fontWeight: 600, cursor: 'default' }}>
                         데이터 입출력
                     </span>
                 </div>
@@ -550,8 +550,8 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
                     <div
                         style={{
                             ...dropZoneStyle,
-                            borderColor: isDragging ? 'rgba(65,105,225,0.7)' : 'rgba(255,255,255,0.12)',
-                            background: isDragging ? 'rgba(65,105,225,0.08)' : 'rgba(255,255,255,0.03)',
+                            borderColor: isDragging ? 'rgba(var(--accent-rgb), 0.7)' : 'rgba(var(--overlay-rgb), 0.12)',
+                            background: isDragging ? 'rgba(var(--accent-rgb), 0.08)' : 'rgba(var(--overlay-rgb), 0.03)',
                             opacity: dbUploading ? 0.6 : 1,
                             pointerEvents: dbUploading ? 'none' : undefined,
                         }}
@@ -561,10 +561,10 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
                         onClick={() => fileInputRef.current?.click()}
                     >
                         <div style={{ fontSize: 20, marginBottom: 4, opacity: 0.6 }}>⬆</div>
-                        <div style={{ fontSize: 11, color: '#888' }}>
+                        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                             {dbUploading ? 'vehicle_sim.db 업로드 중…' : 'JSON, XML 또는 DB 파일을 끌어오거나'}
                         </div>
-                        <div style={{ fontSize: 11, color: '#7aa2ff', cursor: 'pointer' }}>클릭하여 선택</div>
+                        <div style={{ fontSize: 11, color: 'var(--accent-text)', cursor: 'pointer' }}>클릭하여 선택</div>
                         <input
                             ref={fileInputRef}
                             type="file"
@@ -577,15 +577,15 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
                     {/* XML 레이어 선택 패널 */}
                     {xmlImport && (
                         <div style={xmlPanelStyle}>
-                            <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>
-                                <span style={{ color: '#7aa2ff' }}>📄 {xmlImport.file.name}</span>
+                            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
+                                <span style={{ color: 'var(--accent-text)' }}>📄 {xmlImport.file.name}</span>
                             </div>
                             {xmlImport.detectedLayer ? (
-                                <div style={{ fontSize: 11, color: '#6fcf97', marginBottom: 8 }}>
+                                <div style={{ fontSize: 11, color: 'var(--color-success)', marginBottom: 8 }}>
                                     ✓ 자동 감지: <strong>{xmlImport.detectedLayer.label}</strong>
                                 </div>
                             ) : (
-                                <div style={{ fontSize: 11, color: '#f5a623', marginBottom: 6 }}>
+                                <div style={{ fontSize: 11, color: 'var(--color-warning)', marginBottom: 6 }}>
                                     파일명으로 레이어를 감지할 수 없습니다. 직접 선택하세요.
                                 </div>
                             )}
@@ -602,11 +602,11 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
 
                             {/* 좌표 입력 (network XML 가져오기 시 기준점 지정) */}
                             {coordInput && (
-                                <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 6, background: 'rgba(80,120,255,0.06)', border: '1px solid rgba(80,120,255,0.25)' }}>
+                                <div style={{ marginTop: 10, padding: '8px 10px', borderRadius: 6, background: 'rgba(var(--accent-text-rgb), 0.06)', border: '1px solid rgba(var(--accent-text-rgb), 0.25)' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                                        <div style={{ fontSize: 11, color: '#8aaaee' }}>기준점 좌표 (배치 위치)</div>
+                                        <div style={{ fontSize: 11, color: 'var(--accent-text)' }}>기준점 좌표 (배치 위치)</div>
                                         <button
-                                            style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', background: 'rgba(80,140,255,0.15)', border: '1px solid rgba(80,140,255,0.4)', color: '#7ab0ff', lineHeight: 1.6 }}
+                                            style={{ fontSize: 10, padding: '2px 8px', borderRadius: 4, cursor: 'pointer', background: 'rgba(var(--accent-text-rgb), 0.15)', border: '1px solid rgba(var(--accent-text-rgb), 0.4)', color: 'var(--accent-text)', lineHeight: 1.6 }}
                                             onClick={() => {
                                                 useMapStore.getState().startCoordPick((lat, lng) => {
                                                     setCoordInput({
@@ -620,13 +620,13 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
                                         </button>
                                     </div>
                                     {!coordInput.latitude && !coordInput.longitude && (
-                                        <div style={{ fontSize: 10, color: '#f5a623', marginBottom: 6 }}>
+                                        <div style={{ fontSize: 10, color: 'var(--color-warning)', marginBottom: 6 }}>
                                             ⚠ 시나리오 기준 좌표가 없습니다. 직접 입력하거나 지도에서 선택하세요.
                                         </div>
                                     )}
                                     <div style={{ display: 'flex', gap: 6 }}>
                                         <div style={{ flex: 1 }}>
-                                            <div style={{ fontSize: 10, color: '#888', marginBottom: 3 }}>위도 (Latitude)</div>
+                                            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>위도 (Latitude)</div>
                                             <input
                                                 type="number"
                                                 step="any"
@@ -637,7 +637,7 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
                                             />
                                         </div>
                                         <div style={{ flex: 1 }}>
-                                            <div style={{ fontSize: 10, color: '#888', marginBottom: 3 }}>경도 (Longitude)</div>
+                                            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 3 }}>경도 (Longitude)</div>
                                             <input
                                                 type="number"
                                                 step="any"
@@ -678,9 +678,9 @@ const DataIOPanel: React.FC<{ hideHeader?: boolean; section?: DataIOSection }> =
                             padding: '7px 10px',
                             borderRadius: 6,
                             fontSize: 11,
-                            background: importStatus.type === 'ok' ? 'rgba(0,200,100,0.1)' : 'rgba(220,60,60,0.12)',
-                            border: `1px solid ${importStatus.type === 'ok' ? 'rgba(0,200,100,0.3)' : 'rgba(220,60,60,0.3)'}`,
-                            color: importStatus.type === 'ok' ? '#4ecb8d' : '#f07070',
+                            background: importStatus.type === 'ok' ? 'rgba(var(--color-success-rgb), 0.1)' : 'rgba(var(--color-danger-rgb), 0.12)',
+                            border: `1px solid ${importStatus.type === 'ok' ? 'rgba(var(--color-success-rgb), 0.3)' : 'rgba(var(--color-danger-rgb), 0.3)'}`,
+                            color: importStatus.type === 'ok' ? 'var(--color-success)' : 'var(--color-danger)',
                         }}>
                             {importStatus.text}
                         </div>
@@ -709,19 +709,19 @@ const LayerSaveRow: React.FC<{
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span style={{
                     width: 6, height: 6, borderRadius: '50%',
-                    background: isChanged ? '#f5a623' : '#333',
+                    background: isChanged ? 'var(--color-warning)' : 'rgba(var(--overlay-rgb), 0.3)',
                     flexShrink: 0,
                 }} />
-                <span style={{ fontSize: 11, color: isChanged ? '#ddd' : '#555' }}>{label}</span>
+                <span style={{ fontSize: 11, color: isChanged ? 'var(--text-secondary)' : 'var(--text-disabled)' }}>{label}</span>
             </div>
             <button
                 onClick={onSave}
                 disabled={!isChanged || saving}
                 style={{
                     padding: '3px 10px', fontSize: 10, borderRadius: 4,
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    background: isChanged ? 'rgba(245,166,35,0.15)' : 'rgba(255,255,255,0.03)',
-                    color: isChanged ? '#f5a623' : '#444',
+                    border: '1px solid rgba(var(--overlay-rgb), 0.12)',
+                    background: isChanged ? 'rgba(var(--color-warning-rgb), 0.15)' : 'rgba(var(--overlay-rgb), 0.03)',
+                    color: isChanged ? 'var(--color-warning)' : 'var(--text-disabled)',
                     cursor: isChanged && !saving ? 'pointer' : 'default',
                 }}
             >
@@ -742,7 +742,7 @@ const LayerExportRow: React.FC<{
     const hasData = !!store.getState().currentJsonData;
     return (
         <div style={rowStyle}>
-            <span style={{ fontSize: 11, color: hasData ? '#aaa' : '#444' }}>{label}</span>
+            <span style={{ fontSize: 11, color: hasData ? 'var(--text-tertiary)' : 'var(--text-disabled)' }}>{label}</span>
             <div style={{ display: 'flex', gap: 4 }}>
                 {onExportXml && (
                     <button
@@ -750,9 +750,9 @@ const LayerExportRow: React.FC<{
                         disabled={exportingXml}
                         style={{
                             padding: '3px 10px', fontSize: 10, borderRadius: 4,
-                            border: '1px solid rgba(255,255,255,0.12)',
-                            background: 'rgba(80,180,100,0.15)',
-                            color: exportingXml ? '#555' : '#6ecf8a',
+                            border: '1px solid rgba(var(--overlay-rgb), 0.12)',
+                            background: 'rgba(var(--color-success-rgb), 0.15)',
+                            color: exportingXml ? 'var(--text-disabled)' : 'var(--color-success)',
                             cursor: exportingXml ? 'default' : 'pointer',
                         }}
                     >
@@ -764,9 +764,9 @@ const LayerExportRow: React.FC<{
                     disabled={!hasData}
                     style={{
                         padding: '3px 10px', fontSize: 10, borderRadius: 4,
-                        border: '1px solid rgba(255,255,255,0.12)',
-                        background: hasData ? 'rgba(65,105,225,0.15)' : 'rgba(255,255,255,0.03)',
-                        color: hasData ? '#7aa2ff' : '#444',
+                        border: '1px solid rgba(var(--overlay-rgb), 0.12)',
+                        background: hasData ? 'rgba(var(--accent-rgb), 0.15)' : 'rgba(var(--overlay-rgb), 0.03)',
+                        color: hasData ? 'var(--accent-text)' : 'var(--text-disabled)',
                         cursor: hasData ? 'pointer' : 'default',
                     }}
                 >
@@ -779,13 +779,13 @@ const LayerExportRow: React.FC<{
 
 // ── 스타일 ────────────────────────────────────────────────────
 const sectionTitleStyle: React.CSSProperties = {
-    fontSize: 10, fontWeight: 600, color: '#555',
+    fontSize: 10, fontWeight: 600, color: 'var(--text-disabled)',
     letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: 6,
 };
 
 const rowStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.04)',
+    padding: '5px 0', borderBottom: '1px solid rgba(var(--overlay-rgb), 0.04)',
 };
 
 const dropZoneStyle: React.CSSProperties = {
@@ -798,16 +798,16 @@ const xmlPanelStyle: React.CSSProperties = {
     marginTop: 8,
     padding: '10px 12px',
     borderRadius: 8,
-    background: 'rgba(65,105,225,0.06)',
-    border: '1px solid rgba(65,105,225,0.2)',
+    background: 'rgba(var(--accent-rgb), 0.06)',
+    border: '1px solid rgba(var(--accent-rgb), 0.2)',
 };
 
 const selectStyle: React.CSSProperties = {
     width: '100%',
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.12)',
+    background: 'rgba(var(--overlay-rgb), 0.06)',
+    border: '1px solid rgba(var(--overlay-rgb), 0.12)',
     borderRadius: 5,
-    color: '#c8ccd4',
+    color: 'var(--text-secondary)',
     fontSize: 12,
     padding: '5px 8px',
     outline: 'none',
@@ -818,10 +818,10 @@ const selectStyle: React.CSSProperties = {
 const coordInputStyle: React.CSSProperties = {
     width: '100%',
     boxSizing: 'border-box',
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.12)',
+    background: 'rgba(var(--overlay-rgb), 0.06)',
+    border: '1px solid rgba(var(--overlay-rgb), 0.12)',
     borderRadius: 5,
-    color: '#c8ccd4',
+    color: 'var(--text-secondary)',
     fontSize: 12,
     padding: '5px 8px',
     outline: 'none',
@@ -829,16 +829,16 @@ const coordInputStyle: React.CSSProperties = {
 
 const cancelSmallBtnStyle: React.CSSProperties = {
     flex: 1, padding: '5px 0', fontSize: 11, borderRadius: 4,
-    border: '1px solid rgba(255,255,255,0.1)',
-    background: 'rgba(255,255,255,0.04)',
-    color: '#777', cursor: 'pointer',
+    border: '1px solid rgba(var(--overlay-rgb), 0.1)',
+    background: 'rgba(var(--overlay-rgb), 0.04)',
+    color: 'rgba(var(--overlay-rgb), 0.4)', cursor: 'pointer',
 };
 
 const importSmallBtnStyle: React.CSSProperties = {
     flex: 2, padding: '5px 0', fontSize: 11, borderRadius: 4,
-    border: '1px solid rgba(65,105,225,0.45)',
-    background: 'rgba(65,105,225,0.2)',
-    color: '#7aa2ff', cursor: 'pointer', fontWeight: 600,
+    border: '1px solid rgba(var(--accent-rgb), 0.45)',
+    background: 'rgba(var(--accent-rgb), 0.2)',
+    color: 'var(--accent-text)', cursor: 'pointer', fontWeight: 600,
 };
 
 // ── 시설물 응답 → 스토어 일괄 주입 헬퍼 ─────────────────────────────
@@ -978,34 +978,34 @@ const OsmNetworkSection: React.FC<{
             <button
                 style={{
                     width: '100%', textAlign: 'left', padding: '6px 8px',
-                    background: expanded ? 'rgba(65,105,225,0.1)' : 'transparent',
-                    border: '1px solid ' + (expanded ? 'rgba(65,105,225,0.3)' : 'rgba(255,255,255,0.08)'),
+                    background: expanded ? 'rgba(var(--accent-rgb), 0.1)' : 'transparent',
+                    border: '1px solid ' + (expanded ? 'rgba(var(--accent-rgb), 0.3)' : 'rgba(var(--overlay-rgb), 0.08)'),
                     borderRadius: 6, cursor: 'pointer',
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 }}
                 onClick={() => setExpanded(v => !v)}
             >
-                <span style={{ fontSize: 11, color: '#7aa2ff', fontWeight: 600 }}>
+                <span style={{ fontSize: 11, color: 'var(--accent-text)', fontWeight: 600 }}>
                     📍 표준 노드링크 가져오기
                 </span>
-                <span style={{ fontSize: 10, color: '#555' }}>{expanded ? '▲' : '▼'}</span>
+                <span style={{ fontSize: 10, color: 'var(--text-disabled)' }}>{expanded ? '▲' : '▼'}</span>
             </button>
 
             {expanded && (
                 <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <p style={{ fontSize: 10, color: '#666', margin: 0, lineHeight: 1.5 }}>
+                    <p style={{ fontSize: 10, color: 'rgba(var(--overlay-rgb), 0.4)', margin: 0, lineHeight: 1.5 }}>
                         표준 노드링크 데이터로 네트워크를 생성합니다.
                         차선수·제한속도·도로폭 등 속성이 포함됩니다.
                     </p>
 
                     {selecting ? (
                         <>
-                            <div style={{ fontSize: 10, color: '#ffaa44', lineHeight: 1.5 }}>
+                            <div style={{ fontSize: 10, color: 'var(--color-warning)', lineHeight: 1.5 }}>
                                 Shift + 드래그로 영역을 선택하세요<br/>
-                                <span style={{ color: '#666' }}>(일반 드래그: 지도 이동)</span>
+                                <span style={{ color: 'rgba(var(--overlay-rgb), 0.4)' }}>(일반 드래그: 지도 이동)</span>
                             </div>
                             <button
-                                style={{ ...autoSmallBtnStyle, borderColor: 'rgba(255,160,50,0.5)', color: '#ffaa44' }}
+                                style={{ ...autoSmallBtnStyle, borderColor: 'rgba(var(--color-warning-rgb), 0.5)', color: 'var(--color-warning)' }}
                                 onClick={() => setSelecting(false)}
                             >
                                 선택 취소
@@ -1025,7 +1025,7 @@ const OsmNetworkSection: React.FC<{
                             ['동(E)', east,  setEast],
                         ] as [string, string, React.Dispatch<React.SetStateAction<string>>][]).map(([label, val, setter]) => (
                             <div key={label}>
-                                <div style={{ fontSize: 10, color: '#666', marginBottom: 2 }}>{label}</div>
+                                <div style={{ fontSize: 10, color: 'rgba(var(--overlay-rgb), 0.4)', marginBottom: 2 }}>{label}</div>
                                 <input
                                     type="number" step="any" value={val}
                                     onChange={e => setter(e.target.value)}
@@ -1051,15 +1051,15 @@ const OsmNetworkSection: React.FC<{
 
 const autoSmallBtnStyle: React.CSSProperties = {
     padding: '5px 10px', fontSize: 10, borderRadius: 4,
-    border: '1px solid rgba(65,105,225,0.4)',
-    background: 'rgba(65,105,225,0.1)', color: '#7aa2ff',
+    border: '1px solid rgba(var(--accent-rgb), 0.4)',
+    background: 'rgba(var(--accent-rgb), 0.1)', color: 'var(--accent-text)',
     cursor: 'pointer', whiteSpace: 'nowrap',
 };
 
 const autoInputStyle: React.CSSProperties = {
     width: '100%', boxSizing: 'border-box',
-    background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 4, color: '#ccc', fontSize: 11, padding: '4px 7px', outline: 'none',
+    background: 'rgba(var(--overlay-rgb), 0.05)', border: '1px solid rgba(var(--overlay-rgb), 0.1)',
+    borderRadius: 4, color: 'var(--text-secondary)', fontSize: 11, padding: '4px 7px', outline: 'none',
 };
 
 // ── OSM 가져오기 섹션 ──────────────────────────────────────────
@@ -1145,7 +1145,7 @@ const SumoNetworkSection: React.FC<{
                 style={{
                     width: '100%', textAlign: 'left', padding: '6px 8px',
                     background: expanded ? 'rgba(100,65,225,0.1)' : 'transparent',
-                    border: '1px solid ' + (expanded ? 'rgba(100,65,225,0.3)' : 'rgba(255,255,255,0.08)'),
+                    border: '1px solid ' + (expanded ? 'rgba(100,65,225,0.3)' : 'rgba(var(--overlay-rgb), 0.08)'),
                     borderRadius: 6, cursor: 'pointer',
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                 }}
@@ -1154,24 +1154,24 @@ const SumoNetworkSection: React.FC<{
                 <span style={{ fontSize: 11, color: '#aa88ff', fontWeight: 600 }}>
                     🗺 OSM 가져오기
                 </span>
-                <span style={{ fontSize: 10, color: '#555' }}>{expanded ? '▲' : '▼'}</span>
+                <span style={{ fontSize: 10, color: 'var(--text-disabled)' }}>{expanded ? '▲' : '▼'}</span>
             </button>
 
             {expanded && (
                 <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <p style={{ fontSize: 10, color: '#666', margin: 0, lineHeight: 1.5 }}>
+                    <p style={{ fontSize: 10, color: 'rgba(var(--overlay-rgb), 0.4)', margin: 0, lineHeight: 1.5 }}>
                         OpenStreetMap 도로 데이터를 SUMO netconvert로 변환합니다.
                         교차로 차선 연결이 정밀 생성됩니다. (Docker 필요)
                     </p>
 
                     {selecting ? (
                         <>
-                            <div style={{ fontSize: 10, color: '#ffaa44', lineHeight: 1.5 }}>
+                            <div style={{ fontSize: 10, color: 'var(--color-warning)', lineHeight: 1.5 }}>
                                 Shift + 드래그로 영역을 선택하세요<br/>
-                                <span style={{ color: '#666' }}>(일반 드래그: 지도 이동)</span>
+                                <span style={{ color: 'rgba(var(--overlay-rgb), 0.4)' }}>(일반 드래그: 지도 이동)</span>
                             </div>
                             <button
-                                style={{ ...autoSmallBtnStyle, borderColor: 'rgba(255,160,50,0.5)', color: '#ffaa44' }}
+                                style={{ ...autoSmallBtnStyle, borderColor: 'rgba(var(--color-warning-rgb), 0.5)', color: 'var(--color-warning)' }}
                                 onClick={() => setSelecting(false)}
                             >
                                 선택 취소
@@ -1194,7 +1194,7 @@ const SumoNetworkSection: React.FC<{
                             ['동(E)', east,  setEast],
                         ] as [string, string, React.Dispatch<React.SetStateAction<string>>][]).map(([label, val, setter]) => (
                             <div key={label}>
-                                <div style={{ fontSize: 10, color: '#666', marginBottom: 2 }}>{label}</div>
+                                <div style={{ fontSize: 10, color: 'rgba(var(--overlay-rgb), 0.4)', marginBottom: 2 }}>{label}</div>
                                 <input
                                     type="number" step="any" value={val}
                                     onChange={e => setter(e.target.value)}

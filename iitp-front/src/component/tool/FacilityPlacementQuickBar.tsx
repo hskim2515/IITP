@@ -69,6 +69,7 @@ function midpoint(coords: Coordinates[] | undefined): Coordinates | null {
 const FacilityPlacementQuickBar: React.FC = () => {
     const isEditMode = useModeStore((s) => s.appMode === 'edit');
     const toolbar = useNetworkToolbarStore();
+    const measuredWidth = useNetworkToolbarStore((s) => s.measuredWidth);
     const network = useNetworkStore((s) => s.currentJsonData);
     const selectedGuid = useSelectionStore((s) => s.selectedGuid);
 
@@ -139,7 +140,12 @@ const FacilityPlacementQuickBar: React.FC = () => {
         useNetworkToolbarStore.getState().hide();
     };
 
-    const menuW = 320;
+    // NetworkEditToolbar(맥락바)의 실제 렌더 폭 — 레벨/열린 패널(⚙속성, 🚧차로 폐쇄 등)에
+    // 따라 버튼 수·패널 유무가 달라 고정폭이 아니다. 예전엔 320(추정치)을 하드코딩해서,
+    // 맥락바에 버튼이 늘어나(예: 🚧 차로 폐쇄 추가) 실제 폭이 그걸 넘으면 이 퀵바가 맥락바
+    // 위에 겹쳐 떴다(실사용 지적, 정류장/역/신호 배치 버튼 전부 동일 증상). 아직 측정 전(0)
+    // 이면 이전 추정치를 폴백으로 유지.
+    const menuW = measuredWidth > 0 ? measuredWidth : 320;
     const left = Math.min(toolbar.x + menuW + 8, window.innerWidth - 220 - 8);
     const top = Math.min(toolbar.y + 8, window.innerHeight - 60);
 

@@ -527,14 +527,36 @@ public class NextSimRunner {
         }
         writeConfigScenarioJson(networkDir);
 
-        // 4) mode.xml — meso 에 전체 링크 지정 (mesoscopic 시뮬, bucheon 예시와 동일 방식)
-        Set<String> linkIds = extractLinkIds(networkDir.resolve("network.xml"));
-        StringBuilder mode = new StringBuilder(xml("<Periods>"));
-        mode.append("\n  <period id=\"1\" stime=\"0\">\n    <micro linkid=\" \" />\n    <meso linkid=\"");
-        mode.append(String.join(" ", linkIds));
-        mode.append("\" />\n  </period>\n</Periods>\n");
-        Files.writeString(networkDir.resolve("mode.xml"), mode.toString(), StandardCharsets.UTF_8);
-        log.info("[NextSimRunner] mode.xml 생성: meso 링크 {}개", linkIds.size());
+        // 4) mode.xml — 버전 폴더에 직접 올려둔 mode.xml이 있으면 그걸 우선 쓴다(signal.xml 등과
+        // 동일한 copyOptional 관례). 없으면 네트워크의 각 링크 sim_type(Meso/Micro)을 그대로
+        // 반영한 기본값을 생성한다.
+        // ⚠️ 2026-08-04 수정: 예전엔 이 필드를 network.xml의 sim_type과 무관하게 항상 전체
+        // meso로 덮어썼다(마이크로 영역을 지정해도 실행엔 전혀 반영 안 됨) — 프론트 "마이크로
+        // 영역 지정" 도구(폴리곤 그리기 → 그 안 링크만 sim_type=Micro)와 짝을 맞춰 실제 값을
+        // 읽어 분배하도록 고쳤다. Micro가 실제로 이 NextSim 바이너리에서 크래시 없이 도는지는
+        // 여전히 검증된 적이 없다 — 이 경로를 처음 타는 실행에서 새로운 크래시 유형이 나올 수 있음.
+        if (!copyOptional(versionId, "mode.xml", networkDir)) {
+            Set<String> linkIds = extractLinkIds(networkDir.resolve("network.xml"));
+            Set<String> microIds = extractMicroLinkIds(networkDir.resolve("network.xml"));
+            Set<String> mesoIds = new LinkedHashSet<>(linkIds);
+            mesoIds.removeAll(microIds);
+            // 빈 목록 표기: 실제 배포판 참조 파일(1_bucheon network/mode.xml, 전체 링크가
+            // micro인 실사용 예시)로 실측 확인 — meso가 비었을 때도 micro와 동일하게 " "(공백)
+            // 하나만 쓴다. 파이썬 레거시 스크립트(source_code/backend/parseXML.py parsePeriod)의
+            // "0 " 관례를 따라 처음엔 이렇게 썼다가, 실제로 전체 마이크로로 실행해보니 nextsim이
+            // 반복 크래시했다 — 생성된 mode.xml을 참조 파일과 직접 대조해 원인이 이 "0 "(존재
+            // 하지 않는 링크 id "0"을 meso 링크로 오인)임을 확인, " "로 수정.
+            String microStr = microIds.isEmpty() ? " " : String.join(" ", microIds);
+            String mesoStr = mesoIds.isEmpty() ? " " : String.join(" ", mesoIds);
+            StringBuilder mode = new StringBuilder(xml("<Periods>"));
+            mode.append("\n  <period id=\"1\" stime=\"0\">\n    <micro linkid=\"").append(microStr);
+            mode.append("\" />\n    <meso linkid=\"").append(mesoStr);
+            mode.append("\" />\n  </period>\n</Periods>\n");
+            Files.writeString(networkDir.resolve("mode.xml"), mode.toString(), StandardCharsets.UTF_8);
+            log.info("[NextSimRunner] mode.xml 생성: micro 링크 {}개, meso 링크 {}개", microIds.size(), mesoIds.size());
+        } else {
+            log.info("[NextSimRunner] {} mode.xml — 버전 폴더에 올려둔 값 사용", versionId);
+        }
 
         // 5) 네트워크 종속이지만 플랫폼 미관리 파일 — 빈 템플릿 (배포판 bucheon 스키마 준수,
         //    아래 형태들은 실행 이진탐색으로 무해 검증됨)
@@ -1165,6 +1187,27 @@ public class NextSimRunner {
         }
         if (ids.isEmpty()) throw new IOException("network.xml 에서 링크를 찾지 못했습니다");
         return ids;
+    }
+
+    /** sim_type="1"(Micro)인 링크 id만 추출 — 나머지(속성 없음 포함)는 전부 meso로 간주.
+     *  mode.xml 생성 전용. extractLinkIds와 동일한 청크 스트림 스캔 패턴(수백MB 대비 DOM 로드 금지).
+     *  sim_type은 LinkXml 필드 순서상 max_veh 다음·shape 이전에 위치(전 배포판 공통 관찰) — shape가
+     *  수천자일 수 있어 비탐욕 와일드카드로 shape까지 스캔하지 않고 sim_type에서 바로 멈춘다. */
+    private Set<String> extractMicroLinkIds(Path networkXml) throws IOException {
+        Set<String> ids = new LinkedHashSet<>();
+        Pattern p = Pattern.compile("<link\\s+id=\"([^\"]+)\"[^>]*?\\bsim_type=\"1\"");
+        try (var reader = Files.newBufferedReader(networkXml, StandardCharsets.UTF_8)) {
+            char[] buf = new char[1 << 22];
+            String carry = "";
+            int n;
+            while ((n = reader.read(buf)) > 0) {
+                String chunk = carry + new String(buf, 0, n);
+                Matcher m = p.matcher(chunk);
+                while (m.find()) ids.add(m.group(1));
+                carry = chunk.length() > 512 ? chunk.substring(chunk.length() - 512) : chunk;
+            }
+        }
+        return ids; // 빈 집합이어도 정상(마이크로 미지정 네트워크의 기본 상태)
     }
 
     // ─────────────────────────── 터미널 크래시 자동 복구 (route-generator + nextsim 공용) ─────

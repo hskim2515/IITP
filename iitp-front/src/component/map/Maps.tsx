@@ -25,6 +25,8 @@ import { usePlacementMode } from "@hooks/usePlacementMode";
 import { useRouteDrawMode } from "@hooks/useRouteDrawMode";
 import { useOsmBboxDraw } from "@hooks/useOsmBboxDraw";
 import { useKtdbPolygonDraw } from "@hooks/useKtdbPolygonDraw";
+import { useMicroRegionDraw } from "@hooks/useMicroRegionDraw";
+import { useMesoLaneMetricLayer } from "@hooks/useMesoLaneMetricLayer";
 import useNetworkStationModify from "@hooks/useNetworkStationModify";
 import { useNetworkDrawStore } from "@stores/useNetworkDrawStore";
 import NetworkEditToolbar from "@component/tool/NetworkEditToolbar";
@@ -113,6 +115,8 @@ const Maps = ({ singleMapMode = false }: MapsProps) => {
     useNetworkStationModify();
     useOsmBboxDraw();
     useKtdbPolygonDraw();
+    useMicroRegionDraw();
+    useMesoLaneMetricLayer();
     useCoordPick();
 
     const getContainerWidth = useCallback(() => {

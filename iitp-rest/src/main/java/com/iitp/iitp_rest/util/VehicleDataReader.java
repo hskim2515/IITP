@@ -2,6 +2,7 @@ package com.iitp.iitp_rest.util;
 
 import com.iitp.iitp_rest.model.VehicleEvent;
 import com.iitp.iitp_rest.model.VehicleInfo;
+import com.iitp.iitp_rest.model.analytics.LaneTrafficResponse;
 import com.iitp.iitp_rest.model.analytics.LinkStatsResponse;
 import com.iitp.iitp_rest.model.analytics.LinkTrafficResponse;
 import com.iitp.iitp_rest.model.analytics.OverallSummaryResponse;
@@ -111,13 +112,43 @@ public class VehicleDataReader {
         }
     }
 
+    /**
+     * ⚠️ 실측 확정(외부 배포판 원본 vehicle_sim.db 가져오기 재현): 우리 NextSim 파이프라인이
+     * 만드는 "신형" VehicleEvent 테이블은 spd/mode 컬럼을 실제로 갖고 있지만(다른 메서드들의
+     * hasSpd 판정이 "VehicleEvent엔 없다"고 가정하는 것과 반대), 원본 배포판(예: 부천 참고
+     * 데이터셋)의 VehicleEvent 테이블은 진짜로 veh_id/timestep/link_id/lane_id/pos_x/pos_y
+     * 6개 컬럼만 있다 — 같은 테이블명("VehicleEvent")이 스키마가 다른 두 종류로 실존한다.
+     * 테이블명만으로 판정하면 이 원본 데이터를 가져왔을 때 SELECT가 "no such column: spd"로
+     * 예외를 던지고(readVehicleEvent/readVehicleEventsFiltered에서 조용히 삼켜짐) 빈 결과를
+     * 반환해 "vehicle_sim.db가 없습니다"로 오인되거나(재생 타임라인이 아예 시작 못 함), viewport
+     * 스트리밍은 차량 0대(문서 패킷만)로 조용히 실패했다. 테이블명 대신 실제 컬럼 존재를 직접
+     * 확인해야 두 스키마 변형 모두 안전하게 처리된다.
+     */
+    private boolean columnExists(Connection conn, String schema, String tableName, String columnName) {
+        try (Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT * FROM " + schema + "." + tableName + " LIMIT 0")) {
+            ResultSetMetaData meta = rs.getMetaData();
+            for (int i = 1; i <= meta.getColumnCount(); i++) {
+                if (columnName.equalsIgnoreCase(meta.getColumnName(i))) return true;
+            }
+            return false;
+        } catch (SQLException e) {
+            return false;
+        }
+    }
+
     // vehicle_event
     public List<VehicleEvent> readVehicleEvent(String versionId) {
         List<VehicleEvent> vehicleEventList = new ArrayList<>();
 
         try {
-            File dbFile = prepareDbFile(versionId);
-            boolean isTempFile = !dbFile.getAbsolutePath().equals(localPath != null ? new File(localPath).getAbsolutePath() : "");
+            // ⚠️ 예전엔 prepareDbFile(캐시 미사용)을 써서, generateVehicleRoute 흐름에서 바로
+            // 앞서 countEvents(prepareDbFileCached)가 이미 다운로드해둔 파일을 무시하고
+            // vehicle_sim.db(GB급일 수 있음, 실측 최소 184MB)를 SFTP로 다시 통째로 재다운로드한
+            // 뒤 쓰자마자 삭제했다 — "재생 버튼 눌러도 한참 안 뜨는" 지연의 실측 원인 중 하나.
+            // prepareDbFileCached로 통일해 캐시된 로컬 사본을 재사용한다(다른 조회 메서드들과
+            // 동일 패턴). 캐시 소유 파일이라 여기서 삭제하면 안 된다(invalidateDbCache가 관리).
+            File dbFile = prepareDbFileCached(versionId);
 
             String memoryUrl = "jdbc:sqlite::memory:";
             try (Connection conn = DriverManager.getConnection(memoryUrl);
@@ -147,8 +178,18 @@ public class VehicleDataReader {
                 // 예전엔 구형(VehicleEventDebugging) 전용인 줄 알고 신형 SELECT에서 빠져있었다
                 // — 그 결과 VehicleController.dropStalePositionArtifacts가 항상 speed=0(기본값)
                 // 만 보게 되어 커넥션→링크 전환 시 좌표 고정 아티팩트를 전혀 못 걸렀다.
+                // ⚠️ 실측 확정(외부 배포판 원본 vehicle_sim.db 가져오기 재현): 그런데 "신형" 테이블명
+                // (VehicleEvent)이라고 해서 항상 spd/mode 컬럼이 있는 건 아니다 — 원본 배포판의
+                // VehicleEvent는 6개 컬럼(veh_id/timestep/link_id/lane_id/pos_x/pos_y)만 갖고
+                // 있어서, 무조건 spd/mode를 SELECT하면 "no such column"으로 예외가 나 조용히
+                // 빈 리스트를 반환했다(재생 자체가 "vehicle_sim.db 없음"으로 오인돼 시작 못 함).
+                // 테이블명이 아니라 실제 컬럼 존재로 판정한다.
+                boolean hasSpd = columnExists(conn, "vehicle_sim_db", tableName, "spd");
+                boolean hasMode = columnExists(conn, "vehicle_sim_db", tableName, "mode");
                 String dataQuery = isNewSchema
-                        ? "SELECT veh_id, timestep, link_id, lane_id, pos_x, pos_y, spd, mode FROM vehicle_sim_db.VehicleEvent WHERE veh_id IN (" + inClause + ") ORDER BY veh_id, timestep"
+                        ? "SELECT veh_id, timestep, link_id, lane_id, pos_x, pos_y"
+                            + (hasSpd ? ", spd" : "") + (hasMode ? ", mode" : "")
+                            + " FROM vehicle_sim_db.VehicleEvent WHERE veh_id IN (" + inClause + ") ORDER BY veh_id, timestep"
                         : "SELECT veh_id, type, timestep, link_id, lane_id, pos_x, pos_y, spd, acc, spacing, mode, leader_id, target_lane_id FROM vehicle_sim_db.VehicleEventDebugging WHERE veh_id IN (" + inClause + ")";
 
                 try (PreparedStatement pstmt = conn.prepareStatement(dataQuery)) {
@@ -165,8 +206,8 @@ public class VehicleDataReader {
                             v.setLaneId(rs.getString("lane_id"));
                             v.setPosX(rs.getFloat("pos_x"));
                             v.setPosY(rs.getFloat("pos_y"));
-                            v.setSpeed(rs.getFloat("spd"));
-                            v.setDriveMode(rs.getString("mode"));
+                            v.setSpeed(!isNewSchema || hasSpd ? rs.getFloat("spd") : 0f);
+                            v.setDriveMode(!isNewSchema || hasMode ? rs.getString("mode") : null);
                             if (!isNewSchema) {
                                 v.setType(rs.getString("type"));
                                 v.setAcc(rs.getFloat("acc"));
@@ -179,8 +220,6 @@ public class VehicleDataReader {
                     }
                 }
             }
-
-            if (isTempFile) dbFile.delete();
         } catch (SQLException | IOException e) {
             logger.error("Error while reading limited vehicle data", e);
         }
@@ -270,10 +309,18 @@ public class VehicleDataReader {
 
                 // 3) 선별 차량의 시간창 내 전체 이벤트 (링크 무관)
                 // mode(=driveMode)는 정체 구간(큐 모델, "None") 판별용 — buildVehiclePackets의
-                // filterQueueJitter가 이 값으로 차선 왕복 튐 구간을 잡아낸다. 신형/구형 스키마
-                // 모두 mode 컬럼 보유. spd는 dropStalePositionArtifacts(커넥션→링크 전환 시
-                // 좌표 고정 아티팩트 판별)가 필요로 한다 — readVehicleEvent와 동일 이유로 추가.
-                String dataSql = "SELECT e.veh_id, e.timestep, e.link_id, e.lane_id, e.pos_x, e.pos_y, e.spd, e.mode " +
+                // filterQueueJitter가 이 값으로 차선 왕복 튐 구간을 잡아낸다. spd는
+                // dropStalePositionArtifacts(커넥션→링크 전환 시 좌표 고정 아티팩트 판별)가
+                // 필요로 한다 — readVehicleEvent와 동일 이유로 추가.
+                // ⚠️ 실측 확정(외부 배포판 원본 vehicle_sim.db 가져오기 재현): "신형" 테이블명
+                // (VehicleEvent)이어도 spd/mode 컬럼이 없는 변형이 실존한다(원본 배포판은 6개
+                // 컬럼만 가짐) — 무조건 SELECT하면 "no such column"으로 예외가 나 조용히 빈
+                // 결과를 반환했고, viewport 스트리밍이 차량 0대(문서 패킷만)로 조용히 실패했다.
+                // 테이블명이 아니라 실제 컬럼 존재로 판정한다.
+                boolean hasSpd = columnExists(conn, "vehicle_sim_db", tableName, "spd");
+                boolean hasMode = columnExists(conn, "vehicle_sim_db", tableName, "mode");
+                String dataSql = "SELECT e.veh_id, e.timestep, e.link_id, e.lane_id, e.pos_x, e.pos_y"
+                        + (hasSpd ? ", e.spd" : "") + (hasMode ? ", e.mode" : "") + " " +
                         "FROM vehicle_sim_db." + tableName + " e JOIN sel_vehicles s ON e.veh_id = s.id " +
                         "WHERE 1=1" + timeFilter + " ORDER BY e.veh_id, e.timestep";
                 try (ResultSet rs = stmt.executeQuery(dataSql)) {
@@ -285,8 +332,8 @@ public class VehicleDataReader {
                         v.setLaneId(rs.getString("lane_id"));
                         v.setPosX(rs.getFloat("pos_x"));
                         v.setPosY(rs.getFloat("pos_y"));
-                        v.setSpeed(rs.getFloat("spd"));
-                        v.setDriveMode(rs.getString("mode"));
+                        v.setSpeed(hasSpd ? rs.getFloat("spd") : 0f);
+                        v.setDriveMode(hasMode ? rs.getString("mode") : null);
                         out.add(v);
                     }
                 }
@@ -452,7 +499,14 @@ public class VehicleDataReader {
                 boolean hasDebugging = !hasEvent && tableExists(conn, "vehicle_sim_db", "VehicleEventDebugging");
                 if (!hasEvent && !hasDebugging) return out; // vehicle_sim 테이블 형식은 미지원(좌표 기반) → 빈 결과
                 String tableName = hasEvent ? "VehicleEvent" : "VehicleEventDebugging";
-                boolean hasSpd = hasDebugging;
+                // ⚠️ 2026-08-04 수정: hasSpd = hasDebugging(구형 스키마만 spd 있다는 가정)는 틀렸다
+                // — readVehicleEvent가 이미 실측 확인한 대로 신형 VehicleEvent 테이블도 실제
+                // spd 컬럼을 갖고 있다(실사용 scenario3_1_V2 DB로 직접 확인: veh_id/timestep/
+                // link_id/lane_id/pos_x/pos_y/heading_deg/spd/acc/mode). 테이블명이 아니라
+                // columnExists로 실제 컬럼 존재를 직접 확인해야 두 스키마 변형 모두 정확하다
+                // (columnExists 자체는 readVehicleEvent 근처 주석이 지적한 것과 동일한 이유로
+                // 이미 이 파일에 존재 — 그 메서드만 못 쓰고 있었음).
+                boolean hasSpd = hasDebugging || columnExists(conn, "vehicle_sim_db", tableName, "spd");
 
                 String inClause = String.join(",", Collections.nCopies(linkIds.size(), "?"));
                 boolean useTimeWindow = !(fromTime == 0 && toTime == 0);
@@ -490,6 +544,69 @@ public class VehicleDataReader {
             }
         } catch (Exception e) {
             logger.error("[readLinkTraffic] 집계 실패 versionId={}", versionId, e);
+        }
+        return out;
+    }
+
+    /**
+     * bbox + 시간창 내 레인별 교통량 집계 — readLinkTraffic의 레인 단위 버전(메조 링크 레인/
+     * 커넥션 색칠 전용, 마이크로는 개별 차량 CZML로 이미 표시되므로 대상 아님). GROUP BY에
+     * lane_id만 추가한 것 외엔 동일 구조 — hasSpd 판정도 readLinkTraffic과 동일하게
+     * columnExists로 직접 확인한다(같은 버그 클래스 회귀 방지).
+     */
+    public LaneTrafficResponse readLaneTraffic(String versionId, List<String> linkIds, int fromTime, int toTime) {
+        LaneTrafficResponse out = new LaneTrafficResponse();
+        out.setFromTime(fromTime);
+        out.setToTime(toTime);
+        if (linkIds == null || linkIds.isEmpty()) return out;
+
+        try {
+            File tempDbFile = prepareDbFileCached(versionId);
+            String memoryUrl = "jdbc:sqlite::memory:";
+            try (Connection conn = DriverManager.getConnection(memoryUrl);
+                 Statement stmt = conn.createStatement()) {
+                stmt.execute("ATTACH DATABASE '" + tempDbFile.getAbsolutePath() + "' AS vehicle_sim_db");
+
+                boolean hasEvent = tableExists(conn, "vehicle_sim_db", "VehicleEvent");
+                boolean hasDebugging = !hasEvent && tableExists(conn, "vehicle_sim_db", "VehicleEventDebugging");
+                if (!hasEvent && !hasDebugging) return out;
+                String tableName = hasEvent ? "VehicleEvent" : "VehicleEventDebugging";
+                boolean hasSpd = hasDebugging || columnExists(conn, "vehicle_sim_db", tableName, "spd");
+
+                String inClause = String.join(",", Collections.nCopies(linkIds.size(), "?"));
+                boolean useTimeWindow = !(fromTime == 0 && toTime == 0);
+                if (!useTimeWindow) {
+                    try (PreparedStatement rangePs = conn.prepareStatement(
+                            "SELECT MIN(timestep) AS lo, MAX(timestep) AS hi FROM vehicle_sim_db." + tableName)) {
+                        try (ResultSet rangeRs = rangePs.executeQuery()) {
+                            if (rangeRs.next()) {
+                                out.setFromTime((int) rangeRs.getDouble("lo"));
+                                out.setToTime((int) rangeRs.getDouble("hi"));
+                            }
+                        }
+                    }
+                }
+                String timeFilter = useTimeWindow ? " AND timestep >= ? AND timestep < ? " : " ";
+                String speedExpr = hasSpd ? "ROUND(AVG(spd) * 3.6, 2)" : "0.0";
+                String sql = "SELECT link_id, lane_id, COUNT(DISTINCT veh_id) AS volume, " + speedExpr + " AS avg_speed "
+                        + "FROM vehicle_sim_db." + tableName + " WHERE link_id IN (" + inClause + ")"
+                        + timeFilter + "GROUP BY link_id, lane_id";
+
+                try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                    int idx = 1;
+                    for (String id : linkIds) ps.setString(idx++, id);
+                    if (useTimeWindow) { ps.setInt(idx++, fromTime); ps.setInt(idx++, toTime); }
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            out.getLanes().add(new LaneTrafficResponse.LaneTraffic(
+                                    rs.getString("link_id"), rs.getInt("lane_id"),
+                                    rs.getInt("volume"), rs.getDouble("avg_speed")));
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            logger.error("[readLaneTraffic] 집계 실패 versionId={}", versionId, e);
         }
         return out;
     }

@@ -90,6 +90,15 @@ export default class NetworkFeatureLayer extends VectorLayer {
     private selHighlightSource: VectorSource | null = null;
     private selHighlightLayer: VectorLayer | null = null;
     private unsubscribeSel: (() => void) | undefined;
+    // 차단 구간(segment.block=true) 오버레이 — 레인/구간/셀 상세 폴리곤(buildLinkFeatures 내부,
+    // this.showDetail 게이트)은 실측 확인 결과 showDetail 이 어디서도 true로 설정되지 않는
+    // 죽은 코드였고, 설령 켜져도 타일 모드(상시 기본값)에서는 fullBuild가 MVT 사용 시
+    // buildLinkFeatures 자체를 호출하지 않아(this.source에 링크 피처를 안 만듦) 이래저래
+    // 차단 구간이 지도에 전혀 표시되지 않았다(실사용 지적, setLaneWindowBlock/setLaneEndBlock로
+    // 만든 차단 구간이 저장은 되지만 화면엔 안 보임). editOverlayLayer와 동일 패턴(MVT 위
+    // 독립 OL 레이어, currentJsonData 직접 읽어 타일 모드에서도 동작)으로 전용 오버레이를 둔다.
+    private blockedSegSource: VectorSource | null = null;
+    private blockedSegLayer: VectorLayer | null = null;
 
     // ── 타일링 상태 (NETWORK_TILING.ENABLED 일 때만 사용; 읽기 전용 뷰) ──
     // 타일 경계 링크/노드는 여러 타일에 중복 등장 → id별 refcount 로 마지막 타일 evict 시에만 destroy.
@@ -146,7 +155,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         if (store) {
             this.unsubscribe = store.subscribe(
                 (state: { currentJsonData: Network; }) => state.currentJsonData,
-                () => { this.updateEditDeltas(); this.renderEditOverlay(); this.load(); },
+                () => { this.updateEditDeltas(); this.renderEditOverlay(); this.renderBlockedSegmentsOverlay(); this.load(); },
                 { equalityFn: (a:Network, b:Network) => a === b }
             );
             // 저장/폐기(isChanged true→false) 감지 → 편집 델타 정리 + 서버 데이터 새로고침.
@@ -204,6 +213,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         this.mvtLayer?.setVisible(visible);
         this.editOverlayLayer?.setVisible(visible);
         this.selHighlightLayer?.setVisible(visible);
+        this.blockedSegLayer?.setVisible(visible);
         try { this.mvtLayer?.changed(); } catch (_) {}
         try { this.getMapInternal()?.render(); } catch (_) {}
     }
@@ -306,6 +316,22 @@ export default class NetworkFeatureLayer extends VectorLayer {
             );
             this.unsubscribeEdit = () => { unsubEdited(); unsubDeleted(); unsubNodeEdits(); };
             this.renderEditOverlay();
+        }
+
+        // 차단 구간(🚧 차로 폐쇄 등) 오버레이 레이어 부착 (MVT 위, editOverlayLayer와 같은 층 근처).
+        if (NETWORK_TILING.ENABLED && !this.blockedSegLayer) {
+            this.blockedSegSource = new VectorSource();
+            this.blockedSegLayer = new VectorLayer({
+                source: this.blockedSegSource,
+                style: () => new Style({
+                    fill: new Fill({ color: "rgba(255,196,0,0.55)" }),
+                    stroke: new Stroke({ color: "rgba(180,120,0,0.95)", width: 1.5 }),
+                }),
+                zIndex: 130, // editOverlayLayer(120) 바로 위 — MVT/도로 위, 편집 오버레이와도 구분
+            });
+            this.blockedSegLayer.setVisible(this.getVisible());
+            map.addLayer(this.blockedSegLayer);
+            this.renderBlockedSegmentsOverlay();
         }
 
         // 선택 하이라이트 오버레이 (2D, MVT 위). selectedProps(링크/레인) 좌표 기반 강조.
@@ -846,6 +872,60 @@ export default class NetworkFeatureLayer extends VectorLayer {
             buf.push(poly);
         }
         if (buf.length > 0) this.editOverlaySource.addFeatures(buf);
+        try { this.getMapInternal()?.render(); } catch (_) {}
+    }
+
+    /**
+     * segment.block=true 인 구간을 지도 위에 노란 스트라이프로 표시 — currentJsonData의
+     * link.lanes[].segments[]를 직접 읽으므로 타일 모드(fullBuild가 링크 피처를 안 만드는
+     * 모드)에서도 동작한다. 오프셋 계산은 buildLinkFeatures와 동일 규약
+     * (offsetCenter = ((laneCount-1)/2 - laneIdx) * laneWidth)을 쓰되, 링크 시작~끝 직선
+     * 기준(곡선 미추종)이라 급커브 도로에서는 근사치다 — 상세 폴리곤(buildLinkFeatures의
+     * showDetail 경로)과 달리 "차단 구간이 어디 있는지 한눈에 보이는" 용도로 충분하다.
+     */
+    private renderBlockedSegmentsOverlay(): void {
+        if (!this.blockedSegSource) return;
+        this.blockedSegSource.clear();
+        const store = layerNameToStoreMap[this.LAYER_NAME];
+        const net: any = store?.getState()?.currentJsonData;
+        const links: any[] = net?.links ?? [];
+        const buf: Feature[] = [];
+        for (const link of links) {
+            if (!link?.lanes?.length) continue;
+            const coords = link.coordinates;
+            if (!Array.isArray(coords) || coords.length < 2) continue;
+            const p1 = fromLonLat([coords[0].lng, coords[0].lat]) as [number, number];
+            const p2 = fromLonLat([coords[coords.length - 1].lng, coords[coords.length - 1].lat]) as [number, number];
+            const dx = p2[0] - p1[0], dy = p2[1] - p1[1];
+            const len = Math.hypot(dx, dy);
+            if (len === 0) continue;
+            const nx = -dy / len, ny = dx / len;
+            const laneCount = link.lanes.length;
+            const laneWidth = (link.width ?? 7) / Math.max(1, laneCount);
+
+            for (let li = 0; li < laneCount; li++) {
+                const lane = link.lanes[li];
+                const segs = lane?.segments;
+                if (!Array.isArray(segs) || segs.length === 0) continue;
+                const offsetCenter = ((laneCount - 1) / 2 - li) * laneWidth;
+                const c1: [number, number] = [p1[0] + nx * offsetCenter, p1[1] + ny * offsetCenter];
+                const c2: [number, number] = [p2[0] + nx * offsetCenter, p2[1] + ny * offsetCenter];
+                for (const seg of segs) {
+                    if (!seg?.block) continue;
+                    const init = seg.initPoint ?? 0;
+                    const end = seg.endPoint ?? init;
+                    const offset = Math.min(init, end);
+                    const length = Math.max(0, Math.abs(end - init));
+                    if (length <= 0) continue;
+                    const ring = this.createRectangleAlongLane(c1, c2, offset, length, laneWidth * 0.8);
+                    if (!ring) continue;
+                    const f = new Feature(new Polygon([ring]));
+                    f.setProperties({ featureType: "blocked-segment", linkRef: link.id, laneRef: li });
+                    buf.push(f);
+                }
+            }
+        }
+        if (buf.length > 0) this.blockedSegSource.addFeatures(buf);
         try { this.getMapInternal()?.render(); } catch (_) {}
     }
 
@@ -1937,6 +2017,7 @@ export default class NetworkFeatureLayer extends VectorLayer {
         if (this.mvtLayer) { try { this.mvtLayer.setMap(null); } catch (_) {} this.mvtLayer = null; }
         if (this.editOverlayLayer) { try { this.editOverlayLayer.setMap(null); } catch (_) {} this.editOverlayLayer = null; this.editOverlaySource = null; }
         if (this.selHighlightLayer) { try { this.selHighlightLayer.setMap(null); } catch (_) {} this.selHighlightLayer = null; this.selHighlightSource = null; }
+        if (this.blockedSegLayer) { try { this.blockedSegLayer.setMap(null); } catch (_) {} this.blockedSegLayer = null; this.blockedSegSource = null; }
         super.dispose();
     }
 }

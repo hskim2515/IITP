@@ -76,7 +76,7 @@ const DataIOModal: React.FC<{ section: Section; onClose: () => void }> = ({ sect
                 onClick={onClose}
                 style={{
                     position: 'fixed', inset: 0,
-                    background: 'rgba(0,0,0,0.35)',
+                    background: 'rgba(var(--surface-overlay-rgb),0.35)',
                     zIndex: 1200,
                 }}
             />
@@ -89,10 +89,10 @@ const DataIOModal: React.FC<{ section: Section; onClose: () => void }> = ({ sect
                     transform: 'translateX(-50%)',
                     width: 340,
                     maxHeight: 'calc(100vh - 70px)',
-                    background: 'rgba(13,15,24,0.98)',
+                    background: 'rgba(var(--surface-popover-rgb),0.98)',
                     backdropFilter: 'blur(16px)',
                     WebkitBackdropFilter: 'blur(16px)',
-                    border: '1px solid rgba(255,255,255,0.1)',
+                    border: '1px solid rgba(var(--overlay-rgb),0.1)',
                     borderRadius: 10,
                     boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
                     zIndex: 1201,
@@ -105,17 +105,17 @@ const DataIOModal: React.FC<{ section: Section; onClose: () => void }> = ({ sect
                 <div style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                     padding: '10px 14px',
-                    borderBottom: '1px solid rgba(255,255,255,0.07)',
+                    borderBottom: '1px solid rgba(var(--overlay-rgb),0.07)',
                     flexShrink: 0,
                 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: '#ddd' }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>
                         파일 › {title}
                     </span>
                     <button
                         onClick={onClose}
                         style={{
                             background: 'none', border: 'none',
-                            color: '#666', cursor: 'pointer',
+                            color: 'rgba(var(--overlay-rgb),0.4)', cursor: 'pointer',
                             fontSize: 16, lineHeight: 1, padding: '2px 4px',
                         }}
                         title="닫기"

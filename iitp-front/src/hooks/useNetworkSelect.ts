@@ -1001,15 +1001,45 @@ export function mergeSegmentInNetwork(network: Network, linkId: number | string,
 export function setLaneEndBlock(
     network: Network, linkId: number | string, laneIdx: number, lengthM: number, fromEnd: 'start' | 'end',
 ): Network {
+    const link = network.links.find(l => String(l.id) === String(linkId));
+    const lane = link?.lanes?.[laneIdx];
+    if (!link || !lane) return network;
+    const total = getEffectiveSegments(lane, link).slice(-1)[0]?.endPoint ?? 0;
+    if (!(lengthM > 0) || !(lengthM < total)) return network; // 0 이하 또는 전체 길이 이상이면 의미 없음
+    return fromEnd === 'start'
+        ? setLaneWindowBlock(network, linkId, laneIdx, 0, lengthM)
+        : setLaneWindowBlock(network, linkId, laneIdx, total - lengthM, total);
+}
+
+// 레인의 임의 구간(startM~endM)을 차단(block)으로 지정 — CrashProperty.js(레거시, "차로 폐쇄"
+// lane closure)의 일반화 버전. 위 setLaneEndBlock(한쪽 끝 고정)은 이 함수의 특수 케이스
+// (startM=0 또는 endM=전체길이)다. startM=0이면 시작 세그먼트를, endM=전체길이면 끝
+// 세그먼트를 생략 — 필요한 구간만 만든다(항상 3구간을 강제하지 않음).
+export function setLaneWindowBlock(
+    network: Network, linkId: number | string, laneIdx: number, startM: number, endM: number,
+): Network {
     return updateLaneSegments(network, linkId, laneIdx, (segs) => {
         const total = segs.length > 0 ? segs[segs.length - 1]!.endPoint : 0;
-        if (!(lengthM > 0) || !(lengthM < total)) return segs; // 0 이하 또는 전체 길이 이상이면 의미 없음
-        const split = fromEnd === 'end' ? total - lengthM : lengthM;
+        const s = Math.max(0, startM);
+        const e = Math.min(total, endM);
+        if (!(s < e)) return segs; // 범위 오류면 무시
         const base = segs[0] ?? { featureType: 'segments' as any, id: 0, block: false, initPoint: 0, endPoint: total };
-        const first: Segment = { ...base, id: 0, initPoint: 0, endPoint: split, block: fromEnd === 'start' };
-        const second: Segment = { ...base, id: 1, initPoint: split, endPoint: total, block: fromEnd === 'end' };
-        return [first, second];
+        const result: Segment[] = [];
+        if (s > 0) result.push({ ...base, initPoint: 0, endPoint: s, block: false });
+        result.push({ ...base, initPoint: s, endPoint: e, block: true });
+        if (e < total) result.push({ ...base, initPoint: e, endPoint: total, block: false });
+        return result.map((seg, i) => ({ ...seg, id: i }));
     });
+}
+
+/** 링크 id 목록의 simType(0=Meso/1=Micro)을 일괄 지정 — 마이크로 영역 그리기(폴리곤 안 링크
+ *  일괄 지정) 전용. numLane 등과 달리 레인 재구성이 필요 없어 updateLinkInNetwork와 분리했다. */
+export function setSimTypeForLinks(network: Network, linkIds: string[], simType: number): Network {
+    const idSet = new Set(linkIds.map(String));
+    return {
+        ...network,
+        links: network.links.map(l => idSet.has(String(l.id)) ? { ...l, simType } : l),
+    };
 }
 
 export function updateLinkInNetwork(

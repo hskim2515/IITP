@@ -148,22 +148,24 @@ const HistoryModal: React.FC<Props> = ({
                             contentStyle={{
                                 padding: '10px 12px',
                                 maxWidth: '300px',
-                                background: isSelected ? '#0ea5e9' : '#fff',
-                                color: isSelected ? '#fff' : '#1e1e1e',
-                                border: isSelected ? '2px solid #0284c7' : 'none',
+                                // 선택됨: 항상 채도 높은 accent 고정색 + 흰 텍스트(PLAN_COLORS 칩과 동일 이유).
+                                // 미선택: 라이브러리 기본 흰 카드 대신 앱 표면 토큰으로 통일 — 테마 반응.
+                                background: isSelected ? 'var(--accent)' : 'rgb(var(--surface-popover-rgb))',
+                                color: isSelected ? '#fff' : 'var(--text-primary)',
+                                border: isSelected ? '2px solid var(--accent-text)' : '1px solid rgba(var(--overlay-rgb), 0.1)',
                                 cursor: 'pointer',
                             }}
                             contentArrowStyle={{
                                 borderRight: isSelected
-                                    ? '7px solid #0ea5e9'
-                                    : '7px solid #fff',
+                                    ? '7px solid var(--accent)'
+                                    : '7px solid rgb(var(--surface-popover-rgb))',
                             }}
                             iconStyle={{
                                 top: 5,
                                 left: 5,
                                 width: 30,
                                 height: 30,
-                                background: isSelected ? '#0ea5e9' : 'green',
+                                background: isSelected ? 'var(--accent)' : 'var(--color-success)',
                                 color: '#fff',
                             }}
                             onTimelineElementClick={() => handleSelect(idx)}

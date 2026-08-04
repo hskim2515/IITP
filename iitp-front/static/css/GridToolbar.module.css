@@ -3,8 +3,8 @@
     align-items: center;
     justify-content: space-between;
     padding: 6px 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(255, 255, 255, 0.02);
+    border-bottom: 1px solid rgba(var(--overlay-rgb), 0.08);
+    background: rgba(var(--overlay-rgb), 0.02);
     min-height: 42px;
     flex-shrink: 0;
     gap: 20px;
@@ -35,22 +35,22 @@
 .levelName {
     font-size: 13px;
     font-weight: 600;
-    color: rgba(255, 255, 255, 0.9);
+    color: rgba(var(--overlay-rgb), 0.9);
 }
 
 .parentCtx {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.5);
+    color: rgba(var(--overlay-rgb), 0.5);
     padding: 2px 8px;
     border-radius: 4px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(var(--overlay-rgb), 0.06);
+    border: 1px solid rgba(var(--overlay-rgb), 0.08);
     white-space: nowrap;
 }
 
 .rowCount {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.3);
+    color: rgba(var(--overlay-rgb), 0.3);
 }
 
 .right {
@@ -64,17 +64,17 @@
     padding: 4px 12px;
     font-size: 12px;
     border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(var(--overlay-rgb), 0.12);
     background: transparent;
-    color: rgba(255, 255, 255, 0.6);
+    color: rgba(var(--overlay-rgb), 0.6);
     cursor: pointer;
     transition: all 0.15s ease;
     white-space: nowrap;
 }
 
 .btn:hover {
-    background: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.9);
+    background: rgba(var(--overlay-rgb), 0.06);
+    color: rgba(var(--overlay-rgb), 0.9);
 }
 
 .btnAdd { composes: btn; }
@@ -82,14 +82,14 @@
 
 .btnSave {
     composes: btn;
-    color: rgba(100, 180, 255, 0.9);
-    border-color: rgba(100, 180, 255, 0.3);
+    color: rgba(var(--accent-grid-rgb), 0.9);
+    border-color: rgba(var(--accent-grid-rgb), 0.3);
 }
 
 .btnSave:hover {
-    background: rgba(100, 180, 255, 0.15);
-    color: #fff;
-    border-color: rgba(100, 180, 255, 0.6);
+    background: rgba(var(--accent-grid-rgb), 0.15);
+    color: var(--text-primary);
+    border-color: rgba(var(--accent-grid-rgb), 0.6);
 }
 
 /* 브레드크럼 관련 */
@@ -115,9 +115,9 @@
     flex-shrink: 0;
     padding: 3px 8px 3px 5px;
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.5);
+    color: rgba(var(--overlay-rgb), 0.5);
     background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(var(--overlay-rgb), 0.12);
     border-radius: 4px;
     cursor: pointer;
     transition: all 0.15s ease;
@@ -125,9 +125,9 @@
 }
 
 .backBtn:hover {
-    color: rgba(255, 255, 255, 0.9);
-    border-color: rgba(255, 255, 255, 0.3);
-    background: rgba(255, 255, 255, 0.06);
+    color: rgba(var(--overlay-rgb), 0.9);
+    border-color: rgba(var(--overlay-rgb), 0.3);
+    background: rgba(var(--overlay-rgb), 0.06);
 }
 
 .backIcon {
@@ -155,25 +155,25 @@
 }
 
 .crumbLink {
-    color: rgba(255, 255, 255, 0.45);
+    color: rgba(var(--overlay-rgb), 0.45);
     background: transparent;
     border: none;
     cursor: pointer;
 }
 
 .crumbLink:hover {
-    color: rgba(255, 255, 255, 0.9);
-    background: rgba(255, 255, 255, 0.08);
+    color: rgba(var(--overlay-rgb), 0.9);
+    background: rgba(var(--overlay-rgb), 0.08);
 }
 
 .crumbActive {
-    color: rgba(255, 255, 255, 0.95);
+    color: rgba(var(--overlay-rgb), 0.95);
     font-weight: 600;
 }
 
 .sep {
     font-size: 12px;
-    color: rgba(255, 255, 255, 0.15);
+    color: rgba(var(--overlay-rgb), 0.15);
     margin: 0 2px;
 }
 /* ── 현재 위치 표시 ──────────────────────────────────────── */
@@ -188,9 +188,9 @@
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.06em;
-    color: rgba(100, 180, 255, 1);
-    background: rgba(100, 180, 255, 0.12);
-    border: 1px solid rgba(100, 180, 255, 0.25);
+    color: rgba(var(--accent-grid-rgb), 1);
+    background: rgba(var(--accent-grid-rgb), 0.12);
+    border: 1px solid rgba(var(--accent-grid-rgb), 0.25);
     padding: 2px 7px;
     border-radius: 3px;
     white-space: nowrap;
@@ -200,7 +200,7 @@
 /* 부모 컨텍스트: links #20001516 */
 .currentLabel {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.4);
+    color: rgba(var(--overlay-rgb), 0.4);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -209,10 +209,10 @@
 
 .switcher {
     display: flex;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(var(--overlay-rgb), 0.05);
     padding: 2px;
     border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(var(--overlay-rgb), 0.1);
 }
 
 .switchBtn {
@@ -220,7 +220,7 @@
     font-size: 12px;
     border: none;
     background: transparent;
-    color: rgba(255, 255, 255, 0.4);
+    color: rgba(var(--overlay-rgb), 0.4);
     cursor: pointer;
     border-radius: 3px;
     text-transform: uppercase;
@@ -229,8 +229,8 @@
 .active { /* CSS Modules 식별자 등록용 */ }
 
 .switchBtn.active {
-    background: rgba(255, 255, 255, 0.1);
-    color: #fff;
+    background: rgba(var(--overlay-rgb), 0.1);
+    color: var(--text-primary);
     font-weight: 600;
 }
 
@@ -242,8 +242,8 @@
 
 .rowCount {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.3);
-    background: rgba(255, 255, 255, 0.05);
+    color: rgba(var(--overlay-rgb), 0.3);
+    background: rgba(var(--overlay-rgb), 0.05);
     padding: 2px 6px;
     border-radius: 10px;
 }

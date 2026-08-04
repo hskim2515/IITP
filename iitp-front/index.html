@@ -5,6 +5,23 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>IITP</title>
+    <script>
+      // FOUC 방지 — React 마운트(useThemeSync)를 기다리면 zustand-persist 리하이드레이션이
+      // 첫 페인트 이후에 끝나 라이트 사용자가 다크 화면을 한 프레임 보게 된다. 여기서 동기적으로
+      // localStorage를 직접 읽어 첫 페인트 전에 data-theme을 미리 세팅한다. useAppSettingsStore
+      // (src/stores/useAppSettingsStore.ts)의 persist 키('app-settings')/필드명('theme')과
+      // 반드시 일치해야 한다 — 스토어 쪽을 바꾸면 이 스크립트도 같이 바꿀 것.
+      (function () {
+        try {
+          var raw = localStorage.getItem('app-settings');
+          if (!raw) return;
+          var parsed = JSON.parse(raw);
+          if (parsed && parsed.state && parsed.state.theme === 'light') {
+            document.documentElement.dataset.theme = 'light';
+          }
+        } catch (e) { /* 파싱 실패/프라이빗모드 등 — 기본 다크 유지 */ }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

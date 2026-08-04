@@ -175,7 +175,7 @@ const SignalRow: React.FC<RowProps> = ({
     if (editing) {
         const draftMeta = dirMeta(normalizeTurning(draftConnection?.turning));
         return (
-            <tr ref={rowRef} style={{ background: "#0c1322" }}>
+            <tr ref={rowRef} style={{ background: "rgb(var(--signal-surface-1-rgb))" }}>
                 <td style={signalChildDirectionTd}>
                     <div style={directionAndTypeStyle}>
                         {draftConnection
@@ -215,11 +215,11 @@ const SignalRow: React.FC<RowProps> = ({
                     <button
                         onClick={save}
                         disabled={!draftConnection}
-                        style={draftConnection ? btnS("#4f8ef7") : disabledButtonStyle}
+                        style={draftConnection ? btnS("var(--signal-accent)") : disabledButtonStyle}
                     >
                         연결
                     </button>
-                    <button onClick={cancel} style={{ ...btnS("#2a3050"), marginLeft: 4 }}>취소</button>
+                    <button onClick={cancel} style={{ ...btnS("rgb(var(--signal-border-rgb))"), marginLeft: 4 }}>취소</button>
                 </td>
             </tr>
         );
@@ -232,11 +232,11 @@ const SignalRow: React.FC<RowProps> = ({
             onClick={highlightConnection}
             style={{
                 cursor: "pointer",
-                borderBottom: "1px solid #0d1020",
-                background: disconnected ? "#261014" : isSelected ? "#0d2444" : "#080e18",
+                borderBottom: "1px solid rgb(var(--signal-surface-1-rgb))",
+                background: disconnected ? "rgb(var(--signal-danger-surface-rgb))" : isSelected ? "rgb(var(--signal-border-subtle-rgb))" : "rgb(var(--signal-surface-0-rgb))",
                 outline: disconnected
-                    ? "1px solid #8f2f3d"
-                    : isSelected ? "1px solid #4f8ef755" : undefined,
+                    ? "1px solid rgb(var(--signal-danger-border-rgb))"
+                    : isSelected ? "1px solid rgba(var(--signal-accent-rgb), 0.33)" : undefined,
                 outlineOffset: "-1px",
             }}
         >
@@ -259,7 +259,7 @@ const SignalRow: React.FC<RowProps> = ({
                     </span>
                 </div>
             </td>
-            <td style={{ ...td, color: disconnected ? "#ef7f8e" : "#8eb3ee", fontSize: 11 }}>
+            <td style={{ ...td, color: disconnected ? "var(--signal-danger)" : "rgb(var(--signal-accent-text-rgb))", fontSize: 11 }}>
                 {connection
                     ? connectionLabel(connection)
                     : `저장된 ID #${sig.connectionId || "없음"} · 현재 노드에 존재하지 않음`}
@@ -336,17 +336,17 @@ const AddRow: React.FC<AddRowProps> = ({
             <tr>
                 <td colSpan={3} style={emptyConnectionStyle}>
                     이 교차로에는 연결할 수 있는 Connection이 없습니다. 네트워크 데이터를 먼저 확인하세요.
-                    <button onClick={onCancel} style={{ ...btnS("#2a3050"), marginLeft: 8 }}>닫기</button>
+                    <button onClick={onCancel} style={{ ...btnS("rgb(var(--signal-border-rgb))"), marginLeft: 8 }}>닫기</button>
                 </td>
             </tr>
         );
     }
 
     return (
-        <tr style={{ background: "#090e1a" }}>
+        <tr style={{ background: "rgb(var(--signal-surface-0-rgb))" }}>
             <td style={td}>
                 <div style={directionAndTypeStyle}>
-                    <span style={{ ...readonlyValueStyle, color: connection ? meta.color : "#69758a" }}>
+                    <span style={{ ...readonlyValueStyle, color: connection ? meta.color : "var(--signal-text-muted)" }}>
                         {connection ? `${meta.icon} ${meta.label}` : "자동 결정"}
                     </span>
                     {connection && (
@@ -382,11 +382,11 @@ const AddRow: React.FC<AddRowProps> = ({
                 <button
                     onClick={add}
                     disabled={!connection}
-                    style={connection ? btnS("#4fc97a") : disabledButtonStyle}
+                    style={connection ? btnS("var(--color-success)") : disabledButtonStyle}
                 >
                     신호 연결
                 </button>
-                <button onClick={onCancel} style={{ ...btnS("#2a3050"), marginLeft: 4 }}>취소</button>
+                <button onClick={onCancel} style={{ ...btnS("rgb(var(--signal-border-rgb))"), marginLeft: 4 }}>취소</button>
             </td>
         </tr>
     );
@@ -642,7 +642,7 @@ const SignalGroupedEditor: React.FC<SignalGroupedEditorProps> = ({
     }, [activeSignals, network]);
 
     if (!signals.length && !mapNodeId) {
-        return <div style={{ color: "#445", padding: 40, textAlign: "center", fontSize: 13 }}>
+        return <div style={{ color: "var(--signal-text-disabled)", padding: 40, textAlign: "center", fontSize: 13 }}>
             신호 데이터가 없습니다. 지도에서 교차로(노드)를 클릭하면 여기서 바로 신호를 추가할 수 있습니다.
         </div>;
     }
@@ -655,18 +655,18 @@ const SignalGroupedEditor: React.FC<SignalGroupedEditorProps> = ({
             {/* ── 상단 탭 바 ── */}
             <div style={{
                 display: "flex", alignItems: "stretch",
-                borderBottom: "1px solid #1a1e30", flexShrink: 0,
-                background: "#080c18", overflow: "hidden",
+                borderBottom: "1px solid rgb(var(--signal-surface-3-rgb))", flexShrink: 0,
+                background: "rgb(var(--signal-surface-0-rgb))", overflow: "hidden",
             }}>
                 {/* 검색 */}
-                <div style={{ padding: "6px 8px", flexShrink: 0, display: "flex", alignItems: "center", borderRight: "1px solid #1a1e30" }}>
+                <div style={{ padding: "6px 8px", flexShrink: 0, display: "flex", alignItems: "center", borderRight: "1px solid rgb(var(--signal-surface-3-rgb))" }}>
                     <input
                         value={search}
                         onChange={e => setSearch(e.target.value)}
                         placeholder="교차로 검색"
                         style={{
-                            background: "#0e1525", border: "1px solid #1e2540",
-                            borderRadius: 4, color: "#aabbcc", padding: "3px 8px",
+                            background: "rgb(var(--signal-surface-2-rgb))", border: "1px solid rgb(var(--signal-border-subtle-rgb))",
+                            borderRadius: 4, color: "var(--signal-text-secondary)", padding: "3px 8px",
                             fontSize: 11, width: 90, outline: "none",
                         }}
                     />
@@ -686,10 +686,10 @@ const SignalGroupedEditor: React.FC<SignalGroupedEditorProps> = ({
                                 onClick={() => { setManualNodeId(nid); setAddingTo(null); }}
                                 style={{
                                     padding: "0 14px",
-                                    background: isActive ? "#141c30" : "none",
+                                    background: isActive ? "rgb(var(--signal-surface-3-rgb))" : "none",
                                     border: "none",
-                                    borderBottom: `2px solid ${isActive ? "#4f8ef7" : "transparent"}`,
-                                    color: isActive ? "#c0d4f0" : "#445",
+                                    borderBottom: `2px solid ${isActive ? "var(--signal-accent)" : "transparent"}`,
+                                    color: isActive ? "var(--signal-text-primary)" : "var(--signal-text-disabled)",
                                     cursor: "pointer", fontSize: 11,
                                     whiteSpace: "nowrap",
                                     display: "flex", alignItems: "center", gap: 5,
@@ -722,8 +722,8 @@ const SignalGroupedEditor: React.FC<SignalGroupedEditorProps> = ({
                             style={{
                                 flexShrink: 0, padding: "0 12px",
                                 background: "none", border: "none",
-                                borderLeft: "1px solid #1a1e30",
-                                color: "#4f8ef7", cursor: "pointer", fontSize: 12, whiteSpace: "nowrap",
+                                borderLeft: "1px solid rgb(var(--signal-surface-3-rgb))",
+                                color: "var(--signal-accent)", cursor: "pointer", fontSize: 12, whiteSpace: "nowrap",
                             }}
                         >⚡ 자동 생성</button>
                         <button
@@ -733,8 +733,8 @@ const SignalGroupedEditor: React.FC<SignalGroupedEditorProps> = ({
                             style={{
                                 flexShrink: 0, padding: "0 12px",
                                 background: "none", border: "none",
-                                borderLeft: "1px solid #1a1e30",
-                                color: activeSignals.length === 0 ? "#334" : "#c0392b",
+                                borderLeft: "1px solid rgb(var(--signal-surface-3-rgb))",
+                                color: activeSignals.length === 0 ? "rgb(var(--signal-border-rgb))" : "rgb(var(--signal-warning-border-rgb))",
                                 cursor: activeSignals.length === 0 ? "default" : "pointer",
                                 fontSize: 12, whiteSpace: "nowrap",
                             }}
@@ -744,8 +744,8 @@ const SignalGroupedEditor: React.FC<SignalGroupedEditorProps> = ({
                             style={{
                                 flexShrink: 0, padding: "0 12px",
                                 background: "none", border: "none",
-                                borderLeft: "1px solid #1a1e30",
-                                color: "#4fc97a", cursor: "pointer", fontSize: 12,
+                                borderLeft: "1px solid rgb(var(--signal-surface-3-rgb))",
+                                color: "var(--signal-text-muted)", cursor: "pointer", fontSize: 12,
                             }}
                         >+ 추가</button>
                     </>
@@ -762,7 +762,7 @@ const SignalGroupedEditor: React.FC<SignalGroupedEditorProps> = ({
                             <col style={{ width: "170px" }} />
                         </colgroup>
                         <thead>
-                            <tr style={{ background: "#060910" }}>
+                            <tr style={{ background: "rgb(var(--signal-surface-0-rgb))" }}>
                                 <th style={th}>이동 방향</th>
                                 <th style={th}>Connection ID</th>
                                 <th style={th}></th>
@@ -786,10 +786,10 @@ const SignalGroupedEditor: React.FC<SignalGroupedEditorProps> = ({
                                             onClick={() => highlightTurnGroup(connectionGuids, group.signalGuids)}
                                             style={{
                                                 background: groupSelected
-                                                    ? "#15315a"
-                                                    : group.isRtor ? "#1a170c" : "#0d1829",
-                                                borderTop: "1px solid #253550",
-                                                borderBottom: "1px solid #1c2940",
+                                                    ? "rgb(var(--signal-border-rgb))"
+                                                    : group.isRtor ? "rgb(var(--signal-warning-surface-rgb))" : "rgb(var(--signal-surface-2-rgb))",
+                                                borderTop: "1px solid rgb(var(--signal-border-rgb))",
+                                                borderBottom: "1px solid rgb(var(--signal-border-subtle-rgb))",
                                                 cursor: "pointer",
                                             }}
                                         >
@@ -798,8 +798,8 @@ const SignalGroupedEditor: React.FC<SignalGroupedEditorProps> = ({
                                                 style={{
                                                     padding: "8px 12px",
                                                     boxShadow: group.isRtor
-                                                        ? "inset 3px 0 #9b7728"
-                                                        : "inset 3px 0 #315c92",
+                                                        ? "inset 3px 0 rgb(var(--signal-warning-border-rgb))"
+                                                        : "inset 3px 0 rgb(var(--signal-border-accent-rgb))",
                                                 }}
                                             >
                                                 <div style={turnGroupHeaderStyle}>
@@ -828,7 +828,7 @@ const SignalGroupedEditor: React.FC<SignalGroupedEditorProps> = ({
                                                             </span>
                                                         ))}
                                                     </span>
-                                                    <strong style={{ color: group.isRtor ? "#f2c15e" : "#c9d6e9" }}>
+                                                    <strong style={{ color: group.isRtor ? "var(--signal-warning)" : "var(--signal-text-primary)" }}>
                                                         {group.directionLabel || "방향 미지정"}
                                                     </strong>
                                                     <span style={turnGroupApproachStyle}>{group.approachLabel}</span>
@@ -918,7 +918,7 @@ const SignalGroupedEditor: React.FC<SignalGroupedEditorProps> = ({
                                 />
                             )}
                             {activeSignals.length === 0 && addingTo !== activeId && (
-                                <tr><td colSpan={3} style={{ padding: "24px", textAlign: "center", color: "#334", fontSize: 12 }}>
+                                <tr><td colSpan={3} style={{ padding: "24px", textAlign: "center", color: "rgb(var(--signal-border-rgb))", fontSize: 12 }}>
                                     이 교차로에 등록된 신호가 없습니다.
                                 </td></tr>
                             )}
@@ -926,13 +926,13 @@ const SignalGroupedEditor: React.FC<SignalGroupedEditorProps> = ({
                     </table>
                 </div>
             ) : (
-                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#334", fontSize: 12 }}>
+                <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "rgb(var(--signal-border-rgb))", fontSize: 12 }}>
                     상단 탭에서 교차로를 선택하세요.
                 </div>
             )}
 
             <style>{`
-                tr.signal-data-row:hover { background: #101b2c !important; }
+                tr.signal-data-row:hover { background: rgb(var(--signal-surface-2-rgb)) !important; }
             `}</style>
         </div>
     );
@@ -941,8 +941,8 @@ const SignalGroupedEditor: React.FC<SignalGroupedEditorProps> = ({
 /* ── 공통 스타일 ── */
 const th: React.CSSProperties = {
     textAlign: "left", padding: "6px 12px",
-    fontSize: 11, color: "#334", fontWeight: 600,
-    borderBottom: "1px solid #1a1e30",
+    fontSize: 11, color: "rgb(var(--signal-border-rgb))", fontWeight: 600,
+    borderBottom: "1px solid rgb(var(--signal-surface-3-rgb))",
     position: "sticky", top: 0,
 };
 const td: React.CSSProperties = { padding: "6px 12px", verticalAlign: "middle" };
@@ -959,22 +959,22 @@ const directionAndTypeStyle: React.CSSProperties = {
 const typeInlineBadgeStyle: React.CSSProperties = {
     flexShrink: 0,
     padding: "2px 6px",
-    border: "1px solid #27364e",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 4,
-    background: "#0d1625",
-    color: "#6f7e94",
+    background: "rgb(var(--signal-surface-2-rgb))",
+    color: "var(--signal-text-muted)",
     fontSize: 9,
     fontWeight: 700,
 };
 const inp: React.CSSProperties = {
-    background: "#0e1525", border: "1px solid #2a3050", borderRadius: 4,
-    color: "#c0d4f0", padding: "4px 8px", fontSize: 11,
+    background: "rgb(var(--signal-surface-2-rgb))", border: "1px solid rgb(var(--signal-border-rgb))", borderRadius: 4,
+    color: "var(--signal-text-primary)", padding: "4px 8px", fontSize: 11,
     width: "100%", boxSizing: "border-box", outline: "none",
 };
 const sel: React.CSSProperties = { ...inp, cursor: "pointer" };
 const btnS = (bg: string): React.CSSProperties => ({
     background: bg, border: "none", borderRadius: 4,
-    color: bg === "transparent" ? undefined : "#fff",
+    color: bg === "transparent" ? undefined : "var(--signal-text-primary)",
     padding: "3px 10px", cursor: "pointer", fontSize: 11,
 });
 
@@ -982,28 +982,28 @@ const readonlyValueStyle: React.CSSProperties = {
     display: "inline-flex",
     minHeight: 27,
     alignItems: "center",
-    color: "#9cacc2",
+    color: "var(--signal-text-secondary)",
     fontSize: 11,
     fontWeight: 600,
 };
 
 const requiredValueStyle: React.CSSProperties = {
     ...readonlyValueStyle,
-    color: "#e18491",
+    color: "var(--signal-danger)",
 };
 
 const disabledButtonStyle: React.CSSProperties = {
-    ...btnS("#202738"),
-    color: "#586276",
+    ...btnS("rgb(var(--signal-border-subtle-rgb))"),
+    color: "var(--signal-text-disabled)",
     cursor: "not-allowed",
 };
 
 const rowSecondaryButtonStyle: React.CSSProperties = {
     height: 28,
-    border: "1px solid #2b3a52",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 5,
-    background: "#111b2b",
-    color: "#9eacc1",
+    background: "rgb(var(--signal-surface-2-rgb))",
+    color: "var(--signal-text-secondary)",
     padding: "0 9px",
     fontSize: 10,
     cursor: "pointer",
@@ -1011,10 +1011,10 @@ const rowSecondaryButtonStyle: React.CSSProperties = {
 
 const rowDeleteButtonStyle: React.CSSProperties = {
     height: 28,
-    border: "1px solid #57323b",
+    border: "1px solid rgb(var(--signal-danger-border-rgb))",
     borderRadius: 5,
-    background: "#24151b",
-    color: "#e48791",
+    background: "rgb(var(--signal-danger-surface-rgb))",
+    color: "var(--signal-danger)",
     padding: "0 9px",
     fontSize: 10,
     cursor: "pointer",
@@ -1023,10 +1023,10 @@ const rowDeleteButtonStyle: React.CSSProperties = {
 const disconnectedBadgeStyle: React.CSSProperties = {
     display: "inline-flex",
     alignItems: "center",
-    border: "1px solid #a43b49",
+    border: "1px solid rgb(var(--signal-warning-border-rgb))",
     borderRadius: 5,
-    background: "#421820",
-    color: "#ff9aa7",
+    background: "rgb(var(--signal-danger-surface-rgb))",
+    color: "var(--signal-danger)",
     padding: "3px 8px",
     fontSize: 10,
     fontWeight: 800,
@@ -1035,23 +1035,23 @@ const disconnectedBadgeStyle: React.CSSProperties = {
 const emptyConnectionStyle: React.CSSProperties = {
     padding: 18,
     textAlign: "center",
-    color: "#c27782",
+    color: "var(--signal-danger)",
     fontSize: 11,
-    background: "#1b1016",
-    borderBottom: "1px solid #43202a",
+    background: "rgb(var(--signal-warning-surface-rgb))",
+    borderBottom: "1px solid rgb(var(--signal-danger-border-rgb))",
 };
 
 const unassignedSectionStyle: React.CSSProperties = {
     padding: "14px 18px 10px",
-    borderTop: "2px solid #684f1f",
-    borderBottom: "1px solid #3d321c",
-    background: "#18150e",
-    color: "#e7c46e",
+    borderTop: "2px solid rgb(var(--signal-warning-border-rgb))",
+    borderBottom: "1px solid rgb(var(--signal-danger-surface-rgb))",
+    background: "rgb(var(--signal-warning-surface-rgb))",
+    color: "var(--signal-warning)",
 };
 
 const unassignedDescriptionStyle: React.CSSProperties = {
     marginLeft: 10,
-    color: "#9d8d66",
+    color: "var(--signal-text-muted)",
     fontSize: 10,
     fontWeight: 400,
 };
@@ -1059,13 +1059,13 @@ const unassignedDescriptionStyle: React.CSSProperties = {
 const unassignedHintStyle: React.CSSProperties = {
     display: "block",
     marginTop: 5,
-    color: "#6f674f",
+    color: "rgb(var(--signal-warning-border-rgb))",
     fontSize: 9,
 };
 
 const unassignedRowStyle: React.CSSProperties = {
-    borderBottom: "1px solid #292619",
-    background: "#11120f",
+    borderBottom: "1px solid rgb(var(--signal-danger-surface-rgb))",
+    background: "rgb(var(--signal-warning-surface-rgb))",
     cursor: "pointer",
 };
 
@@ -1078,22 +1078,22 @@ const unassignedBadgeStyle: React.CSSProperties = {
     display: "inline-flex",
     marginLeft: 8,
     padding: "2px 6px",
-    border: "1px solid #705824",
+    border: "1px solid rgb(var(--signal-warning-border-rgb))",
     borderRadius: 4,
-    color: "#d5ab50",
-    background: "#241d0e",
+    color: "var(--signal-warning)",
+    background: "rgb(var(--signal-warning-surface-rgb))",
     fontSize: 9,
     fontWeight: 700,
 };
 
 const unassignedConnectionStyle: React.CSSProperties = {
     ...td,
-    color: "#9a9178",
+    color: "var(--signal-text-muted)",
 };
 
 const unassignedActionStyle: React.CSSProperties = {
     ...td,
-    color: "#817451",
+    color: "rgb(var(--signal-warning-border-rgb))",
     textAlign: "right",
     fontSize: 10,
 };
@@ -1111,10 +1111,10 @@ const turnGroupToggleStyle: React.CSSProperties = {
     height: 22,
     flexShrink: 0,
     padding: 0,
-    border: "1px solid #30425f",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 4,
-    background: "#111d30",
-    color: "#8fa6c8",
+    background: "rgb(var(--signal-surface-3-rgb))",
+    color: "var(--signal-text-secondary)",
     cursor: "pointer",
     fontSize: 9,
 };
@@ -1126,10 +1126,10 @@ const turnGroupBadgeStyle: React.CSSProperties = {
     display: "inline-flex",
     justifyContent: "center",
     padding: "4px 9px",
-    border: "1px solid #4d79b8",
+    border: "1px solid rgb(var(--signal-border-accent-rgb))",
     borderRadius: 5,
-    background: "#17365f",
-    color: "#d9eaff",
+    background: "rgb(var(--signal-border-rgb))",
+    color: "var(--signal-text-primary)",
     fontSize: 12,
     fontWeight: 800,
 };
@@ -1144,7 +1144,7 @@ const turnDirectionIconsStyle: React.CSSProperties = {
 
 const turnGroupApproachStyle: React.CSSProperties = {
     minWidth: 0,
-    color: "#71829b",
+    color: "var(--signal-text-muted)",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -1154,10 +1154,10 @@ const turnGroupCountStyle: React.CSSProperties = {
     marginLeft: "auto",
     flexShrink: 0,
     padding: "3px 7px",
-    border: "1px solid #293b57",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 9,
-    background: "#111e31",
-    color: "#8194b0",
+    background: "rgb(var(--signal-surface-3-rgb))",
+    color: "var(--signal-text-muted)",
     fontSize: 9,
 };
 

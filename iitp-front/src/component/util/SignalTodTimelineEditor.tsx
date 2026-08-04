@@ -404,13 +404,13 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
         const canGenerate = !!emptyNodeId && (planIdsByNode.get(emptyNodeId)?.length ?? 0) > 0;
         return (
             <div style={emptyStateStyle}>
-                <div style={{ fontSize: 15, color: "#bac5d8", marginBottom: 8 }}>신호 TOD 데이터가 없습니다.</div>
+                <div style={{ fontSize: 15, color: "var(--signal-text-secondary)", marginBottom: 8 }}>신호 TOD 데이터가 없습니다.</div>
                 <div>신호 PLAN을 기준으로 백엔드 기본 TOD 시간표를 생성할 수 있습니다.</div>
                 {canGenerate && (
                     <button
                         type="button"
                         onClick={() => autoGenerateTod(emptyNodeId!)}
-                        style={{ ...toolbarButtonStyle, marginTop: 14, color: "#edc45e", borderColor: "#75591e" }}
+                        style={{ ...toolbarButtonStyle, marginTop: 14, color: "var(--signal-warning)", borderColor: "rgb(var(--signal-warning-border-rgb))" }}
                     >
                         ⚡ TOD 자동 생성
                     </button>
@@ -444,16 +444,16 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
         .sort((a, b) => Number(a) - Number(b));
 
     return (
-        <div style={{ display: "flex", height: bodyHeight, overflow: "hidden", background: "#080d18" }}>
+        <div style={{ display: "flex", height: bodyHeight, overflow: "hidden", background: "rgb(var(--signal-surface-0-rgb))" }}>
             {!hideSidebar && <aside style={sidebarStyle}>
-                <div style={{ padding: "9px 9px 7px", borderBottom: "1px solid #1d2739" }}>
+                <div style={{ padding: "9px 9px 7px", borderBottom: "1px solid rgb(var(--signal-border-subtle-rgb))" }}>
                     <input
                         value={search}
                         onChange={event => setSearch(event.target.value)}
                         placeholder="교차로 ID 검색"
                         style={{ ...toolbarInputStyle, width: "100%" }}
                     />
-                    <div style={{ color: "#657188", fontSize: 9, marginTop: 6 }}>
+                    <div style={{ color: "var(--signal-text-muted)", fontSize: 9, marginTop: 6 }}>
                         교차로 {visibleNodes.length}/{nodes.length}
                     </div>
                 </div>
@@ -475,17 +475,17 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
                                     padding: "8px 10px",
                                     textAlign: "left",
                                     border: "none",
-                                    borderBottom: "1px solid #151e2e",
-                                    borderLeft: selected ? "3px solid #4f8ef7" : "3px solid transparent",
-                                    background: selected ? "#101d34" : "transparent",
+                                    borderBottom: "1px solid rgb(var(--signal-surface-3-rgb))",
+                                    borderLeft: selected ? "3px solid var(--signal-accent)" : "3px solid transparent",
+                                    background: selected ? "rgb(var(--signal-surface-3-rgb))" : "transparent",
                                     cursor: "pointer",
                                 }}
                             >
-                                <div style={{ color: selected ? "#d7e3f6" : "#96a4ba", fontSize: 11, fontWeight: 700 }}>
+                                <div style={{ color: selected ? "var(--signal-text-primary)" : "var(--signal-text-secondary)", fontSize: 11, fontWeight: 700 }}>
                                     교차로 #{nodeId}
                                 </div>
                                 <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4 }}>
-                                    <span style={{ color: "#657188", fontSize: 9 }}>구간 {node.plans?.length ?? 0}</span>
+                                    <span style={{ color: "var(--signal-text-muted)", fontSize: 9 }}>구간 {node.plans?.length ?? 0}</span>
                                     {issues.length > 0 && (
                                         <span title={issues.map(issue => issue.message).join("\n")} style={issueBadgeStyle}>
                                             오류 {issues.length}
@@ -496,7 +496,7 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
                         );
                     })}
                     {visibleNodes.length === 0 && (
-                        <div style={{ padding: 18, textAlign: "center", color: "#6e7a8f", fontSize: 10 }}>
+                        <div style={{ padding: 18, textAlign: "center", color: "var(--signal-text-muted)", fontSize: 10 }}>
                             검색 결과가 없습니다.
                         </div>
                     )}
@@ -508,8 +508,8 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
                     <>
                         <div style={toolbarStyle}>
                             <div>
-                                <strong style={{ color: "#cbd7e9", fontSize: 12 }}>교차로 #{activeNodeId}</strong>
-                                <div style={{ color: "#69768b", fontSize: 9, marginTop: 3 }}>
+                                <strong style={{ color: "var(--signal-text-primary)", fontSize: 12 }}>교차로 #{activeNodeId}</strong>
+                                <div style={{ color: "var(--signal-text-muted)", fontSize: 9, marginTop: 3 }}>
                                     TOD 구간 {activePlans.length}개
                                 </div>
                             </div>
@@ -524,7 +524,7 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
                             )}
                             <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
                                 {legendPlanIds.map(planId => (
-                                    <span key={planId} style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "#8794a9", fontSize: 9 }}>
+                                    <span key={planId} style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "var(--signal-text-muted)", fontSize: 9 }}>
                                         <span style={{ width: 8, height: 8, borderRadius: 2, background: planColor(planId) }} />
                                         P{planId}
                                     </span>
@@ -533,7 +533,7 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
                             <button
                                 type="button"
                                 onClick={() => autoGenerateTod(activeNodeId!)}
-                                style={{ ...toolbarButtonStyle, marginLeft: "auto", color: "#edc45e", borderColor: "#75591e" }}
+                                style={{ ...toolbarButtonStyle, marginLeft: "auto", color: "var(--signal-warning)", borderColor: "rgb(var(--signal-warning-border-rgb))" }}
                             >
                                 ⚡ TOD 자동 생성
                             </button>
@@ -553,7 +553,7 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
                                 }
                                 style={{
                                     ...toolbarButtonStyle,
-                                    color: "#83adf5",
+                                    color: "rgb(var(--signal-accent-text-rgb))",
                                     opacity: (!activeGap && !activeCanSplit) || activeAllowedPlanIds.length === 0 || !activeParentGuid ? 0.35 : 1,
                                     cursor: (!activeGap && !activeCanSplit) || activeAllowedPlanIds.length === 0 || !activeParentGuid ? "not-allowed" : "pointer",
                                 }}
@@ -564,7 +564,7 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
 
                         {issuesExpanded && activeIssues.length > 0 && (
                             <div style={issuePanelStyle}>
-                                <div style={{ color: "#f3b0b0", fontWeight: 700, marginBottom: 6 }}>
+                                <div style={{ color: "var(--signal-danger)", fontWeight: 700, marginBottom: 6 }}>
                                     이 교차로에서 확인이 필요한 항목
                                 </div>
                                 {activeIssues.map((issue, index) => (
@@ -575,13 +575,13 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
                                             gridTemplateColumns: "112px 1fr",
                                             gap: 8,
                                             padding: "4px 0",
-                                            borderTop: index === 0 ? "none" : "1px solid #3a2630",
+                                            borderTop: index === 0 ? "none" : "1px solid rgb(var(--signal-danger-border-rgb))",
                                         }}
                                     >
-                                        <strong style={{ color: issue.code === "gap" ? "#f5bd72" : "#ff9898" }}>
+                                        <strong style={{ color: issue.code === "gap" ? "var(--signal-warning)" : "var(--signal-danger)" }}>
                                             {ISSUE_LABELS[issue.code] ?? issue.code}
                                         </strong>
-                                        <span style={{ color: "#c8b8bd" }}>{issue.message}</span>
+                                        <span style={{ color: "var(--signal-text-secondary)" }}>{issue.message}</span>
                                     </div>
                                 ))}
                             </div>
@@ -589,7 +589,7 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
 
                         {selectedPlan && selectedPlan.__guid && (
                             <div style={selectionBarStyle}>
-                                <span style={{ color: "#8190a7" }}>적용 신호 계획</span>
+                                <span style={{ color: "var(--signal-text-muted)" }}>적용 신호 계획</span>
                                 <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                                     {selectablePlanIds.map(id => {
                                         const selected = String(selectedPlan.id) === id;
@@ -603,8 +603,10 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
                                                 title={`이 시간 구간에 Plan ${id} 적용`}
                                                 style={{
                                                     minWidth: 42,
-                                                    border: selected ? "2px solid #fff" : "1px solid rgba(255,255,255,0.25)",
+                                                    border: selected ? "2px solid var(--signal-text-primary)" : "1px solid rgba(255,255,255,0.25)",
                                                     background: planColor(id),
+                                                    /* PLAN_COLORS는 테마와 무관하게 항상 채도 높은 고정색 — 그 위 텍스트도
+                                                       항상 흰색으로 고정해야 라이트 모드에서도 대비가 보장된다. */
                                                     color: "#fff",
                                                     borderRadius: 5,
                                                     padding: "4px 9px",
@@ -620,24 +622,24 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
                                         );
                                     })}
                                 </div>
-                                <strong style={{ color: "#cbd7e9", fontSize: 10 }}>
+                                <strong style={{ color: "var(--signal-text-primary)", fontSize: 10 }}>
                                     {String(selectedPlan.startTime).slice(0, 5)}–{String(selectedPlan.endTime).slice(0, 5)}
                                 </strong>
-                                <span style={{ color: "#647188", fontSize: 9 }}>색상은 Plan 구분용입니다.</span>
+                                <span style={{ color: "var(--signal-text-muted)", fontSize: 9 }}>색상은 Plan 구분용입니다.</span>
                                 <button
                                     onClick={() => {
                                         if (window.confirm(`Plan ${selectedPlan.id} 구간을 삭제하시겠습니까?`)) {
                                             deletePlan(selectedPlan.__guid!);
                                         }
                                     }}
-                                    style={{ ...toolbarButtonStyle, color: "#ef7b7b", marginLeft: "auto" }}
+                                    style={{ ...toolbarButtonStyle, color: "var(--signal-danger)", marginLeft: "auto" }}
                                 >
                                     구간 삭제
                                 </button>
                             </div>
                         )}
 
-                        <div style={{ position: "relative", height: 34, flexShrink: 0, borderBottom: "1px solid #263149", background: "#0a101c" }}>
+                        <div style={{ position: "relative", height: 34, flexShrink: 0, borderBottom: "1px solid rgb(var(--signal-border-rgb))", background: "rgb(var(--signal-surface-1-rgb))" }}>
                             {HOUR_MARKS.map(hour => (
                                 <div
                                     key={hour}
@@ -646,9 +648,9 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
                                         left: percentage(hour * 60),
                                         top: 0,
                                         height: "100%",
-                                        borderLeft: hour % 6 === 0 ? "1px solid #4c5b79" : "1px solid #253047",
+                                        borderLeft: hour % 6 === 0 ? "1px solid var(--signal-text-disabled)" : "1px solid rgb(var(--signal-border-rgb))",
                                         paddingLeft: 4,
-                                        color: hour % 6 === 0 ? "#7f8ca2" : "transparent",
+                                        color: hour % 6 === 0 ? "var(--signal-text-muted)" : "transparent",
                                         fontSize: 10,
                                         transform: "translateX(-1px)",
                                         boxSizing: "border-box",
@@ -662,7 +664,7 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
                         <div style={{ flex: 1, minHeight: 90, padding: "18px 10px", overflow: "auto" }}>
                             <div
                                 data-tod-timeline
-                                style={{ position: "relative", height: 48, background: "#111827", borderRadius: 5, overflow: "hidden" }}
+                                style={{ position: "relative", height: 48, background: "rgb(var(--signal-surface-2-rgb))", borderRadius: 5, overflow: "hidden" }}
                             >
                                 {activePlans.map((plan, index) => {
                                     const baseStart = parseTodTime(plan.startTime, false);
@@ -697,8 +699,9 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
                                                 width: percentage(width),
                                                 top: 3,
                                                 bottom: 3,
-                                                border: selected ? "2px solid #fff" : "1px solid rgba(255,255,255,0.15)",
+                                                border: selected ? "2px solid var(--signal-text-primary)" : "1px solid rgba(255,255,255,0.15)",
                                                 background: color,
+                                                /* color = planColor(...) — 테마와 무관한 고정 도메인 색 위 텍스트라 항상 흰색 고정 */
                                                 color: "#fff",
                                                 borderRadius: 4,
                                                 cursor: plan.__guid ? "pointer" : "default",
@@ -734,12 +737,12 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
                                     );
                                 })}
                                 {activeIssues.some(issue => issue.code === "gap") && (
-                                    <div style={{ position: "absolute", inset: 0, pointerEvents: "none", border: "1px dashed #f5ad55", borderRadius: 5 }} />
+                                    <div style={{ position: "absolute", inset: 0, pointerEvents: "none", border: "1px dashed var(--signal-warning)", borderRadius: 5 }} />
                                 )}
                             </div>
-                            <div style={{ display: "flex", justifyContent: "space-between", color: "#718097", fontSize: 9, marginTop: 8 }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", color: "var(--signal-text-muted)", fontSize: 9, marginTop: 8 }}>
                                 <span>막대 경계를 드래그하면 맞닿은 두 구간이 5분 단위로 함께 조정됩니다.</span>
-                                {dragPreview && <strong style={{ color: "#dbe7fb" }}>{formatTodTime(dragPreview.minutes)}</strong>}
+                                {dragPreview && <strong style={{ color: "var(--signal-text-primary)" }}>{formatTodTime(dragPreview.minutes)}</strong>}
                             </div>
                         </div>
                     </>
@@ -754,7 +757,7 @@ const SignalTodTimelineEditor: React.FC<SignalTodTimelineEditorProps> = ({
                             <button
                                 type="button"
                                 onClick={() => autoGenerateTod(selectedNodeId)}
-                                style={{ ...toolbarButtonStyle, marginTop: 14, color: "#edc45e", borderColor: "#75591e" }}
+                                style={{ ...toolbarButtonStyle, marginTop: 14, color: "var(--signal-warning)", borderColor: "rgb(var(--signal-warning-border-rgb))" }}
                             >
                                 ⚡ TOD 자동 생성
                             </button>
@@ -779,30 +782,30 @@ const toolbarStyle: React.CSSProperties = {
     alignItems: "center",
     gap: 8,
     padding: "6px 10px",
-    borderBottom: "1px solid #1e293d",
-    background: "#0b121f",
+    borderBottom: "1px solid rgb(var(--signal-border-subtle-rgb))",
+    background: "rgb(var(--signal-surface-1-rgb))",
     boxSizing: "border-box",
     flexShrink: 0,
 };
 
 const toolbarInputStyle: React.CSSProperties = {
     width: 155,
-    background: "#111a2b",
-    border: "1px solid #2b3850",
+    background: "rgb(var(--signal-surface-2-rgb))",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 5,
-    color: "#d4dcea",
+    color: "var(--signal-text-primary)",
     padding: "6px 8px",
     fontSize: 10,
     outline: "none",
 };
 
 const toolbarButtonStyle: React.CSSProperties = {
-    border: "1px solid #2b3850",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 5,
     padding: "5px 8px",
     cursor: "pointer",
     fontSize: 10,
-    background: "#111a2b",
+    background: "rgb(var(--signal-surface-2-rgb))",
 };
 
 const sidebarStyle: React.CSSProperties = {
@@ -810,8 +813,8 @@ const sidebarStyle: React.CSSProperties = {
     flexShrink: 0,
     display: "flex",
     flexDirection: "column",
-    borderRight: "1px solid #1e293d",
-    background: "#0a101c",
+    borderRight: "1px solid rgb(var(--signal-border-subtle-rgb))",
+    background: "rgb(var(--signal-surface-1-rgb))",
 };
 
 const selectionBarStyle: React.CSSProperties = {
@@ -820,8 +823,8 @@ const selectionBarStyle: React.CSSProperties = {
     alignItems: "center",
     gap: 8,
     padding: "5px 10px",
-    borderBottom: "1px solid #1e293d",
-    background: "#0d1626",
+    borderBottom: "1px solid rgb(var(--signal-border-subtle-rgb))",
+    background: "rgb(var(--signal-surface-2-rgb))",
     fontSize: 10,
     boxSizing: "border-box",
     flexShrink: 0,
@@ -841,10 +844,10 @@ const dragHandleStyle: React.CSSProperties = {
 };
 
 const issueBadgeStyle: React.CSSProperties = {
-    background: "#3a1d25",
-    border: "1px solid #713b43",
+    background: "rgb(var(--signal-danger-surface-rgb))",
+    border: "1px solid rgb(var(--signal-danger-border-rgb))",
     borderRadius: 10,
-    color: "#ff9292",
+    color: "var(--signal-danger)",
     padding: "1px 5px",
     fontSize: 8,
     cursor: "help",
@@ -854,8 +857,8 @@ const issuePanelStyle: React.CSSProperties = {
     maxHeight: 132,
     overflowY: "auto",
     padding: "8px 10px",
-    borderBottom: "1px solid #59313a",
-    background: "#24151c",
+    borderBottom: "1px solid rgb(var(--signal-danger-border-rgb))",
+    background: "rgb(var(--signal-danger-surface-rgb))",
     fontSize: 9,
     boxSizing: "border-box",
     flexShrink: 0,
@@ -866,9 +869,9 @@ const footerStyle: React.CSSProperties = {
     alignItems: "center",
     gap: 14,
     padding: "6px 10px",
-    borderTop: "1px solid #1e293d",
-    background: "#0a101c",
-    color: "#718097",
+    borderTop: "1px solid rgb(var(--signal-border-subtle-rgb))",
+    background: "rgb(var(--signal-surface-1-rgb))",
+    color: "var(--signal-text-muted)",
     fontSize: 9,
     flexShrink: 0,
 };
@@ -879,7 +882,7 @@ const emptyStateStyle: React.CSSProperties = {
     alignItems: "center",
     justifyContent: "center",
     minHeight: 220,
-    color: "#748096",
+    color: "var(--signal-text-muted)",
     fontSize: 12,
     textAlign: "center",
 };

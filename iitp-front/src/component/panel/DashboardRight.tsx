@@ -98,7 +98,7 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
                 <div className={styles.analyticsPanel} style={{ padding: '12px 12px 14px' }}>
                     {!analyticsData ? (
                         <div className={styles.analyticsEmpty}>
-                            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="1.5">
+                            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(var(--overlay-rgb), 0.3)" strokeWidth="1.5">
                                 <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
                             </svg>
                             <p className={styles.emptyTitle}>분석 데이터 없음</p>
@@ -134,7 +134,7 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
                             {/* Analytics KPI Grid */}
                             <div className={styles.analyticsKpiRowSide}>
                                 <div className={styles.analyticsKpi}>
-                                    <div className={styles.analyticsKpiIcon} style={{ color: '#4169E1' }}>
+                                    <div className={styles.analyticsKpiIcon} style={{ color: 'var(--accent)' }}>
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                             <rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/>
                                             <circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
@@ -145,7 +145,7 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
                                     <div className={styles.kpiUnit}>대 (전체 시뮬레이션)</div>
                                 </div>
                                 <div className={styles.analyticsKpi}>
-                                    <div className={styles.analyticsKpiIcon} style={{ color: '#f59e0b' }}>
+                                    <div className={styles.analyticsKpiIcon} style={{ color: 'var(--color-warning)' }}>
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                             <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
                                         </svg>
@@ -155,7 +155,7 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
                                     <div className={styles.kpiUnit}>차량당 평균</div>
                                 </div>
                                 <div className={styles.analyticsKpi}>
-                                    <div className={styles.analyticsKpiIcon} style={{ color: '#10b981' }}>
+                                    <div className={styles.analyticsKpiIcon} style={{ color: 'var(--color-success)' }}>
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                             <polyline points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
                                         </svg>
@@ -165,7 +165,7 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
                                     <div className={styles.kpiUnit}>km/h</div>
                                 </div>
                                 <div className={styles.analyticsKpi}>
-                                    <div className={styles.analyticsKpiIcon} style={{ color: '#ef4444' }}>
+                                    <div className={styles.analyticsKpiIcon} style={{ color: 'var(--color-danger)' }}>
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
                                         </svg>
@@ -200,19 +200,19 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
                             {/* 피크 요약 */}
                             <div style={{ display: 'flex', gap: 8 }}>
                                 <div className={styles.sectionBox} style={{ flex: 1, textAlign: 'center' }}>
-                                    <div style={{ fontSize: 10, color: '#555', marginBottom: 4 }}>피크 교통량 시각</div>
-                                    <div style={{ fontSize: 15, fontWeight: 700, color: '#f59e0b', fontVariantNumeric: 'tabular-nums' }}>{analyticsData.peakTime}</div>
-                                    <div style={{ fontSize: 10, color: '#444' }}>{analyticsData.peakVolume.toLocaleString()} 대</div>
+                                    <div style={{ fontSize: 10, color: 'var(--text-disabled)', marginBottom: 4 }}>피크 교통량 시각</div>
+                                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--color-warning)', fontVariantNumeric: 'tabular-nums' }}>{analyticsData.peakTime}</div>
+                                    <div style={{ fontSize: 10, color: 'var(--text-disabled)' }}>{analyticsData.peakVolume.toLocaleString()} 대</div>
                                 </div>
                                 <div className={styles.sectionBox} style={{ flex: 1, textAlign: 'center' }}>
-                                    <div style={{ fontSize: 10, color: '#555', marginBottom: 4 }}>총 이동거리</div>
-                                    <div style={{ fontSize: 15, fontWeight: 700, color: '#10b981', fontVariantNumeric: 'tabular-nums' }}>{analyticsData.totalDistanceKm.toLocaleString()}</div>
-                                    <div style={{ fontSize: 10, color: '#444' }}>km (누적)</div>
+                                    <div style={{ fontSize: 10, color: 'var(--text-disabled)', marginBottom: 4 }}>총 이동거리</div>
+                                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--color-success)', fontVariantNumeric: 'tabular-nums' }}>{analyticsData.totalDistanceKm.toLocaleString()}</div>
+                                    <div style={{ fontSize: 10, color: 'var(--text-disabled)' }}>km (누적)</div>
                                 </div>
                                 <div className={styles.sectionBox} style={{ flex: 1, textAlign: 'center' }}>
-                                    <div style={{ fontSize: 10, color: '#555', marginBottom: 4 }}>CO₂ 추정</div>
+                                    <div style={{ fontSize: 10, color: 'var(--text-disabled)', marginBottom: 4 }}>CO₂ 추정</div>
                                     <div style={{ fontSize: 15, fontWeight: 700, color: '#8b5cf6', fontVariantNumeric: 'tabular-nums' }}>{analyticsData.estimatedCO2Kg.toLocaleString()}</div>
-                                    <div style={{ fontSize: 10, color: '#444' }}>kg</div>
+                                    <div style={{ fontSize: 10, color: 'var(--text-disabled)' }}>kg</div>
                                 </div>
                             </div>
 
@@ -220,7 +220,7 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
                             <div className={styles.analyticsChartGridSide}>
                                 <div className={styles.analyticsChartSection}>
                                     <div className={styles.sectionHeader}>
-                                        <div className={styles.sectionAccent} style={{ background: '#4169E1' }}/>
+                                        <div className={styles.sectionAccent} style={{ background: 'var(--accent)' }}/>
                                         <span className={styles.sectionTitle}>시간대별 교통량 · 평균속도</span>
                                         <span className={styles.sectionMeta}>{INTERVAL}초 간격</span>
                                     </div>
@@ -228,26 +228,26 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
                                         <ComposedChart data={analyticsData.timeSeries} margin={{ top: 5, right: 30, left: -10, bottom: 0 }}>
                                             <defs>
                                                 <linearGradient id="volGradient" x1="0" y1="0" x2="0" y2="1">
-                                                    <stop offset="5%" stopColor="#4169E1" stopOpacity={0.8}/>
-                                                    <stop offset="95%" stopColor="#4169E1" stopOpacity={0.2}/>
+                                                    <stop offset="5%" stopColor="var(--accent)" stopOpacity={0.8}/>
+                                                    <stop offset="95%" stopColor="var(--accent)" stopOpacity={0.2}/>
                                                 </linearGradient>
                                             </defs>
-                                            <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" vertical={false}/>
-                                            <XAxis dataKey="time" stroke="#333" tick={{ fontSize: 10, fill: '#555' }} interval="preserveStartEnd"/>
-                                            <YAxis yAxisId="vol" stroke="#333" tick={{ fontSize: 10, fill: '#555' }} label={{ value: '대', angle: -90, position: 'insideLeft', fill: '#444', fontSize: 10 }}/>
-                                            <YAxis yAxisId="spd" orientation="right" stroke="#333" tick={{ fontSize: 10, fill: '#555' }} label={{ value: 'km/h', angle: 90, position: 'insideRight', fill: '#444', fontSize: 10 }}/>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--overlay-rgb), 0.08)" vertical={false}/>
+                                            <XAxis dataKey="time" stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 10, fill: 'var(--text-disabled)' }} interval="preserveStartEnd"/>
+                                            <YAxis yAxisId="vol" stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 10, fill: 'var(--text-disabled)' }} label={{ value: '대', angle: -90, position: 'insideLeft', fill: 'var(--text-disabled)', fontSize: 10 }}/>
+                                            <YAxis yAxisId="spd" orientation="right" stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 10, fill: 'var(--text-disabled)' }} label={{ value: 'km/h', angle: 90, position: 'insideRight', fill: 'var(--text-disabled)', fontSize: 10 }}/>
                                             <Tooltip content={<ChartTooltip/>}/>
-                                            <Legend wrapperStyle={{ fontSize: 11, color: '#666', paddingTop: 4 }}/>
+                                            <Legend wrapperStyle={{ fontSize: 11, color: 'rgba(var(--overlay-rgb), 0.4)', paddingTop: 4 }}/>
                                             <Bar yAxisId="vol" dataKey="교통량" fill="url(#volGradient)" radius={[2, 2, 0, 0]} maxBarSize={20}/>
-                                            <Line yAxisId="spd" type="monotone" dataKey="평균속도" stroke="#f59e0b" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#f59e0b' }}/>
+                                            <Line yAxisId="spd" type="monotone" dataKey="평균속도" stroke="var(--color-warning)" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: 'var(--color-warning)' }}/>
                                             {currentBucket && (
                                                 <ReferenceLine
                                                     x={currentBucket.time}
                                                     yAxisId="vol"
-                                                    stroke="#ff6b6b"
+                                                    stroke="var(--color-danger)"
                                                     strokeWidth={1.5}
                                                     strokeDasharray="4 3"
-                                                    label={{ value: '현재', position: 'top', fill: '#ff6b6b', fontSize: 9 }}
+                                                    label={{ value: '현재', position: 'top', fill: 'var(--color-danger)', fontSize: 9 }}
                                                 />
                                             )}
                                         </ComposedChart>
@@ -256,7 +256,7 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
 
                                 <div className={styles.analyticsChartSection} style={{ marginTop: 10 }}>
                                     <div className={styles.sectionHeader}>
-                                        <div className={styles.sectionAccent} style={{ background: '#10b981' }}/>
+                                        <div className={styles.sectionAccent} style={{ background: 'var(--color-success)' }}/>
                                         <span className={styles.sectionTitle}>시간대별 평균속도 추이</span>
                                         <span className={styles.sectionMeta}>km/h</span>
                                     </div>
@@ -264,17 +264,17 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
                                         <AreaChart data={analyticsData.timeSeries} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
                                             <defs>
                                                 <linearGradient id="spdGrad" x1="0" y1="0" x2="0" y2="1">
-                                                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.5}/>
-                                                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.05}/>
+                                                    <stop offset="5%" stopColor="var(--color-success)" stopOpacity={0.5}/>
+                                                    <stop offset="95%" stopColor="var(--color-success)" stopOpacity={0.05}/>
                                                 </linearGradient>
                                             </defs>
-                                            <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" vertical={false}/>
-                                            <XAxis dataKey="time" stroke="#333" tick={{ fontSize: 9, fill: '#555' }} interval="preserveStartEnd"/>
-                                            <YAxis stroke="#333" tick={{ fontSize: 9, fill: '#555' }}/>
+                                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--overlay-rgb), 0.08)" vertical={false}/>
+                                            <XAxis dataKey="time" stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 9, fill: 'var(--text-disabled)' }} interval="preserveStartEnd"/>
+                                            <YAxis stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 9, fill: 'var(--text-disabled)' }}/>
                                             <Tooltip content={<ChartTooltip/>}/>
-                                            <Area type="monotone" dataKey="평균속도" stroke="#10b981" strokeWidth={2} fill="url(#spdGrad)" dot={false}/>
+                                            <Area type="monotone" dataKey="평균속도" stroke="var(--color-success)" strokeWidth={2} fill="url(#spdGrad)" dot={false}/>
                                             {currentBucket && (
-                                                <ReferenceLine x={currentBucket.time} stroke="#ff6b6b" strokeWidth={1.5} strokeDasharray="4 3"/>
+                                                <ReferenceLine x={currentBucket.time} stroke="var(--color-danger)" strokeWidth={1.5} strokeDasharray="4 3"/>
                                             )}
                                         </AreaChart>
                                     </ResponsiveContainer>
@@ -283,14 +283,14 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
                                 <div className={styles.analyticsRightCol}>
                                     <div className={styles.analyticsChartSection}>
                                         <div className={styles.sectionHeader}>
-                                            <div className={styles.sectionAccent} style={{ background: '#10b981' }}/>
+                                            <div className={styles.sectionAccent} style={{ background: 'var(--color-success)' }}/>
                                             <span className={styles.sectionTitle}>차량 유형</span>
                                         </div>
                                         <ResponsiveContainer width="100%" height={120}>
                                             <BarChart data={analyticsData.typeData} layout="vertical" margin={{ top: 0, right: 40, left: 10, bottom: 0 }}>
-                                                <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" horizontal={false}/>
-                                                <XAxis type="number" stroke="#333" tick={{ fontSize: 10, fill: '#555' }}/>
-                                                <YAxis type="category" dataKey="type" stroke="#333" tick={{ fontSize: 11, fill: '#999' }} width={42}/>
+                                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--overlay-rgb), 0.08)" horizontal={false}/>
+                                                <XAxis type="number" stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 10, fill: 'var(--text-disabled)' }}/>
+                                                <YAxis type="category" dataKey="type" stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 11, fill: 'var(--text-tertiary)' }} width={42}/>
                                                 <Tooltip content={<ChartTooltip/>}/>
                                                 <Bar dataKey="count" name="차량 수" radius={[0, 3, 3, 0]} maxBarSize={16}>
                                                     {analyticsData.typeData.map((entry, index) => (
@@ -310,15 +310,15 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
 
                                     <div className={styles.analyticsChartSection}>
                                         <div className={styles.sectionHeader}>
-                                            <div className={styles.sectionAccent} style={{ background: '#f59e0b' }}/>
+                                            <div className={styles.sectionAccent} style={{ background: 'var(--color-warning)' }}/>
                                             <span className={styles.sectionTitle}>속도 분포</span>
                                             <span className={styles.sectionMeta}>km/h</span>
                                         </div>
                                         <ResponsiveContainer width="100%" height={105}>
                                             <BarChart data={analyticsData.speedDistribution} margin={{ top: 0, right: 10, left: -20, bottom: 0 }}>
-                                                <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" vertical={false}/>
-                                                <XAxis dataKey="range" stroke="#333" tick={{ fontSize: 10, fill: '#555' }}/>
-                                                <YAxis stroke="#333" tick={{ fontSize: 10, fill: '#555' }}/>
+                                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--overlay-rgb), 0.08)" vertical={false}/>
+                                                <XAxis dataKey="range" stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 10, fill: 'var(--text-disabled)' }}/>
+                                                <YAxis stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 10, fill: 'var(--text-disabled)' }}/>
                                                 <Tooltip content={<ChartTooltip/>}/>
                                                 <Bar dataKey="count" name="샘플 수" radius={[3, 3, 0, 0]}>
                                                     {analyticsData.speedDistribution.map((entry, index) => (
@@ -357,8 +357,8 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
                                 </>
                             )}
                         </button>
-                        {!versionId && <span style={{ fontSize: 11, color: '#555' }}>시나리오를 먼저 선택하세요</span>}
-                        {error && <span style={{ fontSize: 11, color: '#ef4444' }}>{error}</span>}
+                        {!versionId && <span style={{ fontSize: 11, color: 'var(--text-disabled)' }}>시나리오를 먼저 선택하세요</span>}
+                        {error && <span style={{ fontSize: 11, color: 'var(--color-danger)' }}>{error}</span>}
                     </div>
 
                     {/* 요약 KPI (summary) */}
@@ -387,8 +387,8 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
                     {/* 상위 링크 테이블 */}
                     {linkStats && linkStats.topLinks.length > 0 ? (
                         <div className={styles.sectionBox} style={{ padding: 0, overflow: 'hidden' }}>
-                            <div className={styles.sectionHeader} style={{ padding: '12px 14px 8px', marginBottom: 0, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                                <div className={styles.sectionAccent} style={{ background: '#4169E1' }}/>
+                            <div className={styles.sectionHeader} style={{ padding: '12px 14px 8px', marginBottom: 0, borderBottom: '1px solid rgba(var(--overlay-rgb), 0.05)' }}>
+                                <div className={styles.sectionAccent} style={{ background: 'var(--accent)' }}/>
                                 <span className={styles.sectionTitle}>교통량 상위 링크</span>
                                 <span className={styles.sectionMeta}>{linkStats.interval}초 간격</span>
                             </div>
@@ -428,7 +428,7 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
                         </div>
                     ) : !isLoading && !linkStats ? (
                         <div className={styles.analyticsEmpty}>
-                            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#333" strokeWidth="1.5">
+                            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="rgba(var(--overlay-rgb), 0.3)" strokeWidth="1.5">
                                 <rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/>
                                 <line x1="9" y1="21" x2="9" y2="9"/>
                             </svg>
@@ -456,9 +456,9 @@ const DashboardRight: React.FC<Props> = ({ onClose }) => {
                                             <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.2}/>
                                         </linearGradient>
                                     </defs>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" vertical={false}/>
-                                    <XAxis dataKey="time" stroke="#333" tick={{ fontSize: 9, fill: '#555' }} interval="preserveStartEnd"/>
-                                    <YAxis stroke="#333" tick={{ fontSize: 9, fill: '#555' }}/>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--overlay-rgb), 0.08)" vertical={false}/>
+                                    <XAxis dataKey="time" stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 9, fill: 'var(--text-disabled)' }} interval="preserveStartEnd"/>
+                                    <YAxis stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 9, fill: 'var(--text-disabled)' }}/>
                                     <Tooltip content={<ChartTooltip/>}/>
                                     <Bar dataKey="교통량" fill="url(#dbVolGrad)" radius={[2, 2, 0, 0]} maxBarSize={16}/>
                                 </BarChart>

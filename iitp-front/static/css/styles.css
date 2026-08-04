@@ -458,17 +458,18 @@ body {
     color: #ffffff;
 }
 
-/* 닫기 버튼 */
+/* 닫기 버튼 — 스코프 없는 전역 선택자라 위쪽(66행)의 동명 .close-btn 정의는 캐스케이드 순서상
+   여기 정의로 항상 덮어써진다(LeftPanel.tsx의 상시 노출 × 버튼도 이 규칙 하나로 스타일링됨). */
 .close-btn {
     background: none;
     border: none;
     font-size: 1.5rem;
-    color: #ccc;
+    color: var(--text-secondary);
     cursor: pointer;
 }
 
 .close-btn:hover {
-    color: #fff;
+    color: var(--text-primary);
 }
 
 .input-table {
@@ -534,10 +535,16 @@ body {
     margin: 5px;
 }
 
+/* modal-overlay/container/header/content/actions, close-btn(하단), grid-header, grid-btn,
+   transparent-table — 이 파일에서 실제로 JSX가 참조하는 유일한 클래스들이다(HistoryModal,
+   TypeSelectionModal, LeftPanel의 닫기 버튼, JsonGrid). 나머지(popup-*, layer-popup,
+   measure-popup, form-table, input-table 등)는 이 파일이 어디서도 import되지 않아
+   그동안 전혀 적용되지 않던 죽은 규칙이라 그대로 리터럴로 남겨뒀다 — 위 라이브 클래스들만
+   토큰화하고 main.tsx에서 새로 import해 실제로 켰다. */
 .modal-overlay {
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
-    background-color: rgba(0, 0, 0, 0.6);
+    background-color: rgba(var(--surface-overlay-rgb), 0.6);
     display: flex;
     justify-content: center;
     align-items: center;
@@ -545,7 +552,7 @@ body {
 }
 .modal-container {
     position: relative;
-    background: #1e1e1e;
+    background: rgb(var(--surface-1-rgb));
     border-radius: 10px;
     width: 400px;
     max-height: 80vh;
@@ -556,8 +563,8 @@ body {
 .modal-header {
     position: sticky;  /* 여기서 고정 */
     top: 0;
-    background: #1e1e1e;
-    color: white;
+    background: rgb(var(--surface-1-rgb));
+    color: var(--text-primary);
     padding: 16px 24px;
     font-weight: bold;
     font-size: 1rem;
@@ -565,11 +572,11 @@ body {
     justify-content: space-between;
     align-items: center;
     z-index: 10;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid rgba(var(--overlay-rgb), 0.15);
     height: 30px;
 }
 .modal-content {
-    background: #1e1e1e;
+    background: rgb(var(--surface-1-rgb));
     width: 100%;
     max-width: 400px;
     padding: 12px;
@@ -581,9 +588,9 @@ body {
     margin-top: 12px;
     margin-right: 20px;
     padding: 8px;
-    background: #333;
-    color: white;
-    border: 1px solid #555;
+    background: rgb(var(--surface-2-rgb));
+    color: var(--text-primary);
+    border: 1px solid var(--border-default);
     border-radius: 4px;
     width: 90%;
 }
@@ -598,17 +605,19 @@ body {
 
 .modal-actions button {
     padding: 8px 16px;
-    background-color: #28a745;
-    color: white;
+    background-color: var(--color-success);
+    /* 항상 채도 높은 success 배경 위 텍스트라 흰색 고정 — PLAN_COLORS 칩과 동일 이유
+       (SignalTodTimelineEditor.tsx 참고). */
+    color: #fff;
     border: none;
     border-radius: 4px;
     cursor: pointer;
     font-weight: bold;
-    transition: background-color 0.2s;
+    transition: filter 0.2s;
 }
 
 .modal-actions button:hover {
-    background-color: #218838;
+    filter: brightness(0.85);
 }
 
 .grid-container {
@@ -617,8 +626,8 @@ body {
 .grid-header {
     display: flex;
     align-items: center;
-    color: #eaeaea;
-    fill: #eaeaea;
+    color: var(--text-secondary);
+    fill: currentColor;
 }
 .grid-header h4 {
     margin: 12px;
@@ -637,26 +646,26 @@ body {
     transition: background 0.15s, border-color 0.15s;
 }
 .grid-btn.delete-btn {
-    background: rgba(220, 53, 69, 0.15);
-    border-color: rgba(220, 53, 69, 0.35);
-    color: #f07070;
+    background: rgba(var(--color-danger-rgb), 0.15);
+    border-color: rgba(var(--color-danger-rgb), 0.35);
+    color: var(--color-danger);
 }
 .grid-btn.delete-btn:hover {
-    background: rgba(220, 53, 69, 0.28);
-    border-color: rgba(220, 53, 69, 0.55);
+    background: rgba(var(--color-danger-rgb), 0.28);
+    border-color: rgba(var(--color-danger-rgb), 0.55);
 }
 .grid-btn.delete-btn:disabled {
     opacity: 0.35;
     cursor: not-allowed;
 }
 .grid-btn.add-btn {
-    background: rgba(40, 167, 69, 0.15);
-    border-color: rgba(40, 167, 69, 0.35);
-    color: #6fcf97;
+    background: rgba(var(--color-success-rgb), 0.15);
+    border-color: rgba(var(--color-success-rgb), 0.35);
+    color: var(--color-success);
 }
 .grid-btn.add-btn:hover {
-    background: rgba(40, 167, 69, 0.28);
-    border-color: rgba(40, 167, 69, 0.55);
+    background: rgba(var(--color-success-rgb), 0.28);
+    border-color: rgba(var(--color-success-rgb), 0.55);
 }
 
 .transparent-table .ant-table,
@@ -664,6 +673,6 @@ body {
 .transparent-table .ant-table-thead > tr > th,
 .transparent-table .ant-table-tbody > tr > td,
 .transparent-table .ant-table-expanded-row {
-    background-color: rgba(255, 255, 255, 0.2) !important; /* 👈 배경 흰색 + 투명도 0.3 */
+    background-color: rgba(var(--overlay-rgb), 0.2) !important;
 }
 

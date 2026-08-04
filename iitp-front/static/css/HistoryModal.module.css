@@ -28,8 +28,8 @@
     /* 목록 끝까지 굴려도 스크롤이 `.body` 로 넘어가 패널 전체가 따라 움직이지 않게 한다. */
     overscroll-behavior: contain;
 
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(var(--overlay-rgb), 0.03);
+    border: 1px solid rgba(var(--overlay-rgb), 0.08);
     border-radius: 8px;
 }
 
@@ -51,6 +51,6 @@
 }
 
 .inlinePanel::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--overlay-rgb), 0.1);
     border-radius: 2px;
 }

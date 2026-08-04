@@ -65,8 +65,8 @@ function countPrimitives(col: any): number {
 
 const StatRow: React.FC<{ label: string; value: string; color?: string }> = ({ label, value, color }) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '3px 0', fontSize: 12 }}>
-        <span style={{ color: '#777' }}>{label}</span>
-        <span style={{ color: color ?? '#ddd', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+        <span style={{ color: 'rgba(var(--overlay-rgb), 0.4)' }}>{label}</span>
+        <span style={{ color: color ?? 'var(--text-secondary)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
     </div>
 );
 
@@ -192,8 +192,8 @@ const PerformanceTab: React.FC = () => {
     }, [viewer, olMap]);
 
     const lodTier = getNetworkLodTierByAltitude(render.camAlt);
-    const fpsColor = render.fps >= 45 ? '#5fd35f' : render.fps >= 25 ? '#e6c34d' : '#e05555';
-    const frameColor = render.maxFrameMs <= 33 ? '#5fd35f' : render.maxFrameMs <= 80 ? '#e6c34d' : '#e05555';
+    const fpsColor = render.fps >= 45 ? 'var(--color-success)' : render.fps >= 25 ? 'var(--color-warning)' : 'var(--color-danger)';
+    const frameColor = render.maxFrameMs <= 33 ? 'var(--color-success)' : render.maxFrameMs <= 80 ? 'var(--color-warning)' : 'var(--color-danger)';
     const vpTier = normalizedPixelSizeM != null ? tierOf(normalizedPixelSizeM) : 'unknown';
 
     return (
@@ -229,7 +229,7 @@ const PerformanceTab: React.FC = () => {
             {/* ── 카메라/씬 상세 ── */}
             <div className={styles.sectionBox}>
                 <div className={styles.sectionHeader}>
-                    <div className={styles.sectionAccent} style={{ background: '#4169E1' }}/>
+                    <div className={styles.sectionAccent} style={{ background: 'var(--accent)' }}/>
                     <span className={styles.sectionTitle}>카메라 · 씬</span>
                 </div>
                 <StatRow label="카메라 고도" value={render.camAlt >= 1000 ? `${(render.camAlt / 1000).toFixed(1)} km` : `${render.camAlt.toFixed(0)} m`} />
@@ -250,12 +250,12 @@ const PerformanceTab: React.FC = () => {
                 <StatRow label="pixelSizeM (네트워크 크기 보정)" value={normalizedPixelSizeM != null ? `${normalizedPixelSizeM.toFixed(1)} m/px` : 'n/a'} />
                 <StatRow label="bbox 서/북" value={bbox ? `${bbox.w.toFixed(4)}, ${bbox.n.toFixed(4)}` : 'n/a'} />
                 <StatRow label="bbox 동/남" value={bbox ? `${bbox.e.toFixed(4)}, ${bbox.s.toFixed(4)}` : 'n/a'} />
-                <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+                <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid rgba(var(--overlay-rgb), 0.08)' }}>
                     <StatRow label="개별 차량 표시 <" value={`${VEHICLE_STREAMING.MAX_PIXEL_SIZE_M} m/px`} color={TIER_COLOR.individual} />
                     <StatRow label="히트맵/trip 집계" value={`${VEHICLE_AGG_FEED.MIN_RESOLUTION} ~ ${VEHICLE_AGG_FEED.MAX_RESOLUTION} m/px`} color={TIER_COLOR.heatmap} />
                     <StatRow label="OD 흐름 (overview) ≥" value={`${OD_FLOW.MIN_RESOLUTION} m/px`} color={TIER_COLOR.odFlow} />
                 </div>
-                <div style={{ marginTop: 6, fontSize: 10, color: '#555' }}>
+                <div style={{ marginTop: 6, fontSize: 10, color: 'var(--text-disabled)' }}>
                     지도 위 사각형(2D/3D 동시)이 현재 bbox를 티어 색상으로 표시합니다.
                 </div>
             </div>

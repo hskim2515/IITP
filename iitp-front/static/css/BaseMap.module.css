@@ -1,5 +1,5 @@
 .field {
-    color: white;
+    color: var(--text-primary);
     display: block;
     margin: 4px 0;
 }

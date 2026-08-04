@@ -305,7 +305,7 @@ const OdMatrixModal: React.FC = () => {
                 {/* ── 헤더 ── */}
                 <div style={hdr}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontWeight: 700, fontSize: 14, color: '#dde6ff' }}>
+                        <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>
                             OD Matrix 수요 편집
                         </span>
                         {versionId && (
@@ -314,9 +314,9 @@ const OdMatrixModal: React.FC = () => {
                         {saveMsg && (
                             <span style={{
                                 fontSize: 11, borderRadius: 5, padding: '3px 10px',
-                                color:       saveMsg.ok ? '#4ecb8d' : '#f07070',
-                                background:  saveMsg.ok ? 'rgba(0,200,100,0.08)' : 'rgba(220,60,60,0.1)',
-                                border: `1px solid ${saveMsg.ok ? 'rgba(0,200,100,0.25)' : 'rgba(220,60,60,0.25)'}`,
+                                color:       saveMsg.ok ? 'var(--color-success)' : 'var(--color-danger)',
+                                background:  saveMsg.ok ? 'rgba(var(--color-success-rgb), 0.08)' : 'rgba(var(--color-danger-rgb), 0.1)',
+                                border: `1px solid ${saveMsg.ok ? 'rgba(var(--color-success-rgb), 0.25)' : 'rgba(var(--color-danger-rgb), 0.25)'}`,
                             }}>
                                 {saveMsg.text}
                             </span>
@@ -332,7 +332,7 @@ const OdMatrixModal: React.FC = () => {
 
                 {/* ── 상태 ── */}
                 {loading && <Center>불러오는 중…</Center>}
-                {!loading && error && <Center style={{ color: '#f07070' }}>{error}</Center>}
+                {!loading && error && <Center style={{ color: 'var(--color-danger)' }}>{error}</Center>}
 
                 {/* ── 본문 ── */}
                 {!loading && !error && data && (
@@ -343,10 +343,10 @@ const OdMatrixModal: React.FC = () => {
                             <div style={sideTitle}>시간대 ({data.odMatrices.length})</div>
                             {data.odMatrices.map((m, i) => (
                                 <button key={m.id} onClick={() => switchTab(i)} style={tabItem(i === tabIdx)}>
-                                    <span style={{ fontSize: 13, fontWeight: 600, color: i === tabIdx ? '#aac8ff' : '#666' }}>
+                                    <span style={{ fontSize: 13, fontWeight: 600, color: i === tabIdx ? 'var(--accent-text)' : 'rgba(var(--overlay-rgb), 0.4)' }}>
                                         {m.startTime.slice(0, 5)}
                                     </span>
-                                    <span style={{ fontSize: 10, color: i === tabIdx ? '#5577bb' : '#3a3a3a', marginTop: 2 }}>
+                                    <span style={{ fontSize: 10, color: i === tabIdx ? 'rgba(var(--accent-text-rgb), 0.7)' : 'rgba(var(--overlay-rgb), 0.2)', marginTop: 2 }}>
                                         {m.duration}분 · {i === tabIdx
                                             ? matrixToDemands(matrix).length
                                             : m.demands.length}건
@@ -434,14 +434,14 @@ const OdMatrixModal: React.FC = () => {
                                         <div key={r} style={{
                                             width: 18, height: 14, borderRadius: 2,
                                             background: cellBg(r * maxFlow + (r === 0 ? 0 : 0.01)),
-                                            border: '1px solid rgba(255,255,255,0.06)',
+                                            border: '1px solid rgba(var(--overlay-rgb), 0.06)',
                                         }}/>
                                     ))}
-                                    <span style={{ fontSize: 10, color: '#444', marginLeft: 2 }}>
+                                    <span style={{ fontSize: 10, color: 'var(--text-disabled)', marginLeft: 2 }}>
                                         0 → {maxFlow.toLocaleString()}
                                     </span>
                                 </div>
-                                <span style={{ fontSize: 11, color: '#444' }}>
+                                <span style={{ fontSize: 11, color: 'var(--text-disabled)' }}>
                                     {currentMatrix
                                         ? `${matrix.sources.length} 출발지 × ${matrix.sinks.length} 도착지`
                                         : ''}
@@ -458,7 +458,7 @@ const OdMatrixModal: React.FC = () => {
                                 {/* 빈 매트릭스여도 테이블은 렌더 — 추가 입력(도착지/출발지 ID)이
                                     테이블 헤더/푸터에 있어서, 숨기면 신규 작성이 불가능해진다 */}
                                 {matrix.sources.length === 0 && matrix.sinks.length === 0 && (
-                                    <div style={{ color: '#555', fontSize: 12, padding: '12px 0 6px' }}>
+                                    <div style={{ color: 'var(--text-disabled)', fontSize: 12, padding: '12px 0 6px' }}>
                                         데이터가 없습니다. 도착지/출발지 ID(터미널 노드)를 입력해 추가하세요.
                                     </div>
                                 )}
@@ -468,14 +468,14 @@ const OdMatrixModal: React.FC = () => {
                                             <tr>
                                                 {/* 좌상단 코너 */}
                                                 <th style={{ ...th, ...stickyTL, width: 110 }}>
-                                                    <span style={{ fontSize: 10, color: '#333' }}>출발↓ / 도착→</span>
+                                                    <span style={{ fontSize: 10, color: 'rgba(var(--overlay-rgb), 0.3)' }}>출발↓ / 도착→</span>
                                                 </th>
 
                                                 {/* 도착지 헤더 */}
                                                 {matrix.sinks.map(snk => (
                                                     <th key={snk} style={{ ...th, ...stickyTop, minWidth: 72 }}>
                                                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
-                                                            <span style={{ color: '#7aa2ff', fontFamily: 'monospace', fontSize: 11 }}>
+                                                            <span style={{ color: 'var(--accent-text)', fontFamily: 'monospace', fontSize: 11 }}>
                                                                 {snk}
                                                             </span>
                                                             <button
@@ -507,9 +507,9 @@ const OdMatrixModal: React.FC = () => {
                                             {matrix.sources.map((src, ri) => (
                                                 <tr key={src}>
                                                     {/* 출발지 헤더 */}
-                                                    <td style={{ ...td, ...stickyLeft, background: 'rgba(12,14,26,0.98)' }}>
+                                                    <td style={{ ...td, ...stickyLeft, background: 'rgba(var(--surface-1-rgb), 0.98)' }}>
                                                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
-                                                            <span style={{ color: '#f5a623', fontFamily: 'monospace', fontSize: 11 }}>
+                                                            <span style={{ color: 'var(--color-warning)', fontFamily: 'monospace', fontSize: 11 }}>
                                                                 {src}
                                                             </span>
                                                             <button
@@ -531,10 +531,10 @@ const OdMatrixModal: React.FC = () => {
                                                                 onClick={e => { e.stopPropagation(); startEdit(src, snk); }}
                                                                 style={{
                                                                     ...td,
-                                                                    background: isEditing ? 'rgba(65,105,225,0.22)' : cellBg(flow),
+                                                                    background: isEditing ? 'rgba(var(--accent-rgb), 0.22)' : cellBg(flow),
                                                                     border: isEditing
-                                                                        ? '1px solid rgba(100,140,255,0.6)'
-                                                                        : `1px solid rgba(255,255,255,${flow > 0 ? '0.06' : '0.03'})`,
+                                                                        ? '1px solid rgba(var(--accent-text-rgb), 0.6)'
+                                                                        : `1px solid rgba(var(--overlay-rgb), ${flow > 0 ? '0.06' : '0.03'})`,
                                                                     cursor: 'text',
                                                                     textAlign: 'right',
                                                                     padding: '0 6px',
@@ -559,7 +559,7 @@ const OdMatrixModal: React.FC = () => {
                                                                         style={{
                                                                             width: '100%', background: 'transparent',
                                                                             border: 'none', outline: 'none',
-                                                                            color: '#ddd', fontSize: 12,
+                                                                            color: 'var(--text-secondary)', fontSize: 12,
                                                                             textAlign: 'right', fontFamily: 'monospace',
                                                                         }}
                                                                     />
@@ -583,7 +583,7 @@ const OdMatrixModal: React.FC = () => {
 
                                             {/* + 출발지 행 */}
                                             <tr>
-                                                <td style={{ ...td, ...stickyLeft, background: 'rgba(12,14,26,0.98)', paddingTop: 6 }}>
+                                                <td style={{ ...td, ...stickyLeft, background: 'rgba(var(--surface-1-rgb), 0.98)', paddingTop: 6 }}>
                                                     <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                                                         <input
                                                             value={newSrcInput}
@@ -613,48 +613,49 @@ const OdMatrixModal: React.FC = () => {
 
 /* ── 서브 컴포넌트 ── */
 const Center: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style }) => (
-    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: 13, ...style }}>
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-disabled)', fontSize: 13, ...style }}>
         {children}
     </div>
 );
 
 /* ── 스타일 ── */
-const ov:    React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1400 };
-const panel: React.CSSProperties = { background: 'rgba(12,14,26,0.98)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.8)', width: '88vw', maxWidth: 1200, height: '82vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' };
-const hdr:   React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', borderBottom: '1px solid rgba(255,255,255,0.07)', flexShrink: 0 };
-const badge: React.CSSProperties = { fontSize: 10, color: '#445', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 4, padding: '2px 7px' };
+const ov:    React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(var(--surface-overlay-rgb), 0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1400 };
+const panel: React.CSSProperties = { background: 'rgba(var(--surface-1-rgb), 0.98)', border: '1px solid rgba(var(--overlay-rgb), 0.08)', borderRadius: 10, boxShadow: '0 20px 60px rgba(var(--surface-overlay-rgb), 0.8)', width: '88vw', maxWidth: 1200, height: '82vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' };
+const hdr:   React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', borderBottom: '1px solid rgba(var(--overlay-rgb), 0.07)', flexShrink: 0 };
+const badge: React.CSSProperties = { fontSize: 10, color: 'rgba(var(--overlay-rgb), 0.35)', background: 'rgba(var(--overlay-rgb), 0.04)', border: '1px solid rgba(var(--overlay-rgb), 0.07)', borderRadius: 4, padding: '2px 7px' };
 const saveBtn = (disabled: boolean): React.CSSProperties => ({
     padding: '5px 16px', fontSize: 12, borderRadius: 5, cursor: disabled ? 'default' : 'pointer', fontWeight: 600, transition: 'all 0.15s',
-    background: disabled ? 'rgba(255,255,255,0.03)' : 'rgba(65,105,225,0.22)',
-    border: `1px solid ${disabled ? 'rgba(255,255,255,0.08)' : 'rgba(100,140,255,0.5)'}`,
-    color: disabled ? '#444' : '#8ab4ff',
+    background: disabled ? 'rgba(var(--overlay-rgb), 0.03)' : 'rgba(var(--accent-rgb), 0.22)',
+    border: `1px solid ${disabled ? 'rgba(var(--overlay-rgb), 0.08)' : 'rgba(var(--accent-text-rgb), 0.5)'}`,
+    color: disabled ? 'var(--text-disabled)' : 'var(--accent-text)',
 });
-const closeBtn: React.CSSProperties = { background: 'none', border: 'none', color: '#555', fontSize: 18, cursor: 'pointer', padding: '2px 4px', borderRadius: 4, lineHeight: 1 };
-const sidebar:   React.CSSProperties = { width: 170, flexShrink: 0, borderRight: '1px solid rgba(255,255,255,0.06)', overflowY: 'auto', padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: 3 };
-const sideTitle: React.CSSProperties = { fontSize: 10, fontWeight: 600, color: '#3a3a3a', letterSpacing: '0.6px', textTransform: 'uppercase', padding: '2px 6px 8px' };
-const legend:    React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 14px', borderBottom: '1px solid rgba(255,255,255,0.04)', flexShrink: 0 };
-const mixPanel: React.CSSProperties = { padding: '10px 14px 11px', background: 'rgba(42,61,96,0.14)', borderBottom: '1px solid rgba(120,150,210,0.12)', flexShrink: 0 };
+const closeBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-disabled)', fontSize: 18, cursor: 'pointer', padding: '2px 4px', borderRadius: 4, lineHeight: 1 };
+const sidebar:   React.CSSProperties = { width: 170, flexShrink: 0, borderRight: '1px solid rgba(var(--overlay-rgb), 0.06)', overflowY: 'auto', padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: 3 };
+const sideTitle: React.CSSProperties = { fontSize: 10, fontWeight: 600, color: 'rgba(var(--overlay-rgb), 0.2)', letterSpacing: '0.6px', textTransform: 'uppercase', padding: '2px 6px 8px' };
+const legend:    React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 14px', borderBottom: '1px solid rgba(var(--overlay-rgb), 0.04)', flexShrink: 0 };
+// OD 차량 구성비(vehicle mix) 패널 — accent 계열 틴트 유지, 리터럴만 토큰화.
+const mixPanel: React.CSSProperties = { padding: '10px 14px 11px', background: 'rgba(var(--accent-rgb), 0.14)', borderBottom: '1px solid rgba(var(--accent-text-rgb), 0.12)', flexShrink: 0 };
 const mixHeader: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 };
-const mixBar: React.CSSProperties = { display: 'flex', height: 6, overflow: 'hidden', borderRadius: 4, background: 'rgba(255,255,255,0.05)', marginBottom: 7 };
+const mixBar: React.CSSProperties = { display: 'flex', height: 6, overflow: 'hidden', borderRadius: 4, background: 'rgba(var(--overlay-rgb), 0.05)', marginBottom: 7 };
 const mixRows: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '5px 12px' };
-const mixRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, minHeight: 30, padding: '3px 7px', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 5, background: 'rgba(5,10,20,0.24)' };
+const mixRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, minHeight: 30, padding: '3px 7px', border: '1px solid rgba(var(--overlay-rgb), 0.05)', borderRadius: 5, background: 'rgba(var(--surface-overlay-rgb), 0.24)' };
 const mixDot: React.CSSProperties = { width: 7, height: 7, borderRadius: '50%', flexShrink: 0 };
-const mixPercentBox: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 2, color: '#71819b', fontSize: 10 };
-const mixPercentInput: React.CSSProperties = { width: 43, height: 22, padding: '0 4px', textAlign: 'right', color: '#d8e3f5', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 4, outline: 'none', fontSize: 11 };
+const mixPercentBox: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 2, color: 'var(--text-muted)', fontSize: 10 };
+const mixPercentInput: React.CSSProperties = { width: 43, height: 22, padding: '0 4px', textAlign: 'right', color: 'var(--text-secondary)', background: 'rgba(var(--overlay-rgb), 0.04)', border: '1px solid rgba(var(--overlay-rgb), 0.09)', borderRadius: 4, outline: 'none', fontSize: 11 };
 const tabItem = (active: boolean): React.CSSProperties => ({
     display: 'flex', flexDirection: 'column', alignItems: 'flex-start', padding: '7px 10px', borderRadius: 6, cursor: 'pointer', gap: 2, transition: 'all 0.15s', textAlign: 'left',
-    background: active ? 'rgba(65,105,225,0.16)' : 'rgba(255,255,255,0.02)',
-    border: `1px solid ${active ? 'rgba(100,140,255,0.3)' : 'rgba(255,255,255,0.04)'}`,
+    background: active ? 'rgba(var(--accent-rgb), 0.16)' : 'rgba(var(--overlay-rgb), 0.02)',
+    border: `1px solid ${active ? 'rgba(var(--accent-text-rgb), 0.3)' : 'rgba(var(--overlay-rgb), 0.04)'}`,
 });
 
 // 테이블 셀 스타일
-const th: React.CSSProperties = { padding: '6px 8px', textAlign: 'center', fontSize: 11, color: '#556', fontWeight: 600, borderBottom: '1px solid rgba(255,255,255,0.07)', whiteSpace: 'nowrap', background: 'rgba(12,14,26,0.98)' };
-const td: React.CSSProperties = { border: '1px solid rgba(255,255,255,0.03)', verticalAlign: 'middle' };
+const th: React.CSSProperties = { padding: '6px 8px', textAlign: 'center', fontSize: 11, color: 'rgba(var(--overlay-rgb), 0.35)', fontWeight: 600, borderBottom: '1px solid rgba(var(--overlay-rgb), 0.07)', whiteSpace: 'nowrap', background: 'rgba(var(--surface-1-rgb), 0.98)' };
+const td: React.CSSProperties = { border: '1px solid rgba(var(--overlay-rgb), 0.03)', verticalAlign: 'middle' };
 const stickyTop: React.CSSProperties = { position: 'sticky', top: 0, zIndex: 2 };
 const stickyLeft: React.CSSProperties = { position: 'sticky', left: 0, zIndex: 2, padding: '4px 8px', whiteSpace: 'nowrap', minWidth: 110 };
 const stickyTL:   React.CSSProperties = { position: 'sticky', top: 0, left: 0, zIndex: 3 };
-const delBtn: React.CSSProperties = { background: 'none', border: 'none', color: '#333', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '1px 3px', borderRadius: 3 };
-const addInput: React.CSSProperties = { width: 80, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 4, color: '#888', fontSize: 11, padding: '3px 6px', outline: 'none' };
-const addBtn: React.CSSProperties = { background: 'rgba(65,105,225,0.15)', border: '1px solid rgba(100,140,255,0.3)', borderRadius: 4, color: '#7aa2ff', cursor: 'pointer', fontSize: 13, padding: '2px 6px', lineHeight: 1 };
+const delBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'rgba(var(--overlay-rgb), 0.3)', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '1px 3px', borderRadius: 3 };
+const addInput: React.CSSProperties = { width: 80, background: 'rgba(var(--overlay-rgb), 0.04)', border: '1px solid rgba(var(--overlay-rgb), 0.08)', borderRadius: 4, color: 'var(--text-muted)', fontSize: 11, padding: '3px 6px', outline: 'none' };
+const addBtn: React.CSSProperties = { background: 'rgba(var(--accent-rgb), 0.15)', border: '1px solid rgba(var(--accent-text-rgb), 0.3)', borderRadius: 4, color: 'var(--accent-text)', cursor: 'pointer', fontSize: 13, padding: '2px 6px', lineHeight: 1 };
 
 export default OdMatrixModal;

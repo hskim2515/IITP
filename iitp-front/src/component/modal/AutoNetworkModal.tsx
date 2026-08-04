@@ -130,7 +130,7 @@ const AutoNetworkModal: React.FC = () => {
     if (selecting) {
         return (
             <div style={selectingBannerStyle}>
-                <span style={{ fontSize: 13, color: '#e0e0e0' }}>
+                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
                     지도에서 드래그하여 영역을 선택하세요
                 </span>
                 <button style={cancelSelectBtnStyle} onClick={() => setSelecting(false)}>
@@ -154,7 +154,7 @@ const AutoNetworkModal: React.FC = () => {
                             <StatRow label="링크" value={`${stats.link_count}개`} />
                             <StatRow label="KTDB 매핑" value={stats.ktdb_used ? '적용됨' : '미적용 (기본값)'} />
                         </div>
-                        <p style={{ fontSize: 11, color: '#777', margin: 0, lineHeight: 1.6 }}>
+                        <p style={{ fontSize: 11, color: 'rgba(var(--overlay-rgb),0.45)', margin: 0, lineHeight: 1.6 }}>
                             위성 이미지에서 추출한 도로 네트워크입니다.
                             교차로 연결(connection)은 자동 생성되지 않으며
                             시뮬레이션 전 수동 보정이 필요합니다.
@@ -231,7 +231,7 @@ const AutoNetworkModal: React.FC = () => {
                         <button style={filePickBtnStyle} onClick={() => fileInputRef.current?.click()}>
                             {ktdbFile ? '파일 변경' : 'ZIP 선택'}
                         </button>
-                        <span style={{ fontSize: 11, color: '#666' }}>
+                        <span style={{ fontSize: 11, color: 'rgba(var(--overlay-rgb),0.4)' }}>
                             {ktdbFile ? ktdbFile.name : '미첨부 — 기본 속성(1차선, 50km/h) 사용'}
                         </span>
                         <input ref={fileInputRef} type="file" accept=".zip"
@@ -296,8 +296,8 @@ const AutoNetworkModal: React.FC = () => {
 
 const StatRow: React.FC<{ label: string; value: string }> = ({ label, value }) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-        <span style={{ color: '#888' }}>{label}</span>
-        <span style={{ color: '#ccc' }}>{value}</span>
+        <span style={{ color: 'var(--text-muted)' }}>{label}</span>
+        <span style={{ color: 'var(--text-secondary)' }}>{value}</span>
     </div>
 );
 
@@ -306,11 +306,11 @@ const AdvancedRow: React.FC<{
     onChange: (v: number) => void;
 }> = ({ label, min, max, value, onChange }) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 11, color: '#888', flex: 1 }}>{label}</span>
+        <span style={{ fontSize: 11, color: 'var(--text-muted)', flex: 1 }}>{label}</span>
         <input type="range" min={min} max={max} value={value}
                onChange={e => onChange(Number(e.target.value))}
                style={{ flex: 2 }}/>
-        <span style={{ fontSize: 11, color: '#aaa', minWidth: 36, textAlign: 'right' }}>{value}</span>
+        <span style={{ fontSize: 11, color: 'var(--text-tertiary)', minWidth: 36, textAlign: 'right' }}>{value}</span>
     </div>
 );
 
@@ -319,25 +319,25 @@ const AdvancedRow: React.FC<{
 const selectingBannerStyle: React.CSSProperties = {
     position: 'fixed', top: 56, left: '50%', transform: 'translateX(-50%)',
     zIndex: 1300, display: 'flex', alignItems: 'center', gap: 16,
-    padding: '10px 20px', background: 'rgba(14,16,28,0.96)',
-    border: '1px solid rgba(65,105,225,0.5)', borderRadius: 8,
+    padding: '10px 20px', background: 'rgba(var(--surface-popover-rgb),0.96)',
+    border: '1px solid rgba(var(--accent-rgb),0.5)', borderRadius: 8,
     boxShadow: '0 4px 20px rgba(0,0,0,0.6)', backdropFilter: 'blur(12px)',
     pointerEvents: 'all',
 };
 
 const cancelSelectBtnStyle: React.CSSProperties = {
     padding: '5px 14px', fontSize: 12, borderRadius: 5,
-    border: '1px solid rgba(255,255,255,0.15)',
-    background: 'rgba(255,255,255,0.07)', color: '#aaa', cursor: 'pointer',
+    border: '1px solid rgba(var(--overlay-rgb),0.15)',
+    background: 'rgba(var(--overlay-rgb),0.07)', color: 'var(--text-tertiary)', cursor: 'pointer',
 };
 
 const overlayStyle: React.CSSProperties = {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+    position: 'fixed', inset: 0, background: 'rgba(var(--surface-overlay-rgb),0.55)',
     display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200,
 };
 
 const panelStyle: React.CSSProperties = {
-    background: 'rgba(14,16,28,0.98)', border: '1px solid rgba(255,255,255,0.1)',
+    background: 'rgba(var(--surface-popover-rgb),0.98)', border: '1px solid rgba(var(--overlay-rgb),0.1)',
     borderRadius: 10, boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
     width: 440, maxWidth: '92vw', maxHeight: '90vh',
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
@@ -345,11 +345,11 @@ const panelStyle: React.CSSProperties = {
 
 const headerStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.07)', color: '#e0e0e0',
+    padding: '12px 16px', borderBottom: '1px solid rgba(var(--overlay-rgb),0.07)', color: 'var(--text-secondary)',
 };
 
 const closeBtnStyle: React.CSSProperties = {
-    background: 'none', border: 'none', color: '#888',
+    background: 'none', border: 'none', color: 'var(--text-muted)',
     fontSize: 18, cursor: 'pointer', lineHeight: 1, padding: '0 2px',
 };
 
@@ -358,17 +358,17 @@ const bodyStyle: React.CSSProperties = {
     overflowY: 'auto',
 };
 
-const descStyle: React.CSSProperties = { fontSize: 11, color: '#777', margin: '0 0 4px 0' };
+const descStyle: React.CSSProperties = { fontSize: 11, color: 'rgba(var(--overlay-rgb),0.45)', margin: '0 0 4px 0' };
 
 const mapSelectBtnStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     marginBottom: 8, padding: '8px 14px', fontSize: 12, borderRadius: 6,
-    border: '1px dashed rgba(65,105,225,0.5)', background: 'rgba(65,105,225,0.08)',
-    color: '#7aa2ff', cursor: 'pointer', width: '100%',
+    border: '1px dashed rgba(var(--accent-rgb),0.5)', background: 'rgba(var(--accent-rgb),0.08)',
+    color: 'var(--accent-text)', cursor: 'pointer', width: '100%',
 };
 
 const sectionTitle: React.CSSProperties = {
-    fontSize: 10, fontWeight: 600, color: '#555',
+    fontSize: 10, fontWeight: 600, color: 'var(--text-disabled)',
     textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4,
 };
 
@@ -377,51 +377,51 @@ const gridStyle: React.CSSProperties = {
 };
 
 const labelStyle: React.CSSProperties = {
-    fontSize: 11, color: '#888', display: 'flex', alignItems: 'center',
+    fontSize: 11, color: 'var(--text-muted)', display: 'flex', alignItems: 'center',
 };
 
 const inputStyle: React.CSSProperties = {
-    background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 5, color: '#ddd', fontSize: 12, padding: '5px 8px',
+    background: 'rgba(var(--overlay-rgb),0.05)', border: '1px solid rgba(var(--overlay-rgb),0.1)',
+    borderRadius: 5, color: 'var(--text-secondary)', fontSize: 12, padding: '5px 8px',
     outline: 'none', width: '100%', boxSizing: 'border-box',
 };
 
 const filePickBtnStyle: React.CSSProperties = {
     padding: '5px 12px', fontSize: 11, borderRadius: 5,
-    border: '1px solid rgba(255,255,255,0.15)',
-    background: 'rgba(255,255,255,0.06)', color: '#aaa', cursor: 'pointer',
+    border: '1px solid rgba(var(--overlay-rgb),0.15)',
+    background: 'rgba(var(--overlay-rgb),0.06)', color: 'var(--text-tertiary)', cursor: 'pointer',
     whiteSpace: 'nowrap',
 };
 
 const advancedToggleBtnStyle: React.CSSProperties = {
     marginTop: 4, padding: '4px 10px', fontSize: 11, borderRadius: 5,
-    border: '1px solid rgba(255,255,255,0.1)',
-    background: 'rgba(255,255,255,0.04)', color: '#666', cursor: 'pointer',
+    border: '1px solid rgba(var(--overlay-rgb),0.1)',
+    background: 'rgba(var(--overlay-rgb),0.04)', color: 'rgba(var(--overlay-rgb),0.4)', cursor: 'pointer',
     textAlign: 'left', width: '100%',
 };
 
 const advancedPanelStyle: React.CSSProperties = {
-    padding: '8px 10px', background: 'rgba(255,255,255,0.02)',
-    border: '1px solid rgba(255,255,255,0.07)', borderRadius: 6,
+    padding: '8px 10px', background: 'rgba(var(--overlay-rgb),0.02)',
+    border: '1px solid rgba(var(--overlay-rgb),0.07)', borderRadius: 6,
     display: 'flex', flexDirection: 'column', gap: 6,
 };
 
 const statsBoxStyle: React.CSSProperties = {
-    padding: '10px 12px', background: 'rgba(65,105,225,0.06)',
-    border: '1px solid rgba(65,105,225,0.2)', borderRadius: 6,
+    padding: '10px 12px', background: 'rgba(var(--accent-rgb),0.06)',
+    border: '1px solid rgba(var(--accent-rgb),0.2)', borderRadius: 6,
     display: 'flex', flexDirection: 'column', gap: 6,
 };
 
 const errorStyle: React.CSSProperties = {
     marginTop: 4, padding: '7px 10px', borderRadius: 6, fontSize: 11,
-    background: 'rgba(220,60,60,0.12)', border: '1px solid rgba(220,60,60,0.3)',
-    color: '#f07070',
+    background: 'rgba(var(--color-danger-rgb),0.12)', border: '1px solid rgba(var(--color-danger-rgb),0.3)',
+    color: 'var(--color-danger)',
 };
 
 const progressStyle: React.CSSProperties = {
     marginTop: 4, padding: '7px 10px', borderRadius: 6, fontSize: 11,
-    background: 'rgba(65,105,225,0.08)', border: '1px solid rgba(65,105,225,0.25)',
-    color: '#7aa2ff', display: 'flex', alignItems: 'center', gap: 8,
+    background: 'rgba(var(--accent-rgb),0.08)', border: '1px solid rgba(var(--accent-rgb),0.25)',
+    color: 'var(--accent-text)', display: 'flex', alignItems: 'center', gap: 8,
 };
 
 const spinnerStyle: React.CSSProperties = {
@@ -431,24 +431,24 @@ const spinnerStyle: React.CSSProperties = {
 };
 
 const noteStyle: React.CSSProperties = {
-    marginTop: 6, fontSize: 10, color: '#555', lineHeight: 1.5,
+    marginTop: 6, fontSize: 10, color: 'var(--text-disabled)', lineHeight: 1.5,
 };
 
 const footerStyle: React.CSSProperties = {
     display: 'flex', justifyContent: 'flex-end', gap: 8,
-    padding: '10px 16px', borderTop: '1px solid rgba(255,255,255,0.07)',
+    padding: '10px 16px', borderTop: '1px solid rgba(var(--overlay-rgb),0.07)',
 };
 
 const cancelBtnStyle: React.CSSProperties = {
     padding: '6px 14px', fontSize: 12, borderRadius: 5,
-    border: '1px solid rgba(255,255,255,0.12)',
-    background: 'rgba(255,255,255,0.05)', color: '#aaa', cursor: 'pointer',
+    border: '1px solid rgba(var(--overlay-rgb),0.12)',
+    background: 'rgba(var(--overlay-rgb),0.05)', color: 'var(--text-tertiary)', cursor: 'pointer',
 };
 
 const primaryBtnStyle: React.CSSProperties = {
     padding: '6px 16px', fontSize: 12, borderRadius: 5,
-    border: '1px solid rgba(65,105,225,0.5)',
-    background: 'rgba(65,105,225,0.2)', color: '#7aa2ff',
+    border: '1px solid rgba(var(--accent-rgb),0.5)',
+    background: 'rgba(var(--accent-rgb),0.2)', color: 'var(--accent-text)',
     cursor: 'pointer', fontWeight: 600,
 };
 

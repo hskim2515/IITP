@@ -27,21 +27,21 @@ const ExportModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
     return createPortal(
         <>
-            <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)', zIndex: 2100 }} />
+            <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(var(--surface-overlay-rgb),0.35)', zIndex: 2100 }} />
             <div
                 onClick={e => e.stopPropagation()}
                 style={{
                     position: 'fixed', top: '54px', left: '50%', transform: 'translateX(-50%)',
                     width: 340, maxHeight: 'calc(100vh - 70px)',
-                    background: 'rgba(13,15,24,0.98)', backdropFilter: 'blur(16px)',
-                    border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10,
+                    background: 'rgba(var(--surface-popover-rgb),0.98)', backdropFilter: 'blur(16px)',
+                    border: '1px solid rgba(var(--overlay-rgb),0.1)', borderRadius: 10,
                     boxShadow: '0 16px 48px rgba(0,0,0,0.7)', zIndex: 2101,
                     display: 'flex', flexDirection: 'column', overflow: 'hidden',
                 }}
             >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.07)' }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: '#ddd' }}>내보내기</span>
-                    <button onClick={onClose} style={{ background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>×</button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid rgba(var(--overlay-rgb),0.07)' }}>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)' }}>내보내기</span>
+                    <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'rgba(var(--overlay-rgb),0.4)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>×</button>
                 </div>
                 <div style={{ overflowY: 'auto', flex: 1, padding: '10px 14px' }}>
                     <DataIOPanel hideHeader section="export" />

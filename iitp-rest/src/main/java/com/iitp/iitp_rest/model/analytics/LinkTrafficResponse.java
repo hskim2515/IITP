@@ -29,7 +29,7 @@ public class LinkTrafficResponse {
     public static class LinkTraffic {
         private String linkId;
         private int volume;     // 시간창 내 고유 차량 수
-        private double avgSpeed; // 평균 속도 (km/h) — 현재 운영 스키마(VehicleEvent)엔 spd 컬럼이 없어 항상 0
+        private double avgSpeed; // 평균 속도 (km/h) — spd 컬럼 없는 vehicle_sim.db(드묾)에서만 0
 
         /** 링크 중심선 좌표 (네트워크 타일 모드에서 클라이언트가 링크 지오메트리를 별도 보유하지 않으므로 동봉) */
         @JsonInclude(JsonInclude.Include.NON_NULL)

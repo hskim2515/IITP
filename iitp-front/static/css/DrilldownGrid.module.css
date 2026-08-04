@@ -13,14 +13,14 @@
     display: flex;
     gap: 4px;
     padding: 8px 12px 0 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid rgba(var(--overlay-rgb), 0.08);
 }
 
 .tab {
     padding: 6px 16px;
     font-size: 12px;
     font-weight: 500;
-    color: rgba(255, 255, 255, 0.4);
+    color: rgba(var(--overlay-rgb), 0.4);
     background: transparent;
     border: none;
     cursor: pointer;
@@ -29,15 +29,15 @@
 }
 
 .tab:hover {
-    color: rgba(255, 255, 255, 0.8);
-    background: rgba(255, 255, 255, 0.05);
+    color: rgba(var(--overlay-rgb), 0.8);
+    background: rgba(var(--overlay-rgb), 0.05);
 }
 
 .activeTab {
     composes: tab;
-    color: rgba(100, 180, 255, 1);
-    background: rgba(100, 180, 255, 0.1);
-    border-bottom: 2px solid rgba(100, 180, 255, 1);
+    color: rgba(var(--accent-grid-rgb), 1);
+    background: rgba(var(--accent-grid-rgb), 0.1);
+    border-bottom: 2px solid rgba(var(--accent-grid-rgb), 1);
 }
 
 .tableWrap {
@@ -60,7 +60,7 @@
     box-sizing: border-box;
     overflow: hidden;
     gap: 10px;
-    color: #555;
+    color: var(--text-disabled);
     padding: 40px 20px;
 }
 
@@ -71,13 +71,13 @@
 
 .emptyTitle {
     font-size: 13px;
-    color: #666;
+    color: var(--text-disabled);
     font-weight: 500;
 }
 
 .emptyDesc {
     font-size: 11px;
-    color: #444;
+    color: var(--text-disabled);
     text-align: center;
     line-height: 1.6;
 }

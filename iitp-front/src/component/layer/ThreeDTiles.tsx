@@ -79,7 +79,7 @@ const ThreeDTiles = (_props: Props) => {
                 </label>
             ))}
             {tilesets.length === 0 && (
-                <div style={{ color: '#888', fontSize: 12, padding: '8px 4px' }}>
+                <div style={{ color: 'var(--text-muted)', fontSize: 12, padding: '8px 4px' }}>
                     등록된 3D Tiles가 없습니다.
                 </div>
             )}

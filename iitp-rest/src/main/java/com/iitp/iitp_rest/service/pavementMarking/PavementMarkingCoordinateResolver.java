@@ -9,6 +9,7 @@ import com.iitp.iitp_rest.model.pavementMarking.PavementMarkingData;
 import com.iitp.iitp_rest.service.network.NetworkJaxbParser;
 import com.iitp.iitp_rest.util.CoordinateUtils;
 import com.iitp.iitp_rest.util.FileStorageService;
+import com.iitp.iitp_rest.util.LaneGeometryUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -106,11 +107,12 @@ public class PavementMarkingCoordinateResolver {
         // (interpolateByOffset.ts의 computeLaneCenterlineOl)도 같은 이유로 lane.shape를 안 믿고
         // link.shape + width + laneIdx로 직접 차선 중심선을 계산한다 — 이 앱 전체에서 차선
         // 지오메트리는 원래 이렇게 유도되는 게 정상 관례(lane.shape XML 필드 자체가 신뢰
-        // 불가능한 값). 동일 알고리즘을 그대로 포팅.
-        List<Coordinates> localPts = computeLaneCenterline(link, m.getLaneRef());
+        // 불가능한 값). 동일 알고리즘을 {@link LaneGeometryUtils}로 공유(VehicleController의
+        // geometry 투영 로직도 동일 유틸을 사용).
+        List<Coordinates> localPts = LaneGeometryUtils.computeLaneCenterline(link, m.getLaneRef());
         if (localPts == null || localPts.size() < 2) return false;
 
-        double[] pointAndAngle = pointAndAngleAtOffset(localPts, totalOffset);
+        double[] pointAndAngle = LaneGeometryUtils.pointAndAngleAtOffset(localPts, totalOffset);
         if (pointAndAngle == null) return false;
 
         Coordinates wgs = CoordinateUtils.transformCoordinates(
@@ -122,65 +124,6 @@ public class PavementMarkingCoordinateResolver {
         m.setCoordinates(List.of(c));
         m.setAngle(pointAndAngle[2] + rotationRad);
         return true;
-    }
-
-    /** link.shape(로컬 x,y)에 laneIdx 차선의 폭 오프셋을 적용한 중심선 — 프론트
-     *  interpolateByOffset.ts의 computeLaneCenterlineOl과 동일한 정점별 법선 오프셋 방식
-     *  (차선0=최좌측 관례도 동일). */
-    private static List<Coordinates> computeLaneCenterline(LinkXml link, int laneIdx) {
-        List<Coordinates> coords = CoordinateUtils.parse(link.getShape());
-        if (coords.size() < 2) return null;
-        int laneCount = link.getLanes() != null ? link.getLanes().size() : 1;
-        if (laneCount == 0) return null;
-        double width = link.getWidth() > 0 ? link.getWidth() : 7.0;
-        double laneWidth = width / laneCount;
-        double lateralOffset = (laneIdx - (laneCount - 1) / 2.0) * laneWidth;
-        if (lateralOffset == 0) return coords;
-
-        List<Coordinates> result = new java.util.ArrayList<>(coords.size());
-        for (int i = 0; i < coords.size(); i++) {
-            Coordinates p = coords.get(i);
-            Coordinates prev = coords.get(Math.max(0, i - 1));
-            Coordinates next = coords.get(Math.min(coords.size() - 1, i + 1));
-            double dx = next.getLng() - prev.getLng(), dy = next.getLat() - prev.getLat();
-            double len = Math.hypot(dx, dy);
-            if (len < 1e-6) { result.add(p); continue; }
-            // 우측(+) 법선 — NetworkFeatureLayer.buildLinkFeatures(nx=dy,ny=-dx, "3D right 정합"
-            // 주석 참고)와 동일해야 하는데 (-dy,dx)로 반대 부호였다(2026-08-03 실사용 재현:
-            // 3차로 도로에서 1/3차로 마킹이 좌우로 뒤바뀜 — 가운데 차로는 offset=0이라 부호와
-            // 무관해 정상으로 보였음). 프론트 computeLaneCenterlineOl과 동일하게 수정.
-            double nx = dy / len, ny = -dx / len;
-            Coordinates offsetPt = new Coordinates();
-            offsetPt.setLng(p.getLng() + nx * lateralOffset);
-            offsetPt.setLat(p.getLat() + ny * lateralOffset);
-            result.add(offsetPt);
-        }
-        return result;
-    }
-
-    /** 로컬 좌표 폴리라인(x,y)을 따라 offset(누적 실거리, m) 지점의 [x, y, angle]을 계산.
-     *  프론트 interpolateByOffset.ts의 interpolateAlongLine과 동일한 정의(각도 관례 포함) —
-     *  같은 linkRef/laneRef/cellId/offset이면 수동 배치(클라이언트 계산)와 동일한 결과가 나온다. */
-    private static double[] pointAndAngleAtOffset(List<Coordinates> pts, double offset) {
-        double accumulated = 0;
-        for (int i = 1; i < pts.size(); i++) {
-            double x1 = pts.get(i - 1).getLng(), y1 = pts.get(i - 1).getLat();
-            double x2 = pts.get(i).getLng(), y2 = pts.get(i).getLat();
-            double segLen = Math.hypot(x2 - x1, y2 - y1);
-            if (segLen == 0) continue;
-            if (accumulated + segLen >= offset) {
-                double ratio = (offset - accumulated) / segLen;
-                double x = x1 + ratio * (x2 - x1);
-                double y = y1 + ratio * (y2 - y1);
-                double angle = Math.atan2(x2 - x1, y2 - y1);
-                return new double[]{x, y, angle};
-            }
-            accumulated += segLen;
-        }
-        // offset이 셀 길이 합 오차 등으로 폴리라인 전체 길이를 살짝 넘으면 끝점으로 클램프
-        Coordinates p1 = pts.get(pts.size() - 2), p2 = pts.get(pts.size() - 1);
-        double angle = Math.atan2(p2.getLng() - p1.getLng(), p2.getLat() - p1.getLat());
-        return new double[]{p2.getLng(), p2.getLat(), angle};
     }
 
     private static boolean isMissingCoordinate(PavementMarkingData m) {

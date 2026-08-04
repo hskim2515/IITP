@@ -272,15 +272,21 @@ const useSimulation = () => {
     // Cesium 시뮬레이션 업데이트 (재생/일시정지/초기화 적용)
     useEffect(() => {
         if (viewer) {
-            try {
-                layerManager.getLayerGroup("analyze").forEach((layer) => {
-                    if ((layer as any).destroyed) return;
+            // ⚠️ getLayerGroup("analyze")는 Cesium 프리미티브(heatmap/trip 등, setSpeed/setStatus
+            // 보유)뿐 아니라 2D OpenLayers 벡터 레이어(해당 메서드 없음)까지 함께 묶어 반환한다.
+            // 레이어 하나라도 없으면 forEach 전체가 예외로 중단돼, 그 뒤 순서의 레이어들은
+            // 이번 업데이트 사이클에서 속도/재생상태 동기화를 통째로 못 받는다 — 레이어별로
+            // 개별 처리해 한 레이어의 결함이 나머지에 전파되지 않게 한다.
+            layerManager.getLayerGroup("analyze").forEach((layer) => {
+                if ((layer as any).destroyed) return;
+                if (typeof (layer as any).setSpeed !== 'function') return;
+                try {
                     layer.setSpeed(speed * speedFactor);
                     layer.setStatus(isRunning);
-                });
-            } catch (e) {
-                console.warn('[useSimulation] layer setSpeed/setStatus 오류(무시):', e);
-            }
+                } catch (e) {
+                    console.warn('[useSimulation] layer setSpeed/setStatus 오류(무시):', e);
+                }
+            });
 
             viewerClockMultiplier.current = speed;
 
@@ -508,6 +514,18 @@ const useSimulation = () => {
         const startViewportStreaming = (): (() => void) => {
             useLogStore.getState().addLog('info', '[차량 경로] viewport 스트리밍 모드 (대용량)');
             let firstLoad = true;
+            // ⚠️ 실측 확정: 시나리오 진입 직후 flyToNetworkExtent(네트워크 실제 extent 기반 카메라
+            // 이동, 비동기 — extent API 응답 후 flyTo)가 완료되기 전에 이 스트리밍의 첫 doFetch(true)
+            // 가 이미 실행돼, useMapInit의 하드코딩된 기본 카메라 위치(126.77496, 37.49720 — 시나리오
+            // 실제 위치와 무관) 기준 bbox로 요청을 보내 차량 0대를 받는다. computeBbox의 줌 게이트
+            // 예외("최초 로드는 무조건 요청")가 firstLoad 한 번으로 소진되는데, 그 한 번을 이미 잘못된
+            // 카메라 위치에 써버린 뒤라 — 카메라가 나중에 flyToNetworkExtent로 올바른 위치에 도착해도
+            // 그 시점엔 이미 "최초 로드 아님" 상태라 줌 게이트가 걸려, 사용자가 직접 줌을 조작해
+            // normalizedPixelSizeM을 임계값 밑으로 내리기 전까진 재요청이 전혀 안 나간다("가만히
+            // 있으면 로드 안 되고 줌인해야만 됨" 실사용 재현). 줌 게이트 예외를 firstLoad(1회성)가
+            // 아니라 "차량 데이터를 실제로 한 번이라도 받을 때까지" 유지해, 카메라 보정이 끝난 뒤의
+            // 재요청도 예외를 계속 받도록 한다.
+            let gotAnyVehicleData = false;
             let lastBboxKey = '';
             let windowFrom = 0, windowTo = -1; // 로드된 시간창 (버퍼 제외, 시뮬 초)
             let simMin = 0;
@@ -571,7 +589,7 @@ const useSimulation = () => {
 
             const doFetch = (force = false) => {
                 if (fetching) { retryAfterFetch = true; return; } // 진행 중 fetch 끝나면 최신 상태로 재시도
-                const bbox = computeBbox(firstLoad);
+                const bbox = computeBbox(firstLoad || !gotAnyVehicleData);
                 if (!bbox) return;
                 // toFixed(3)(≈111m) — 카메라 관성 감쇠(inertia) 동안 화면 중앙 지면점이 매
                 // camera.changed마다 미세하게(수~수십m) 흔들리는데, 4자리(≈11m)로는 "사실상
@@ -640,6 +658,10 @@ const useSimulation = () => {
                         // 히스테리시스: 진입 = truncated(total > MAX), 해제 = total < MAX×EXIT_RATIO.
                         // 경계값 부근에서 팬마다 왕복 진동 방지 + 최소 전환 간격으로 깜빡임 억제.
                         const total = Number(data.totalVehicles ?? 0);
+                        // 카메라가 아직 올바른 위치(flyToNetworkExtent 결과)에 도착하기 전에 잘못된
+                        // bbox로 온 "차량 0대" 응답 때문에 줌 게이트 예외를 소진하지 않기 위한 플래그
+                        // — 실제 차량이 하나라도 잡힌 뒤에야 최초 로드 예외를 내려놓는다.
+                        if (total > 0) gotAnyVehicleData = true;
                         const shown = Array.isArray(data.positions) ? data.positions.length : 0;
                         const wasDense = (useVehicleStore.getState() as any).denseViewport === true;
                         const exitThreshold = VEHICLE_STREAMING.MAX_VEHICLES * VEHICLE_STREAMING.DENSE_EXIT_RATIO;
@@ -911,7 +933,8 @@ const useSimulation = () => {
                 // 점프해 trail 그물이 생긴다(streamTransitionRef 선언부 주석 참고). worker init 직후 재개.
                 if (!streamTransitionRef.current) {
                     // currentTime: 절대 경과초(vehicle_sim.db timestep 기준) — computeElapsedSec 주석 참고
-                    czmlPositionWorkerRef.current?.postMessage({ type: 'tick', currentTime: computeElapsedSec(viewer, viewer.clock.currentTime) });
+                    const elapsedSec = computeElapsedSec(viewer, viewer.clock.currentTime);
+                    czmlPositionWorkerRef.current?.postMessage({ type: 'tick', currentTime: elapsedSec });
                 }
                 useSimulationStore.getState().setCurrentTime(JulianDate.clone(viewer.clock.currentTime));
 

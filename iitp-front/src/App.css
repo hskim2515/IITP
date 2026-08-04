@@ -38,7 +38,7 @@
 }
 
 .read-the-docs {
-  color: #888;
+  color: var(--text-muted);
 }
 
 .map-container {
@@ -60,13 +60,13 @@ body {
 
 .title {
   font-size: 2.8rem;
-  color: #00bcd4;
+  color: var(--scenario-accent);
   margin-bottom: 10px;
 }
 
 .description {
   font-size: 1.2rem;
-  color: #cccccc;
+  color: var(--text-secondary);
   margin-bottom: 40px;
 }
 
@@ -79,14 +79,14 @@ body {
 
 .scenario-card {
   position: relative;
-  background: #2c2c3e;
-  border: 1px solid #444;
+  background: var(--scenario-surface);
+  border: 1px solid var(--text-disabled);
   border-radius: 12px;
   padding: 30px 25px;
   width: 280px;
   cursor: pointer;
   transition: all 0.3s ease;
-  box-shadow: 0 4px 15px rgba(0, 255, 255, 0.1);
+  box-shadow: 0 4px 15px rgba(var(--scenario-accent-rgb), 0.1);
 }
 
 /* 수정·삭제 버튼 그룹 */
@@ -108,9 +108,9 @@ body {
   width: 26px;
   height: 26px;
   border-radius: 6px;
-  border: 1px solid rgba(255,255,255,0.15);
-  background: rgba(255,255,255,0.07);
-  color: #aaa;
+  border: 1px solid rgba(var(--overlay-rgb), 0.15);
+  background: rgba(var(--overlay-rgb), 0.07);
+  color: var(--text-tertiary);
   font-size: 13px;
   cursor: pointer;
   display: flex;
@@ -122,30 +122,30 @@ body {
 }
 
 .scenario-card-btn--edit:hover {
-  background: rgba(0, 188, 212, 0.2);
-  color: #00eaff;
-  border-color: rgba(0, 188, 212, 0.5);
+  background: rgba(var(--scenario-accent-rgb), 0.2);
+  color: var(--scenario-accent);
+  border-color: rgba(var(--scenario-accent-rgb), 0.5);
 }
 
 .scenario-card-btn--delete:hover {
-  background: rgba(220, 60, 60, 0.2);
-  color: #f07070;
-  border-color: rgba(220, 60, 60, 0.5);
+  background: rgba(var(--color-danger-rgb), 0.2);
+  color: var(--color-danger);
+  border-color: rgba(var(--color-danger-rgb), 0.5);
 }
 
 .scenario-card:hover {
   transform: translateY(-5px);
-  background-color: #35354a;
-  box-shadow: 0 6px 20px rgba(0, 255, 255, 0.2);
+  background-color: var(--scenario-surface-hover);
+  box-shadow: 0 6px 20px rgba(var(--scenario-accent-rgb), 0.2);
 }
 
 .scenario-card h2 {
-  color: #00e5ff;
+  color: var(--scenario-accent);
   margin-bottom: 10px;
 }
 
 .scenario-card p {
-  color: #bbbbbb;
+  color: var(--text-tertiary);
 }
 
 /* 시나리오 추가 카드 */
@@ -154,33 +154,33 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  border: 2px solid #00eaff;
-  background: linear-gradient(135deg, rgba(0, 188, 212, 0.15), rgba(0, 234, 255, 0.08));
-  color: #00eaff;
-  box-shadow: 0 0 16px rgba(0, 234, 255, 0.2), inset 0 0 12px rgba(0, 234, 255, 0.05);
+  border: 2px solid var(--scenario-accent);
+  background: linear-gradient(135deg, rgba(var(--scenario-accent-rgb), 0.15), rgba(var(--scenario-accent-rgb), 0.08));
+  color: var(--scenario-accent);
+  box-shadow: 0 0 16px rgba(var(--scenario-accent-rgb), 0.2), inset 0 0 12px rgba(var(--scenario-accent-rgb), 0.05);
 }
 
 .scenario-card--add:hover {
-  background: linear-gradient(135deg, rgba(0, 188, 212, 0.28), rgba(0, 234, 255, 0.16));
-  box-shadow: 0 6px 24px rgba(0, 234, 255, 0.4), inset 0 0 16px rgba(0, 234, 255, 0.1);
+  background: linear-gradient(135deg, rgba(var(--scenario-accent-rgb), 0.28), rgba(var(--scenario-accent-rgb), 0.16));
+  box-shadow: 0 6px 24px rgba(var(--scenario-accent-rgb), 0.4), inset 0 0 16px rgba(var(--scenario-accent-rgb), 0.1);
   transform: translateY(-5px);
-  border-color: #00ffff;
+  border-color: var(--scenario-accent);
 }
 
 .scenario-card--add-icon {
   font-size: 3rem;
   line-height: 1;
   margin-bottom: 12px;
-  color: #00eaff;
-  text-shadow: 0 0 12px rgba(0, 234, 255, 0.8);
+  color: var(--scenario-accent);
+  text-shadow: 0 0 12px rgba(var(--scenario-accent-rgb), 0.8);
 }
 
 .scenario-card--add p {
-  color: #00eaff;
+  color: var(--scenario-accent);
   font-weight: 700;
   font-size: 1rem;
   letter-spacing: 0.03em;
-  text-shadow: 0 0 8px rgba(0, 234, 255, 0.5);
+  text-shadow: 0 0 8px rgba(var(--scenario-accent-rgb), 0.5);
 }
 
 /* 시나리오 생성 모달 */
@@ -205,15 +205,15 @@ body {
 
 .scenario-form-row label {
   font-size: 0.85rem;
-  color: #aaaaaa;
+  color: var(--text-tertiary);
 }
 
 .scenario-form-row input,
 .scenario-form-row textarea {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(var(--overlay-rgb), 0.06);
+  border: 1px solid rgba(var(--overlay-rgb), 0.15);
   border-radius: 8px;
-  color: #ffffff;
+  color: var(--text-primary);
   font-size: 0.95rem;
   padding: 0.55rem 0.8rem;
   outline: none;
@@ -224,11 +224,11 @@ body {
 
 .scenario-form-row input:focus,
 .scenario-form-row textarea:focus {
-  border-color: #00eaff;
+  border-color: var(--scenario-accent);
 }
 
 .scenario-form-error {
-  color: #ff6b6b;
+  color: var(--color-danger);
   font-size: 0.88rem;
   margin: 0;
 }
@@ -241,12 +241,12 @@ body {
 }
 
 .scenario-form-actions .btn-cancel {
-  background-color: rgba(255, 255, 255, 0.1);
-  color: #cccccc;
+  background-color: rgba(var(--overlay-rgb), 0.1);
+  color: var(--text-secondary);
 }
 
 .scenario-form-actions .btn-cancel:hover {
-  background-color: rgba(255, 255, 255, 0.18);
+  background-color: rgba(var(--overlay-rgb), 0.18);
 }
 
 /* 키 입력 라벨 + 배지 행 */
@@ -263,8 +263,8 @@ body {
 
 .scenario-key-input--readonly {
   cursor: default;
-  color: #baf8ff !important;
-  background: rgba(0, 234, 255, 0.07) !important;
+  color: var(--scenario-accent) !important;
+  background: rgba(var(--scenario-accent-rgb), 0.07) !important;
 }
 
 /* 키 상태 배지 */
@@ -277,36 +277,36 @@ body {
 }
 
 .key-badge--checking {
-  background: rgba(255, 200, 0, 0.15);
-  color: #ffc800;
-  border: 1px solid rgba(255, 200, 0, 0.4);
+  background: rgba(var(--color-warning-rgb), 0.15);
+  color: var(--color-warning);
+  border: 1px solid rgba(var(--color-warning-rgb), 0.4);
 }
 
 .key-badge--ok {
-  background: rgba(0, 234, 100, 0.15);
-  color: #00ea64;
-  border: 1px solid rgba(0, 234, 100, 0.4);
+  background: rgba(var(--scenario-accent-rgb), 0.15);
+  color: var(--scenario-accent);
+  border: 1px solid rgba(var(--scenario-accent-rgb), 0.4);
 }
 
 .key-badge--dup {
-  background: rgba(255, 107, 107, 0.15);
-  color: #ff6b6b;
-  border: 1px solid rgba(255, 107, 107, 0.4);
+  background: rgba(var(--color-danger-rgb), 0.15);
+  color: var(--color-danger);
+  border: 1px solid rgba(var(--color-danger-rgb), 0.4);
 }
 
 /* 키 입력 필드 상태별 테두리 */
 .scenario-form-row input.input--ok {
-  border-color: #00ea64;
+  border-color: var(--scenario-accent);
 }
 
 .scenario-form-row input.input--err {
-  border-color: #ff6b6b;
+  border-color: var(--color-danger);
 }
 
 /* 입력 형식 힌트 */
 .scenario-form-hint {
   font-size: 0.75rem;
-  color: #666;
+  color: var(--text-disabled);
   margin-top: 3px;
 }
 
@@ -324,14 +324,14 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 10px 16px;
-  background: rgba(13, 15, 25, 0.96);
-  border-bottom: 1px solid rgba(0, 234, 255, 0.3);
+  background: rgba(var(--surface-1-rgb), 0.96);
+  border-bottom: 1px solid rgba(var(--scenario-accent-rgb), 0.3);
   flex-shrink: 0;
   gap: 12px;
 }
 
 .map-picker-guide {
-  color: #00eaff;
+  color: var(--scenario-accent);
   font-size: 0.9rem;
   font-weight: 600;
   flex: 1;
@@ -345,10 +345,10 @@ body {
 
 /* 지도 피커 내부 버튼 - 공통 베이스 */
 .map-picker-btn {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(var(--overlay-rgb), 0.08);
+  border: 1px solid rgba(var(--overlay-rgb), 0.25);
   border-radius: 7px;
-  color: #cccccc;
+  color: var(--text-secondary);
   font-size: 0.85rem;
   font-weight: 600;
   padding: 0.35rem 0.9rem;
@@ -358,36 +358,36 @@ body {
 }
 
 .map-picker-btn:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(var(--overlay-rgb), 0.15);
 }
 
 /* 활성화된 범위 선택 버튼 */
 .map-picker-btn--active {
-  background: rgba(255, 80, 80, 0.15);
-  border-color: #ff6b6b;
-  color: #ff6b6b;
+  background: rgba(var(--color-danger-rgb), 0.15);
+  border-color: var(--color-danger);
+  color: var(--color-danger);
 }
 
 .map-picker-btn--active:hover {
-  background: rgba(255, 80, 80, 0.25);
+  background: rgba(var(--color-danger-rgb), 0.25);
 }
 
 /* 적용 버튼 */
 .map-picker-btn--confirm {
-  background: rgba(0, 188, 212, 0.2);
-  border-color: #00eaff;
-  color: #00eaff;
+  background: rgba(var(--scenario-accent-rgb), 0.2);
+  border-color: var(--scenario-accent);
+  color: var(--scenario-accent);
 }
 
 .map-picker-btn--confirm:hover {
-  background: rgba(0, 188, 212, 0.35);
-  box-shadow: 0 0 8px rgba(0, 234, 255, 0.4);
+  background: rgba(var(--scenario-accent-rgb), 0.35);
+  box-shadow: 0 0 8px rgba(var(--scenario-accent-rgb), 0.4);
 }
 
 /* 닫기 버튼 */
 .map-picker-btn--close {
-  color: #888;
-  border-color: rgba(255, 255, 255, 0.15);
+  color: var(--text-muted);
+  border-color: rgba(var(--overlay-rgb), 0.15);
 }
 
 .map-picker-map {
@@ -414,7 +414,7 @@ body {
   left: 0;
   width: 100vw;
   height: 100vh;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(var(--surface-overlay-rgb), 0.6);
   backdrop-filter: blur(4px);
   display: flex;
   justify-content: center;
@@ -423,15 +423,15 @@ body {
 }
 
 .version-popup-content {
-  background: rgba(13, 15, 25, 0.95);
+  background: rgba(var(--surface-1-rgb), 0.95);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(var(--overlay-rgb), 0.1);
   border-radius: 14px;
-  color: #ffffff;
+  color: var(--text-primary);
   padding: 2.5rem 2.5rem;
   text-align: center;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7);
+  box-shadow: 0 24px 60px rgba(var(--surface-overlay-rgb), 0.7);
   max-width: 480px;
   animation: fadeIn 0.25s ease-out;
   font-family: 'Segoe UI', 'Pretendard', sans-serif;
@@ -439,18 +439,18 @@ body {
 
 .version-popup-content h2 {
   font-size: 1.3rem;
-  color: #00eaff;
+  color: var(--scenario-accent);
   margin-bottom: 1rem;
 }
 
 .version-popup-content p {
-  color: #cccccc;
+  color: var(--text-secondary);
   font-size: 1rem;
   margin-bottom: 2rem;
 }
 
 .version-popup-content button {
-  background-color: #00eaff;
+  background-color: var(--scenario-accent);
   border: none;
   color: #000;
   font-weight: bold;
@@ -463,7 +463,7 @@ body {
 }
 
 .version-popup-content button:hover {
-  background-color: #00c0d1;
+  background-color: var(--scenario-accent);
 }
 
 @keyframes fadeIn {
@@ -487,6 +487,10 @@ body {
   left: 0;
   width: 100vw;
   height: 100vh;
+  /* ⚠️ 의도적으로 흰색 고정 — 이 앱 안에서 유일하게 밝은 배경(어두운 텍스트 #333과 짝)인
+     예외 컴포넌트였다(마이그레이션 전 rgba(255,255,255,0.8) 리터럴). --overlay-rgb는
+     라이트 테마에서 검정으로 뒤집히는 토큰이라 여기 쓰면 라이트 모드에서 이 오버레이가
+     검게 반전되는 버그가 생긴다 — 테마와 무관하게 항상 밝게 유지해야 하므로 고정값 유지. */
   background: rgba(255, 255, 255, 0.8);
   display: flex;
   align-items: center;
@@ -516,7 +520,7 @@ body {
   justify-content: center;
   gap: 2px;
   width: 600px;
-  color: #ccc;
+  color: var(--text-secondary);
   font-family: 'Segoe UI', sans-serif;
   pointer-events: auto;
   /* grid-column을 2로 명시 고정 — 편집모드 최소화(editMinimal)에서 이 요소 자체가 조건부로
@@ -531,15 +535,15 @@ body {
   width: 600px;
   height: 12px;
   overflow: hidden;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(var(--overlay-rgb), 0.08);
 }
 
 .tick {
   width: 100px;
   text-align: center;
   font-size: 9px;
-  color: #aaa;
-  border-left: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--text-tertiary);
+  border-left: 1px solid rgba(var(--overlay-rgb), 0.2);
   line-height: 12px;
 }
 
@@ -548,7 +552,7 @@ body {
   width: 600px;
   height: 16px;
   overflow: hidden;
-  background-color: rgba(255, 255, 255, 0.04);
+  background-color: rgba(var(--overlay-rgb), 0.04);
   border-radius: 3px;
 }
 
@@ -557,7 +561,7 @@ body {
   top: 2px;
   height: 12px;
   line-height: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(var(--overlay-rgb), 0.15);
   padding: 0 4px;
   font-size: 9px;
   white-space: nowrap;
@@ -570,8 +574,8 @@ body {
 .block.jump {
   position: absolute;
   height: 12px;
-  background-color: rgba(255, 165, 0, 0.18);
-  border: 1px solid rgba(255, 165, 0, 0.45);
+  background-color: rgba(var(--color-warning-rgb), 0.18);
+  border: 1px solid rgba(var(--color-warning-rgb), 0.45);
   display: flex;
   align-items: center;
   padding: 0 3px;
@@ -581,7 +585,7 @@ body {
 
 .close-button {
   margin-left: auto;
-  color: rgba(255, 100, 100, 0.8);
+  color: rgba(var(--color-danger-rgb), 0.8);
   font-weight: bold;
   cursor: pointer;
   user-select: none;
@@ -590,8 +594,8 @@ body {
 }
 
 .block.active {
-  background-color: rgba(65, 105, 225, 0.18);
-  border: 1px solid rgba(65, 105, 225, 0.45);
+  background-color: rgba(var(--accent-rgb), 0.18);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
   z-index: 2;
   display: flex;
   align-items: center;
@@ -609,17 +613,17 @@ body {
 }
 
 .resize-handle.left {
-  border-left: 2px solid rgba(255, 255, 255, 0.25);
+  border-left: 2px solid rgba(var(--overlay-rgb), 0.25);
 }
 
 .resize-handle.right {
-  border-right: 2px solid rgba(255, 255, 255, 0.25);
+  border-right: 2px solid rgba(var(--overlay-rgb), 0.25);
 }
 
 .label {
   flex: 1;
   text-align: center;
-  color: #888;
+  color: var(--text-muted);
   font-size: 9px;
   pointer-events: none;
   letter-spacing: 0.2px;
@@ -627,7 +631,7 @@ body {
 
 .add-button {
   margin-left: auto;
-  color: #7aa2ff;
+  color: var(--accent-text);
   font-weight: bold;
   cursor: pointer;
   user-select: none;
@@ -639,7 +643,7 @@ body {
   position: absolute;
   top: 2px;
   font-size: 10px;
-  color: #7aa2ff;
+  color: var(--accent-text);
   cursor: pointer;
   user-select: none;
   transform: translateX(-50%);
@@ -660,24 +664,29 @@ body {
   font-weight: 500;
   z-index: 9999;
   color: white;
-  box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+  box-shadow: 0 4px 10px rgba(var(--surface-overlay-rgb), 0.15);
   animation: fadeInOut 2s ease-in-out;
 }
 
 .messagePopup.info {
-  background-color: #007bff;
+  background-color: var(--accent);
 }
 
 .messagePopup.warn {
-  background-color: #ffc107;
+  background-color: var(--color-warning);
   color: #000;
 }
 
 .messagePopup.error {
-  background-color: #dc3545;
+  background-color: var(--color-danger);
 }
 
 .messagePopup.confirm {
+  /* 항상 흰 카드 + 검정 텍스트로 고정 — .loading-overlay와 같은 이유(App.css:490 주석 참고).
+     var(--text-primary)는 라이트 테마에서 거의 검정으로 뒤집히는데, 그 위에 고정 #000 텍스트를
+     얹으면 라이트 모드에서 텍스트가 안 보인다. info/warn/error 변형은 accent/warning/danger처럼
+     테마별로 이미 대비가 보정된 시맨틱 색을 쓰지만, confirm은 애초에 "중립 흰 카드" 정체성이라
+     테마와 무관하게 고정한다. */
   background-color: #ffffff;
   color: #000;
 }
@@ -698,18 +707,20 @@ body {
 }
 /* 확인 버튼 */
 .messagePopup.confirm .buttons button:nth-child(1) {
-  background-color: #007bff;
+  background-color: var(--accent);
   color: white;
 }
 .messagePopup.confirm .buttons button:nth-child(1):hover {
-  background-color: #0056b3;
+  /* rgba 채널 산술(calc)은 유효한 CSS가 아니라 filter로 어둡게 — 테마와 무관하게 --accent
+     값이 무엇이든 항상 동작한다. */
+  filter: brightness(0.8);
 }
 /* 취소 버튼 */
 .messagePopup.confirm .buttons button:nth-child(2) {
-  background-color: #6c757d;
+  background-color: rgba(var(--overlay-rgb), 0.3);
   color: white;
 }
 .messagePopup.confirm .buttons button:nth-child(2):hover {
-  background-color: #5a6268;
+  background-color: rgba(var(--overlay-rgb), 0.4);
 }
 

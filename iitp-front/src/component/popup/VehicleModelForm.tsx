@@ -19,24 +19,24 @@ const HprRow: React.FC<{
     onChange: (v: number) => void; disabled?: boolean;
 }> = ({ label, value, min = -180, max = 180, step = 1, unit = '°', onChange, disabled }) => (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0' }}>
-        <span style={{ width: 58, fontSize: 11, color: '#888', flexShrink: 0 }}>{label}</span>
+        <span style={{ width: 58, fontSize: 11, color: 'var(--text-muted)', flexShrink: 0 }}>{label}</span>
         <input
             type="range" min={min} max={max} step={step} value={value}
             disabled={disabled}
-            style={{ flex: 1, accentColor: '#7aa2ff', cursor: disabled ? 'default' : 'pointer' }}
+            style={{ flex: 1, accentColor: 'var(--accent-text)', cursor: disabled ? 'default' : 'pointer' }}
             onChange={e => onChange(Number(e.target.value))}
         />
         <input
             type="number" min={min} max={max} step={step} value={value}
             disabled={disabled}
             style={{
-                width: 52, background: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.1)', borderRadius: 4,
-                color: '#eee', fontSize: 11, padding: '3px 6px', textAlign: 'right',
+                width: 52, background: 'rgba(var(--overlay-rgb), 0.05)',
+                border: '1px solid rgba(var(--overlay-rgb), 0.1)', borderRadius: 4,
+                color: 'var(--text-secondary)', fontSize: 11, padding: '3px 6px', textAlign: 'right',
             }}
             onChange={e => onChange(Number(e.target.value))}
         />
-        <span style={{ fontSize: 10, color: '#555', flexShrink: 0 }}>{unit}</span>
+        <span style={{ fontSize: 10, color: 'var(--text-disabled)', flexShrink: 0 }}>{unit}</span>
     </div>
 );
 
@@ -205,9 +205,9 @@ const VehicleModelForm: React.FC<Props> = ({
                             ) : (
                                 <div style={{
                                     height: 240, borderRadius: 8,
-                                    border: '1px dashed rgba(255,255,255,0.1)',
+                                    border: '1px dashed rgba(var(--overlay-rgb), 0.1)',
                                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    color: '#444', fontSize: 12, background: 'rgba(0,0,0,0.15)',
+                                    color: 'var(--text-disabled)', fontSize: 12, background: 'rgba(var(--surface-overlay-rgb), 0.15)',
                                     flexDirection: 'column', gap: 6,
                                 }}>
                                     <span style={{ fontSize: 28 }}>🧊</span>
@@ -218,12 +218,12 @@ const VehicleModelForm: React.FC<Props> = ({
 
                         {/* ── 방향 보정 슬라이더 ────────────────── */}
                         <div style={{
-                            background: 'rgba(255,255,255,0.02)',
-                            border: '1px solid rgba(255,255,255,0.07)',
+                            background: 'rgba(var(--overlay-rgb), 0.02)',
+                            border: '1px solid rgba(var(--overlay-rgb), 0.07)',
                             borderRadius: 8, padding: '10px 12px', marginBottom: 14,
                         }}>
                             <div style={{
-                                fontSize: 11, color: '#7aa2ff', fontWeight: 600,
+                                fontSize: 11, color: 'var(--accent-text)', fontWeight: 600,
                                 letterSpacing: '0.3px', marginBottom: 8,
                             }}>
                                 방향 보정
@@ -234,7 +234,7 @@ const VehicleModelForm: React.FC<Props> = ({
                                 onChange={v => setHprDeg(p => ({ ...p, pitch: v }))} />
                             <HprRow label="Roll" value={hprDeg.roll} disabled={isReadOnly}
                                 onChange={v => setHprDeg(p => ({ ...p, roll: v }))} />
-                            <div style={{ fontSize: 10, color: '#555', marginTop: 6 }}>
+                            <div style={{ fontSize: 10, color: 'var(--text-disabled)', marginTop: 6 }}>
                                 뒤집혔으면 Roll ±180° · 옆으로 누웠으면 Pitch ±90°
                             </div>
                             {!isReadOnly && (
@@ -242,9 +242,9 @@ const VehicleModelForm: React.FC<Props> = ({
                                     type="button"
                                     style={{
                                         marginTop: 8, padding: '3px 10px', fontSize: 11,
-                                        background: 'rgba(255,255,255,0.04)',
-                                        border: '1px solid rgba(255,255,255,0.1)',
-                                        borderRadius: 4, color: '#777', cursor: 'pointer',
+                                        background: 'rgba(var(--overlay-rgb), 0.04)',
+                                        border: '1px solid rgba(var(--overlay-rgb), 0.1)',
+                                        borderRadius: 4, color: 'rgba(var(--overlay-rgb), 0.4)', cursor: 'pointer',
                                     }}
                                     onClick={() => setHprDeg({ heading: 0, pitch: 0, roll: 180 })}
                                 >
@@ -255,12 +255,12 @@ const VehicleModelForm: React.FC<Props> = ({
 
                         {/* ── Z 높이 보정 ────────────────────────── */}
                         <div style={{
-                            background: 'rgba(255,255,255,0.02)',
-                            border: '1px solid rgba(255,255,255,0.07)',
+                            background: 'rgba(var(--overlay-rgb), 0.02)',
+                            border: '1px solid rgba(var(--overlay-rgb), 0.07)',
                             borderRadius: 8, padding: '10px 12px', marginBottom: 14,
                         }}>
                             <div style={{
-                                fontSize: 11, color: '#7aa2ff', fontWeight: 600,
+                                fontSize: 11, color: 'var(--accent-text)', fontWeight: 600,
                                 letterSpacing: '0.3px', marginBottom: 8,
                             }}>
                                 높이 보정 (Z-offset)
@@ -272,7 +272,7 @@ const VehicleModelForm: React.FC<Props> = ({
                                 onChange={v => setZOffset(v)}
                                 disabled={isReadOnly}
                             />
-                            <div style={{ fontSize: 10, color: '#555', marginTop: 4 }}>
+                            <div style={{ fontSize: 10, color: 'var(--text-disabled)', marginTop: 4 }}>
                                 단위: m · 양수=위로, 음수=아래로
                             </div>
                         </div>
@@ -313,7 +313,7 @@ const VehicleModelForm: React.FC<Props> = ({
                                 style={{
                                     height: 30, padding: 2, borderRadius: 4,
                                     background: 'transparent',
-                                    border: '1px solid rgba(255,255,255,0.1)',
+                                    border: '1px solid rgba(var(--overlay-rgb), 0.1)',
                                     cursor: isReadOnly ? 'default' : 'pointer',
                                 }}
                             />

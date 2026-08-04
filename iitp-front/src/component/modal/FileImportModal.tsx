@@ -320,7 +320,7 @@ const FileImportModal: React.FC<Props> = ({ onClose }) => {
     if (selecting) {
         return createPortal(
             <div style={selectingBannerStyle}>
-                <span style={{ fontSize: 13, color: '#e0e0e0' }}>Shift + 드래그로 영역을 선택하세요 (일반 드래그: 지도 이동)</span>
+                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Shift + 드래그로 영역을 선택하세요 (일반 드래그: 지도 이동)</span>
                 <button style={cancelSelectBtnStyle} onClick={() => setSelecting(false)}>취소</button>
             </div>,
             document.body
@@ -332,7 +332,7 @@ const FileImportModal: React.FC<Props> = ({ onClose }) => {
     if (selectingPolygon) {
         return createPortal(
             <div style={selectingBannerStyle}>
-                <span style={{ fontSize: 13, color: '#e0e0e0' }}>지도를 클릭해 폴리곤 꼭짓점을 추가하고, 더블클릭으로 완성하세요</span>
+                <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>지도를 클릭해 폴리곤 꼭짓점을 추가하고, 더블클릭으로 완성하세요</span>
                 <button style={cancelSelectBtnStyle} onClick={() => setSelectingPolygon(false)}>취소</button>
             </div>,
             document.body
@@ -351,7 +351,7 @@ const FileImportModal: React.FC<Props> = ({ onClose }) => {
             <div style={panelStyle}>
                 {/* 헤더 */}
                 <div style={headerStyle}>
-                    <span style={{ fontWeight: 600, fontSize: 13, color: '#ddd' }}>가져오기</span>
+                    <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-secondary)' }}>가져오기</span>
                     <button onClick={onClose} style={closeBtnStyle}>×</button>
                 </div>
 
@@ -700,14 +700,14 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 onClick={() => fileInputRef.current?.click()}
             >
                 <div style={{ fontSize: 22, marginBottom: 4, opacity: 0.5 }}>⬆</div>
-                <div style={{ fontSize: 11, color: '#888' }}>파일을 끌어오거나</div>
-                <div style={{ fontSize: 11, color: '#7aa2ff', cursor: 'pointer' }}>클릭하여 선택</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>파일을 끌어오거나</div>
+                <div style={{ fontSize: 11, color: 'var(--accent-text)', cursor: 'pointer' }}>클릭하여 선택</div>
                 <input ref={fileInputRef} type="file" accept=".json,.xml,.db,.zip" style={{ display: 'none' }}
                        onChange={e => { const f = e.target.files?.[0]; if (f) void processFile(f); e.target.value = ''; }} />
             </div>
 
             {zipProcessing && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#7aa2ff', padding: '6px 10px', background: 'rgba(255,255,255,0.04)', borderRadius: 5 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--accent-text)', padding: '6px 10px', background: 'rgba(var(--overlay-rgb),0.04)', borderRadius: 5 }}>
                     <div style={zipSpinnerStyle} />
                     {zipProgress || 'ZIP 처리 중...'}
                 </div>
@@ -715,17 +715,17 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
             {zipResults && (
                 <div style={xmlPanelStyle}>
-                    <div style={{ fontSize: 11, color: '#ccc', marginBottom: 6, fontWeight: 600 }}>
+                    <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 6, fontWeight: 600 }}>
                         ZIP 가져오기 결과 ({zipResults.filter(r => r.status === 'ok' || r.status === 'warning').length}/{zipResults.length}개 성공)
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 180, overflowY: 'auto' }}>
                         {zipResults.map((r, i) => (
                             <div key={i} style={{
                                 fontSize: 10, display: 'flex', gap: 6,
-                                color: r.status === 'ok' ? '#6fcf97' : r.status === 'warning' ? '#f0c040' : r.status === 'error' ? '#ff6b6b' : '#888',
+                                color: r.status === 'ok' ? 'var(--color-success)' : r.status === 'warning' ? 'var(--color-warning)' : r.status === 'error' ? 'var(--color-danger)' : 'var(--text-muted)',
                             }}>
                                 <span>{r.status === 'ok' ? '✓' : r.status === 'warning' ? '⚠' : r.status === 'error' ? '✗' : '—'}</span>
-                                <span style={{ color: '#aaa', flexShrink: 0 }}>{r.name}</span>
+                                <span style={{ color: 'var(--text-tertiary)', flexShrink: 0 }}>{r.name}</span>
                                 <span>{r.text}</span>
                             </div>
                         ))}
@@ -735,18 +735,18 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
             {xmlImport && (
                 <div style={xmlPanelStyle}>
-                    <div style={{ fontSize: 11, color: '#7aa2ff', marginBottom: 6 }}>📄 {xmlImport.file.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--accent-text)', marginBottom: 6 }}>📄 {xmlImport.file.name}</div>
                     {xmlImport.detectedStoreless ? (
-                        <div style={{ fontSize: 11, color: '#6fcf97', marginBottom: 8 }}>✓ 자동 감지: <strong>{xmlImport.detectedStoreless.label}</strong></div>
+                        <div style={{ fontSize: 11, color: 'var(--color-success)', marginBottom: 8 }}>✓ 자동 감지: <strong>{xmlImport.detectedStoreless.label}</strong></div>
                     ) : xmlImport.detectedLayer && !XML_IMPORT_SUPPORTED_KEYS.has(xmlImport.detectedLayer.key) ? (
-                        <div style={{ fontSize: 11, color: '#f5a623', marginBottom: 8 }}>
+                        <div style={{ fontSize: 11, color: 'var(--color-warning)', marginBottom: 8 }}>
                             ⚠ <strong>{xmlImport.detectedLayer.label}</strong>은(는) 아직 XML 업로드를 지원하지 않습니다.<br/>
                             JSON으로 내보내 가져오세요 (데이터 입출력 패널).
                         </div>
                     ) : xmlImport.detectedLayer ? (
-                        <div style={{ fontSize: 11, color: '#6fcf97', marginBottom: 8 }}>✓ 자동 감지: <strong>{xmlImport.detectedLayer.label}</strong></div>
+                        <div style={{ fontSize: 11, color: 'var(--color-success)', marginBottom: 8 }}>✓ 자동 감지: <strong>{xmlImport.detectedLayer.label}</strong></div>
                     ) : (
-                        <div style={{ fontSize: 11, color: '#f5a623', marginBottom: 6 }}>파일명으로 레이어를 감지할 수 없습니다. 직접 선택하세요.</div>
+                        <div style={{ fontSize: 11, color: 'var(--color-warning)', marginBottom: 6 }}>파일명으로 레이어를 감지할 수 없습니다. 직접 선택하세요.</div>
                     )}
                     <select style={selectStyle} value={xmlImport.selectedKey}
                             onChange={e => setXmlImport(p => p ? { ...p, selectedKey: e.target.value } : null)}>
@@ -767,8 +767,8 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
             {dbImport && (
                 <div style={xmlPanelStyle}>
-                    <div style={{ fontSize: 11, color: '#7aa2ff', marginBottom: 6 }}>📄 {dbImport.file.name}</div>
-                    <div style={{ fontSize: 11, color: '#f5a623', marginBottom: 8 }}>
+                    <div style={{ fontSize: 11, color: 'var(--accent-text)', marginBottom: 6 }}>📄 {dbImport.file.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--color-warning)', marginBottom: 8 }}>
                         ⚠ 시뮬레이션 결과(vehicle_sim.db)를 교체합니다.<br/>
                         기존 차량 경로 데이터는 삭제되고 다음 재생 시 새 파일로 다시 생성됩니다.
                     </div>
@@ -780,7 +780,7 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             )}
 
             {status && (
-                <div style={{ fontSize: 11, color: status.type === 'ok' ? '#6fcf97' : status.type === 'warning' ? '#f0c040' : '#ff6b6b', padding: '6px 10px', background: 'rgba(255,255,255,0.04)', borderRadius: 5 }}>
+                <div style={{ fontSize: 11, color: status.type === 'ok' ? 'var(--color-success)' : status.type === 'warning' ? 'var(--color-warning)' : 'var(--color-danger)', padding: '6px 10px', background: 'rgba(var(--overlay-rgb),0.04)', borderRadius: 5 }}>
                     {status.type === 'ok' ? '✓ ' : status.type === 'warning' ? '⚠ ' : '✗ '}{status.text}
                 </div>
             )}
@@ -936,7 +936,7 @@ const ReanchorTab: React.FC<ReanchorTabProps> = ({
             </div>
 
             {scenario?.latitude != null && scenario?.longitude != null && (
-                <div style={{ fontSize: 11, color: '#666' }}>
+                <div style={{ fontSize: 11, color: 'rgba(var(--overlay-rgb),0.4)' }}>
                     현재 기준 좌표: {scenario.latitude.toFixed(6)}, {scenario.longitude.toFixed(6)}
                 </div>
             )}
@@ -954,7 +954,7 @@ const ReanchorTab: React.FC<ReanchorTabProps> = ({
 
                     {picked && (
                         <div style={xmlPanelStyle}>
-                            <div style={{ fontSize: 11, color: '#8aaaee', marginBottom: 6 }}>선택한 기준점</div>
+                            <div style={{ fontSize: 11, color: 'rgba(var(--accent-text-rgb),0.85)', marginBottom: 6 }}>선택한 기준점</div>
                             <div style={gridStyle}>
                                 <span style={labelStyle}>위도</span>
                                 <span style={{ ...inputStyle, background: 'transparent', border: 'none', padding: '5px 0' }}>
@@ -986,11 +986,11 @@ const ReanchorTab: React.FC<ReanchorTabProps> = ({
                         const value = calibPoints[step.key];
                         return (
                             <div key={step.key} style={xmlPanelStyle}>
-                                <div style={{ fontSize: 11, color: '#8aaaee', marginBottom: 3 }}>{step.label}</div>
-                                <div style={{ fontSize: 10, color: '#666', marginBottom: 7 }}>{step.hint}</div>
+                                <div style={{ fontSize: 11, color: 'rgba(var(--accent-text-rgb),0.85)', marginBottom: 3 }}>{step.label}</div>
+                                <div style={{ fontSize: 10, color: 'rgba(var(--overlay-rgb),0.4)', marginBottom: 7 }}>{step.hint}</div>
                                 {value ? (
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                                        <span style={{ fontSize: 11, color: '#ccc', fontFamily: 'monospace' }}>
+                                        <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
                                             {value.lat.toFixed(6)}, {value.lon.toFixed(6)}
                                         </span>
                                         <button
@@ -1018,7 +1018,7 @@ const ReanchorTab: React.FC<ReanchorTabProps> = ({
             )}
 
             {status && (
-                <div style={{ fontSize: 11, color: status.type === 'ok' ? '#6fcf97' : '#ff6b6b', padding: '6px 10px', background: 'rgba(255,255,255,0.04)', borderRadius: 5 }}>
+                <div style={{ fontSize: 11, color: status.type === 'ok' ? 'var(--color-success)' : 'var(--color-danger)', padding: '6px 10px', background: 'rgba(var(--overlay-rgb),0.04)', borderRadius: 5 }}>
                     {status.type === 'ok' ? '✓ ' : '✗ '}{status.text}
                 </div>
             )}
@@ -1219,8 +1219,8 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
         return (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '20px 0' }}>
                 <div style={reflectSpinnerStyle} />
-                <p style={{ fontSize: 13, color: '#e0e0e0', margin: 0, fontWeight: 600 }}>지도에 반영 중...</p>
-                <p style={{ fontSize: 11, color: '#888', margin: 0, textAlign: 'center' }}>
+                <p style={{ fontSize: 13, color: 'var(--text-secondary)', margin: 0, fontWeight: 600 }}>지도에 반영 중...</p>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, textAlign: 'center' }}>
                     기존 데이터를 초기화하고 새 네트워크 타일을 불러오고 있습니다.
                 </p>
             </div>
@@ -1233,17 +1233,17 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
         const linkCount = pendingData.links?.length ?? 0;
         return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <p style={{ fontSize: 12, color: '#ccc', margin: 0 }}>서버에 network.xml이 저장되었습니다.</p>
-                <p style={{ fontSize: 11, color: '#888', margin: 0 }}>노드 {nodeCount}개 · 링크 {linkCount}개</p>
+                <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0 }}>서버에 network.xml이 저장되었습니다.</p>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0 }}>노드 {nodeCount}개 · 링크 {linkCount}개</p>
                 {isSimplified && (
-                    <p style={{ fontSize: 10, color: '#5bc8f5', margin: 0 }}>
+                    <p style={{ fontSize: 10, color: 'rgba(var(--accent-text-rgb),0.9)', margin: 0 }}>
                         ℹ 대용량 네트워크 — 직선 간소화 렌더링. 줌인 시 상세 형상을 자동 로드합니다.
                     </p>
                 )}
                 {warnings.length > 0 && (
-                    <div style={{ padding: '8px 10px', background: 'rgba(245,166,35,0.08)', borderRadius: 5, border: '1px solid rgba(245,166,35,0.3)' }}>
-                        <p style={{ fontSize: 10, color: '#f0c040', margin: '0 0 4px', fontWeight: 600 }}>⚠ 경고 {warnings.length}건</p>
-                        {warnings.map((w, i) => <p key={i} style={{ fontSize: 10, color: '#c8a840', margin: '2px 0' }}>• {w}</p>)}
+                    <div style={{ padding: '8px 10px', background: 'rgba(var(--color-warning-rgb),0.08)', borderRadius: 5, border: '1px solid rgba(var(--color-warning-rgb),0.3)' }}>
+                        <p style={{ fontSize: 10, color: 'var(--color-warning)', margin: '0 0 4px', fontWeight: 600 }}>⚠ 경고 {warnings.length}건</p>
+                        {warnings.map((w, i) => <p key={i} style={{ fontSize: 10, color: 'rgba(var(--color-warning-rgb),0.8)', margin: '2px 0' }}>• {w}</p>)}
                     </div>
                 )}
                 <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 4 }}>
@@ -1299,9 +1299,9 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
 
             {isKtdb ? (
                 polygons ? (
-                    <p style={{ fontSize: 11, color: '#6fcf97', margin: 0 }}>✓ 경계가 지정되었습니다.</p>
+                    <p style={{ fontSize: 11, color: 'var(--color-success)', margin: 0 }}>✓ 경계가 지정되었습니다.</p>
                 ) : (
-                    <p style={{ fontSize: 10, color: '#666', margin: 0 }}>폴리곤을 그리거나 파일을 업로드하세요.</p>
+                    <p style={{ fontSize: 10, color: 'rgba(var(--overlay-rgb),0.4)', margin: 0 }}>폴리곤을 그리거나 파일을 업로드하세요.</p>
                 )
             ) : (
                 <div style={gridStyle}>
@@ -1320,7 +1320,7 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
                 </div>
             )}
 
-            {error && <div style={{ fontSize: 11, color: '#ff6b6b', padding: '6px 8px', background: 'rgba(255,107,107,0.08)', borderRadius: 4 }}>{error}</div>}
+            {error && <div style={{ fontSize: 11, color: 'var(--color-danger)', padding: '6px 8px', background: 'rgba(var(--color-danger-rgb),0.08)', borderRadius: 4 }}>{error}</div>}
 
             {loading && <ImportProgressBar progress={progress} />}
 

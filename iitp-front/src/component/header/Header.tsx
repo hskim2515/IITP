@@ -15,6 +15,9 @@ import { reloadIntoScenario } from "@utils/scenarioBootstrap";
 import { useMessageStore } from "@stores/useMessageStore";
 import axiosInstance from "@api/axiosInstance";
 import { ScenarioVersions } from "@type/Scenario";
+import { useAppSettingsStore } from "@stores/useAppSettingsStore";
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faSun, faMoon } from '@fortawesome/free-solid-svg-icons';
 import styles from '@css/Header.module.css'
 
 interface Props {
@@ -64,6 +67,8 @@ function HeaderDropdown({
 const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
     const appMode = useModeStore((s) => s.appMode);
     const toggleAppMode = useModeStore((s) => s.toggleAppMode);
+    const theme = useAppSettingsStore((s) => s.theme);
+    const toggleTheme = useAppSettingsStore((s) => s.toggleTheme);
     const netChanged = useNetworkStore((s: any) => s.isChanged);
     const selectedScenario = useScenarioStore((s) => s.selectedScenario);
     const selectedScenarioVersion = useScenarioStore((s) => s.selectedScenarioVersion);
@@ -392,6 +397,20 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
                         <SimulationControls/>
                     </div>
                 )}
+
+                {/* 다크/라이트 테마 토글 — 화면 외관 취향이라 editMinimal(편집 최소화 모드)에서도
+                 *  다른 버튼들과 달리 계속 노출한다(요청: 지도가 손 많이 감, 전체 범위 포함).
+                 *  AppSettings.tsx의 라디오와 동일한 theme 필드를 공유한다. */}
+                <div style={dividerStyle} />
+                <div style={groupStyle}>
+                    <button
+                        title={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+                        onClick={toggleTheme}
+                        style={themeToggleBtnStyle}
+                    >
+                        <FontAwesomeIcon icon={theme === 'dark' ? faSun : faMoon} />
+                    </button>
+                </div>
             </div>
         </header>
         </>
@@ -418,6 +437,12 @@ const pillBtnActiveStyle: React.CSSProperties = {
 const pillBtnActiveNeutralStyle: React.CSSProperties = {
     ...pillBtnStyle,
     background: 'rgba(255,255,255,0.08)',
+};
+const themeToggleBtnStyle: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    width: 28, height: 28, borderRadius: 4, cursor: 'pointer',
+    border: '1px solid #888', background: 'transparent',
+    color: '#ccc', fontSize: 13, flexShrink: 0,
 };
 // 버전 버튼 전용 — "버전:" 접두어를 없애 글자수를 줄이고(title 속성에 전체 의미는 그대로
 // 남김), label이 긴 시나리오에서도 버튼이 무한정 늘어나지 않도록 최대 폭 + 말줄임을 둔다.

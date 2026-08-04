@@ -7,6 +7,9 @@ interface NetworkDrawState {
     isActive: boolean;
     isConnectionActive: boolean;
     isSelectActive: boolean;
+    // 마이크로 시뮬레이션 영역 지정 — 폴리곤을 그리는 중이면 true(useMicroRegionDraw.ts가
+    // 구독). 다른 그리기/선택 모드와 상호배타적(다른 setXxxActive들과 마찬가지로 서로를 끈다).
+    microRegionDrawActive: boolean;
     placementMode: PlacementMode;
     laneCount: number;
     linkWidth: number;
@@ -71,6 +74,7 @@ interface NetworkDrawState {
     setActive: (active: boolean) => void;
     setConnectionActive: (active: boolean) => void;
     setSelectActive: (active: boolean) => void;
+    setMicroRegionDrawActive: (active: boolean) => void;
     setPlacementMode: (mode: PlacementMode) => void;
     setLaneCount: (count: number) => void;
     setLinkWidth: (width: number) => void;
@@ -125,6 +129,7 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
     isActive: false,
     isConnectionActive: false,
     isSelectActive: false,
+    microRegionDrawActive: false,
     placementMode: 'none' as PlacementMode,
     laneCount: 2,
     linkWidth: 7.0,
@@ -150,10 +155,11 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
     selectedNodeIds: [],
     lastDrawnPoint: null,
 
-    setActive: (active) => set({ isActive: active, isConnectionActive: false, isSelectActive: false, placementMode: 'none' }),
-    setConnectionActive: (active) => set({ isConnectionActive: active, isActive: false, isSelectActive: false, connSelectedNodeId: null, placementMode: 'none' }),
-    setSelectActive: (active) => set({ isSelectActive: active, isActive: false, isConnectionActive: false, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedSegmentId: null, placementMode: 'none' }),
-    setPlacementMode: (mode) => set({ placementMode: mode, isActive: false, isConnectionActive: false, isSelectActive: false }),
+    setActive: (active) => set({ isActive: active, isConnectionActive: false, isSelectActive: false, microRegionDrawActive: false, placementMode: 'none' }),
+    setConnectionActive: (active) => set({ isConnectionActive: active, isActive: false, isSelectActive: false, microRegionDrawActive: false, connSelectedNodeId: null, placementMode: 'none' }),
+    setSelectActive: (active) => set({ isSelectActive: active, isActive: false, isConnectionActive: false, microRegionDrawActive: false, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedSegmentId: null, placementMode: 'none' }),
+    setMicroRegionDrawActive: (active) => set({ microRegionDrawActive: active, isActive: false, isConnectionActive: false, isSelectActive: false, placementMode: 'none' }),
+    setPlacementMode: (mode) => set({ placementMode: mode, isActive: false, isConnectionActive: false, isSelectActive: false, microRegionDrawActive: false }),
     setLaneCount: (count) => set({ laneCount: count }),
     setLinkWidth: (width) => set({ linkWidth: width }),
     setMaxSpd: (spd) => set({ maxSpd: spd }),
@@ -272,5 +278,5 @@ export const useNetworkDrawStore = create<NetworkDrawState>((set) => ({
     setSelectedNodeIds: (ids) => set({ selectedNodeIds: ids, selectedLinkIds: [], selectedLinkId: null, selectedNodeId: null }),
     clearMultiSelection: () => set({ selectedLinkIds: [], selectedNodeIds: [] }),
     setLastDrawnPoint: (point) => set({ lastDrawnPoint: point }),
-    reset: () => set({ isActive: false, isConnectionActive: false, isSelectActive: false, placementMode: 'none', startNodeId: null, startNodeCoord: null, connSelectedNodeId: null, pendingStartCoord: null, pendingConnNodeId: null, pendingStartNodeId: null, pendingNodePlacement: null, pendingLaneSplit: null, connectTargetNodeId: null, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedSegmentId: null, selectedLinkIds: [], selectedNodeIds: [], chainEndpoint: null }),
+    reset: () => set({ isActive: false, isConnectionActive: false, isSelectActive: false, microRegionDrawActive: false, placementMode: 'none', startNodeId: null, startNodeCoord: null, connSelectedNodeId: null, pendingStartCoord: null, pendingConnNodeId: null, pendingStartNodeId: null, pendingNodePlacement: null, pendingLaneSplit: null, connectTargetNodeId: null, selectedLinkId: null, selectedNodeId: null, selectedLaneId: null, selectedSegmentId: null, selectedLinkIds: [], selectedNodeIds: [], chainEndpoint: null }),
 }));

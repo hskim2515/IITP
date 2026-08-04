@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { getDistance } from 'ol/sphere';
 import { fromLonLat } from 'ol/proj';
 import { useNetworkDrawStore } from '@stores/useNetworkDrawStore';
@@ -16,7 +16,7 @@ import {
     countSignalsForNodes, deleteSignalsForNodes, generateSignalsForNode,
     isPassThroughNode, mergeLinksAtNode, batchDeleteOrMergeNodes,
     reconcileSignalConnectionIds, farNodeIdsForCascadeDelete, cleanupOrphanNodes,
-    toggleSegmentBlock, splitSegmentInNetwork, mergeSegmentInNetwork, setLaneEndBlock,
+    toggleSegmentBlock, splitSegmentInNetwork, mergeSegmentInNetwork, setLaneEndBlock, setLaneWindowBlock,
     getEffectiveSegments,
     countStationsForLinks, countStationsForNodes, deleteStationsForLinks, deletePavementMarkingsForLinks,
     deletePavementMarkingsForShrunkLanes,
@@ -74,10 +74,10 @@ const coordInputStyle: React.CSSProperties = { ...inputStyle, width: '90px', fon
 const counterBtnStyle: React.CSSProperties = {
     width: '22px', height: '22px', borderRadius: '4px',
     border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)',
-    color: '#aaa', fontSize: '14px', cursor: 'pointer',
+    color: 'var(--text-tertiary)', fontSize: '14px', cursor: 'pointer',
     display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, lineHeight: 1,
 };
-const infoRowStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', fontSize: 10, color: '#555', padding: '1px 0' };
+const infoRowStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text-disabled)', padding: '1px 0' };
 
 const Btn: React.FC<{
     onClick: () => void; danger?: boolean; nav?: boolean; disabled?: boolean; title?: string; children: React.ReactNode;
@@ -88,7 +88,7 @@ const Btn: React.FC<{
         onClick={onClick}
         style={{
             ...btnBase,
-            color: disabled ? '#555' : danger ? '#ff6b6b' : nav ? '#7aa2ff' : '#ddd',
+            color: disabled ? 'var(--text-disabled)' : danger ? 'var(--color-danger)' : nav ? 'var(--accent-text)' : 'var(--text-secondary)',
             fontWeight: nav ? 600 : 400,
             cursor: disabled ? 'not-allowed' : 'pointer',
             opacity: disabled ? 0.55 : 1,
@@ -132,6 +132,15 @@ const NetworkEditToolbar: React.FC = () => {
     const connectTargetNodeId = useNetworkDrawStore((s) => s.connectTargetNodeId);
     const network = useNetworkStore((s) => s.currentJsonData);
 
+    // 실제 렌더된 폭을 FacilityPlacementQuickBar(별도 컴포넌트, 이 바 옆에 안 겹치게 떠야 함)가
+    // 읽을 수 있게 매 렌더 후 기록 — 레벨/열린 패널에 따라 폭이 달라지므로 고정값을 가정하면
+    // 안 된다(useNetworkToolbarStore.measuredWidth 주석 참고).
+    const rootRef = useRef<HTMLDivElement>(null);
+    useLayoutEffect(() => {
+        const w = rootRef.current?.getBoundingClientRect().width ?? 0;
+        if (w > 0) useNetworkToolbarStore.getState().setMeasuredWidth(w);
+    });
+
     // ── 링크 속성 인라인 편집 상태 ───────────────────────────────────
     const [propsOpen, setPropsOpen] = useState(false);
     const [numLane, setNumLane] = useState(2);
@@ -152,6 +161,12 @@ const NetworkEditToolbar: React.FC = () => {
 
     // ── 레인 끝 차단 구간 자동 생성(회전전용차로 등) 입력 상태 ──────────
     const [endBlockLength, setEndBlockLength] = useState('');
+
+    // ── 차로 폐쇄(레인 임의 구간 차단, 링크의 모든 레인 한 폼) 입력 상태 ──
+    // 레거시 참조 구현(source_code/frontend/CrashProperty.js "Lane closure")의 UX 반영 —
+    // 링크 전체 레인을 한 번에 보여주고 레인마다 자유로운 시작~끝 구간을 입력받는다.
+    const [closureOpen, setClosureOpen] = useState(false);
+    const [closureInputs, setClosureInputs] = useState<Record<number, { start: string; end: string }>>({});
 
     const linkId  = toolbar.linkId;
     const nodeId  = toolbar.nodeId;
@@ -417,7 +432,7 @@ const NetworkEditToolbar: React.FC = () => {
         };
 
         return (
-            <div style={{ position: 'fixed', left, top, zIndex: 4000 }}>
+            <div ref={rootRef} style={{ position: 'fixed', left, top, zIndex: 4000 }}>
                 <div style={barStyle}>
                     <span style={{ padding: '0 8px', fontSize: 12, color: isMultiLink ? '#7aa2ff' : '#ffb347', fontWeight: 600 }}>
                         {label} {count}개
@@ -449,7 +464,7 @@ const NetworkEditToolbar: React.FC = () => {
                                 <span className={styles.settingValue} style={{ minWidth: 42 }}>{batchMaxSpd} km/h</span>
                             </div>
                         </div>
-                        <button onClick={handleBatchApply} style={{ width: '100%', marginTop: 6, padding: '6px 14px', background: 'rgba(122,162,255,0.15)', border: '1px solid rgba(122,162,255,0.4)', borderRadius: 5, color: '#7aa2ff', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
+                        <button onClick={handleBatchApply} style={{ width: '100%', marginTop: 6, padding: '6px 14px', background: 'rgba(var(--accent-text-rgb), 0.15)', border: '1px solid rgba(var(--accent-text-rgb), 0.4)', borderRadius: 5, color: 'var(--accent-text)', fontSize: 12, cursor: 'pointer', fontWeight: 600 }}>
                             일괄 적용
                         </button>
                     </div>
@@ -467,15 +482,15 @@ const NetworkEditToolbar: React.FC = () => {
         const cell = lane?.cells?.[cellIdx];
         if (!link || !lane) return null;
         return (
-            <div style={{ position: 'fixed', left, top, zIndex: 4000 }}>
+            <div ref={rootRef} style={{ position: 'fixed', left, top, zIndex: 4000 }}>
                 <div style={barStyle}>
                     <Btn onClick={() => useNetworkToolbarStore.getState().setLevel('segment', { linkId, laneIdx, segIdx: segmentIndexAtFrac(lane, link, toolbar.hitFrac ?? 0) })}>◀ 뒤로</Btn>
                     <VDivider />
-                    <span style={{ padding: '0 8px', fontSize: 12, color: '#7ad0ff', fontWeight: 600 }}>셀 #{cellIdx}</span>
+                    <span style={{ padding: '0 8px', fontSize: 12, color: 'rgb(var(--accent-grid-rgb))', fontWeight: 600 }}>셀 #{cellIdx}</span>
                 </div>
                 <div style={expandPanelStyle}>
-                    <div style={infoRowStyle}><span>길이</span><span style={{ color: '#888' }}>{cell ? `${cell.length.toFixed(1)} m` : '-'}</span></div>
-                    <div style={infoRowStyle}><span>오프셋</span><span style={{ color: '#888' }}>{cell ? `${cell.offset.toFixed(1)} m` : '-'}</span></div>
+                    <div style={infoRowStyle}><span>길이</span><span style={{ color: 'var(--text-muted)' }}>{cell ? `${cell.length.toFixed(1)} m` : '-'}</span></div>
+                    <div style={infoRowStyle}><span>오프셋</span><span style={{ color: 'var(--text-muted)' }}>{cell ? `${cell.offset.toFixed(1)} m` : '-'}</span></div>
                 </div>
             </div>
         );
@@ -520,7 +535,7 @@ const NetworkEditToolbar: React.FC = () => {
         };
 
         return (
-            <div style={{ position: 'fixed', left, top, zIndex: 4000 }}>
+            <div ref={rootRef} style={{ position: 'fixed', left, top, zIndex: 4000 }}>
                 <div style={barStyle}>
                     <Btn onClick={() => useNetworkToolbarStore.getState().setLevel('lane', { linkId, laneIdx })}>◀ 뒤로</Btn>
                     <VDivider />
@@ -535,9 +550,9 @@ const NetworkEditToolbar: React.FC = () => {
                     </Btn>
                 </div>
                 <div style={expandPanelStyle}>
-                    <div style={infoRowStyle}><span>범위</span><span style={{ color: '#888' }}>{seg.initPoint.toFixed(1)} ~ {seg.endPoint.toFixed(1)} m</span></div>
-                    <div style={infoRowStyle}><span>길이</span><span style={{ color: '#888' }}>{(seg.endPoint - seg.initPoint).toFixed(1)} m</span></div>
-                    <div style={infoRowStyle}><span>상태</span><span style={{ color: seg.block ? '#ff6b6b' : '#4caf50' }}>{seg.block ? '차단(block)' : '통행 가능'}</span></div>
+                    <div style={infoRowStyle}><span>범위</span><span style={{ color: 'var(--text-muted)' }}>{seg.initPoint.toFixed(1)} ~ {seg.endPoint.toFixed(1)} m</span></div>
+                    <div style={infoRowStyle}><span>길이</span><span style={{ color: 'var(--text-muted)' }}>{(seg.endPoint - seg.initPoint).toFixed(1)} m</span></div>
+                    <div style={infoRowStyle}><span>상태</span><span style={{ color: seg.block ? 'var(--color-danger)' : 'var(--color-success)' }}>{seg.block ? '차단(block)' : '통행 가능'}</span></div>
                 </div>
             </div>
         );
@@ -569,20 +584,20 @@ const NetworkEditToolbar: React.FC = () => {
         };
 
         return (
-            <div style={{ position: 'fixed', left, top, zIndex: 4000 }}>
+            <div ref={rootRef} style={{ position: 'fixed', left, top, zIndex: 4000 }}>
                 <div style={barStyle}>
                     <Btn onClick={() => useNetworkToolbarStore.getState().setLevel('link', { linkId })}>◀ 뒤로</Btn>
                     <VDivider />
-                    <span style={{ padding: '0 8px', fontSize: 12, color: '#7ad0ff', fontWeight: 600 }}>레인 L{laneIdx}</span>
+                    <span style={{ padding: '0 8px', fontSize: 12, color: 'rgb(var(--accent-grid-rgb))', fontWeight: 600 }}>레인 L{laneIdx}</span>
                     <VDivider />
                     <Btn nav onClick={() => useNetworkToolbarStore.getState().setLevel('segment', { linkId, laneIdx, segIdx: segmentIndexAtFrac(lane, link, toolbar.hitFrac ?? 0) })}>
                         구간보기 ▸
                     </Btn>
                 </div>
                 <div style={expandPanelStyle}>
-                    <div style={infoRowStyle}><span>왼쪽 인접</span><span style={{ color: '#888' }}>{String(lane.leftLaneId ?? '-')}</span></div>
-                    <div style={infoRowStyle}><span>오른쪽 인접</span><span style={{ color: '#888' }}>{String(lane.rightLaneId ?? '-')}</span></div>
-                    <div style={infoRowStyle}><span>구간(세그먼트) 수</span><span style={{ color: '#888' }}>{getEffectiveSegments(lane, link).length}개</span></div>
+                    <div style={infoRowStyle}><span>왼쪽 인접</span><span style={{ color: 'var(--text-muted)' }}>{String(lane.leftLaneId ?? '-')}</span></div>
+                    <div style={infoRowStyle}><span>오른쪽 인접</span><span style={{ color: 'var(--text-muted)' }}>{String(lane.rightLaneId ?? '-')}</span></div>
+                    <div style={infoRowStyle}><span>구간(세그먼트) 수</span><span style={{ color: 'var(--text-muted)' }}>{getEffectiveSegments(lane, link).length}개</span></div>
                     <div className={styles.settingRow}>
                         <span className={styles.settingLabel}>차단 구간 자동 생성 (m)</span>
                         <input type="number" min={0} max={link.length} step={1} value={endBlockLength}
@@ -657,14 +672,15 @@ const NetworkEditToolbar: React.FC = () => {
         };
 
         return (
-            <div style={{ position: 'fixed', left, top, zIndex: 4000 }}>
+            <div ref={rootRef} style={{ position: 'fixed', left, top, zIndex: 4000 }}>
                 <div style={barStyle}>
-                    <span style={{ padding: '0 8px', fontSize: 12, color: '#7aa2ff', fontWeight: 600 }}>
+                    <span style={{ padding: '0 8px', fontSize: 12, color: 'var(--accent-text)', fontWeight: 600 }}>
                         링크 #{linkId}
                     </span>
                     <VDivider />
                     <Btn onClick={handleReverse} title={`방향 반전 (${link.toNode} → ${link.fromNode})`}>⇄ 반전</Btn>
                     <Btn onClick={() => setPropsOpen((v) => !v)} title="차선 수 / 폭 / 속도">⚙ 속성{saving ? '…' : ''}</Btn>
+                    <Btn onClick={() => setClosureOpen((v) => !v)} title="레인별 임의 구간 차단(공사 등)">🚧 차로 폐쇄</Btn>
                     <Btn danger onClick={handleDelete} title="링크 삭제 (Delete)">🗑 삭제</Btn>
                     <VDivider />
                     <Btn nav disabled={laneIdx == null} onClick={() => useNetworkToolbarStore.getState().setLevel('lane', { linkId, laneIdx: laneIdx ?? 0 })} title={laneIdx == null ? '레인 위를 클릭해야 활성화됩니다' : undefined}>
@@ -695,11 +711,48 @@ const NetworkEditToolbar: React.FC = () => {
                             </div>
                         </div>
                         <div style={{ marginTop: 4, borderTop: '1px solid rgba(255,255,255,0.07)', paddingTop: 4 }}>
-                            <div style={infoRowStyle}><span>길이</span><span style={{ color: '#888' }}>{Math.round(link.length)} m</span></div>
-                            <div style={infoRowStyle}><span>방위각</span><span style={{ color: '#888' }}>{bearing !== null ? `${bearing}°` : '-'}</span></div>
-                            <div style={infoRowStyle}><span>방향</span><span style={{ color: '#888' }}>{link.fromNode} → {link.toNode}</span></div>
-                            <div style={infoRowStyle}><span>차선 폭</span><span style={{ color: '#888' }}>{(link.width / link.numLane).toFixed(1)} m</span></div>
+                            <div style={infoRowStyle}><span>길이</span><span style={{ color: 'var(--text-muted)' }}>{Math.round(link.length)} m</span></div>
+                            <div style={infoRowStyle}><span>방위각</span><span style={{ color: 'var(--text-muted)' }}>{bearing !== null ? `${bearing}°` : '-'}</span></div>
+                            <div style={infoRowStyle}><span>방향</span><span style={{ color: 'var(--text-muted)' }}>{link.fromNode} → {link.toNode}</span></div>
+                            <div style={infoRowStyle}><span>차선 폭</span><span style={{ color: 'var(--text-muted)' }}>{(link.width / link.numLane).toFixed(1)} m</span></div>
                         </div>
+                    </div>
+                )}
+                {closureOpen && (
+                    <div style={expandPanelStyle}>
+                        {link.lanes.map((lane, li) => {
+                            const total = getEffectiveSegments(lane, link).slice(-1)[0]?.endPoint ?? link.length;
+                            const vals = closureInputs[li] ?? { start: '', end: '' };
+                            const setVals = (patch: Partial<{ start: string; end: string }>) =>
+                                setClosureInputs((prev) => ({ ...prev, [li]: { ...vals, ...patch } }));
+                            const s = Number(vals.start), e = Number(vals.end);
+                            const canApply = vals.start !== '' && vals.end !== '' && s >= 0 && e > s && e <= total;
+                            const handleApply = () => {
+                                const cur = useNetworkStore.getState().currentJsonData;
+                                if (!cur || !canApply) return;
+                                applyNetworkUpdate(setLaneWindowBlock(cur, linkId, li, s, e));
+                                useNetworkToolbarStore.getState().setLevel('link', { linkId });
+                                useMessageStore.getState().setMessage({
+                                    type: 'info',
+                                    text: `레인 L${li} ${s}~${e}m 차단 구간 생성(기존 구간 구성은 대체됨)`,
+                                });
+                            };
+                            return (
+                                <div key={li} className={styles.settingRow}>
+                                    <span className={styles.settingLabel}>L{li} ({total.toFixed(0)}m)</span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <input type="number" min={0} max={total} step={1} value={vals.start}
+                                               placeholder="시작" onChange={(e) => setVals({ start: e.target.value })}
+                                               style={{ ...coordInputStyle, width: '52px' }} />
+                                        <span style={{ color: 'var(--text-muted)' }}>~</span>
+                                        <input type="number" min={0} max={total} step={1} value={vals.end}
+                                               placeholder="끝" onChange={(e) => setVals({ end: e.target.value })}
+                                               style={{ ...coordInputStyle, width: '52px' }} />
+                                        <Btn onClick={handleApply} title="이 레인에 차단 구간 적용">적용</Btn>
+                                    </div>
+                                </div>
+                            );
+                        })}
                     </div>
                 )}
             </div>
@@ -930,9 +983,9 @@ const NetworkEditToolbar: React.FC = () => {
         };
 
         return (
-            <div style={{ position: 'fixed', left, top, zIndex: 4000 }}>
+            <div ref={rootRef} style={{ position: 'fixed', left, top, zIndex: 4000 }}>
                 <div style={barStyle}>
-                    <span style={{ padding: '0 8px', fontSize: 12, color: '#ffb347', fontWeight: 600 }}>
+                    <span style={{ padding: '0 8px', fontSize: 12, color: 'var(--color-warning)', fontWeight: 600 }}>
                         노드 #{nodeId}
                     </span>
                     <VDivider />
@@ -951,24 +1004,24 @@ const NetworkEditToolbar: React.FC = () => {
                 </div>
                 {coordOpen && (
                     <div style={expandPanelStyle}>
-                        <div style={{ marginBottom: 4, fontSize: 10, color: '#555' }}>좌표 직접 입력</div>
+                        <div style={{ marginBottom: 4, fontSize: 10, color: 'var(--text-disabled)' }}>좌표 직접 입력</div>
                         <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
                             <input type="number" step="0.000001" placeholder="경도 (lng)" value={editLng} onChange={(e) => setEditLng(e.target.value)} style={coordInputStyle} />
                             <input type="number" step="0.000001" placeholder="위도 (lat)" value={editLat} onChange={(e) => setEditLat(e.target.value)} style={coordInputStyle} />
                         </div>
                         <div style={{ display: 'flex', gap: 4 }}>
-                            <button onClick={handleCoordApply} style={{ flex: 1, padding: '6px 14px', background: 'rgba(122,162,255,0.15)', border: '1px solid rgba(122,162,255,0.4)', borderRadius: 5, color: '#7aa2ff', fontSize: 12, cursor: 'pointer' }}>적용</button>
-                            <button onClick={() => setCoordOpen(false)} style={{ flex: 1, padding: '6px 14px', background: 'rgba(220,50,50,0.15)', border: '1px solid rgba(220,50,50,0.35)', borderRadius: 5, color: '#ff6b6b', fontSize: 12, cursor: 'pointer' }}>취소</button>
+                            <button onClick={handleCoordApply} style={{ flex: 1, padding: '6px 14px', background: 'rgba(var(--accent-text-rgb), 0.15)', border: '1px solid rgba(var(--accent-text-rgb), 0.4)', borderRadius: 5, color: 'var(--accent-text)', fontSize: 12, cursor: 'pointer' }}>적용</button>
+                            <button onClick={() => setCoordOpen(false)} style={{ flex: 1, padding: '6px 14px', background: 'rgba(var(--color-danger-rgb), 0.15)', border: '1px solid rgba(var(--color-danger-rgb), 0.35)', borderRadius: 5, color: 'var(--color-danger)', fontSize: 12, cursor: 'pointer' }}>취소</button>
                         </div>
                     </div>
                 )}
                 {!coordOpen && (
                     <div style={expandPanelStyle}>
-                        <div style={infoRowStyle}><span>좌표</span><span style={{ color: '#888' }}>{node.coordinates.lng.toFixed(5)}, {node.coordinates.lat.toFixed(5)}</span></div>
-                        <div style={infoRowStyle}><span>in / out 포트</span><span style={{ color: '#7aa2ff' }}>{inCount} / {outCount}</span></div>
-                        <div style={infoRowStyle}><span>connection</span><span style={{ color: '#aaa' }}>{node.numConnection}개</span></div>
+                        <div style={infoRowStyle}><span>좌표</span><span style={{ color: 'var(--text-muted)' }}>{node.coordinates.lng.toFixed(5)}, {node.coordinates.lat.toFixed(5)}</span></div>
+                        <div style={infoRowStyle}><span>in / out 포트</span><span style={{ color: 'var(--accent-text)' }}>{inCount} / {outCount}</span></div>
+                        <div style={infoRowStyle}><span>connection</span><span style={{ color: 'var(--text-tertiary)' }}>{node.numConnection}개</span></div>
                         {(linkedLinkIds.length > 0 || nodeSignalCount > 0 || nodeStationCount > 0) && (
-                            <div style={{ marginTop: 4, fontSize: 10, color: '#555' }}>
+                            <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text-disabled)' }}>
                                 {nodePassThrough
                                     ? `삭제 시 인접 링크(레인 포함)가 자동 병합됩니다${nodeSignalCount > 0 ? ` · 신호 ${nodeSignalCount}개는 삭제` : ''}`
                                     : `삭제 시 연결 링크 ${linkedLinkIds.length}개, 커넥션${nodeSignalCount > 0 ? `, 신호 ${nodeSignalCount}개` : ''}${nodeStationCount > 0 ? `, 정류장 ${nodeStationCount}개` : ''}도 함께 삭제`}

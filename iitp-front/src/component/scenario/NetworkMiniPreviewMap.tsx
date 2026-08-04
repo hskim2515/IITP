@@ -92,12 +92,12 @@ const NetworkMiniPreviewMap: React.FC<Props> = ({ versionId }) => {
     }, [versionId]);
 
     return (
-        <div style={{ position: 'relative', width: '100%', height: '100%', background: '#0c0d15', borderRadius: 6, overflow: 'hidden' }}>
+        <div style={{ position: 'relative', width: '100%', height: '100%', background: 'rgb(var(--surface-2-rgb))', borderRadius: 6, overflow: 'hidden' }}>
             <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
             {status !== 'ready' && (
                 <div style={{
                     position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 11, color: '#666', textAlign: 'center', padding: '0 10px', pointerEvents: 'none',
+                    fontSize: 11, color: 'rgba(var(--overlay-rgb), 0.4)', textAlign: 'center', padding: '0 10px', pointerEvents: 'none',
                 }}>
                     {status === 'loading' && '불러오는 중...'}
                     {status === 'empty' && '네트워크 데이터 없음'}

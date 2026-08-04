@@ -28,7 +28,7 @@ const MeasurePopup: React.FC<MeasurePopupProps> = ({ isOpen }) => {
     return (
         <>
             <div className={styles.panelHeader}>
-                <span className={styles.tab} style={{ cursor: 'default', color: '#666' }}>측정 도구</span>
+                <span className={styles.tab} style={{ cursor: 'default', color: 'rgba(var(--overlay-rgb), 0.4)' }}>측정 도구</span>
             </div>
             <div className={styles.panelBody}>
                 <button

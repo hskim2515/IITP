@@ -4,14 +4,14 @@ import { useLogStore, LogEntry, LogType } from '@stores/useLogStore';
 type Filter = 'all' | LogType;
 
 const TYPE_COLOR: Record<LogType, string> = {
-    info:  '#6fa3ef',
-    warn:  '#f0b840',
-    error: '#f06060',
+    info:  'var(--accent-text)',
+    warn:  'var(--color-warning)',
+    error: 'var(--color-danger)',
 };
 const TYPE_BG: Record<LogType, string> = {
     info:  'transparent',
-    warn:  'rgba(240,184,64,0.05)',
-    error: 'rgba(240,96,96,0.07)',
+    warn:  'rgba(var(--color-warning-rgb),0.05)',
+    error: 'rgba(var(--color-danger-rgb),0.07)',
 };
 const TYPE_TAG: Record<LogType, string> = {
     info:  'INFO',
@@ -90,8 +90,8 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({ embedded = false }) 
     if (embedded) {
         return (
             <div style={{
-                background: '#0b0d17',
-                borderTop: '1px solid rgba(255,255,255,0.09)',
+                background: 'rgb(var(--surface-1-rgb))',
+                borderTop: '1px solid rgba(var(--overlay-rgb),0.09)',
                 display: 'flex',
                 flexDirection: 'column',
                 fontFamily: 'Pretendard, "Apple SD Gothic Neo", sans-serif',
@@ -105,27 +105,27 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({ embedded = false }) 
                     padding: '6px 10px',
                     gap: 6,
                     flexShrink: 0,
-                    borderBottom: '1px solid rgba(255,255,255,0.07)',
+                    borderBottom: '1px solid rgba(var(--overlay-rgb),0.07)',
                     cursor: 'pointer',
                 }} onClick={() => setOpen(v => !v)}>
-                    <span style={{ fontSize: 8, color: '#555' }}>{open ? '▼' : '▲'}</span>
-                    <span style={{ color: '#666', fontSize: 11, fontWeight: 600, letterSpacing: 1 }}>로그</span>
+                    <span style={{ fontSize: 8, color: 'var(--text-disabled)' }}>{open ? '▼' : '▲'}</span>
+                    <span style={{ color: 'rgba(var(--overlay-rgb),0.4)', fontSize: 11, fontWeight: 600, letterSpacing: 1 }}>로그</span>
                     {errorCount > 0 && (
-                        <span style={{ fontSize: 10, fontWeight: 700, color: '#f06060',
-                            background: 'rgba(240,96,96,0.1)', padding: '1px 6px', borderRadius: 3 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-danger)',
+                            background: 'rgba(var(--color-danger-rgb),0.1)', padding: '1px 6px', borderRadius: 3 }}>
                             ✕ {errorCount}
                         </span>
                     )}
                     {warnCount > 0 && (
-                        <span style={{ fontSize: 10, fontWeight: 700, color: '#f0b840',
-                            background: 'rgba(240,184,64,0.1)', padding: '1px 6px', borderRadius: 3 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-warning)',
+                            background: 'rgba(var(--color-warning-rgb),0.1)', padding: '1px 6px', borderRadius: 3 }}>
                             ▲ {warnCount}
                         </span>
                     )}
                     <div style={{ flex: 1 }} />
                     <button
                         onClick={(e) => { e.stopPropagation(); clear(); }}
-                        style={{ ...tabBtnStyle, color: '#444', fontSize: 10 }}
+                        style={{ ...tabBtnStyle, color: 'rgba(var(--overlay-rgb),0.35)', fontSize: 10 }}
                         title="로그 지우기"
                     >
                         지우기
@@ -134,7 +134,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({ embedded = false }) 
                 {open && (
                     <div ref={bodyRef} style={{ maxHeight: 180, overflowY: 'auto', overflowX: 'hidden' }}>
                         {entries.length === 0 ? (
-                            <div style={{ padding: '10px 12px', color: '#333', fontSize: 11 }}>표시할 로그가 없습니다.</div>
+                            <div style={{ padding: '10px 12px', color: 'rgba(var(--overlay-rgb),0.3)', fontSize: 11 }}>표시할 로그가 없습니다.</div>
                         ) : (
                             [...entries].reverse().map(e => <LogRow key={e.id} entry={e} fmt={fmt} />)
                         )}
@@ -149,8 +149,8 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({ embedded = false }) 
             position: 'fixed',
             bottom: 0, left: 0, right: 0,
             height: open ? height : HEADER_H,
-            background: '#0b0d17',
-            borderTop: '1px solid rgba(255,255,255,0.09)',
+            background: 'rgb(var(--surface-1-rgb))',
+            borderTop: '1px solid rgba(var(--overlay-rgb),0.09)',
             zIndex: 900,
             display: 'flex',
             flexDirection: 'column',
@@ -176,11 +176,11 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({ embedded = false }) 
                 padding: '0 10px',
                 gap: 6,
                 flexShrink: 0,
-                borderBottom: open ? '1px solid rgba(255,255,255,0.07)' : 'none',
+                borderBottom: open ? '1px solid rgba(var(--overlay-rgb),0.07)' : 'none',
             }}>
                 <button onClick={() => setOpen(v => !v)} style={toggleBtnStyle}>
-                    <span style={{ fontSize: 8, color: '#555' }}>{open ? '▼' : '▲'}</span>
-                    <span style={{ color: '#777', marginLeft: 6, fontSize: 11, fontWeight: 600, letterSpacing: 1 }}>로그</span>
+                    <span style={{ fontSize: 8, color: 'var(--text-disabled)' }}>{open ? '▼' : '▲'}</span>
+                    <span style={{ color: 'rgba(var(--overlay-rgb),0.45)', marginLeft: 6, fontSize: 11, fontWeight: 600, letterSpacing: 1 }}>로그</span>
                 </button>
 
                 <div style={dividerStyle} />
@@ -189,7 +189,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({ embedded = false }) 
                 {errorCount > 0 && (
                     <button
                         onClick={() => setFilter(f => f === 'error' ? 'all' : 'error')}
-                        style={{ ...badgeStyle, color: '#f06060', background: filter === 'error' ? 'rgba(240,96,96,0.2)' : 'rgba(240,96,96,0.08)' }}
+                        style={{ ...badgeStyle, color: 'var(--color-danger)', background: filter === 'error' ? 'rgba(var(--color-danger-rgb),0.2)' : 'rgba(var(--color-danger-rgb),0.08)' }}
                     >
                         ✕ {errorCount}
                     </button>
@@ -197,7 +197,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({ embedded = false }) 
                 {warnCount > 0 && (
                     <button
                         onClick={() => setFilter(f => f === 'warn' ? 'all' : 'warn')}
-                        style={{ ...badgeStyle, color: '#f0b840', background: filter === 'warn' ? 'rgba(240,184,64,0.2)' : 'rgba(240,184,64,0.08)' }}
+                        style={{ ...badgeStyle, color: 'var(--color-warning)', background: filter === 'warn' ? 'rgba(var(--color-warning-rgb),0.2)' : 'rgba(var(--color-warning-rgb),0.08)' }}
                     >
                         ▲ {warnCount}
                     </button>
@@ -209,8 +209,8 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({ embedded = false }) 
                 {(['all', 'info', 'warn', 'error'] as Filter[]).map(f => (
                     <button key={f} onClick={() => setFilter(f)} style={{
                         ...tabBtnStyle,
-                        color: filter === f ? '#ccc' : '#444',
-                        borderBottom: filter === f ? '1px solid #5588cc' : '1px solid transparent',
+                        color: filter === f ? 'var(--text-secondary)' : 'rgba(var(--overlay-rgb),0.35)',
+                        borderBottom: filter === f ? '1px solid var(--accent)' : '1px solid transparent',
                     }}>
                         {f === 'all' ? '전체' : f === 'info' ? '정보' : f === 'warn' ? '경고' : '오류'}
                     </button>
@@ -218,7 +218,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({ embedded = false }) 
 
                 <div style={dividerStyle} />
 
-                <button onClick={clear} style={{ ...tabBtnStyle, color: '#444' }} title="로그 지우기">
+                <button onClick={clear} style={{ ...tabBtnStyle, color: 'rgba(var(--overlay-rgb),0.35)' }} title="로그 지우기">
                     지우기
                 </button>
             </div>
@@ -227,7 +227,7 @@ export const ConsolePanel: React.FC<ConsolePanelProps> = ({ embedded = false }) 
             {open && (
                 <div ref={bodyRef} style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
                     {visible.length === 0 ? (
-                        <div style={{ padding: '12px 16px', color: '#333', fontSize: 11 }}>표시할 로그가 없습니다.</div>
+                        <div style={{ padding: '12px 16px', color: 'rgba(var(--overlay-rgb),0.3)', fontSize: 11 }}>표시할 로그가 없습니다.</div>
                     ) : (
                         visible.map(e => <LogRow key={e.id} entry={e} fmt={fmt} />)
                     )}
@@ -244,9 +244,9 @@ const LogRow = React.memo(({ entry, fmt }: { entry: LogEntry; fmt: (d: Date) => 
         padding: '4px 12px',
         gap: 10,
         background: TYPE_BG[entry.type],
-        borderBottom: '1px solid rgba(255,255,255,0.02)',
+        borderBottom: '1px solid rgba(var(--overlay-rgb),0.02)',
     }}>
-        <span style={{ color: '#333', fontSize: 10, flexShrink: 0, fontFamily: 'monospace', paddingTop: 1 }}>
+        <span style={{ color: 'rgba(var(--overlay-rgb),0.3)', fontSize: 10, flexShrink: 0, fontFamily: 'monospace', paddingTop: 1 }}>
             {fmt(entry.timestamp)}
         </span>
         <span style={{
@@ -259,7 +259,7 @@ const LogRow = React.memo(({ entry, fmt }: { entry: LogEntry; fmt: (d: Date) => 
         }}>
             {TYPE_TAG[entry.type]}
         </span>
-        <span style={{ color: entry.type === 'error' ? '#f09090' : entry.type === 'warn' ? '#d4a860' : '#9ab0cc', lineHeight: 1.5 }}>
+        <span style={{ color: entry.type === 'error' ? 'rgba(var(--color-danger-rgb),0.85)' : entry.type === 'warn' ? 'rgba(var(--color-warning-rgb),0.8)' : 'rgba(var(--accent-text-rgb),0.75)', lineHeight: 1.5 }}>
             {entry.text}
         </span>
     </div>
@@ -273,7 +273,7 @@ const toggleBtnStyle: React.CSSProperties = {
 };
 const dividerStyle: React.CSSProperties = {
     width: 1, height: 14,
-    background: 'rgba(255,255,255,0.08)',
+    background: 'rgba(var(--overlay-rgb),0.08)',
     flexShrink: 0,
 };
 const badgeStyle: React.CSSProperties = {
@@ -284,5 +284,5 @@ const badgeStyle: React.CSSProperties = {
 const tabBtnStyle: React.CSSProperties = {
     background: 'none', border: 'none',
     fontSize: 11, cursor: 'pointer',
-    padding: '2px 8px', color: '#444',
+    padding: '2px 8px', color: 'rgba(var(--overlay-rgb),0.35)',
 };

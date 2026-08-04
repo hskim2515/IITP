@@ -19,23 +19,23 @@ import styles from '@css/ToolsPanel.module.css';
  */
 const counterBtnStyle: React.CSSProperties = {
     width: 22, height: 22, borderRadius: 4,
-    border: '1px solid rgba(255,255,255,0.12)',
-    background: 'rgba(255,255,255,0.06)',
-    color: '#aaa', fontSize: 14, cursor: 'pointer',
+    border: '1px solid rgba(var(--overlay-rgb), 0.12)',
+    background: 'rgba(var(--overlay-rgb), 0.06)',
+    color: 'var(--text-tertiary)', fontSize: 14, cursor: 'pointer',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     padding: 0, lineHeight: 1,
 };
 const inputStyle: React.CSSProperties = {
-    width: 56, background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.12)',
-    borderRadius: 4, color: '#ccc', fontSize: 12,
+    width: 56, background: 'rgba(var(--overlay-rgb), 0.06)',
+    border: '1px solid rgba(var(--overlay-rgb), 0.12)',
+    borderRadius: 4, color: 'var(--text-secondary)', fontSize: 12,
     padding: '2px 6px', textAlign: 'right',
 };
 const utilBtnStyle: React.CSSProperties = {
     padding: '4px 9px',
-    background: 'rgba(122,162,255,0.12)',
-    border: '1px solid rgba(122,162,255,0.3)',
-    borderRadius: 5, color: '#7aa2ff', fontSize: 12,
+    background: 'rgba(var(--accent-text-rgb), 0.12)',
+    border: '1px solid rgba(var(--accent-text-rgb), 0.3)',
+    borderRadius: 5, color: 'var(--accent-text)', fontSize: 12,
     cursor: 'pointer', whiteSpace: 'nowrap',
 };
 
@@ -92,42 +92,42 @@ const NetworkDrawSettingsBar: React.FC = () => {
         <div style={{
             position: 'fixed', top: 12, left: '50%', transform: 'translateX(-50%)', zIndex: 3500,
             display: 'flex', alignItems: 'center', gap: 4,
-            background: 'rgba(14,16,28,0.97)',
-            border: '1px solid rgba(255,255,255,0.14)',
+            background: 'rgba(var(--surface-1-rgb), 0.97)',
+            border: '1px solid rgba(var(--overlay-rgb), 0.14)',
             borderRadius: 8, padding: '6px 10px',
-            boxShadow: '0 8px 28px rgba(0,0,0,0.6)',
-            fontSize: 12, color: '#ddd', userSelect: 'none',
+            boxShadow: '0 8px 28px rgba(var(--surface-overlay-rgb), 0.6)',
+            fontSize: 12, color: 'var(--text-secondary)', userSelect: 'none',
         }}>
-            <span style={{ color: '#7aa2ff', fontWeight: 600, marginRight: 4 }}>✏ 도로 그리기</span>
+            <span style={{ color: 'var(--accent-text)', fontWeight: 600, marginRight: 4 }}>✏ 도로 그리기</span>
 
             <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', marginRight: 6 }}>
                 <input type="checkbox" checked={isBidirectional} onChange={(e) => setBidirectional(e.target.checked)}
-                       style={{ accentColor: '#7aa2ff', width: 13, height: 13 }} />
+                       style={{ accentColor: 'var(--accent-text)', width: 13, height: 13 }} />
                 <span className={styles.settingValue}>{isBidirectional ? '양방향' : '단방향'}</span>
             </label>
 
-            <span style={{ color: '#555' }}>|</span>
+            <span style={{ color: 'var(--text-disabled)' }}>|</span>
 
-            <span style={{ color: '#888', margin: '0 2px' }}>차선</span>
+            <span style={{ color: 'var(--text-muted)', margin: '0 2px' }}>차선</span>
             <button onClick={() => setLaneCount(Math.max(1, laneCount - 1))} style={counterBtnStyle}>−</button>
             <span style={{ minWidth: 16, textAlign: 'center' }}>{laneCount}</span>
             <button onClick={() => setLaneCount(Math.min(8, laneCount + 1))} style={counterBtnStyle}>+</button>
 
-            <span style={{ color: '#555' }}>|</span>
+            <span style={{ color: 'var(--text-disabled)' }}>|</span>
 
-            <span style={{ color: '#888', margin: '0 2px' }}>폭</span>
+            <span style={{ color: 'var(--text-muted)', margin: '0 2px' }}>폭</span>
             <input type="number" min={2} max={40} step={0.5} value={linkWidth}
                    onChange={(e) => setLinkWidth(Number(e.target.value))} style={inputStyle} />
-            <span style={{ color: '#666' }}>m</span>
+            <span style={{ color: 'rgba(var(--overlay-rgb), 0.4)' }}>m</span>
 
-            <span style={{ color: '#555' }}>|</span>
+            <span style={{ color: 'var(--text-disabled)' }}>|</span>
 
-            <span style={{ color: '#888', margin: '0 2px' }}>속도</span>
+            <span style={{ color: 'var(--text-muted)', margin: '0 2px' }}>속도</span>
             <input type="range" min={10} max={110} step={10} value={maxSpd}
                    onChange={(e) => setMaxSpd(Number(e.target.value))} style={{ width: 60 }} />
-            <span style={{ minWidth: 46, color: '#888' }}>{maxSpd} km/h</span>
+            <span style={{ minWidth: 46, color: 'var(--text-muted)' }}>{maxSpd} km/h</span>
 
-            <span style={{ color: '#555' }}>|</span>
+            <span style={{ color: 'var(--text-disabled)' }}>|</span>
 
             <button
                 onClick={handleAutoAllIntersections}
@@ -146,15 +146,15 @@ const NetworkDrawSettingsBar: React.FC = () => {
                 {busyAction === 'split' ? '처리 중...' : '✂ 교차 감지 → 분할'}
             </button>
 
-            <span style={{ color: '#555' }}>|</span>
+            <span style={{ color: 'var(--text-disabled)' }}>|</span>
 
             <button
                 onClick={handleStop}
                 title="그리기 종료 (ESC)"
                 style={{
-                    padding: '4px 9px', background: 'rgba(220,50,50,0.15)',
-                    border: '1px solid rgba(220,50,50,0.35)', borderRadius: 5,
-                    color: '#ff6b6b', fontSize: 12, cursor: 'pointer',
+                    padding: '4px 9px', background: 'rgba(var(--color-danger-rgb), 0.15)',
+                    border: '1px solid rgba(var(--color-danger-rgb), 0.35)', borderRadius: 5,
+                    color: 'var(--color-danger)', fontSize: 12, cursor: 'pointer',
                 }}
             >
                 ■ 종료

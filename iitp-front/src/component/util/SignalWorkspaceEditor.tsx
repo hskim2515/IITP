@@ -260,10 +260,10 @@ const SignalWorkspaceEditor: React.FC<SignalWorkspaceEditorProps> = ({
             <section style={contentStyle}>
                 <header style={workspaceHeaderStyle}>
                     <div style={{ minWidth: 165 }}>
-                        <strong style={{ color: "#e2eaf7", fontSize: 13 }}>
+                        <strong style={{ color: "var(--signal-text-primary)", fontSize: 13 }}>
                             {activeNodeId ? `교차로 #${activeNodeId}` : "교차로 미선택"}
                         </strong>
-                        <div style={{ color: "#6f7f97", fontSize: 9, marginTop: 3 }}>
+                        <div style={{ color: "var(--signal-text-muted)", fontSize: 9, marginTop: 3 }}>
                             이동류 {activeSignals.length}개 · Turn {turnGroups.length}개 · Plan {planCount}개
                         </div>
                     </div>
@@ -297,7 +297,7 @@ const SignalWorkspaceEditor: React.FC<SignalWorkspaceEditorProps> = ({
                     {activeNodeDisconnected ? (
                         <div style={disconnectedNodePanelStyle}>
                             <div style={disconnectedNodeIconStyle}>!</div>
-                            <strong style={{ color: "#f2c4ca", fontSize: 15 }}>
+                            <strong style={{ color: "var(--signal-text-primary)", fontSize: 15 }}>
                                 교차로 연결이 끊겼습니다
                             </strong>
                             <p style={disconnectedNodeDescriptionStyle}>
@@ -368,7 +368,7 @@ const workspaceStyle = (height: number): React.CSSProperties => ({
     display: "flex",
     height,
     overflow: "hidden",
-    background: "#080d18",
+    background: "rgb(var(--signal-surface-0-rgb))",
 });
 
 const sidebarStyle: React.CSSProperties = {
@@ -376,22 +376,22 @@ const sidebarStyle: React.CSSProperties = {
     flexShrink: 0,
     display: "flex",
     flexDirection: "column",
-    borderRight: "1px solid #1d2a3e",
-    background: "#09111d",
+    borderRight: "1px solid rgb(var(--signal-border-subtle-rgb))",
+    background: "rgb(var(--signal-surface-1-rgb))",
 };
 
 const sidebarSearchStyle: React.CSSProperties = {
     padding: 10,
-    borderBottom: "1px solid #1a2638",
+    borderBottom: "1px solid rgb(var(--signal-border-subtle-rgb))",
 };
 
 const searchInputStyle: React.CSSProperties = {
     width: "100%",
     boxSizing: "border-box",
-    border: "1px solid #293850",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 5,
-    background: "#0f1929",
-    color: "#c8d4e6",
+    background: "rgb(var(--signal-surface-2-rgb))",
+    color: "var(--signal-text-primary)",
     padding: "6px 8px",
     fontSize: 10,
     outline: "none",
@@ -400,7 +400,7 @@ const searchInputStyle: React.CSSProperties = {
 const resultCountStyle: React.CSSProperties = {
     display: "block",
     marginTop: 7,
-    color: "#64738a",
+    color: "var(--signal-text-muted)",
     fontSize: 9,
 };
 
@@ -408,10 +408,10 @@ const intersectionButtonStyle = (active: boolean, connected: boolean): React.CSS
     width: "100%",
     padding: "10px 11px",
     border: "none",
-    borderBottom: "1px solid #172235",
-    borderLeft: `3px solid ${active ? (connected ? "#4f8ef7" : "#d95768") : "transparent"}`,
-    background: active ? (connected ? "#14243e" : "#2a151b") : "transparent",
-    color: connected ? (active ? "#e0eaff" : "#8997ac") : "#d9909a",
+    borderBottom: "1px solid rgb(var(--signal-surface-3-rgb))",
+    borderLeft: `3px solid ${active ? (connected ? "var(--signal-accent)" : "var(--signal-danger)") : "transparent"}`,
+    background: active ? (connected ? "rgb(var(--signal-border-subtle-rgb))" : "rgb(var(--signal-danger-surface-rgb))") : "transparent",
+    color: connected ? (active ? "var(--signal-text-primary)" : "var(--signal-text-secondary)") : "var(--signal-danger)",
     textAlign: "left",
     cursor: "pointer",
 });
@@ -427,28 +427,28 @@ const intersectionTitleStyle: React.CSSProperties = {
 const signalCountStyle: React.CSSProperties = {
     minWidth: 20,
     borderRadius: 10,
-    background: "#1c3152",
-    color: "#91baff",
+    background: "rgb(var(--signal-border-rgb))",
+    color: "rgb(var(--signal-accent-text-rgb))",
     padding: "2px 6px",
     textAlign: "center",
     fontSize: 8,
 };
 
 const unconfiguredSignalBadgeStyle: React.CSSProperties = {
-    border: "1px solid #6f5927",
+    border: "1px solid rgb(var(--signal-warning-border-rgb))",
     borderRadius: 10,
-    background: "#211b0d",
-    color: "#d8b45c",
+    background: "rgb(var(--signal-warning-surface-rgb))",
+    color: "var(--signal-warning)",
     padding: "2px 7px",
     fontSize: 8,
     fontWeight: 700,
 };
 
 const disconnectedNodeBadgeStyle: React.CSSProperties = {
-    border: "1px solid #7d3440",
+    border: "1px solid rgb(var(--signal-danger-border-rgb))",
     borderRadius: 10,
-    background: "#351820",
-    color: "#f08090",
+    background: "rgb(var(--signal-danger-surface-rgb))",
+    color: "var(--signal-danger)",
     padding: "2px 7px",
     fontSize: 8,
     fontWeight: 700,
@@ -459,13 +459,13 @@ const intersectionMetaStyle: React.CSSProperties = {
     alignItems: "center",
     minHeight: 18,
     marginTop: 6,
-    color: "#65748b",
+    color: "var(--signal-text-muted)",
     fontSize: 9,
 };
 
 const sidebarEmptyStyle: React.CSSProperties = {
     padding: 20,
-    color: "#65748a",
+    color: "var(--signal-text-muted)",
     fontSize: 10,
     lineHeight: 1.6,
     textAlign: "center",
@@ -485,17 +485,17 @@ const workspaceHeaderStyle: React.CSSProperties = {
     alignItems: "center",
     gap: 18,
     padding: "7px 13px",
-    borderBottom: "1px solid #213049",
-    background: "#0c1524",
+    borderBottom: "1px solid rgb(var(--signal-border-rgb))",
+    background: "rgb(var(--signal-surface-1-rgb))",
 };
 
 const tabListStyle: React.CSSProperties = {
     display: "flex",
     gap: 3,
     padding: 3,
-    border: "1px solid #263650",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 7,
-    background: "#08101c",
+    background: "rgb(var(--signal-surface-1-rgb))",
 };
 
 const tabButtonStyle = (active: boolean): React.CSSProperties => ({
@@ -504,10 +504,10 @@ const tabButtonStyle = (active: boolean): React.CSSProperties => ({
     alignItems: "center",
     gap: 5,
     padding: "0 12px",
-    border: active ? "1px solid #487bc9" : "1px solid transparent",
+    border: active ? "1px solid rgb(var(--signal-border-accent-rgb))" : "1px solid transparent",
     borderRadius: 5,
-    background: active ? "#1a3d6d" : "transparent",
-    color: active ? "#d8e8ff" : "#75839a",
+    background: active ? "rgb(var(--signal-border-rgb))" : "transparent",
+    color: active ? "var(--signal-text-primary)" : "var(--signal-text-muted)",
     fontSize: 10,
     fontWeight: active ? 800 : 600,
     cursor: "pointer",
@@ -516,8 +516,8 @@ const tabButtonStyle = (active: boolean): React.CSSProperties => ({
 const tabCountStyle: React.CSSProperties = {
     minWidth: 15,
     borderRadius: 8,
-    background: "#2d5e9f",
-    color: "#dceaff",
+    background: "rgb(var(--signal-border-accent-rgb))",
+    color: "var(--signal-text-primary)",
     padding: "1px 5px",
     fontSize: 8,
     textAlign: "center",
@@ -537,7 +537,7 @@ const disconnectedNodePanelStyle: React.CSSProperties = {
     alignItems: "center",
     justifyContent: "center",
     padding: 28,
-    background: "#0d111c",
+    background: "rgb(var(--signal-surface-1-rgb))",
 };
 
 const disconnectedNodeIconStyle: React.CSSProperties = {
@@ -547,10 +547,10 @@ const disconnectedNodeIconStyle: React.CSSProperties = {
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 12,
-    border: "1px solid #a44150",
+    border: "1px solid rgb(var(--signal-warning-border-rgb))",
     borderRadius: "50%",
-    background: "#32161d",
-    color: "#ff8797",
+    background: "rgb(var(--signal-danger-surface-rgb))",
+    color: "var(--signal-danger)",
     fontSize: 19,
     fontWeight: 800,
 };
@@ -558,7 +558,7 @@ const disconnectedNodeIconStyle: React.CSSProperties = {
 const disconnectedNodeDescriptionStyle: React.CSSProperties = {
     maxWidth: 620,
     margin: "9px 0 16px",
-    color: "#9d8790",
+    color: "var(--signal-text-muted)",
     fontSize: 11,
     lineHeight: 1.65,
     textAlign: "center",
@@ -572,10 +572,10 @@ const disconnectedActionsStyle: React.CSSProperties = {
 
 const releaseSignalButtonStyle: React.CSSProperties = {
     height: 32,
-    border: "1px solid #65313a",
+    border: "1px solid rgb(var(--signal-danger-border-rgb))",
     borderRadius: 5,
-    background: "#29161b",
-    color: "#e98792",
+    background: "rgb(var(--signal-danger-surface-rgb))",
+    color: "var(--signal-danger)",
     padding: "0 12px",
     fontSize: 10,
     cursor: "pointer",
@@ -583,7 +583,7 @@ const releaseSignalButtonStyle: React.CSSProperties = {
 
 const disconnectedNodeHintStyle: React.CSSProperties = {
     marginTop: 13,
-    color: "#657188",
+    color: "var(--signal-text-muted)",
     fontSize: 9,
 };
 
@@ -592,7 +592,7 @@ const emptyContentStyle: React.CSSProperties = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    color: "#65738a",
+    color: "var(--signal-text-muted)",
     fontSize: 11,
 };
 

@@ -3,6 +3,7 @@ package com.iitp.iitp_rest.controller;
 import com.iitp.iitp_rest.model.analytics.CongestionGraphResponse;
 import com.iitp.iitp_rest.model.analytics.FacilityCoverageResponse;
 import com.iitp.iitp_rest.model.analytics.IntersectionLosResponse;
+import com.iitp.iitp_rest.model.analytics.LaneTrafficResponse;
 import com.iitp.iitp_rest.model.analytics.LinkStatsResponse;
 import com.iitp.iitp_rest.model.analytics.LinkTrafficResponse;
 import com.iitp.iitp_rest.model.analytics.OdFlowResponse;
@@ -12,6 +13,7 @@ import com.iitp.iitp_rest.model.analytics.RegionOdGraphResponse;
 import com.iitp.iitp_rest.model.analytics.RegionTrafficResponse;
 import com.iitp.iitp_rest.model.network.NetworkResponse;
 import com.iitp.iitp_rest.model.network.link.LinkResponse;
+import com.iitp.iitp_rest.model.network.link.SimType;
 import com.iitp.iitp_rest.model.network.node.NodeResponse;
 import com.iitp.iitp_rest.model.scenario.Scenario;
 import com.iitp.iitp_rest.model.signal.SignalResponse;
@@ -125,6 +127,45 @@ public class AnalyticsController {
     }
 
     /**
+     * bbox + 시간창 내 레인별 교통량 집계 — 메조 링크 레인/커넥션 색칠 전용(프론트가 마이크로/
+     * 메조 구분은 이미 보유한 network 데이터로 직접 필터링하므로, 여기서도 메조 링크만 대상으로
+     * 좁혀 응답 크기·쿼리 범위를 줄인다). link-traffic과 동일 골격, GROUP BY만 레인 단위.
+     */
+    @GetMapping("/lane-traffic/{versionId}")
+    public ResponseEntity<LaneTrafficResponse> getLaneTraffic(
+            @PathVariable String versionId,
+            @RequestParam String bbox,
+            @RequestParam(defaultValue = "0") int fromTime,
+            @RequestParam(defaultValue = "0") int toTime) {
+        try {
+            double[] b = parseBbox(bbox);
+            if (b == null) return ResponseEntity.badRequest().build();
+
+            NetworkResponse net = networkTileService.queryByBbox(
+                    versionId, b[0], b[1], b[2], b[3], NetworkTileService.Lod.MID);
+            List<String> linkIds = new ArrayList<>();
+            Map<String, LinkResponse> linkById = new HashMap<>();
+            for (LinkResponse l : net.getLinks()) {
+                if (l.getId() == null || l.getSimType() == SimType.Micro) continue;
+                String id = String.valueOf(l.getId());
+                linkIds.add(id);
+                linkById.put(id, l);
+            }
+
+            LaneTrafficResponse result = vehicleDataReader.readLaneTraffic(versionId, linkIds, fromTime, toTime);
+            applyLaneMetrics(result, linkById);
+            return ResponseEntity.ok(result);
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().build();
+        } catch (java.io.FileNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        } catch (Exception e) {
+            log.error("[AnalyticsController] lane-traffic 오류 versionId={}", versionId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
      * bbox 내 신호교차로별 서비스수준(LOS) 근사 — 접근 링크(그 노드로 향하는 링크)들의
      * V/C 기반 losGrade 중 최악값을 교차로 등급으로 채택한다.
      *
@@ -223,6 +264,24 @@ public class AnalyticsController {
             lt.setToNode(link.getToNode());
             lt.setCapacity(link.getQmax());
             double vc = TrafficMetricsUtil.vcRatio(lt.getVolume(), windowSeconds, link.getQmax());
+            lt.setVcRatio(vc);
+            lt.setLosGrade(TrafficMetricsUtil.losGrade(vc));
+        }
+    }
+
+    /**
+     * 레인 혼잡도(V/C)·LOS 계산 — applyLinkMetrics의 레인 단위 버전. 레인별 capacity가 따로
+     * 없어 링크 capacity(qmax) ÷ 레인 수로 근사한다(각 레인이 균등하게 용량을 나눠 가진다는
+     * 단순화 — 실제 차로별 용량 차이는 반영 못 함, 데모/시각화 목적에선 충분).
+     */
+    private void applyLaneMetrics(LaneTrafficResponse result, Map<String, LinkResponse> linkById) {
+        int windowSeconds = result.getToTime() - result.getFromTime();
+        for (LaneTrafficResponse.LaneTraffic lt : result.getLanes()) {
+            LinkResponse link = linkById.get(lt.getLinkId());
+            if (link == null || link.getNumLane() <= 0) continue;
+            double laneCapacity = link.getQmax() / link.getNumLane();
+            lt.setCapacity(laneCapacity);
+            double vc = TrafficMetricsUtil.vcRatio(lt.getVolume(), windowSeconds, laneCapacity);
             lt.setVcRatio(vc);
             lt.setLosGrade(TrafficMetricsUtil.losGrade(vc));
         }

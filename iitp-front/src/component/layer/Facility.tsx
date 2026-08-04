@@ -406,7 +406,7 @@ const Facility = ({ fields }: FacilityProps) => {
             {vehicleExists === false && nsAvailable === true && (
                 <div className={styles.sectionLabel} style={{ opacity: 0.5, cursor: 'default' }}>
                     <span style={{ flex: 1 }}>차량 시뮬레이션</span>
-                    <span style={{ fontSize: 10, color: '#666' }}>헤더의 NextSim 배지에서 실행하세요</span>
+                    <span style={{ fontSize: 10, color: 'rgba(var(--overlay-rgb),0.4)' }}>헤더의 NextSim 배지에서 실행하세요</span>
                 </div>
             )}
         </div>
@@ -416,7 +416,7 @@ const Facility = ({ fields }: FacilityProps) => {
 const deleteBtnStyle: React.CSSProperties = {
     background: 'none',
     border: 'none',
-    color: '#666',
+    color: 'rgba(var(--overlay-rgb),0.4)',
     cursor: 'pointer',
     fontSize: 10,
     padding: '0 3px',
@@ -425,9 +425,9 @@ const deleteBtnStyle: React.CSSProperties = {
 };
 
 const generateBtnStyle: React.CSSProperties = {
-    background: 'rgba(122,162,255,0.12)',
-    border: '1px solid rgba(122,162,255,0.3)',
-    color: '#7aa2ff',
+    background: 'rgba(var(--accent-text-rgb),0.12)',
+    border: '1px solid rgba(var(--accent-text-rgb),0.3)',
+    color: 'var(--accent-text)',
     cursor: 'pointer',
     fontSize: 9,
     padding: '2px 6px',

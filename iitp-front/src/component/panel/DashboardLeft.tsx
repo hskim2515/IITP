@@ -179,17 +179,17 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
             {/* ── 시나리오 정보 ── */}
             <div className={styles.sectionBox}>
                 <div className={styles.sectionHeader}>
-                    <div className={styles.sectionAccent} style={{ background: '#7aa2ff' }}/>
+                    <div className={styles.sectionAccent} style={{ background: 'var(--accent-text)' }}/>
                     <span className={styles.sectionTitle}>시나리오</span>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: 11, color: '#666' }}>시나리오</span>
-                        <span style={{ fontSize: 12, color: '#ddd', fontWeight: 500 }}>{selectedScenario?.label ?? '-'}</span>
+                        <span style={{ fontSize: 11, color: 'rgba(var(--overlay-rgb), 0.4)' }}>시나리오</span>
+                        <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 500 }}>{selectedScenario?.label ?? '-'}</span>
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontSize: 11, color: '#666' }}>버전</span>
-                        <span style={{ fontSize: 12, color: '#7aa2ff' }}>{selectedScenarioVersion?.label ?? '-'}</span>
+                        <span style={{ fontSize: 11, color: 'rgba(var(--overlay-rgb), 0.4)' }}>버전</span>
+                        <span style={{ fontSize: 12, color: 'var(--accent-text)' }}>{selectedScenarioVersion?.label ?? '-'}</span>
                     </div>
                 </div>
             </div>
@@ -246,22 +246,22 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
             {signalCount > 0 && (
                 <div className={styles.sectionBox}>
                     <div className={styles.sectionHeader}>
-                        <div className={styles.sectionAccent} style={{ background: '#10b981' }}/>
+                        <div className={styles.sectionAccent} style={{ background: 'var(--color-success)' }}/>
                         <span className={styles.sectionTitle}>신호 현황</span>
                         <span className={styles.sectionMeta}>교차로 {signalCount}개</span>
                     </div>
                     <div style={{ display: 'flex', gap: 6 }}>
-                        <div style={{ flex: 1, background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.25)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
-                            <div style={{ fontSize: 18, fontWeight: 700, color: '#10b981', fontVariantNumeric: 'tabular-nums' }}>{greenCount}</div>
-                            <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>녹색 진행</div>
+                        <div style={{ flex: 1, background: 'rgba(var(--color-success-rgb), 0.1)', border: '1px solid rgba(var(--color-success-rgb), 0.25)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--color-success)', fontVariantNumeric: 'tabular-nums' }}>{greenCount}</div>
+                            <div style={{ fontSize: 10, color: 'var(--text-disabled)', marginTop: 2 }}>녹색 진행</div>
                         </div>
-                        <div style={{ flex: 1, background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
-                            <div style={{ fontSize: 18, fontWeight: 700, color: '#ef4444', fontVariantNumeric: 'tabular-nums' }}>{signalCount - greenCount}</div>
-                            <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>적색 정지</div>
+                        <div style={{ flex: 1, background: 'rgba(var(--color-danger-rgb), 0.1)', border: '1px solid rgba(var(--color-danger-rgb), 0.25)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--color-danger)', fontVariantNumeric: 'tabular-nums' }}>{signalCount - greenCount}</div>
+                            <div style={{ fontSize: 10, color: 'var(--text-disabled)', marginTop: 2 }}>적색 정지</div>
                         </div>
-                        <div style={{ flex: 1, background: 'rgba(122,162,255,0.08)', border: '1px solid rgba(122,162,255,0.2)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
-                            <div style={{ fontSize: 18, fontWeight: 700, color: '#ccc', fontVariantNumeric: 'tabular-nums' }}>{signalCount}</div>
-                            <div style={{ fontSize: 10, color: '#555', marginTop: 2 }}>전체</div>
+                        <div style={{ flex: 1, background: 'rgba(var(--accent-text-rgb), 0.08)', border: '1px solid rgba(var(--accent-text-rgb), 0.2)', borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>{signalCount}</div>
+                            <div style={{ fontSize: 10, color: 'var(--text-disabled)', marginTop: 2 }}>전체</div>
                         </div>
                     </div>
                 </div>
@@ -270,7 +270,7 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
             {/* ── 활성 레이어 ── */}
             <div className={styles.sectionBox}>
                 <div className={styles.sectionHeader}>
-                    <div className={styles.sectionAccent} style={{ background: '#4169E1' }}/>
+                    <div className={styles.sectionAccent} style={{ background: 'var(--accent)' }}/>
                     <span className={styles.sectionTitle}>활성 레이어</span>
                     <span className={styles.sectionMeta}>{activeLayerName?.length ?? 0}개</span>
                 </div>
@@ -303,7 +303,7 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
                                 padding: '4px 8px', background: 'rgba(6,182,212,0.05)',
                                 border: '1px solid rgba(6,182,212,0.15)', borderRadius: 6,
                             }}>
-                                <span style={{ fontSize: 10, color: '#666', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
+                                <span style={{ fontSize: 10, color: 'rgba(var(--overlay-rgb), 0.4)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{label}</span>
                                 <span style={{ fontSize: 12, fontWeight: 700, color: '#06b6d4', marginLeft: 4, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>{count.toLocaleString()}</span>
                             </div>
                         ))}
@@ -315,17 +315,17 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
             {unsavedLayers.length > 0 && (
                 <div className={styles.sectionBox}>
                     <div className={styles.sectionHeader}>
-                        <div className={styles.sectionAccent} style={{ background: '#f59e0b' }}/>
+                        <div className={styles.sectionAccent} style={{ background: 'var(--color-warning)' }}/>
                         <span className={styles.sectionTitle}>미저장 레이어</span>
-                        <span className={styles.sectionMeta} style={{ color: '#f59e0b' }}>{unsavedLayers.length}개</span>
+                        <span className={styles.sectionMeta} style={{ color: 'var(--color-warning)' }}>{unsavedLayers.length}개</span>
                     </div>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                         {unsavedLayers.map(name => (
                             <span key={name} style={{
                                 fontSize: 10, padding: '3px 8px',
-                                background: 'rgba(245,158,11,0.12)',
-                                border: '1px solid rgba(245,158,11,0.35)',
-                                borderRadius: 12, color: '#f59e0b',
+                                background: 'rgba(var(--color-warning-rgb), 0.12)',
+                                border: '1px solid rgba(var(--color-warning-rgb), 0.35)',
+                                borderRadius: 12, color: 'var(--color-warning)',
                             }}>{name}</span>
                         ))}
                     </div>
@@ -336,17 +336,17 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
             {speedLimitStats.length > 0 && (
                 <div className={styles.sectionBox}>
                     <div className={styles.sectionHeader}>
-                        <div className={styles.sectionAccent} style={{ background: '#f59e0b' }}/>
+                        <div className={styles.sectionAccent} style={{ background: 'var(--color-warning)' }}/>
                         <span className={styles.sectionTitle}>속도 제한별 링크</span>
                         <span className={styles.sectionMeta}>km/h</span>
                     </div>
                     <ResponsiveContainer width="100%" height={110}>
                         <BarChart data={speedLimitStats} margin={{ top: 2, right: 8, left: -22, bottom: 0 }}>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#1e1e1e" vertical={false}/>
-                            <XAxis dataKey="speed" stroke="#333" tick={{ fontSize: 10, fill: '#555' }}/>
-                            <YAxis stroke="#333" tick={{ fontSize: 10, fill: '#555' }}/>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--overlay-rgb), 0.08)" vertical={false}/>
+                            <XAxis dataKey="speed" stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 10, fill: 'var(--text-disabled)' }}/>
+                            <YAxis stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 10, fill: 'var(--text-disabled)' }}/>
                             <Tooltip content={<ChartTooltip/>}/>
-                            <Bar dataKey="count" name="링크 수" fill="#f59e0b" radius={[3, 3, 0, 0]}/>
+                            <Bar dataKey="count" name="링크 수" fill="var(--color-warning)" radius={[3, 3, 0, 0]}/>
                         </BarChart>
                     </ResponsiveContainer>
                 </div>
@@ -362,19 +362,19 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
                     {historyChartData.length > 0 ? (
                         <ResponsiveContainer width="100%" height={180}>
                             <BarChart data={historyChartData} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#222"/>
-                                <XAxis dataKey="time" stroke="#333" tick={{ fontSize: 10, fill: '#666' }}/>
-                                <YAxis stroke="#333" tick={{ fontSize: 10, fill: '#666' }}/>
+                                <CartesianGrid strokeDasharray="3 3" stroke="rgba(var(--overlay-rgb), 0.08)"/>
+                                <XAxis dataKey="time" stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 10, fill: 'rgba(var(--overlay-rgb), 0.4)' }}/>
+                                <YAxis stroke="rgba(var(--overlay-rgb), 0.3)" tick={{ fontSize: 10, fill: 'rgba(var(--overlay-rgb), 0.4)' }}/>
                                 <Tooltip content={<ChartTooltip/>}/>
-                                <Legend wrapperStyle={{ fontSize: 11, color: '#666', paddingTop: 4 }}/>
-                                <Bar dataKey="추가" fill="#10b981" radius={[3, 3, 0, 0]}/>
-                                <Bar dataKey="수정" fill="#4169E1" radius={[3, 3, 0, 0]}/>
-                                <Bar dataKey="삭제" fill="#ef4444" radius={[3, 3, 0, 0]}/>
+                                <Legend wrapperStyle={{ fontSize: 11, color: 'rgba(var(--overlay-rgb), 0.4)', paddingTop: 4 }}/>
+                                <Bar dataKey="추가" fill="var(--color-success)" radius={[3, 3, 0, 0]}/>
+                                <Bar dataKey="수정" fill="var(--accent)" radius={[3, 3, 0, 0]}/>
+                                <Bar dataKey="삭제" fill="var(--color-danger)" radius={[3, 3, 0, 0]}/>
                             </BarChart>
                         </ResponsiveContainer>
                     ) : (
                         <div className={styles.emptyChart}>
-                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#444" strokeWidth="1.5">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-disabled)" strokeWidth="1.5">
                                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                                 <polyline points="14 2 14 8 20 8"/>
                             </svg>
@@ -382,13 +382,13 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
                         </div>
                     )}
                     <div className={styles.changeSummary}>
-                        <div className={styles.changeChip} style={{ color: '#10b981', borderColor: 'rgba(16,185,129,0.3)', background: 'rgba(16,185,129,0.08)' }}>
+                        <div className={styles.changeChip} style={{ color: 'var(--color-success)', borderColor: 'rgba(var(--color-success-rgb), 0.3)', background: 'rgba(var(--color-success-rgb), 0.08)' }}>
                             <span>+ 추가</span><strong>{totalChanges.added}</strong>
                         </div>
-                        <div className={styles.changeChip} style={{ color: '#7aa2ff', borderColor: 'rgba(65,105,225,0.3)', background: 'rgba(65,105,225,0.08)' }}>
+                        <div className={styles.changeChip} style={{ color: 'var(--accent-text)', borderColor: 'rgba(var(--accent-rgb), 0.3)', background: 'rgba(var(--accent-rgb), 0.08)' }}>
                             <span>≈ 수정</span><strong>{totalChanges.modified}</strong>
                         </div>
-                        <div className={styles.changeChip} style={{ color: '#ef4444', borderColor: 'rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.08)' }}>
+                        <div className={styles.changeChip} style={{ color: 'var(--color-danger)', borderColor: 'rgba(var(--color-danger-rgb), 0.3)', background: 'rgba(var(--color-danger-rgb), 0.08)' }}>
                             <span>− 삭제</span><strong>{totalChanges.deleted}</strong>
                         </div>
                     </div>
@@ -399,7 +399,7 @@ const DashboardLeft: React.FC<Props> = ({ onClose }) => {
             {/* ── 최근 편집 이력 ── */}
             <div className={styles.sectionBox}>
                 <div className={styles.sectionHeader}>
-                    <div className={styles.sectionAccent} style={{ background: '#f59e0b' }}/>
+                    <div className={styles.sectionAccent} style={{ background: 'var(--color-warning)' }}/>
                     <span className={styles.sectionTitle}>최근 편집</span>
                     <span className={styles.sectionMeta}>{updateLogs.length}건</span>
                 </div>

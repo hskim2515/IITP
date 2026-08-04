@@ -3,10 +3,10 @@
 .textarea,
 .select {
     width: 100%;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(var(--overlay-rgb), 0.06);
+    border: 1px solid rgba(var(--overlay-rgb), 0.12);
     border-radius: 4px;
-    color: #c8ccd4;
+    color: var(--text-secondary);
     font-size: 12px;
     font-family: 'Segoe UI', sans-serif;
     outline: none;
@@ -31,14 +31,14 @@
 .input:focus,
 .textarea:focus,
 .select:focus {
-    border-color: rgba(65, 105, 225, 0.7);
-    background: rgba(65, 105, 225, 0.08);
+    border-color: rgba(var(--accent-rgb), 0.7);
+    background: rgba(var(--accent-rgb), 0.08);
 }
 
 .input:hover,
 .textarea:hover,
 .select:hover {
-    border-color: rgba(255, 255, 255, 0.22);
+    border-color: rgba(var(--overlay-rgb), 0.22);
 }
 
 /* number 인풋 스피너 숨김 */
@@ -59,8 +59,8 @@
 }
 
 .select option {
-    background: #1a1d2e;
-    color: #c8ccd4;
+    background: rgb(var(--surface-input-rgb));
+    color: var(--text-secondary);
 }
 
 /* ── 체크박스 ─────────────────────────────────────────────────── */
@@ -73,7 +73,7 @@
 .checkbox {
     width: 14px;
     height: 14px;
-    accent-color: #4169E1;
+    accent-color: var(--accent);
     cursor: pointer;
 }
 
@@ -85,8 +85,8 @@
     gap: 3px;
     min-height: 26px;
     padding: 2px 5px;
-    background: rgba(255, 255, 255, 0.06);
-    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(var(--overlay-rgb), 0.06);
+    border: 1px solid rgba(var(--overlay-rgb), 0.12);
     border-radius: 4px;
     cursor: text;
     box-sizing: border-box;
@@ -94,18 +94,18 @@
 }
 
 .tagsWrap:focus-within {
-    border-color: rgba(65, 105, 225, 0.7);
-    background: rgba(65, 105, 225, 0.08);
+    border-color: rgba(var(--accent-rgb), 0.7);
+    background: rgba(var(--accent-rgb), 0.08);
 }
 
 .tag {
     display: inline-flex;
     align-items: center;
     gap: 3px;
-    background: rgba(65, 105, 225, 0.2);
-    border: 1px solid rgba(65, 105, 225, 0.35);
+    background: rgba(var(--accent-rgb), 0.2);
+    border: 1px solid rgba(var(--accent-rgb), 0.35);
     border-radius: 3px;
-    color: #7aa2ff;
+    color: var(--accent-text);
     font-size: 11px;
     padding: 1px 5px;
     white-space: nowrap;
@@ -114,7 +114,7 @@
 .tagRemove {
     background: none;
     border: none;
-    color: #7aa2ff;
+    color: var(--accent-text);
     cursor: pointer;
     font-size: 12px;
     line-height: 1;
@@ -132,7 +132,7 @@
     background: transparent;
     border: none;
     outline: none;
-    color: #c8ccd4;
+    color: var(--text-secondary);
     font-size: 12px;
     padding: 0 2px;
     height: 20px;

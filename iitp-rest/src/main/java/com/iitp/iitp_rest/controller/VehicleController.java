@@ -13,9 +13,12 @@ import com.iitp.iitp_rest.model.geometry.Cartesian3;
 import com.iitp.iitp_rest.model.vehicle.route.VehicleRequest;
 import com.iitp.iitp_rest.model.scenario.Scenario;
 import com.iitp.iitp_rest.model.signal.SignalTimelineResponse;
+import com.iitp.iitp_rest.service.network.NetworkGeometryIndexService;
 import com.iitp.iitp_rest.service.network.NetworkService;
 import com.iitp.iitp_rest.service.network.NetworkTileService;
+import com.iitp.iitp_rest.model.geometry.Coordinates;
 import com.iitp.iitp_rest.util.FileStorageService;
+import com.iitp.iitp_rest.util.LaneGeometryUtils;
 import com.iitp.iitp_rest.service.scenario.ScenarioService;
 import com.iitp.iitp_rest.service.signal.SignalTimelineService;
 import com.iitp.iitp_rest.service.vehicle.DummySignalGenerator;
@@ -76,10 +79,19 @@ public class VehicleController {
     private final SignalTimelineService signalTimelineService;
     private final NetworkService networkService;
     private final NetworkTileService networkTileService;
+    private final NetworkGeometryIndexService networkGeometryIndexService;
     private final DummyVehicleGenerator dummyVehicleGenerator;
     private final DummySignalGenerator dummySignalGenerator;
     private final FileStorageService fileStorage;
     private final com.iitp.iitp_rest.repository.VehicleTypeRepository vehicleTypeRepository;
+
+    /** 커넥션/링크 전환 구간 중 물리적으로 불가능한 단일 구간 점프(NextSim이 중간 샘플 없이
+     *  기록한 경우)를 network.xml의 실제 link/connection 도형에 투영해 보정할지 여부. 오프라인
+     *  검증(veh 6140/962/6292 재현 스캔, VehicleControllerGeometryProjectionTest) 통과 후 기본
+     *  on으로 전환 — 문제 생기면 application.properties에 vehicle.geometryProjection.enabled=false
+     *  로 즉시 되돌릴 수 있다. */
+    @Value("${vehicle.geometryProjection.enabled:true}")
+    private boolean geometryProjectionEnabled;
 
     /** vehicle_sim.db 무효화 연쇄 — NextSim 재실행 등 외부 갱신 시 ViewportCtx 도 함께 비움 */
     @jakarta.annotation.PostConstruct
@@ -352,7 +364,8 @@ public class VehicleController {
      * 유지한다. timestep은 손대지 않으므로(샘플을 삭제하지 않음) availability gap 계산(7초
      * 임계)에는 영향 없다.
      */
-    private static void filterQueueJitter(List<VehicleEvent> events) {
+    // package-private(테스트 접근용) — VehicleControllerGeometryProjectionTest 참고
+    static void filterQueueJitter(List<VehicleEvent> events) {
         int n = events.size();
         int i = 0;
         while (i < n) {
@@ -409,7 +422,7 @@ public class VehicleController {
     private static final double STALE_POSITION_DIST_EPS_M = 0.5; // 클러스터 시작점 대비 이동거리가 이 미만이면 "같은 위치"
     private static final double STALE_POSITION_EXPECTED_DIST_MIN_M = 1.5; // 클러스터 내 한 샘플이라도 속도×경과시간이 이 초과면 결함으로 판정
 
-    private static List<VehicleEvent> dropStalePositionArtifacts(List<VehicleEvent> events) {
+    static List<VehicleEvent> dropStalePositionArtifacts(List<VehicleEvent> events) {
         if (events.size() < 2) return events;
         List<VehicleEvent> kept = new ArrayList<>(events.size());
         int n = events.size();
@@ -575,6 +588,148 @@ public class VehicleController {
         }
     }
 
+    // ─────────────── geometry 투영 (link/connection 실도형 기반 보간) ───────────────
+    //
+    // dropStalePositionArtifacts/filterQueueJitter는 "정지 중 좌표가 노이즈로 흔들리는" 아티팩트를
+    // 정리하지만, 그 둘로도 못 고치는 별개의 문제가 남는다: 큐잉 링크→커넥션(교차로) 전환 지점에서
+    // NextSim이 애초에 중간 샘플을 기록하지 않는 경우다 — 실측(scenario3_1_V2 veh 6140): 링크
+    // 20000682에서 정지 상태였다가 단 1초 만에 커넥션(노드 10000685) 위 82m 지점으로 기록됨(시속
+    // 295km, 물리적으로 불가능). 이 구간엔 진짜 중간 데이터가 없어 어떤 후처리 필터로도 못 고친다
+    // — CZML 직선 보간이 실제로는 곡선인 교차로를 가로질러 그리면서 "정지했다 옆으로 슬라이드"
+    // 하는 것처럼 보이는 근본 원인. network.xml의 실제 link/connection 도형에 두 샘플을 투영해
+    // 그 사이를 곡선을 따라 채워 넣는다.
+    private static final double GEOMETRY_PROJECTION_SPEED_MARGIN = 1.3; // max_spd/ff_spd는 목표치이지 물리적 벽이 아니므로 여유
+    private static final double GEOMETRY_PROJECTION_HARD_FALLBACK_MPS = 30.0; // 링크/커넥션 속도 조회 실패 시 폴백(108km/h)
+    private static final double GEOMETRY_PROJECTION_TARGET_SPACING_M = 5.0;
+    private static final int GEOMETRY_PROJECTION_MAX_SYNTHETIC_POINTS = 30;
+
+    /**
+     * vehicles(이미 dropStalePositionArtifacts+filterQueueJitter로 정리된 리스트)를 순회하며
+     * implied speed가 해당 구간의 물리적 속도 한계를 넘는 연속 샘플 쌍을 찾아, 그 사이를
+     * link/connection 실도형에 투영한 중간 웨이포인트로 채운다(in-place 확장). V1 범위: prev/cur가
+     * 인접한 2개 곡선(링크 레인 ↔ 그 레인에서 나가는 커넥션)으로 이어지는 경우만 처리 — 그 이상의
+     * 갭(더 많은 세그먼트를 건너뜀)은 기존 직선 보간으로 폴백하고 카운터만 남긴다.
+     */
+    static void insertGeometryProjectedWaypoints(
+            List<VehicleEvent> vehicles,
+            NetworkGeometryIndexService.GeometryIndex geomIndex,
+            java.util.concurrent.atomic.AtomicLong flaggedCounter,
+            java.util.concurrent.atomic.AtomicLong multiHopFallbackCounter) {
+        for (int i = 0; i < vehicles.size() - 1; i++) {
+            VehicleEvent prev = vehicles.get(i);
+            VehicleEvent cur = vehicles.get(i + 1);
+            double dt = cur.getTimestep() - prev.getTimestep();
+            if (dt <= 0) continue;
+            double dist = Math.hypot(cur.getPosX() - prev.getPosX(), cur.getPosY() - prev.getPosY());
+            double impliedSpeedMps = dist / dt;
+
+            Long prevLinkId = parseLongOrNull(prev.getLinkId());
+            Long prevLaneId = parseLongOrNull(prev.getLaneId());
+            Long curLinkId = parseLongOrNull(cur.getLinkId());
+            Long curLaneId = parseLongOrNull(cur.getLaneId());
+            if (prevLinkId == null || prevLaneId == null || curLinkId == null || curLaneId == null) continue;
+
+            double refLimitMps = Math.max(
+                    orZero(geomIndex.segmentMaxSpeedMps(prevLinkId, prevLaneId.intValue())),
+                    orZero(geomIndex.segmentMaxSpeedMps(curLinkId, curLaneId.intValue())));
+            double threshold = Math.max(refLimitMps * GEOMETRY_PROJECTION_SPEED_MARGIN, GEOMETRY_PROJECTION_HARD_FALLBACK_MPS);
+            if (impliedSpeedMps <= threshold) continue;
+
+            flaggedCounter.incrementAndGet();
+
+            List<Coordinates> stitched = stitchCurve(geomIndex, prevLinkId, prevLaneId.intValue(), curLinkId, curLaneId.intValue());
+            if (stitched == null) {
+                multiHopFallbackCounter.incrementAndGet();
+                continue;
+            }
+
+            double[] prevProj = LaneGeometryUtils.nearestPointOnPolyline(stitched, prev.getPosX(), prev.getPosY());
+            double[] curProj = LaneGeometryUtils.nearestPointOnPolyline(stitched, cur.getPosX(), cur.getPosY());
+            if (prevProj == null || curProj == null || curProj[0] <= prevProj[0]) {
+                multiHopFallbackCounter.incrementAndGet();
+                continue;
+            }
+            double startArc = prevProj[0];
+            double segLen = curProj[0] - startArc;
+
+            int nPoints = (int) Math.round(segLen / GEOMETRY_PROJECTION_TARGET_SPACING_M);
+            nPoints = Math.max(2, Math.min(GEOMETRY_PROJECTION_MAX_SYNTHETIC_POINTS, nPoints));
+
+            List<VehicleEvent> synthesized = new ArrayList<>(nPoints - 1);
+            for (int p = 1; p < nPoints; p++) {
+                double frac = (double) p / nPoints;
+                double[] pointAndAngle = LaneGeometryUtils.pointAndAngleAtOffset(stitched, startArc + segLen * frac);
+                VehicleEvent synth = new VehicleEvent();
+                synth.setId(prev.getId());
+                synth.setType(prev.getType());
+                synth.setTimestep(prev.getTimestep() + dt * frac);
+                synth.setLinkId(cur.getLinkId());
+                synth.setLaneId(cur.getLaneId());
+                synth.setPosX((float) pointAndAngle[0]);
+                synth.setPosY((float) pointAndAngle[1]);
+                synth.setSpeed(cur.getSpeed());
+                synthesized.add(synth);
+            }
+            vehicles.addAll(i + 1, synthesized);
+            i += synthesized.size(); // 방금 삽입한 구간은 다시 훑지 않음
+        }
+    }
+
+    /** prev/cur 세그먼트가 인접한 2개 곡선(링크 레인 ↔ 그 레인에서 나가는 커넥션)으로 이어지면
+     *  두 곡선을 이어붙인 폴리라인을 반환, 아니면 null(V1 범위 밖 — 호출측이 기존 직선 보간으로
+     *  폴백). */
+    private static List<Coordinates> stitchCurve(
+            NetworkGeometryIndexService.GeometryIndex geomIndex,
+            long prevLinkId, int prevLaneOrConn, long curLinkId, int curLaneOrConn) {
+        List<Coordinates> prevCurve = resolveCurve(geomIndex, prevLinkId, prevLaneOrConn);
+        List<Coordinates> curCurve = resolveCurve(geomIndex, curLinkId, curLaneOrConn);
+        if (prevCurve == null || curCurve == null) return null;
+        if (prevCurve == curCurve) return prevCurve; // 같은 세그먼트 위 — 스티칭 불필요(드묾)
+
+        boolean adjacent = false;
+        if (NetworkGeometryIndexService.GeometryIndex.isLinkRange(prevLinkId)
+                && NetworkGeometryIndexService.GeometryIndex.isNodeRange(curLinkId)) {
+            ConnectionXml conn = geomIndex.connection(curLinkId, curLaneOrConn);
+            adjacent = conn != null && conn.getFromLink() != null && conn.getFromLink() == prevLinkId
+                    && conn.getFromLane() != null && conn.getFromLane() == prevLaneOrConn;
+        } else if (NetworkGeometryIndexService.GeometryIndex.isNodeRange(prevLinkId)
+                && NetworkGeometryIndexService.GeometryIndex.isLinkRange(curLinkId)) {
+            ConnectionXml conn = geomIndex.connection(prevLinkId, prevLaneOrConn);
+            adjacent = conn != null && conn.getToLink() != null && conn.getToLink() == curLinkId
+                    && conn.getToLane() != null && conn.getToLane() == curLaneOrConn;
+        }
+        if (!adjacent) return null;
+
+        List<Coordinates> stitched = new ArrayList<>(prevCurve.size() + curCurve.size());
+        stitched.addAll(prevCurve);
+        stitched.addAll(curCurve);
+        return stitched;
+    }
+
+    private static List<Coordinates> resolveCurve(
+            NetworkGeometryIndexService.GeometryIndex geomIndex, long linkOrNodeId, int laneOrConnId) {
+        if (NetworkGeometryIndexService.GeometryIndex.isLinkRange(linkOrNodeId)) {
+            return geomIndex.laneCenterline(linkOrNodeId, laneOrConnId);
+        }
+        if (NetworkGeometryIndexService.GeometryIndex.isNodeRange(linkOrNodeId)) {
+            return geomIndex.connectionCurve(linkOrNodeId, laneOrConnId);
+        }
+        return null;
+    }
+
+    private static Long parseLongOrNull(String s) {
+        if (s == null) return null;
+        try {
+            return Long.parseLong(s.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static double orZero(Double v) {
+        return v != null ? v : 0.0;
+    }
+
     /**
      * versionId → [baseLon, baseLat, baseRotationDeg, baseScale] — network.xml 자체에 박혀있는
      * 캘리브레이션 값(2점 캘리브레이션/reanchor 결과)의 캐시. 백엔드 재시작 전까지 유지되며,
@@ -646,11 +801,26 @@ public class VehicleController {
         AtomicReference<Instant> latestStopRef = new AtomicReference<>(null);
         double[] calibration = resolveVehicleCalibration(versionId, scenario);
 
+        NetworkGeometryIndexService.GeometryIndex geomIndex = null;
+        if (geometryProjectionEnabled) {
+            try {
+                geomIndex = networkGeometryIndexService.get(versionId);
+            } catch (IOException e) {
+                logger.warn("[buildVehiclePackets] {} geometry index 로드 실패, geometry 투영 건너뜀: {}", versionId, e.getMessage());
+            }
+        }
+        final NetworkGeometryIndexService.GeometryIndex finalGeomIndex = geomIndex;
+        java.util.concurrent.atomic.AtomicLong geomFlagged = new java.util.concurrent.atomic.AtomicLong();
+        java.util.concurrent.atomic.AtomicLong geomFallback = new java.util.concurrent.atomic.AtomicLong();
+
         grouped.entrySet().parallelStream().forEach(entry -> {
             String vehicleId = entry.getKey();
             List<VehicleEvent> vehicles = dropStalePositionArtifacts(entry.getValue());
             if (vehicles.isEmpty()) return;
             filterQueueJitter(vehicles);
+            if (finalGeomIndex != null) {
+                insertGeometryProjectedWaypoints(vehicles, finalGeomIndex, geomFlagged, geomFallback);
+            }
 
             double firstTimestep = vehicles.get(0).getTimestep();
             double lastTimestep = vehicles.get(vehicles.size() - 1).getTimestep();
@@ -770,6 +940,11 @@ public class VehicleController {
             }
             vehiclePathList.add(vehicleEntry);
         });
+
+        if (finalGeomIndex != null && geomFlagged.get() > 0) {
+            logger.info("[buildVehiclePackets] {} geometry 투영: flagged={}, multiHopFallback={}",
+                    versionId, geomFlagged.get(), geomFallback.get());
+        }
 
         return new Instant[]{ earliestStartRef.get(), latestStopRef.get() };
     }

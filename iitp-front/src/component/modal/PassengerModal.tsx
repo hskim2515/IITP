@@ -211,7 +211,7 @@ const PassengerModal: React.FC = () => {
                 {/* ── 헤더 ── */}
                 <div style={hdr}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <span style={{ fontWeight: 700, fontSize: 14, color: '#dde6ff' }}>
+                        <span style={{ fontWeight: 700, fontSize: 14, color: 'var(--text-primary)' }}>
                             PASSENGER 승객 수요 편집
                         </span>
                         {versionId && (
@@ -220,9 +220,9 @@ const PassengerModal: React.FC = () => {
                         {saveMsg && (
                             <span style={{
                                 fontSize: 11, borderRadius: 5, padding: '3px 10px',
-                                color:       saveMsg.ok ? '#4ecb8d' : '#f07070',
-                                background:  saveMsg.ok ? 'rgba(0,200,100,0.08)' : 'rgba(220,60,60,0.1)',
-                                border: `1px solid ${saveMsg.ok ? 'rgba(0,200,100,0.25)' : 'rgba(220,60,60,0.25)'}`,
+                                color:       saveMsg.ok ? 'var(--color-success)' : 'var(--color-danger)',
+                                background:  saveMsg.ok ? 'rgba(var(--color-success-rgb), 0.08)' : 'rgba(var(--color-danger-rgb), 0.1)',
+                                border: `1px solid ${saveMsg.ok ? 'rgba(var(--color-success-rgb), 0.25)' : 'rgba(var(--color-danger-rgb), 0.25)'}`,
                             }}>
                                 {saveMsg.text}
                             </span>
@@ -238,7 +238,7 @@ const PassengerModal: React.FC = () => {
 
                 {/* ── 상태 ── */}
                 {loading && <Center>불러오는 중…</Center>}
-                {!loading && error && <Center style={{ color: '#f07070' }}>{error}</Center>}
+                {!loading && error && <Center style={{ color: 'var(--color-danger)' }}>{error}</Center>}
 
                 {/* ── 본문 ── */}
                 {!loading && !error && (
@@ -251,14 +251,14 @@ const PassengerModal: React.FC = () => {
                                     <div key={r} style={{
                                         width: 18, height: 14, borderRadius: 2,
                                         background: cellBg(r * maxFlow + (r === 0 ? 0 : 0.01)),
-                                        border: '1px solid rgba(255,255,255,0.06)',
+                                        border: '1px solid rgba(var(--overlay-rgb), 0.06)',
                                     }}/>
                                 ))}
-                                <span style={{ fontSize: 10, color: '#444', marginLeft: 2 }}>
+                                <span style={{ fontSize: 10, color: 'var(--text-disabled)', marginLeft: 2 }}>
                                     0 → {maxFlow.toLocaleString()}
                                 </span>
                             </div>
-                            <span style={{ fontSize: 11, color: '#444' }}>
+                            <span style={{ fontSize: 11, color: 'var(--text-disabled)' }}>
                                 {matrix.origins.length} 출발지 × {matrix.dests.length} 도착지
                             </span>
                         </div>
@@ -271,7 +271,7 @@ const PassengerModal: React.FC = () => {
                             }}
                         >
                             {matrix.origins.length === 0 && matrix.dests.length === 0 && (
-                                <div style={{ color: '#555', fontSize: 12, padding: '12px 0 6px' }}>
+                                <div style={{ color: 'var(--text-disabled)', fontSize: 12, padding: '12px 0 6px' }}>
                                     데이터가 없습니다. 도착지/출발지 ID(터미널 노드)를 입력해 추가하세요.
                                 </div>
                             )}
@@ -279,13 +279,13 @@ const PassengerModal: React.FC = () => {
                                 <thead>
                                     <tr>
                                         <th style={{ ...th, ...stickyTL, width: 110 }}>
-                                            <span style={{ fontSize: 10, color: '#333' }}>출발↓ / 도착→</span>
+                                            <span style={{ fontSize: 10, color: 'rgba(var(--overlay-rgb), 0.3)' }}>출발↓ / 도착→</span>
                                         </th>
 
                                         {matrix.dests.map(dest => (
                                             <th key={dest} style={{ ...th, ...stickyTop, minWidth: 72 }}>
                                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
-                                                    <span style={{ color: '#7aa2ff', fontFamily: 'monospace', fontSize: 11 }}>
+                                                    <span style={{ color: 'var(--accent-text)', fontFamily: 'monospace', fontSize: 11 }}>
                                                         {dest}
                                                     </span>
                                                     <button
@@ -315,9 +315,9 @@ const PassengerModal: React.FC = () => {
                                 <tbody>
                                     {matrix.origins.map((origin) => (
                                         <tr key={origin}>
-                                            <td style={{ ...td, ...stickyLeft, background: 'rgba(12,14,26,0.98)' }}>
+                                            <td style={{ ...td, ...stickyLeft, background: 'rgba(var(--surface-1-rgb), 0.98)' }}>
                                                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 4 }}>
-                                                    <span style={{ color: '#f5a623', fontFamily: 'monospace', fontSize: 11 }}>
+                                                    <span style={{ color: 'var(--color-warning)', fontFamily: 'monospace', fontSize: 11 }}>
                                                         {origin}
                                                     </span>
                                                     <button
@@ -338,10 +338,10 @@ const PassengerModal: React.FC = () => {
                                                         onClick={e => { e.stopPropagation(); startEdit(origin, dest); }}
                                                         style={{
                                                             ...td,
-                                                            background: isEditing ? 'rgba(65,105,225,0.22)' : cellBg(flow),
+                                                            background: isEditing ? 'rgba(var(--accent-rgb), 0.22)' : cellBg(flow),
                                                             border: isEditing
-                                                                ? '1px solid rgba(100,140,255,0.6)'
-                                                                : `1px solid rgba(255,255,255,${flow > 0 ? '0.06' : '0.03'})`,
+                                                                ? '1px solid rgba(var(--accent-text-rgb), 0.6)'
+                                                                : `1px solid rgba(var(--overlay-rgb), ${flow > 0 ? '0.06' : '0.03'})`,
                                                             cursor: 'text',
                                                             textAlign: 'right',
                                                             padding: '0 6px',
@@ -364,7 +364,7 @@ const PassengerModal: React.FC = () => {
                                                                 style={{
                                                                     width: '100%', background: 'transparent',
                                                                     border: 'none', outline: 'none',
-                                                                    color: '#ddd', fontSize: 12,
+                                                                    color: 'var(--text-secondary)', fontSize: 12,
                                                                     textAlign: 'right', fontFamily: 'monospace',
                                                                 }}
                                                             />
@@ -387,7 +387,7 @@ const PassengerModal: React.FC = () => {
                                     ))}
 
                                     <tr>
-                                        <td style={{ ...td, ...stickyLeft, background: 'rgba(12,14,26,0.98)', paddingTop: 6 }}>
+                                        <td style={{ ...td, ...stickyLeft, background: 'rgba(var(--surface-1-rgb), 0.98)', paddingTop: 6 }}>
                                             <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                                                 <input
                                                     value={newOriginInput}
@@ -415,32 +415,32 @@ const PassengerModal: React.FC = () => {
 
 /* ── 서브 컴포넌트 ── */
 const Center: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style }) => (
-    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#555', fontSize: 13, ...style }}>
+    <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-disabled)', fontSize: 13, ...style }}>
         {children}
     </div>
 );
 
 /* ── 스타일 (OdMatrixModal과 동일) ── */
-const ov:    React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1400 };
-const panel: React.CSSProperties = { background: 'rgba(12,14,26,0.98)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, boxShadow: '0 20px 60px rgba(0,0,0,0.8)', width: '88vw', maxWidth: 1200, height: '82vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' };
-const hdr:   React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', borderBottom: '1px solid rgba(255,255,255,0.07)', flexShrink: 0 };
-const badge: React.CSSProperties = { fontSize: 10, color: '#445', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 4, padding: '2px 7px' };
+const ov:    React.CSSProperties = { position: 'fixed', inset: 0, background: 'rgba(var(--surface-overlay-rgb), 0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1400 };
+const panel: React.CSSProperties = { background: 'rgba(var(--surface-1-rgb), 0.98)', border: '1px solid rgba(var(--overlay-rgb), 0.08)', borderRadius: 10, boxShadow: '0 20px 60px rgba(var(--surface-overlay-rgb), 0.8)', width: '88vw', maxWidth: 1200, height: '82vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' };
+const hdr:   React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 18px', borderBottom: '1px solid rgba(var(--overlay-rgb), 0.07)', flexShrink: 0 };
+const badge: React.CSSProperties = { fontSize: 10, color: 'rgba(var(--overlay-rgb), 0.35)', background: 'rgba(var(--overlay-rgb), 0.04)', border: '1px solid rgba(var(--overlay-rgb), 0.07)', borderRadius: 4, padding: '2px 7px' };
 const saveBtn = (disabled: boolean): React.CSSProperties => ({
     padding: '5px 16px', fontSize: 12, borderRadius: 5, cursor: disabled ? 'default' : 'pointer', fontWeight: 600, transition: 'all 0.15s',
-    background: disabled ? 'rgba(255,255,255,0.03)' : 'rgba(65,105,225,0.22)',
-    border: `1px solid ${disabled ? 'rgba(255,255,255,0.08)' : 'rgba(100,140,255,0.5)'}`,
-    color: disabled ? '#444' : '#8ab4ff',
+    background: disabled ? 'rgba(var(--overlay-rgb), 0.03)' : 'rgba(var(--accent-rgb), 0.22)',
+    border: `1px solid ${disabled ? 'rgba(var(--overlay-rgb), 0.08)' : 'rgba(var(--accent-text-rgb), 0.5)'}`,
+    color: disabled ? 'var(--text-disabled)' : 'var(--accent-text)',
 });
-const closeBtn: React.CSSProperties = { background: 'none', border: 'none', color: '#555', fontSize: 18, cursor: 'pointer', padding: '2px 4px', borderRadius: 4, lineHeight: 1 };
-const legend:    React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 14px', borderBottom: '1px solid rgba(255,255,255,0.04)', flexShrink: 0 };
+const closeBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'var(--text-disabled)', fontSize: 18, cursor: 'pointer', padding: '2px 4px', borderRadius: 4, lineHeight: 1 };
+const legend:    React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 14px', borderBottom: '1px solid rgba(var(--overlay-rgb), 0.04)', flexShrink: 0 };
 
-const th: React.CSSProperties = { padding: '6px 8px', textAlign: 'center', fontSize: 11, color: '#556', fontWeight: 600, borderBottom: '1px solid rgba(255,255,255,0.07)', whiteSpace: 'nowrap', background: 'rgba(12,14,26,0.98)' };
-const td: React.CSSProperties = { border: '1px solid rgba(255,255,255,0.03)', verticalAlign: 'middle' };
+const th: React.CSSProperties = { padding: '6px 8px', textAlign: 'center', fontSize: 11, color: 'rgba(var(--overlay-rgb), 0.35)', fontWeight: 600, borderBottom: '1px solid rgba(var(--overlay-rgb), 0.07)', whiteSpace: 'nowrap', background: 'rgba(var(--surface-1-rgb), 0.98)' };
+const td: React.CSSProperties = { border: '1px solid rgba(var(--overlay-rgb), 0.03)', verticalAlign: 'middle' };
 const stickyTop: React.CSSProperties = { position: 'sticky', top: 0, zIndex: 2 };
 const stickyLeft: React.CSSProperties = { position: 'sticky', left: 0, zIndex: 2, padding: '4px 8px', whiteSpace: 'nowrap', minWidth: 110 };
 const stickyTL:   React.CSSProperties = { position: 'sticky', top: 0, left: 0, zIndex: 3 };
-const delBtn: React.CSSProperties = { background: 'none', border: 'none', color: '#333', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '1px 3px', borderRadius: 3 };
-const addInput: React.CSSProperties = { width: 80, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 4, color: '#888', fontSize: 11, padding: '3px 6px', outline: 'none' };
-const addBtn: React.CSSProperties = { background: 'rgba(65,105,225,0.15)', border: '1px solid rgba(100,140,255,0.3)', borderRadius: 4, color: '#7aa2ff', cursor: 'pointer', fontSize: 13, padding: '2px 6px', lineHeight: 1 };
+const delBtn: React.CSSProperties = { background: 'none', border: 'none', color: 'rgba(var(--overlay-rgb), 0.3)', cursor: 'pointer', fontSize: 13, lineHeight: 1, padding: '1px 3px', borderRadius: 3 };
+const addInput: React.CSSProperties = { width: 80, background: 'rgba(var(--overlay-rgb), 0.04)', border: '1px solid rgba(var(--overlay-rgb), 0.08)', borderRadius: 4, color: 'var(--text-muted)', fontSize: 11, padding: '3px 6px', outline: 'none' };
+const addBtn: React.CSSProperties = { background: 'rgba(var(--accent-rgb), 0.15)', border: '1px solid rgba(var(--accent-text-rgb), 0.3)', borderRadius: 4, color: 'var(--accent-text)', cursor: 'pointer', fontSize: 13, padding: '2px 6px', lineHeight: 1 };
 
 export default PassengerModal;

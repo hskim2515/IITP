@@ -30,6 +30,9 @@ import { useNextSimRunStore, checkNextSimAvailable, startNextSimRun, cancelNextS
 import { consumePendingScenario } from "@utils/scenarioBootstrap";
 import { useModeStore } from "@stores/useModeStore";
 import VehicleTypeModelEditor from "@component/util/VehicleTypeModelEditor";
+import { useThemeSync } from "@hooks/useThemeSync";
+import { useAppSettingsStore } from "@stores/useAppSettingsStore";
+import { ConfigProvider, theme as antdTheme } from "antd";
 
 function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const step = useOnboardingStore((s) => s.step);
@@ -231,6 +234,8 @@ const obPrimaryBtn: React.CSSProperties = {
 };
 
 function App() {
+    useThemeSync();
+    const theme = useAppSettingsStore((s) => s.theme);
 
     const [showDashboard, setShowDashboard] = useState(false);
     const [showFileImport, setShowFileImport] = useState(false);
@@ -303,8 +308,11 @@ function App() {
         if (vid) void resumeNextSimPollingIfRunning(String(vid));
     }, [selectedScenarioVersion?.key]);
 
+    // AntD 사용 범위가 작아(Typography/Table/Card 정도) 부담은 적지만, ConfigProvider 없이는
+    // 그 컴포넌트들이 테마 토글과 무관하게 항상 AntD 기본(라이트) 팔레트로 렌더된다.
     return (
-        !selectedScenario ? (
+        <ConfigProvider theme={{ algorithm: theme === 'dark' ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm }}>
+        {!selectedScenario ? (
             <ScenarioSelector/>
         ) : (
             <div>
@@ -395,7 +403,8 @@ function App() {
 
                 </main>
             </div>
-        )
+        )}
+        </ConfigProvider>
     )
 }
 

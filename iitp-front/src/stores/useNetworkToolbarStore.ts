@@ -44,6 +44,15 @@ interface NetworkToolbarState extends TargetIds {
      *  (뒤로·차선보기·구간보기·셀보기 버튼용). 지정 안 한 id 필드는 null로 리셋된다. */
     setLevel: (level: ToolbarLevel, ids?: Partial<TargetIds>) => void;
     hide: () => void;
+
+    /** NetworkEditToolbar(맥락바)가 실제로 렌더된 DOM 너비(px). FacilityPlacementQuickBar가
+     *  이 바 옆에 겹치지 않게 뜨려면 실제 너비를 알아야 하는데, 레벨/열린 패널(⚙속성,
+     *  🚧차로 폐쇄 등)에 따라 버튼 수·패널 유무가 달라 폭이 고정값이 아니다 — 예전엔
+     *  320(고정 추정치)을 썼는데, 버튼이 늘어나며(예: 🚧 차로 폐쇄 추가) 실제 폭을 넘어서면서
+     *  퀵바가 맥락바 위에 겹쳤다(실사용 지적). NetworkEditToolbar가 매 렌더 후
+     *  getBoundingClientRect()로 재기록한다. */
+    measuredWidth: number;
+    setMeasuredWidth: (w: number) => void;
 }
 
 const emptyTargetIds: TargetIds = {
@@ -58,6 +67,8 @@ export const useNetworkToolbarStore = create<NetworkToolbarState>((set) => ({
     ...emptyTargetIds,
     hitFrac: null,
     clickCoord: null,
+    measuredWidth: 0,
+    setMeasuredWidth: (w) => set((s) => (s.measuredWidth === w ? s : { measuredWidth: w })),
 
     show: (pos, level, ids, session) => set({
         visible: true, x: pos.x, y: pos.y, level,

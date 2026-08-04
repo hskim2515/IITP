@@ -286,13 +286,13 @@ const ScenarioSelector = () => {
                 <div className="version-popup" onClick={() => setDeleteConfirm(null)}>
                     <div className="version-popup-content scenario-create-modal" onClick={(e) => e.stopPropagation()}>
                         <h2>시나리오 삭제</h2>
-                        <p style={{ color: "#ccc", fontSize: "0.9rem", margin: "8px 0 20px" }}>
-                            <strong style={{ color: "#fff" }}>{deleteConfirm.label}</strong> 시나리오를 삭제합니다.<br />
+                        <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem", margin: "8px 0 20px" }}>
+                            <strong style={{ color: "var(--text-primary)" }}>{deleteConfirm.label}</strong> 시나리오를 삭제합니다.<br />
                             버전 데이터를 포함한 모든 정보가 삭제되며 복구할 수 없습니다.
                         </p>
                         <div className="scenario-form-actions">
                             <button type="button" onClick={() => setDeleteConfirm(null)} className="btn-cancel">취소</button>
-                            <button type="button" onClick={handleDelete} style={{ background: "rgba(220,60,60,0.25)", borderColor: "rgba(220,60,60,0.6)", color: "#f07070" }}>
+                            <button type="button" onClick={handleDelete} style={{ background: "rgba(var(--color-danger-rgb), 0.25)", borderColor: "rgba(var(--color-danger-rgb), 0.6)", color: "var(--color-danger)" }}>
                                 삭제
                             </button>
                         </div>

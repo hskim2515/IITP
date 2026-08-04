@@ -134,14 +134,14 @@ const SaveVersionModal: React.FC<SaveVersionModalProps> = ({ open, onConfirm, on
         <div style={overlayStyle} onClick={(e) => e.target === e.currentTarget && onCancel()}>
             <div style={panelStyle} onKeyDown={handleKeyDown}>
                 <div style={headerStyle}>
-                    <span style={{ fontWeight: 600, fontSize: 14, color: '#e0e0e0' }}>새 버전으로 저장</span>
+                    <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-secondary)' }}>새 버전으로 저장</span>
                     <button style={closeBtnStyle} onClick={onCancel}>×</button>
                 </div>
                 <div style={bodyStyle}>
-                    <p style={{ fontSize: 12, color: '#777', margin: '0 0 14px 0', lineHeight: 1.6 }}>
+                    <p style={{ fontSize: 12, color: 'rgba(var(--overlay-rgb), 0.4)', margin: '0 0 14px 0', lineHeight: 1.6 }}>
                         저장 시 새 버전이 생성됩니다.
                         {selectedScenarioVersion && (
-                            <> 현재 버전: <strong style={{ color: '#aaa' }}>{selectedScenarioVersion.label}</strong> ({selectedScenarioVersion.key})</>
+                            <> 현재 버전: <strong style={{ color: 'var(--text-tertiary)' }}>{selectedScenarioVersion.label}</strong> ({selectedScenarioVersion.key})</>
                         )}
                     </p>
 
@@ -183,25 +183,25 @@ const SaveVersionModal: React.FC<SaveVersionModalProps> = ({ open, onConfirm, on
 
 const overlayStyle: React.CSSProperties = {
     position: 'fixed', inset: 0,
-    background: 'rgba(0,0,0,0.55)',
+    background: 'rgba(var(--surface-overlay-rgb), 0.55)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     zIndex: 2000,
 };
 const panelStyle: React.CSSProperties = {
-    background: 'rgba(14,16,28,0.98)',
-    border: '1px solid rgba(255,255,255,0.1)',
+    background: 'rgba(var(--surface-1-rgb), 0.98)',
+    border: '1px solid rgba(var(--overlay-rgb), 0.1)',
     borderRadius: 10,
-    boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
+    boxShadow: '0 12px 40px rgba(var(--surface-overlay-rgb), 0.7)',
     width: 360, maxWidth: '90vw',
     display: 'flex', flexDirection: 'column',
 };
 const headerStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
     padding: '12px 16px',
-    borderBottom: '1px solid rgba(255,255,255,0.07)',
+    borderBottom: '1px solid rgba(var(--overlay-rgb), 0.07)',
 };
 const closeBtnStyle: React.CSSProperties = {
-    background: 'none', border: 'none', color: '#666',
+    background: 'none', border: 'none', color: 'rgba(var(--overlay-rgb), 0.4)',
     fontSize: 18, cursor: 'pointer', lineHeight: 1, padding: '0 2px',
 };
 const bodyStyle: React.CSSProperties = {
@@ -212,13 +212,13 @@ const fieldWrapStyle: React.CSSProperties = {
     display: 'flex', flexDirection: 'column', gap: 4,
 };
 const labelStyle: React.CSSProperties = {
-    fontSize: 11, color: '#888', fontWeight: 500,
+    fontSize: 11, color: 'var(--text-muted)', fontWeight: 500,
 };
 const inputStyle: React.CSSProperties = {
-    background: 'rgba(255,255,255,0.06)',
-    border: '1px solid rgba(255,255,255,0.12)',
+    background: 'rgba(var(--overlay-rgb), 0.06)',
+    border: '1px solid rgba(var(--overlay-rgb), 0.12)',
     borderRadius: 5,
-    color: '#c8ccd4',
+    color: 'var(--text-secondary)',
     fontSize: 12,
     padding: '6px 9px',
     outline: 'none',
@@ -227,29 +227,29 @@ const inputStyle: React.CSSProperties = {
     fontFamily: "'Segoe UI', sans-serif",
 };
 const fieldErrorStyle: React.CSSProperties = {
-    fontSize: 11, color: '#f07070',
+    fontSize: 11, color: 'var(--color-danger)',
 };
 const errorStyle: React.CSSProperties = {
     padding: '7px 10px', borderRadius: 6, fontSize: 11,
-    background: 'rgba(220,60,60,0.12)', border: '1px solid rgba(220,60,60,0.3)',
-    color: '#f07070',
+    background: 'rgba(var(--color-danger-rgb), 0.12)', border: '1px solid rgba(var(--color-danger-rgb), 0.3)',
+    color: 'var(--color-danger)',
 };
 const footerStyle: React.CSSProperties = {
     display: 'flex', justifyContent: 'flex-end', gap: 8,
     padding: '10px 16px',
-    borderTop: '1px solid rgba(255,255,255,0.07)',
+    borderTop: '1px solid rgba(var(--overlay-rgb), 0.07)',
 };
 const cancelBtnStyle: React.CSSProperties = {
     padding: '6px 14px', fontSize: 12, borderRadius: 5,
-    border: '1px solid rgba(255,255,255,0.12)',
-    background: 'rgba(255,255,255,0.05)',
-    color: '#aaa', cursor: 'pointer',
+    border: '1px solid rgba(var(--overlay-rgb), 0.12)',
+    background: 'rgba(var(--overlay-rgb), 0.05)',
+    color: 'var(--text-tertiary)', cursor: 'pointer',
 };
 const okBtnStyle: React.CSSProperties = {
     padding: '6px 16px', fontSize: 12, borderRadius: 5,
-    border: '1px solid rgba(65,105,225,0.5)',
-    background: 'rgba(65,105,225,0.2)',
-    color: '#7aa2ff', cursor: 'pointer', fontWeight: 600,
+    border: '1px solid rgba(var(--accent-rgb), 0.5)',
+    background: 'rgba(var(--accent-rgb), 0.2)',
+    color: 'var(--accent-text)', cursor: 'pointer', fontWeight: 600,
 };
 
 export default SaveVersionModal;

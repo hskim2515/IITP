@@ -49,11 +49,22 @@ export const DEFAULT_AUTO_GENERATION_SETTINGS: AutoGenerationSettings = {
  * 항상 유지되는 개인 취향 설정. 시나리오별 값(예: 네트워크 타일 모드)은 useNetworkTileStore처럼
  * 별도 스토어를 쓴다.
  */
+export type AppTheme = 'dark' | 'light';
+
 interface AppSettingsState {
     /** 세션 시작 시 적용할 배경지도 기본값. null이면 서버 레이어 스키마의 basic 필드를 그대로 사용
      *  (BaseMap.tsx가 폴백 처리). */
     defaultBaseMap: BaseMapType | null;
     setDefaultBaseMap: (v: BaseMapType | null) => void;
+
+    /** UI 라이트/다크 테마. 기본값 'dark' — 기존 사용자는 지금까지의 앱과 동일하게 보여야
+     *  하므로 OS 설정(prefers-color-scheme)을 따라가지 않고 항상 다크로 시작한다. index.html의
+     *  FOUC 방지 인라인 스크립트가 이 값을 localStorage에서 직접 읽어 첫 페인트 전에
+     *  document.documentElement의 data-theme을 미리 세팅한다 — 이 필드명('theme')과
+     *  persist 스토리지 키('app-settings')를 그 스크립트와 반드시 맞춰야 한다. */
+    theme: AppTheme;
+    setTheme: (v: AppTheme) => void;
+    toggleTheme: () => void;
 
     autoGeneration: AutoGenerationSettings;
     setAutoGeneration: (partial: Partial<AutoGenerationSettings>) => void;
@@ -65,6 +76,10 @@ export const useAppSettingsStore = create<AppSettingsState>()(
         (set) => ({
             defaultBaseMap: null,
             setDefaultBaseMap: (v) => set({ defaultBaseMap: v }),
+
+            theme: 'dark',
+            setTheme: (v) => set({ theme: v }),
+            toggleTheme: () => set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
 
             autoGeneration: DEFAULT_AUTO_GENERATION_SETTINGS,
             setAutoGeneration: (partial) =>

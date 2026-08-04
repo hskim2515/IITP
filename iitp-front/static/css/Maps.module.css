@@ -21,13 +21,13 @@
 .divider {
     width: 6px;
     flex: 0 0 6px;
-    background-color: #ccc;
+    background-color: var(--text-secondary);
     z-index: 10;
     cursor: col-resize;
 }
 
 .divider:hover {
-    background: #bdbdc0;
+    background: var(--text-primary);
 }
 
 /* ── 2D/3D Mode Toggle ─────────────────────────────────────────── */
@@ -39,9 +39,9 @@
     z-index: 100;
     display: flex;
     gap: 2px;
-    background: rgba(8, 10, 20, 0.88);
+    background: rgba(var(--surface-panel-rgb), 0.88);
     backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(var(--overlay-rgb), 0.1);
     border-radius: 8px;
     padding: 3px;
 }
@@ -50,7 +50,7 @@
     padding: 5px 18px;
     font-size: 12px;
     font-weight: 600;
-    color: #666;
+    color: var(--text-disabled);
     background: transparent;
     border: none;
     border-radius: 5px;
@@ -60,13 +60,13 @@
 }
 
 .mapModeBtn:hover {
-    color: #bbb;
-    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-tertiary);
+    background: rgba(var(--overlay-rgb), 0.06);
 }
 
 .mapModeBtnActive {
     composes: mapModeBtn;
-    color: #fff;
-    background: rgba(65, 105, 225, 0.3);
-    border: 1px solid rgba(65, 105, 225, 0.5);
+    color: var(--text-primary);
+    background: rgba(var(--accent-rgb), 0.3);
+    border: 1px solid rgba(var(--accent-rgb), 0.5);
 }

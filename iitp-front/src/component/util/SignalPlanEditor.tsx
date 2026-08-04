@@ -180,7 +180,7 @@ const PhaseRow: React.FC<PhaseRowProps> = ({
                 style={{
                     ...phaseHeaderStyle,
                     paddingBottom: isExpanded ? 9 : 0,
-                    borderBottom: isExpanded ? "1px solid #202d42" : "none",
+                    borderBottom: isExpanded ? "1px solid rgb(var(--signal-border-subtle-rgb))" : "none",
                     cursor: "pointer",
                 }}
             >
@@ -188,10 +188,10 @@ const PhaseRow: React.FC<PhaseRowProps> = ({
                 <div style={phaseOrderStyle}>{phaseDisplayId}</div>
                 <div style={{ minWidth: 180 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <strong style={{ color: "#dce6f5", fontSize: 12 }}>현시 {phaseDisplayId}</strong>
+                        <strong style={{ color: "var(--signal-text-primary)", fontSize: 12 }}>현시 {phaseDisplayId}</strong>
                         <span style={phaseTimeStyle}>{startTime}~{endTime}초</span>
                     </div>
-                    <div style={{ color: "#68778f", fontSize: 9, marginTop: 3 }}>
+                    <div style={{ color: "var(--signal-text-muted)", fontSize: 9, marginTop: 3 }}>
                         허용 Turn {activeGroups.length}개 · {Number.isFinite(durationSeconds) ? durationSeconds : 0}초
                     </div>
                 </div>
@@ -220,7 +220,7 @@ const PhaseRow: React.FC<PhaseRowProps> = ({
                                 onBlur={applyFields}
                                 style={{ ...inputStyle, width: 62 }}
                             />
-                            <span style={{ color: "#718099", fontSize: 9 }}>초</span>
+                            <span style={{ color: "var(--signal-text-muted)", fontSize: 9 }}>초</span>
                         </div>
                     </label>
                     <button
@@ -238,8 +238,8 @@ const PhaseRow: React.FC<PhaseRowProps> = ({
             {isExpanded && <div style={activeMovementAreaStyle}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                     <div>
-                        <strong style={{ color: "#b9c9de", fontSize: 10 }}>허용 이동류</strong>
-                        <span style={{ color: "#62748f", fontSize: 9, marginLeft: 7 }}>
+                        <strong style={{ color: "var(--signal-text-secondary)", fontSize: 10 }}>허용 이동류</strong>
+                        <span style={{ color: "var(--signal-text-muted)", fontSize: 9, marginLeft: 7 }}>
                             카드를 누르면 지도에서 강조됩니다.
                         </span>
                     </div>
@@ -280,17 +280,17 @@ const PhaseRow: React.FC<PhaseRowProps> = ({
                             style={{
                                 ...activeMovementChipStyle,
                                 borderColor: hoveredTurnKey === group.key || expandedTurnKey === group.key
-                                    ? "#67a4f4"
-                                    : "#315d94",
+                                    ? "rgb(var(--signal-accent-text-rgb))"
+                                    : "rgb(var(--signal-border-accent-rgb))",
                                 background: hoveredTurnKey === group.key || expandedTurnKey === group.key
-                                    ? "linear-gradient(135deg, #1b3d69 0%, #132844 100%)"
+                                    ? "linear-gradient(135deg, rgb(var(--signal-border-rgb)) 0%, rgb(var(--signal-border-subtle-rgb)) 100%)"
                                     : activeMovementChipStyle.background,
                             }}
                         >
                             <span style={activeTurnBadgeStyle}>T{group.turnId}</span>
                             <span style={activeMovementInfoStyle}>
                                 <span style={activeDirectionStyle}>
-                                    <span style={{ color: "#82afff", fontSize: 14 }}>
+                                    <span style={{ color: "rgb(var(--signal-accent-text-rgb))", fontSize: 14 }}>
                                         {group.directions.map(direction => direction.icon).join(" ")}
                                     </span>
                                     <strong>{group.directionLabel}</strong>
@@ -333,7 +333,7 @@ const PhaseRow: React.FC<PhaseRowProps> = ({
 
             {isExpanded && isChoosingTurns && (
                 <div style={movementChooserStyle}>
-                    <div style={{ color: "#8190a7", fontSize: 9, marginBottom: 7 }}>
+                    <div style={{ color: "var(--signal-text-muted)", fontSize: 9, marginBottom: 7 }}>
                         동시에 통행시킬 이동류를 선택하세요. 선택 시 지도에서도 강조됩니다.
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 6 }}>
@@ -350,17 +350,17 @@ const PhaseRow: React.FC<PhaseRowProps> = ({
                                     }}
                                     style={{
                                         ...turnCardStyle,
-                                        color: active ? "#d8e7ff" : "#76839a",
-                                        borderColor: active ? "#3f74c8" : "#2a354a",
-                                        background: active ? "#17325b" : "#101725",
+                                        color: active ? "var(--signal-text-primary)" : "var(--signal-text-muted)",
+                                        borderColor: active ? "rgb(var(--signal-border-accent-rgb))" : "rgb(var(--signal-border-rgb))",
+                                        background: active ? "rgb(var(--signal-border-rgb))" : "rgb(var(--signal-surface-2-rgb))",
                                     }}
                                 >
                                     <span style={candidateTurnHeadingStyle}>
                                         <span style={{
                                             ...candidateTurnBadgeStyle,
-                                            borderColor: active ? "#6aa0f2" : "#3a4b65",
-                                            background: active ? "#24518e" : "#172235",
-                                            color: active ? "#ffffff" : "#9aa8bb",
+                                            borderColor: active ? "rgb(var(--signal-accent-text-rgb))" : "var(--signal-text-disabled)",
+                                            background: active ? "rgb(var(--signal-border-accent-rgb))" : "rgb(var(--signal-surface-3-rgb))",
+                                            color: active ? "var(--signal-text-primary)" : "var(--signal-text-secondary)",
                                         }}>
                                             T{turnId}
                                         </span>
@@ -370,7 +370,7 @@ const PhaseRow: React.FC<PhaseRowProps> = ({
                                         <strong>{group.directionLabel}</strong>
                                     </span>
                                     <span style={{
-                                        color: active ? "#a9bfde" : "#66748a",
+                                        color: active ? "var(--signal-text-secondary)" : "var(--signal-text-muted)",
                                         fontSize: 9,
                                         paddingLeft: 1,
                                     }}>
@@ -378,7 +378,7 @@ const PhaseRow: React.FC<PhaseRowProps> = ({
                                     </span>
                                     <span style={{
                                         ...candidateStateStyle,
-                                        color: active ? "#b9d3ff" : "#738198",
+                                        color: active ? "var(--signal-text-primary)" : "var(--signal-text-muted)",
                                     }}>
                                         {active ? "선택됨" : "선택"}
                                     </span>
@@ -386,7 +386,7 @@ const PhaseRow: React.FC<PhaseRowProps> = ({
                             );
                         })}
                         {turnGroups.length === 0 && (
-                            <span style={{ color: "#e49a62", fontSize: 10 }}>이동 방향 탭에서 Turn을 먼저 추가하세요.</span>
+                            <span style={{ color: "var(--signal-warning)", fontSize: 10 }}>이동 방향 탭에서 Turn을 먼저 추가하세요.</span>
                         )}
                     </div>
                 </div>
@@ -462,10 +462,10 @@ const PlanCard: React.FC<PlanCardProps> = ({
     return (
         <article style={{
             ...planCardStyle,
-            borderColor: issues.length > 0 ? "#713b45" : "#31517f",
+            borderColor: issues.length > 0 ? "rgb(var(--signal-danger-border-rgb))" : "rgb(var(--signal-border-accent-rgb))",
             boxShadow: issues.length > 0
-                ? "0 0 0 1px rgba(113, 59, 69, 0.28)"
-                : "0 7px 20px rgba(0, 0, 0, 0.18)",
+                ? "0 0 0 1px rgba(var(--signal-danger-border-rgb), 0.28)"
+                : "0 7px 20px rgba(var(--surface-overlay-rgb), 0.18)",
         }}>
             <div
                 role="button"
@@ -480,7 +480,7 @@ const PlanCard: React.FC<PlanCardProps> = ({
                 style={{
                     ...planHeaderStyle,
                     marginBottom: isExpanded ? 11 : -11,
-                    borderBottom: isExpanded ? "1px solid #2b4265" : "none",
+                    borderBottom: isExpanded ? "1px solid rgb(var(--signal-border-rgb))" : "none",
                     cursor: "pointer",
                 }}
             >
@@ -697,8 +697,8 @@ const SignalPlanEditor: React.FC<SignalPlanEditorProps> = ({
         }}>
             <div style={toolbarStyle}>
                 <div>
-                    <strong style={{ color: "#d6e0ef", fontSize: 12 }}>교차로 #{nodeId} 신호 Plan</strong>
-                    <div style={{ color: "#738198", fontSize: 10, marginTop: 3 }}>
+                    <strong style={{ color: "var(--signal-text-primary)", fontSize: 12 }}>교차로 #{nodeId} 신호 Plan</strong>
+                    <div style={{ color: "var(--signal-text-muted)", fontSize: 10, marginTop: 3 }}>
                         Plan {plans.length}개 · 선택 가능한 진입 방향 {selectableTurnGroups.length}개
                     </div>
                 </div>
@@ -733,7 +733,7 @@ const SignalPlanEditor: React.FC<SignalPlanEditorProps> = ({
                 </div>
             ) : (
                 <div style={emptyStyle}>
-                    <div style={{ color: "#c1cde0", fontSize: 14, fontWeight: 700 }}>이 교차로에 신호 Plan이 없습니다.</div>
+                    <div style={{ color: "var(--signal-text-primary)", fontSize: 14, fontWeight: 700 }}>이 교차로에 신호 Plan이 없습니다.</div>
                     <div style={{ marginTop: 6 }}>신호 TOD에서 사용할 P0/P1을 만들려면 Plan을 먼저 추가하세요.</div>
                     <button type="button" onClick={addPlan} style={{ ...primaryButtonStyle, marginTop: 14 }}>
                         + 첫 Plan 추가
@@ -750,10 +750,10 @@ const SignalPlanEditor: React.FC<SignalPlanEditorProps> = ({
 const inputStyle: React.CSSProperties = {
     height: 29,
     boxSizing: "border-box",
-    border: "1px solid #2c3951",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 5,
-    background: "#0d1523",
-    color: "#d7e0ef",
+    background: "rgb(var(--signal-surface-1-rgb))",
+    color: "var(--signal-text-primary)",
     padding: "4px 7px",
     fontSize: 11,
     outline: "none",
@@ -764,15 +764,15 @@ const toolbarStyle: React.CSSProperties = {
     alignItems: "center",
     minHeight: 42,
     padding: "7px 10px",
-    border: "1px solid #202c41",
+    border: "1px solid rgb(var(--signal-border-subtle-rgb))",
     borderRadius: 7,
-    background: "#0c1422",
+    background: "rgb(var(--signal-surface-1-rgb))",
 };
 
 const planCardStyle: React.CSSProperties = {
-    border: "2px solid #31517f",
+    border: "2px solid rgb(var(--signal-border-accent-rgb))",
     borderRadius: 9,
-    background: "#0b121f",
+    background: "rgb(var(--signal-surface-1-rgb))",
     padding: 11,
     overflow: "hidden",
 };
@@ -785,9 +785,9 @@ const planHeaderStyle: React.CSSProperties = {
     gap: 10,
     minHeight: 52,
     padding: "8px 12px",
-    borderBottom: "1px solid #2b4265",
+    borderBottom: "1px solid rgb(var(--signal-border-rgb))",
     margin: "-11px -11px 11px",
-    background: "linear-gradient(90deg, #12233b 0%, #0d1829 60%, #0c1422 100%)",
+    background: "linear-gradient(90deg, rgb(var(--signal-border-subtle-rgb)) 0%, rgb(var(--signal-surface-2-rgb)) 60%, rgb(var(--signal-surface-1-rgb)) 100%)",
 };
 
 const planHeaderMainStyle: React.CSSProperties = {
@@ -804,13 +804,13 @@ const planIdentityStyle: React.CSSProperties = {
     alignItems: "center",
     gap: 7,
     padding: "4px 8px",
-    border: "1px solid #31517f",
+    border: "1px solid rgb(var(--signal-border-accent-rgb))",
     borderRadius: 6,
-    background: "#10223b",
+    background: "rgb(var(--signal-surface-3-rgb))",
 };
 
 const planIdentityLabelStyle: React.CSSProperties = {
-    color: "#74a4ed",
+    color: "rgb(var(--signal-accent-text-rgb))",
     fontSize: 8,
     fontWeight: 900,
     letterSpacing: "0.12em",
@@ -819,21 +819,21 @@ const planIdentityLabelStyle: React.CSSProperties = {
 const planIdBadgeStyle: React.CSSProperties = {
     minWidth: 42,
     boxSizing: "border-box",
-    border: "1px solid #4778bc",
+    border: "1px solid rgb(var(--signal-border-accent-rgb))",
     borderRadius: 5,
     padding: "4px 8px",
-    background: "#173861",
-    color: "#d9e8ff",
+    background: "rgb(var(--signal-border-rgb))",
+    color: "var(--signal-text-primary)",
     fontSize: 13,
     textAlign: "center",
 };
 
 const planPhaseCountStyle: React.CSSProperties = {
-    border: "1px solid #2a3d59",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 10,
     padding: "3px 8px",
-    background: "#111d2e",
-    color: "#91a3bd",
+    background: "rgb(var(--signal-surface-3-rgb))",
+    color: "var(--signal-text-secondary)",
     fontSize: 9,
     whiteSpace: "nowrap",
 };
@@ -843,9 +843,9 @@ const phaseRowStyle: React.CSSProperties = {
     flexDirection: "column",
     gap: 8,
     padding: "9px 11px",
-    border: "1px solid #1e2a3e",
+    border: "1px solid rgb(var(--signal-border-subtle-rgb))",
     borderRadius: 8,
-    background: "#0d1625",
+    background: "rgb(var(--signal-surface-2-rgb))",
 };
 
 const phaseHeaderStyle: React.CSSProperties = {
@@ -854,7 +854,7 @@ const phaseHeaderStyle: React.CSSProperties = {
     alignItems: "center",
     gap: 9,
     paddingBottom: 9,
-    borderBottom: "1px solid #202d42",
+    borderBottom: "1px solid rgb(var(--signal-border-subtle-rgb))",
 };
 
 const phaseOrderStyle: React.CSSProperties = {
@@ -865,9 +865,9 @@ const phaseOrderStyle: React.CSSProperties = {
     alignItems: "center",
     justifyContent: "center",
     flexShrink: 0,
-    border: "1px solid #3766aa",
-    background: "#17345e",
-    color: "#c6dcff",
+    border: "1px solid rgb(var(--signal-border-accent-rgb))",
+    background: "rgb(var(--signal-border-rgb))",
+    color: "var(--signal-text-primary)",
     fontSize: 10,
     fontWeight: 800,
 };
@@ -875,17 +875,17 @@ const phaseOrderStyle: React.CSSProperties = {
 const accordionChevronStyle: React.CSSProperties = {
     width: 18,
     flexShrink: 0,
-    color: "#7fa8e5",
+    color: "rgb(var(--signal-accent-text-rgb))",
     fontSize: 9,
     textAlign: "center",
 };
 
 const phaseTimeStyle: React.CSSProperties = {
-    border: "1px solid #31415b",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 9,
     padding: "2px 7px",
-    background: "#111c2d",
-    color: "#9eb0c9",
+    background: "rgb(var(--signal-surface-3-rgb))",
+    color: "var(--signal-text-secondary)",
     fontSize: 9,
     fontFamily: "monospace",
 };
@@ -910,10 +910,10 @@ const activeMovementChipStyle: React.CSSProperties = {
     alignItems: "center",
     gap: 9,
     padding: "7px 9px",
-    border: "1px solid #315d94",
+    border: "1px solid rgb(var(--signal-border-accent-rgb))",
     borderRadius: 7,
-    background: "linear-gradient(135deg, #152c4c 0%, #101d31 100%)",
-    color: "#d4e1f4",
+    background: "linear-gradient(135deg, rgb(var(--signal-border-subtle-rgb)) 0%, rgb(var(--signal-surface-3-rgb)) 100%)",
+    color: "var(--signal-text-primary)",
     textAlign: "left",
     fontSize: 10,
     cursor: "pointer",
@@ -922,11 +922,11 @@ const activeMovementChipStyle: React.CSSProperties = {
 const activeTurnBadgeStyle: React.CSSProperties = {
     minWidth: 48,
     boxSizing: "border-box",
-    border: "1px solid #77a9f4",
+    border: "1px solid rgb(var(--signal-accent-text-rgb))",
     borderRadius: 6,
     padding: "6px 8px",
-    color: "#ffffff",
-    background: "#255894",
+    color: "var(--signal-text-primary)",
+    background: "rgb(var(--signal-border-accent-rgb))",
     fontSize: 13,
     fontWeight: 900,
     fontFamily: "monospace",
@@ -937,7 +937,7 @@ const activeDirectionStyle: React.CSSProperties = {
     display: "flex",
     alignItems: "center",
     gap: 6,
-    color: "#dce8f8",
+    color: "var(--signal-text-primary)",
 };
 
 const activeMovementInfoStyle: React.CSSProperties = {
@@ -948,7 +948,7 @@ const activeMovementInfoStyle: React.CSSProperties = {
 };
 
 const approachLinkStyle: React.CSSProperties = {
-    color: "#71829a",
+    color: "var(--signal-text-muted)",
     fontSize: 8,
     overflow: "hidden",
     textOverflow: "ellipsis",
@@ -956,10 +956,10 @@ const approachLinkStyle: React.CSSProperties = {
 };
 
 const mapHighlightHintStyle: React.CSSProperties = {
-    border: "1px solid #294b75",
+    border: "1px solid rgb(var(--signal-border-accent-rgb))",
     borderRadius: 9,
     padding: "2px 6px",
-    color: "#7898c0",
+    color: "var(--signal-text-secondary)",
     fontSize: 8,
     whiteSpace: "nowrap",
 };
@@ -971,11 +971,11 @@ const connectionHoverListStyle: React.CSSProperties = {
     gap: 4,
     marginTop: 2,
     paddingTop: 7,
-    borderTop: "1px solid #31547e",
+    borderTop: "1px solid rgb(var(--signal-border-accent-rgb))",
 };
 
 const connectionHoverTitleStyle: React.CSSProperties = {
-    color: "#9fc5f8",
+    color: "rgb(var(--signal-accent-text-rgb))",
     fontSize: 9,
     fontWeight: 800,
 };
@@ -987,28 +987,28 @@ const connectionHoverRowStyle: React.CSSProperties = {
     gap: 7,
     minHeight: 25,
     padding: "3px 7px",
-    border: "1px solid #28466d",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 5,
-    background: "#0d1b2e",
-    color: "#8ea5c3",
+    background: "rgb(var(--signal-surface-3-rgb))",
+    color: "var(--signal-text-secondary)",
     fontSize: 8,
 };
 
 const connectionMissingStyle: React.CSSProperties = {
     padding: "6px 7px",
-    border: "1px dashed #71505a",
+    border: "1px dashed rgb(var(--signal-danger-border-rgb))",
     borderRadius: 5,
-    color: "#d08a96",
-    background: "#21151c",
+    color: "var(--signal-danger)",
+    background: "rgb(var(--signal-danger-surface-rgb))",
     fontSize: 8,
 };
 
 const noMovementStyle: React.CSSProperties = {
     padding: "10px",
-    border: "1px dashed #594a30",
+    border: "1px dashed rgb(var(--signal-danger-border-rgb))",
     borderRadius: 6,
-    color: "#c49a58",
-    background: "#1b1811",
+    color: "var(--signal-warning)",
+    background: "rgb(var(--signal-warning-surface-rgb))",
     fontSize: 10,
 };
 
@@ -1017,14 +1017,14 @@ const changeMovementButtonStyle: React.CSSProperties = {
     display: "inline-flex",
     alignItems: "center",
     gap: 6,
-    border: "1px solid #6499eb",
+    border: "1px solid var(--signal-accent)",
     borderRadius: 6,
-    background: "#225493",
-    color: "#ffffff",
+    background: "rgb(var(--signal-border-accent-rgb))",
+    color: "var(--signal-text-primary)",
     padding: "0 12px",
     fontSize: 10,
     fontWeight: 800,
-    boxShadow: "0 3px 10px rgba(28, 83, 151, 0.35)",
+    boxShadow: "0 3px 10px rgba(var(--signal-accent-rgb), 0.35)",
     cursor: "pointer",
 };
 
@@ -1032,9 +1032,9 @@ const movementChooserStyle: React.CSSProperties = {
     width: "100%",
     boxSizing: "border-box",
     padding: "9px",
-    border: "1px solid #293850",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 7,
-    background: "#09111e",
+    background: "rgb(var(--signal-surface-1-rgb))",
 };
 
 const phaseDeleteButtonStyle: React.CSSProperties = {
@@ -1042,7 +1042,7 @@ const phaseDeleteButtonStyle: React.CSSProperties = {
     border: "1px solid transparent",
     borderRadius: 5,
     background: "transparent",
-    color: "#ba727b",
+    color: "var(--signal-danger)",
     padding: "0 7px",
     fontSize: 9,
     cursor: "pointer",
@@ -1061,15 +1061,15 @@ const cycleSummaryStyle: React.CSSProperties = {
     alignItems: "center",
     gap: 7,
     padding: "0 10px",
-    border: "1px solid #2b3b55",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 6,
-    background: "#101a2a",
-    color: "#c6dcff",
+    background: "rgb(var(--signal-surface-2-rgb))",
+    color: "var(--signal-text-primary)",
     fontSize: 10,
 };
 
 const fieldLabelStyle: React.CSSProperties = {
-    color: "#74829a",
+    color: "var(--signal-text-muted)",
     fontSize: 9,
     fontWeight: 700,
 };
@@ -1119,10 +1119,10 @@ const candidateStateStyle: React.CSSProperties = {
 
 const primaryButtonStyle: React.CSSProperties = {
     height: 29,
-    border: "1px solid #376bc0",
+    border: "1px solid rgb(var(--signal-border-accent-rgb))",
     borderRadius: 5,
-    background: "#17396d",
-    color: "#bcd5ff",
+    background: "rgb(var(--signal-border-rgb))",
+    color: "var(--signal-text-primary)",
     padding: "0 11px",
     fontSize: 10,
     fontWeight: 700,
@@ -1131,17 +1131,17 @@ const primaryButtonStyle: React.CSSProperties = {
 
 const autoGenerateButtonStyle: React.CSSProperties = {
     ...primaryButtonStyle,
-    borderColor: "#7a5a19",
-    background: "#2b210c",
-    color: "#edc45e",
+    borderColor: "rgb(var(--signal-warning-border-rgb))",
+    background: "rgb(var(--signal-warning-surface-rgb))",
+    color: "var(--signal-warning)",
 };
 
 const secondaryButtonStyle: React.CSSProperties = {
     height: 28,
-    border: "1px solid #2b3a52",
+    border: "1px solid rgb(var(--signal-border-rgb))",
     borderRadius: 5,
-    background: "#111b2b",
-    color: "#9eacc1",
+    background: "rgb(var(--signal-surface-2-rgb))",
+    color: "var(--signal-text-secondary)",
     padding: "0 9px",
     fontSize: 10,
     cursor: "pointer",
@@ -1149,10 +1149,10 @@ const secondaryButtonStyle: React.CSSProperties = {
 
 const deleteButtonStyle: React.CSSProperties = {
     height: 28,
-    border: "1px solid #57323b",
+    border: "1px solid rgb(var(--signal-danger-border-rgb))",
     borderRadius: 5,
-    background: "#24151b",
-    color: "#e48791",
+    background: "rgb(var(--signal-danger-surface-rgb))",
+    color: "var(--signal-danger)",
     padding: "0 9px",
     fontSize: 10,
     cursor: "pointer",
@@ -1161,19 +1161,19 @@ const deleteButtonStyle: React.CSSProperties = {
 const issueBoxStyle: React.CSSProperties = {
     marginBottom: 9,
     padding: "7px 9px",
-    border: "1px solid #65343e",
+    border: "1px solid rgb(var(--signal-danger-border-rgb))",
     borderRadius: 6,
-    background: "#27151b",
-    color: "#f09aa2",
+    background: "rgb(var(--signal-danger-surface-rgb))",
+    color: "var(--signal-danger)",
     fontSize: 10,
     lineHeight: 1.55,
 };
 
 const issueBadgeStyle: React.CSSProperties = {
-    border: "1px solid #6e3540",
+    border: "1px solid rgb(var(--signal-danger-border-rgb))",
     borderRadius: 10,
-    background: "#321820",
-    color: "#f08b96",
+    background: "rgb(var(--signal-danger-surface-rgb))",
+    color: "var(--signal-danger)",
     padding: "3px 7px",
     fontSize: 9,
     fontWeight: 700,
@@ -1181,9 +1181,9 @@ const issueBadgeStyle: React.CSSProperties = {
 
 const phaseEmptyStyle: React.CSSProperties = {
     padding: 15,
-    border: "1px dashed #334057",
+    border: "1px dashed rgb(var(--signal-border-rgb))",
     borderRadius: 6,
-    color: "#7d899d",
+    color: "var(--signal-text-muted)",
     textAlign: "center",
     fontSize: 10,
 };
@@ -1192,12 +1192,12 @@ const emptyStyle: React.CSSProperties = {
     margin: "45px auto",
     maxWidth: 430,
     padding: 24,
-    border: "1px dashed #2b3950",
+    border: "1px dashed rgb(var(--signal-border-rgb))",
     borderRadius: 8,
-    color: "#8290a6",
+    color: "var(--signal-text-muted)",
     textAlign: "center",
     fontSize: 11,
-    background: "#0b121f",
+    background: "rgb(var(--signal-surface-1-rgb))",
 };
 
 export default SignalPlanEditor;

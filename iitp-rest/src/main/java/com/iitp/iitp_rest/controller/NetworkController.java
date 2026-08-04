@@ -66,6 +66,7 @@ public class NetworkController {
 
     private final NetworkService networkService;
     private final NetworkTileService networkTileService;
+    private final com.iitp.iitp_rest.service.network.NetworkGeometryIndexService networkGeometryIndexService;
     private final NetworkReachabilityService networkReachabilityService;
     // ⚠️ deleteDependentData가 signal/busStation/railStation/pavementMarking DB 레코드를
     // 지우면서도 그 4개 타일 캐시는 무효화하지 않아, 재임포트 사이 시점에 타일 요청이 오면
@@ -419,6 +420,7 @@ public class NetworkController {
                         });
                 xmlLayerVersionService.deleteVersion(LAYER_KEY, versionId); // stale jsonb → 파일 폴백
                 networkTileService.invalidate(versionId);
+                networkGeometryIndexService.invalidate(versionId);
                 return ResponseEntity.ok(Map.of("linkIdRemap", Map.of(), "nodeIdRemap", Map.of(),
                         "odNodeIdRemap", Map.of(), "odPrunedDemandCount", unreachableRemovedLarge[0]));
             }
@@ -440,6 +442,7 @@ public class NetworkController {
             Map<String, Object> cleanData = XmlLayerConverter.toMap(merged);
             xmlLayerVersionService.save(LAYER_KEY, versionId, cleanData, new com.iitp.iitp_rest.model.LogsData());
             networkTileService.invalidate(versionId);
+            networkGeometryIndexService.invalidate(versionId);
 
             Map<String, String> odBandRemap = Map.of();
             int prunedOdDemandCount = 0;
@@ -586,6 +589,7 @@ public class NetworkController {
             xmlLayerVersionService.save(LAYER_KEY, versionId, cleanData, request.getLogs());
             // 편집 저장 시 타일 캐시 무효화 → 다음 타일 요청에서 재빌드
             networkTileService.invalidate(versionId);
+            networkGeometryIndexService.invalidate(versionId);
             // vehicle 시뮬레이션이 network.xml을 HTTP로 읽으므로 파일도 동기화
             try {
                 NetworkResponse response = XmlLayerConverter.fromMap(cleanData, NetworkResponse.class);
@@ -707,6 +711,7 @@ public class NetworkController {
         // 첫 타일 요청이 캐시 히트가 되어 "지도 반영 순간 멈춤"을 import 처리 시간에 흡수.
         try {
             networkTileService.invalidate(versionId);
+            networkGeometryIndexService.invalidate(versionId);
             networkTileService.ingest(versionId, response);
         } catch (Exception e) {
             log.warn("[importNetworkXml] 타일 사전 빌드 실패 (첫 요청 시 lazy 빌드로 폴백): {}", e.getMessage());
@@ -757,6 +762,7 @@ public class NetworkController {
 
             try {
                 networkTileService.invalidate(versionId);
+                networkGeometryIndexService.invalidate(versionId);
                 networkTileService.ingest(versionId, response);
             } catch (Exception e) {
                 log.warn("[reanchorNetwork] 타일 사전 빌드 실패 (첫 요청 시 lazy 빌드로 폴백): {}", e.getMessage());
@@ -819,6 +825,7 @@ public class NetworkController {
 
             try {
                 networkTileService.invalidate(versionId);
+                networkGeometryIndexService.invalidate(versionId);
                 networkTileService.ingest(versionId, response);
             } catch (Exception e) {
                 log.warn("[calibrateNetwork] 타일 사전 빌드 실패 (첫 요청 시 lazy 빌드로 폴백): {}", e.getMessage());

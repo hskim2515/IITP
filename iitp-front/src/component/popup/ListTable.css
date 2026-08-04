@@ -1,18 +1,24 @@
 /* ── ag-Grid Dark Theme Overrides ──────────────────────────────── */
+/* GridTable.module.css의 :global(.ag-dark-custom.ag-theme-alpine)와 완전히 동일한 전역 셀렉터를
+   이 파일도 정의한다(이 파일은 CSS 모듈이 아니라 일반 global CSS라 애초에 스코프가 없다) —
+   두 파일 중 어느 쪽이 번들 순서상 나중에 로드되든 캐스케이드로 서로를 덮어쓸 수 있는 구조라,
+   두 값이 갈라지면 로드 순서에 따라 결과가 달라지는 취약한 상태가 된다. 그래서 값 자체를
+   GridTable.module.css와 동일한 토큰으로 맞춰 어느 쪽이 이기든 결과가 같도록 한다 — 같은 이유로
+   바뀌는 지식 중복이라 한쪽만 고치면 갈라진다(GridTable.module.css:71-90 참고). */
 .ag-dark-custom.ag-theme-alpine {
     --ag-background-color: transparent;
-    --ag-foreground-color: #c8ccd4;
-    --ag-secondary-foreground-color: #888;
-    --ag-header-background-color: rgba(255, 255, 255, 0.04);
-    --ag-header-foreground-color: #999;
-    --ag-border-color: rgba(255, 255, 255, 0.07);
-    --ag-secondary-border-color: rgba(255, 255, 255, 0.05);
-    --ag-odd-row-background-color: rgba(255, 255, 255, 0.015);
-    --ag-row-hover-color: rgba(65, 105, 225, 0.1);
-    --ag-selected-row-background-color: rgba(65, 105, 225, 0.18);
-    --ag-input-focus-border-color: rgba(65, 105, 225, 0.6);
-    --ag-checkbox-checked-color: #4169E1;
-    --ag-range-selection-border-color: rgba(65, 105, 225, 0.5);
+    --ag-foreground-color: var(--text-secondary);
+    --ag-secondary-foreground-color: var(--text-muted);
+    --ag-header-background-color: rgba(var(--overlay-rgb), 0.04);
+    --ag-header-foreground-color: var(--text-muted);
+    --ag-border-color: rgba(var(--overlay-rgb), 0.07);
+    --ag-secondary-border-color: rgba(var(--overlay-rgb), 0.05);
+    --ag-odd-row-background-color: rgba(var(--overlay-rgb), 0.015);
+    --ag-row-hover-color: rgba(var(--accent-rgb), 0.1);
+    --ag-selected-row-background-color: rgba(var(--accent-rgb), 0.18);
+    --ag-input-focus-border-color: rgba(var(--accent-rgb), 0.6);
+    --ag-checkbox-checked-color: var(--accent);
+    --ag-range-selection-border-color: rgba(var(--accent-rgb), 0.5);
     --ag-font-size: 12px;
     --ag-font-family: 'Segoe UI', sans-serif;
     --ag-cell-horizontal-padding: 10px;
@@ -20,26 +26,26 @@
     --ag-header-height: 34px;
 }
 
-/* Filter input dark */
+/* Filter input */
 .ag-dark-custom .ag-filter-toolpanel-instance-filter,
 .ag-dark-custom .ag-text-field-input {
-    background: rgba(255, 255, 255, 0.06) !important;
-    color: #ccc !important;
-    border-color: rgba(255, 255, 255, 0.12) !important;
+    background: rgba(var(--overlay-rgb), 0.06) !important;
+    color: var(--text-secondary) !important;
+    border-color: rgba(var(--overlay-rgb), 0.12) !important;
 }
 
-/* Popup / menu dark */
+/* Popup / menu */
 .ag-dark-custom .ag-menu,
 .ag-dark-custom .ag-popup {
-    background: #0d0f1a !important;
-    border: 1px solid rgba(255, 255, 255, 0.1) !important;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6) !important;
+    background: rgba(var(--surface-popover-rgb), 0.97) !important;
+    border: 1px solid rgba(var(--overlay-rgb), 0.1) !important;
+    box-shadow: 0 8px 24px rgba(var(--surface-overlay-rgb), 0.6) !important;
 }
 
 .ag-dark-custom .ag-menu-option-active,
 .ag-dark-custom .ag-menu-option:hover {
-    background: rgba(65, 105, 225, 0.18) !important;
-    color: #fff !important;
+    background: rgba(var(--accent-rgb), 0.18) !important;
+    color: var(--text-primary) !important;
 }
 
 .ag-dark-custom .ag-column-header-text {
@@ -66,7 +72,7 @@
 
 .ag-dark-custom .ag-body-horizontal-scroll-viewport::-webkit-scrollbar-thumb,
 .ag-dark-custom .ag-body-vertical-scroll-viewport::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(var(--overlay-rgb), 0.12);
     border-radius: 2px;
 }
 
@@ -74,7 +80,7 @@
 .ag-dark-custom .ag-body-horizontal-scroll-viewport,
 .ag-dark-custom .ag-body-vertical-scroll-viewport {
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+    scrollbar-color: rgba(var(--overlay-rgb), 0.12) transparent;
 }
 
 /* 가로 스크롤 줄의 좌/우 spacer 는 ag-grid.css 에서 `overflow-x: scroll` 이라 pinned 컬럼 폭만큼

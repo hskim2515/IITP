@@ -8,13 +8,13 @@
     /* 값이 길어도 가로 스크롤을 만들지 않는다 — tdValue 의 overflowWrap:break-word 로 접힌다 */
     overflow-x: hidden;
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+    scrollbar-color: rgba(var(--overlay-rgb), 0.15) transparent;
 }
 
 .arrayList {
     overflow-x: hidden;
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+    scrollbar-color: rgba(var(--overlay-rgb), 0.15) transparent;
 }
 
 .scrollArea::-webkit-scrollbar,
@@ -30,11 +30,11 @@
 
 .scrollArea::-webkit-scrollbar-thumb,
 .arrayList::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(var(--overlay-rgb), 0.15);
     border-radius: 2px;
 }
 
 .scrollArea::-webkit-scrollbar-thumb:hover,
 .arrayList::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.28);
+    background: rgba(var(--overlay-rgb), 0.28);
 }

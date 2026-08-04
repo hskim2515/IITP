@@ -14,30 +14,30 @@ import { useRailStationStore } from '@stores/useRailStationStore';
 const barStyle: React.CSSProperties = {
     position: 'fixed', top: 54, left: '50%', transform: 'translateX(-50%)', zIndex: 3500,
     display: 'flex', alignItems: 'center', gap: 8,
-    background: 'rgba(14,16,28,0.97)',
-    border: '1px solid rgba(255,255,255,0.14)',
+    background: 'rgba(var(--surface-1-rgb), 0.97)',
+    border: '1px solid rgba(var(--overlay-rgb), 0.14)',
     borderRadius: 8,
     padding: '6px 10px',
-    boxShadow: '0 8px 28px rgba(0,0,0,0.6)',
+    boxShadow: '0 8px 28px rgba(var(--surface-overlay-rgb), 0.6)',
     userSelect: 'none',
     whiteSpace: 'nowrap',
 };
 const btnStyle: React.CSSProperties = {
     padding: '5px 10px', borderRadius: 5, cursor: 'pointer',
-    border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.06)',
-    color: '#ccc', fontSize: 12, fontWeight: 600,
+    border: '1px solid rgba(var(--overlay-rgb), 0.14)', background: 'rgba(var(--overlay-rgb), 0.06)',
+    color: 'var(--text-secondary)', fontSize: 12, fontWeight: 600,
 };
 const primaryBtnStyle: React.CSSProperties = {
     ...btnStyle,
-    border: '1px solid rgba(122,162,255,0.4)', background: 'rgba(122,162,255,0.15)', color: '#7aa2ff',
+    border: '1px solid rgba(var(--accent-text-rgb), 0.4)', background: 'rgba(var(--accent-text-rgb), 0.15)', color: 'var(--accent-text)',
 };
 const dangerBtnStyle: React.CSSProperties = {
     ...btnStyle,
-    border: '1px solid rgba(220,50,50,0.35)', background: 'rgba(220,50,50,0.12)', color: '#ff6b6b',
+    border: '1px solid rgba(var(--color-danger-rgb), 0.35)', background: 'rgba(var(--color-danger-rgb), 0.12)', color: 'var(--color-danger)',
 };
 const selectStyle: React.CSSProperties = {
-    background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)',
-    color: '#ccc', fontSize: 12, padding: '4px 6px', borderRadius: 4,
+    background: 'rgba(var(--overlay-rgb), 0.06)', border: '1px solid rgba(var(--overlay-rgb), 0.12)',
+    color: 'var(--text-secondary)', fontSize: 12, padding: '4px 6px', borderRadius: 4,
 };
 
 const BUS_LINE_SET_LABELS: Record<BusLineSet, string> = {
@@ -154,10 +154,10 @@ const RouteDrawToolbar: React.FC = () => {
 
     return (
         <div style={barStyle}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: mode === 'bus' ? '#7aa2ff' : '#ffb347' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, color: mode === 'bus' ? 'var(--accent-text)' : 'var(--color-warning)' }}>
                 {mode === 'bus' ? '🚌 버스 노선 그리기' : '🚆 철도 노선 그리기'}
             </span>
-            <span style={{ fontSize: 12, color: '#888' }}>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                 {draft.length === 0 ? '정류장을 순서대로 클릭하세요' : draft.map((d) => `#${d.id}`).join(' → ')}
             </span>
             {mode === 'bus' && (

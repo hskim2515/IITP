@@ -4,20 +4,20 @@
     right: 0;
     width: 320px;
     background: #2a2a2a;
-    border: 1px solid #444;
+    border: 1px solid var(--text-disabled);
     border-radius: 6px;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 6px 20px rgba(var(--surface-overlay-rgb), 0.5);
     z-index: 1100;
-    color: #fff;
+    color: var(--text-primary);
     font-size: 13px;
 }
 
 .panelInline {
     width: 100%;
     background: transparent;
-    color: #fff;
+    color: var(--text-primary);
     font-size: 13px;
-    border-top: 1px solid #444;
+    border-top: 1px solid var(--text-disabled);
     margin-top: 8px;
     padding-top: 4px;
 }
@@ -28,19 +28,19 @@
     align-items: center;
     justify-content: space-between;
     padding: 10px 14px;
-    border-bottom: 1px solid #444;
+    border-bottom: 1px solid var(--text-disabled);
 }
 
 .title {
     font-size: 13px;
     font-weight: 600;
-    color: #ccc;
+    color: var(--text-secondary);
 }
 
 .closeBtn {
     background: none;
     border: none;
-    color: #888;
+    color: var(--text-muted);
     cursor: pointer;
     font-size: 14px;
     padding: 0 2px;
@@ -48,13 +48,13 @@
 }
 
 .closeBtn:hover {
-    color: #fff;
+    color: var(--text-primary);
 }
 
 /* 타입 탭 */
 .tabs {
     display: flex;
-    border-bottom: 1px solid #444;
+    border-bottom: 1px solid var(--text-disabled);
 }
 
 .tab {
@@ -63,19 +63,19 @@
     background: none;
     border: none;
     border-bottom: 2px solid transparent;
-    color: #888;
+    color: var(--text-muted);
     font-size: 11px;
     cursor: pointer;
     transition: color 0.15s, border-color 0.15s;
 }
 
 .tab:hover {
-    color: #ccc;
+    color: var(--text-secondary);
 }
 
 .tabActive {
-    color: #7aa2ff;
-    border-bottom-color: #7aa2ff;
+    color: var(--accent-text);
+    border-bottom-color: var(--accent-text);
 }
 
 /* 본문 */
@@ -88,7 +88,7 @@
 
 .typeLabel {
     font-size: 12px;
-    color: #aaa;
+    color: var(--text-tertiary);
     margin-bottom: 2px;
 }
 
@@ -102,23 +102,23 @@
 .axisLabel {
     width: 52px;
     font-size: 12px;
-    color: #999;
+    color: var(--text-muted);
     flex-shrink: 0;
 }
 
 .slider {
     flex: 1;
     height: 4px;
-    accent-color: #7aa2ff;
+    accent-color: var(--accent-text);
     cursor: pointer;
 }
 
 .numInput {
     width: 48px;
     background: #1a1a1a;
-    border: 1px solid #555;
+    border: 1px solid var(--text-disabled);
     border-radius: 3px;
-    color: #fff;
+    color: var(--text-primary);
     font-size: 12px;
     padding: 2px 4px;
     text-align: right;
@@ -133,20 +133,20 @@
 
 .numInput:focus {
     outline: none;
-    border-color: #7aa2ff;
+    border-color: var(--accent-text);
 }
 
 .unit {
     width: 10px;
     font-size: 11px;
-    color: #666;
+    color: var(--text-disabled);
     flex-shrink: 0;
 }
 
 /* 도움말 */
 .hint {
     font-size: 11px;
-    color: #666;
+    color: var(--text-disabled);
     line-height: 1.5;
     border-top: 1px solid #3a3a3a;
     padding-top: 8px;
@@ -156,9 +156,9 @@
 .resetBtn {
     align-self: flex-end;
     background: #333;
-    border: 1px solid #555;
+    border: 1px solid var(--text-disabled);
     border-radius: 4px;
-    color: #aaa;
+    color: var(--text-tertiary);
     font-size: 11px;
     padding: 4px 10px;
     cursor: pointer;
@@ -166,6 +166,6 @@
 }
 
 .resetBtn:hover {
-    background: #444;
-    color: #fff;
+    background: var(--text-disabled);
+    color: var(--text-primary);
 }

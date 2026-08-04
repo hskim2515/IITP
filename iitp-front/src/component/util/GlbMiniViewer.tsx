@@ -204,8 +204,8 @@ const GlbMiniViewer: React.FC<Props> = ({ glbUrl, hprRad, zOffset = 0 }) => {
                 style={{
                     width: '100%', height: 240,
                     borderRadius: 8, overflow: 'hidden',
-                    background: '#0d0f1a',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'rgb(var(--surface-1-rgb))',
+                    border: '1px solid rgba(var(--overlay-rgb), 0.08)',
                 }}
             />
 
@@ -229,7 +229,7 @@ const GlbMiniViewer: React.FC<Props> = ({ glbUrl, hprRad, zOffset = 0 }) => {
                 <div style={{
                     position: 'absolute', inset: 0, borderRadius: 8,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: 'rgba(13,15,26,0.65)', fontSize: 12, color: '#666',
+                    background: 'rgba(var(--surface-1-rgb), 0.65)', fontSize: 12, color: 'rgba(var(--overlay-rgb), 0.4)',
                     pointerEvents: 'none',
                 }}>
                     모델 로딩 중...
@@ -239,7 +239,7 @@ const GlbMiniViewer: React.FC<Props> = ({ glbUrl, hprRad, zOffset = 0 }) => {
                 <div style={{
                     position: 'absolute', inset: 0, borderRadius: 8,
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: 'rgba(13,15,26,0.65)', fontSize: 12, color: '#f87171',
+                    background: 'rgba(var(--surface-1-rgb), 0.65)', fontSize: 12, color: 'var(--color-danger)',
                     pointerEvents: 'none',
                 }}>
                     GLB 로딩 실패 (파일 형식 또는 경로 확인)

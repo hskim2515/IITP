@@ -41,9 +41,9 @@ const ScenarioPreviewPopover: React.FC<Props> = ({ scenario, onSelectVersion }) 
             style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, paddingTop: 8 }}
         >
             <div style={{
-                background: 'rgba(18,20,30,0.98)', backdropFilter: 'blur(16px)',
-                border: '1px solid rgba(0,234,255,0.25)', borderRadius: 10,
-                boxShadow: '0 12px 32px rgba(0,0,0,0.6)', padding: 12,
+                background: 'rgba(var(--surface-popover-rgb), 0.98)', backdropFilter: 'blur(16px)',
+                border: '1px solid rgba(var(--scenario-accent-rgb), 0.25)', borderRadius: 10,
+                boxShadow: '0 12px 32px rgba(var(--surface-overlay-rgb), 0.6)', padding: 12,
                 display: 'flex', flexDirection: 'column', gap: 8, textAlign: 'left', cursor: 'default',
             }}>
                 <div style={{ width: '100%', height: 130 }}>
@@ -52,7 +52,7 @@ const ScenarioPreviewPopover: React.FC<Props> = ({ scenario, onSelectVersion }) 
                     ) : (
                         <div style={{
                             width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            background: '#0c0d15', borderRadius: 6, fontSize: 11, color: '#666',
+                            background: 'rgb(var(--surface-2-rgb))', borderRadius: 6, fontSize: 11, color: 'rgba(var(--overlay-rgb), 0.4)',
                         }}>
                             {versions === null ? '불러오는 중...' : '버전 없음'}
                         </div>
@@ -61,10 +61,10 @@ const ScenarioPreviewPopover: React.FC<Props> = ({ scenario, onSelectVersion }) 
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 3, maxHeight: 110, overflowY: 'auto' }}>
                     {versions === null && (
-                        <span style={{ fontSize: 11, color: '#777' }}>버전 정보를 불러오는 중...</span>
+                        <span style={{ fontSize: 11, color: 'rgba(var(--overlay-rgb), 0.4)' }}>버전 정보를 불러오는 중...</span>
                     )}
                     {versions?.length === 0 && (
-                        <span style={{ fontSize: 11, color: '#777' }}>등록된 버전이 없습니다.</span>
+                        <span style={{ fontSize: 11, color: 'rgba(var(--overlay-rgb), 0.4)' }}>등록된 버전이 없습니다.</span>
                     )}
                     {versions?.map((v) => (
                         <div
@@ -75,19 +75,19 @@ const ScenarioPreviewPopover: React.FC<Props> = ({ scenario, onSelectVersion }) 
                             style={{
                                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                                 padding: '4px 7px', borderRadius: 5, cursor: 'pointer',
-                                background: v.key === selectedKey ? 'rgba(0,234,255,0.12)' : 'transparent',
-                                border: `1px solid ${v.key === selectedKey ? 'rgba(0,234,255,0.35)' : 'transparent'}`,
+                                background: v.key === selectedKey ? 'rgba(var(--scenario-accent-rgb), 0.12)' : 'transparent',
+                                border: `1px solid ${v.key === selectedKey ? 'rgba(var(--scenario-accent-rgb), 0.35)' : 'transparent'}`,
                             }}
                         >
-                            <span style={{ fontSize: 12, color: v.key === selectedKey ? '#00eaff' : '#ccc', fontWeight: 600 }}>
+                            <span style={{ fontSize: 12, color: v.key === selectedKey ? 'var(--scenario-accent)' : 'var(--text-secondary)', fontWeight: 600 }}>
                                 {v.label}
                             </span>
                             <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                <span style={{ fontSize: 10, color: '#666' }}>
+                                <span style={{ fontSize: 10, color: 'rgba(var(--overlay-rgb), 0.4)' }}>
                                     {(v.modifyDate ?? v.insertDate ?? '').slice(0, 10)}
                                 </span>
                                 {v.key === selectedKey && (
-                                    <span style={{ fontSize: 10, color: '#00eaff' }}>편집 →</span>
+                                    <span style={{ fontSize: 10, color: 'var(--scenario-accent)' }}>편집 →</span>
                                 )}
                             </span>
                         </div>

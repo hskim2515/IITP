@@ -28,14 +28,14 @@
 /* ── Panel ────────────────────────────────────────────────────── */
 .panel {
     pointer-events: all;
-    background: rgba(8, 10, 20, 0.96);
+    background: rgba(var(--surface-panel-rgb), 0.96);
     backdrop-filter: blur(18px);
     -webkit-backdrop-filter: blur(18px);
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    border-left: 1px solid rgba(255, 255, 255, 0.06);
-    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid rgba(var(--overlay-rgb), 0.1);
+    border-left: 1px solid rgba(var(--overlay-rgb), 0.06);
+    border-right: 1px solid rgba(var(--overlay-rgb), 0.06);
     border-radius: 14px 14px 0 0;
-    box-shadow: 0 -8px 36px rgba(0, 0, 0, 0.6), 0 -1px 0 rgba(255,255,255,0.04);
+    box-shadow: 0 -8px 36px rgba(var(--surface-overlay-rgb), 0.6), 0 -1px 0 rgba(var(--overlay-rgb), 0.04);
     display: flex;
     flex-direction: column;
     /* height:100% 가 아니라 overlay 가 배분해 주는 높이를 받는다 — overlay 의 max-height
@@ -59,13 +59,13 @@
 .handleBar {
     width: 40px;
     height: 3px;
-    background: rgba(255, 255, 255, 0.14);
+    background: var(--fill-active);
     border-radius: 2px;
     transition: background 0.15s;
 }
 
 .handle:hover .handleBar {
-    background: rgba(255, 255, 255, 0.28);
+    background: rgba(var(--overlay-rgb), 0.28);
 }
 
 /* ── Header ───────────────────────────────────────────────────── */
@@ -74,7 +74,7 @@
     align-items: center;
     gap: 8px;
     padding: 6px 14px 8px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid var(--border-subtle);
     flex-shrink: 0;
     min-height: 40px;
 }
@@ -90,15 +90,15 @@
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #4169E1;
-    box-shadow: 0 0 7px rgba(65, 105, 225, 0.7);
+    background: var(--accent);
+    box-shadow: 0 0 7px rgba(var(--accent-rgb), 0.7);
     flex-shrink: 0;
 }
 
 .title {
     font-size: 12px;
     font-weight: 600;
-    color: #ccc;
+    color: var(--text-secondary);
     letter-spacing: 0.2px;
     white-space: nowrap;
 }
@@ -115,7 +115,7 @@
 .divider {
     width: 1px;
     height: 14px;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--overlay-rgb), 0.1);
     flex-shrink: 0;
     margin: 0 3px;
 }
@@ -147,38 +147,38 @@
 
 .saveBtn {
     composes: btn;
-    background: rgba(65, 105, 225, 0.2);
-    border-color: rgba(65, 105, 225, 0.42);
-    color: #7aa2ff;
+    background: rgba(var(--accent-rgb), 0.2);
+    border-color: rgba(var(--accent-rgb), 0.42);
+    color: var(--accent-text);
 }
 
 .saveBtn:hover {
-    background: rgba(65, 105, 225, 0.35);
-    border-color: rgba(65, 105, 225, 0.68);
+    background: rgba(var(--accent-rgb), 0.35);
+    border-color: rgba(var(--accent-rgb), 0.68);
 }
 
 .revertBtn {
     composes: btn;
-    background: rgba(255, 165, 0, 0.12);
-    border-color: rgba(255, 165, 0, 0.3);
-    color: #fbbf24;
+    background: rgba(var(--color-warning-rgb), 0.12);
+    border-color: rgba(var(--color-warning-rgb), 0.3);
+    color: var(--color-warning);
 }
 
 .revertBtn:hover {
-    background: rgba(255, 165, 0, 0.22);
-    border-color: rgba(255, 165, 0, 0.5);
+    background: rgba(var(--color-warning-rgb), 0.22);
+    border-color: rgba(var(--color-warning-rgb), 0.5);
 }
 
 .historyBtn {
     composes: btn;
-    background: rgba(255, 255, 255, 0.05);
-    border-color: rgba(255, 255, 255, 0.1);
-    color: #999;
+    background: rgba(var(--overlay-rgb), 0.05);
+    border-color: rgba(var(--overlay-rgb), 0.1);
+    color: var(--text-muted);
 }
 
 .historyBtn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #ccc;
+    background: rgba(var(--overlay-rgb), 0.1);
+    color: var(--text-secondary);
 }
 
 .historyBtnActive,
@@ -190,15 +190,15 @@
 
 .debugBtn {
     composes: btn;
-    background: rgba(255, 255, 255, 0.03);
-    border-color: rgba(255, 255, 255, 0.07);
-    color: #555;
+    background: rgba(var(--overlay-rgb), 0.03);
+    border-color: var(--border-subtle);
+    color: var(--text-disabled);
     font-size: 10px;
 }
 
 .debugBtn:hover {
-    color: #888;
-    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-muted);
+    background: rgba(var(--overlay-rgb), 0.06);
 }
 
 /* ── Icon Buttons (size / close) ──────────────────────────────── */
@@ -210,9 +210,9 @@
     height: 24px;
     border-radius: 5px;
     cursor: pointer;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(255, 255, 255, 0.04);
-    color: #777;
+    border: 1px solid rgba(var(--overlay-rgb), 0.08);
+    background: rgba(var(--overlay-rgb), 0.04);
+    color: var(--text-muted);
     font-size: 11px;
     transition: background 0.15s, color 0.15s, border-color 0.15s;
     padding: 0;
@@ -220,9 +220,9 @@
 }
 
 .iconBtn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #ccc;
-    border-color: rgba(255, 255, 255, 0.16);
+    background: rgba(var(--overlay-rgb), 0.1);
+    color: var(--text-secondary);
+    border-color: rgba(var(--overlay-rgb), 0.16);
 }
 
 .closeIconBtn {
@@ -230,9 +230,9 @@
 }
 
 .closeIconBtn:hover {
-    background: rgba(239, 68, 68, 0.18);
-    border-color: rgba(239, 68, 68, 0.35);
-    color: #fca5a5;
+    background: rgba(var(--color-danger-rgb), 0.18);
+    border-color: rgba(var(--color-danger-rgb), 0.35);
+    color: var(--color-danger);
 }
 
 /* ── Body ─────────────────────────────────────────────────────── */
@@ -272,7 +272,7 @@
 .body::-webkit-scrollbar-track,
 .bodyFull::-webkit-scrollbar-track { background: transparent; }
 .body::-webkit-scrollbar-thumb,
-.bodyFull::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
+.bodyFull::-webkit-scrollbar-thumb { background: rgba(var(--overlay-rgb), 0.1); border-radius: 2px; }
 
 /* ── Grid container inside body ───────────────────────────────── */
 /* height:90% 하드코딩 대신 남은 높이를 채운다 */
@@ -300,12 +300,14 @@
     padding: 6px 10px;
     margin-bottom: 6px;
     border-radius: 4px;
-    background: rgba(255, 193, 7, 0.15);
-    border: 1px solid rgba(255, 193, 7, 0.4);
+    background: rgba(var(--color-warning-rgb), 0.15);
+    border: 1px solid rgba(var(--color-warning-rgb), 0.4);
+    /* 배너 자체가 밝은 색조 배경이라 다크/라이트 모드와 무관하게 항상 어두운 텍스트가
+       필요하다 — 토큰화하지 않고 고정. */
     color: #7a5b00;
 }
 .gridStaleBanner.outOfRange {
-    background: rgba(220, 53, 69, 0.12);
-    border-color: rgba(220, 53, 69, 0.4);
+    background: rgba(var(--color-danger-rgb), 0.12);
+    border-color: rgba(var(--color-danger-rgb), 0.4);
     color: #a1202f;
 }

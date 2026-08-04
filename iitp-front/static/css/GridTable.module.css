@@ -34,48 +34,54 @@
     box-sizing: border-box;
     height: 28px;
     padding: 0 10px;
-    background: rgba(255, 255, 255, 0.02);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    background: rgba(var(--overlay-rgb), 0.02);
+    border-bottom: 1px solid rgba(var(--overlay-rgb), 0.07);
 }
 
 .fieldToggleInfo {
     font-size: 11px;
-    color: rgba(255, 255, 255, 0.4);
+    color: rgba(var(--overlay-rgb), 0.4);
 }
 
 .fieldToggleBtn {
     padding: 2px 9px;
     font-size: 11px;
     border-radius: 4px;
-    border: 1px solid rgba(100, 180, 255, 0.3);
+    border: 1px solid rgba(var(--accent-grid-rgb), 0.3);
     background: transparent;
-    color: rgba(100, 180, 255, 0.9);
+    color: rgba(var(--accent-grid-rgb), 0.9);
     cursor: pointer;
     transition: all 0.15s ease;
     white-space: nowrap;
 }
 
 .fieldToggleBtn:hover {
-    background: rgba(100, 180, 255, 0.15);
-    color: #fff;
-    border-color: rgba(100, 180, 255, 0.6);
+    background: rgba(var(--accent-grid-rgb), 0.15);
+    color: var(--text-primary);
+    border-color: rgba(var(--accent-grid-rgb), 0.6);
 }
 
-/* ── AG Grid Dark Theme ──────────────────────────────────────── */
+/* ── AG Grid 테마 ──────────────────────────────────────────────
+ * 클래스명은 "dark"지만 실제로는 라이트/다크 둘 다에 반응한다 — 아래 --ag-*는 전부
+ * var(--text-secondary) 같은 전역 토큰(src/styles/theme.css)을 참조하고, 그 토큰 자체가
+ * [data-theme="light"]에서 값이 바뀌므로 커스텀 프로퍼티 캐스케이드로 자동 전환된다.
+ * 별도 .ag-light-custom 클래스가 필요 없다(원래 계획에서 단순화됨) — 클래스명 자체를
+ * 바꾸면 GridTable.tsx/ListTable.tsx/SchemaTable.tsx 3곳을 건드려야 해서, 굳이 리스크를
+ * 늘리지 않고 이름은 유지했다. */
 :global(.ag-dark-custom.ag-theme-alpine) {
     --ag-background-color: transparent;
-    --ag-foreground-color: #c8ccd4;
-    --ag-secondary-foreground-color: #888;
-    --ag-header-background-color: rgba(255, 255, 255, 0.04);
-    --ag-header-foreground-color: #999;
-    --ag-border-color: rgba(255, 255, 255, 0.07);
-    --ag-secondary-border-color: rgba(255, 255, 255, 0.05);
-    --ag-odd-row-background-color: rgba(255, 255, 255, 0.015);
-    --ag-row-hover-color: rgba(65, 105, 225, 0.1);
-    --ag-selected-row-background-color: rgba(65, 105, 225, 0.18);
-    --ag-input-focus-border-color: rgba(65, 105, 225, 0.6);
-    --ag-checkbox-checked-color: #4169E1;
-    --ag-range-selection-border-color: rgba(65, 105, 225, 0.5);
+    --ag-foreground-color: var(--text-secondary);
+    --ag-secondary-foreground-color: var(--text-muted);
+    --ag-header-background-color: rgba(var(--overlay-rgb), 0.04);
+    --ag-header-foreground-color: var(--text-muted);
+    --ag-border-color: rgba(var(--overlay-rgb), 0.07);
+    --ag-secondary-border-color: rgba(var(--overlay-rgb), 0.05);
+    --ag-odd-row-background-color: rgba(var(--overlay-rgb), 0.015);
+    --ag-row-hover-color: rgba(var(--accent-rgb), 0.1);
+    --ag-selected-row-background-color: rgba(var(--accent-rgb), 0.18);
+    --ag-input-focus-border-color: rgba(var(--accent-rgb), 0.6);
+    --ag-checkbox-checked-color: var(--accent);
+    --ag-range-selection-border-color: rgba(var(--accent-rgb), 0.5);
     --ag-font-size: 12px;
     --ag-font-family: 'Segoe UI', sans-serif;
     --ag-cell-horizontal-padding: 10px;
@@ -95,8 +101,8 @@
 .drillHint {
     cursor: pointer;
     font-size: 11px;
-    color: #7aa2ff;
-    background: rgba(65, 105, 225, 0.12);
+    color: var(--accent-text);
+    background: rgba(var(--accent-rgb), 0.12);
     padding: 2px 7px;
     border-radius: 4px;
     white-space: nowrap;
@@ -105,7 +111,7 @@
 }
 
 .drillHint:hover {
-    background: rgba(65, 105, 225, 0.25);
+    background: rgba(var(--accent-rgb), 0.25);
 }
 
 /* ── 스크롤바 ────────────────────────────────────────────────── */
@@ -128,7 +134,7 @@
 
 :global(.ag-dark-custom .ag-body-horizontal-scroll-viewport)::-webkit-scrollbar-thumb,
 :global(.ag-dark-custom .ag-body-vertical-scroll-viewport)::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(var(--overlay-rgb), 0.15);
     border-radius: 3px;
 }
 
@@ -136,7 +142,7 @@
 :global(.ag-dark-custom .ag-body-horizontal-scroll-viewport),
 :global(.ag-dark-custom .ag-body-vertical-scroll-viewport) {
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+    scrollbar-color: rgba(var(--overlay-rgb), 0.15) transparent;
 }
 
 /* 가로 스크롤 줄은 [좌측 spacer | 실제 scroll viewport | 우측 spacer] 3칸으로 구성되고,

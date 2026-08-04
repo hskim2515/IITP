@@ -36,6 +36,8 @@ const SliderRow = ({ label, min, max, step, value, onChange, display }: {
 const AppSettings: React.FC = () => {
     const defaultBaseMap = useAppSettingsStore((s) => s.defaultBaseMap);
     const setDefaultBaseMap = useAppSettingsStore((s) => s.setDefaultBaseMap);
+    const theme = useAppSettingsStore((s) => s.theme);
+    const setTheme = useAppSettingsStore((s) => s.setTheme);
     const autoGeneration = useAppSettingsStore((s) => s.autoGeneration);
     const setAutoGeneration = useAppSettingsStore((s) => s.setAutoGeneration);
     const resetAutoGeneration = useAppSettingsStore((s) => s.resetAutoGeneration);
@@ -46,6 +48,32 @@ const AppSettings: React.FC = () => {
 
     return (
         <div>
+            {/* 헤더의 토글 버튼(빠른 원클릭용)과 동일한 theme 필드를 읽고 쓴다 — 항상 일치.
+             *  여기 라디오는 설정 팝업을 켠 김에 명시적으로 고르고 싶은 사용자를 위한 보조 창구. */}
+            <div className={styles.sectionLabel} style={{ cursor: 'default' }}>테마</div>
+            <div style={{ padding: '0 4px 4px' }}>
+                <label className={styles.layerItem}>
+                    <input
+                        type="radio"
+                        name="theme"
+                        checked={theme === 'dark'}
+                        onChange={() => setTheme('dark')}
+                    />
+                    다크
+                </label>
+                <label className={styles.layerItem}>
+                    <input
+                        type="radio"
+                        name="theme"
+                        checked={theme === 'light'}
+                        onChange={() => setTheme('light')}
+                    />
+                    라이트
+                </label>
+            </div>
+
+            <div className={styles.sectionDivider} />
+
             <div className={styles.sectionLabel} style={{ cursor: 'default' }}>배경지도 기본값</div>
             <div style={{ padding: '0 4px 4px' }}>
                 <label className={styles.layerItem}>
@@ -74,7 +102,7 @@ const AppSettings: React.FC = () => {
 
             <div className={styles.sectionLabel} style={{ cursor: 'default' }}>자동생성 설정</div>
             <div style={{ padding: '0 4px 4px' }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#888', padding: '4px 6px 2px' }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', padding: '4px 6px 2px' }}>
                     더미 신호
                 </div>
                 <SliderRow
@@ -91,12 +119,12 @@ const AppSettings: React.FC = () => {
                     onChange={(v) => setAutoGeneration({ signalOppositeBearingToleranceDeg: v })}
                     display={`±${autoGeneration.signalOppositeBearingToleranceDeg}°`}
                 />
-                <div style={{ fontSize: 10, color: '#666', padding: '2px 0 6px', lineHeight: 1.4 }}>
+                <div style={{ fontSize: 10, color: 'rgba(var(--overlay-rgb), 0.4)', padding: '2px 0 6px', lineHeight: 1.4 }}>
                     허용오차를 넓히면 실제로는 마주보지 않는(교차하는) 접근로까지 "안전"으로 판단할
                     수 있습니다 — 수동 편집 상충 경고에도 같은 값이 쓰입니다.
                 </div>
 
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#888', padding: '8px 6px 2px' }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', padding: '8px 6px 2px' }}>
                     OD 매트릭스 (KTDB 임포트 시 서버가 생성하는 샘플 수요)
                 </div>
                 <SliderRow
@@ -120,12 +148,12 @@ const AppSettings: React.FC = () => {
                     onChange={(v) => setAutoGeneration({ odRefDistM: v })}
                     display={`${autoGeneration.odRefDistM}m`}
                 />
-                <div style={{ fontSize: 10, color: '#666', padding: '2px 0 6px', lineHeight: 1.4 }}>
+                <div style={{ fontSize: 10, color: 'rgba(var(--overlay-rgb), 0.4)', padding: '2px 0 6px', lineHeight: 1.4 }}>
                     source-sink 거리가 기준 거리 이내면 최대 flow에 가깝게, 멀수록 최소 flow로
                     수렴합니다. 실제 임포트 시점에만 적용되며, 다음 KTDB 가져오기부터 반영됩니다.
                 </div>
 
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#888', padding: '8px 6px 2px' }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', padding: '8px 6px 2px' }}>
                     노면표시 / 버스 / 철도
                 </div>
                 <label className={styles.layerItem}>
@@ -159,7 +187,7 @@ const AppSettings: React.FC = () => {
                     onChange={(v) => setAutoGeneration({ busDefaultIntervalMin: v })}
                     display={`${autoGeneration.busDefaultIntervalMin}분`}
                 />
-                <div style={{ fontSize: 10, color: '#666', padding: '2px 0 6px', lineHeight: 1.4 }}>
+                <div style={{ fontSize: 10, color: 'rgba(var(--overlay-rgb), 0.4)', padding: '2px 0 6px', lineHeight: 1.4 }}>
                     OSM에는 배차간격 정보가 없어 변환된 모든 버스 노선에 이 값을 일괄로 채웁니다.
                     철도는 실제 시간표가 없는 노선을 임의로 지어내지 않도록 배차간격을 항상 비워둡니다
                     (철도 노선 편집 화면에서 직접 입력).
