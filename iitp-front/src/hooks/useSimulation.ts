@@ -953,15 +953,18 @@ const useSimulation = () => {
         if (!viewer || !czml || vehicleRoute.length === 0 || !layerManager) return;
         const myGen = ++simGenRef.current;
 
-        // 스토어가 비어있으면 먼저 fetch
+        // 표시 모델은 시나리오 버전별 XML에 저장되므로 실행할 때마다 현재 버전 설정을 읽는다.
         let { models, vehicleTypes, setModels, setVehicleTypes } = useVehicleModelStore.getState();
-        if (models.length === 0 || vehicleTypes.length === 0) {
+        const vehicleConfigVersionId = getActiveVersionId();
+        if (vehicleConfigVersionId) {
             try {
                 const axiosInstance = (await import('@api/axiosInstance')).default;
-                const [modelsData, typesData] = await Promise.all([
-                    axiosInstance.get('/vehicle-models').then(r => r.data).catch(() => []),
-                    axiosInstance.get('/vehicle-types').then(r => r.data).catch(() => []),
-                ]);
+                const configuration = await axiosInstance
+                    .get(`/vehicle-config/${encodeURIComponent(vehicleConfigVersionId)}`)
+                    .then(response => response.data)
+                    .catch(() => ({}));
+                const modelsData = configuration?.vehicleModels;
+                const typesData = configuration?.vehicleTypes;
                 models = Array.isArray(modelsData) ? modelsData : [];
                 vehicleTypes = Array.isArray(typesData) ? typesData : [];
                 setModels(models);
@@ -993,29 +996,17 @@ const useSimulation = () => {
             const typeGroups  = new Map<string, any[]>();
             const scaleGroups = new Map<string, number[]>();  // per-vehicle length (m)
             const vehicleTypeArray: string[] = [];  // 전체 차량 순서의 타입 배열 (TailPrimitive 색상용)
-            vehicleRoute.forEach((entry: any, idx: number) => {
+            vehicleRoute.forEach((entry: any) => {
                 const isLegacy = Array.isArray(entry);
                 const path = isLegacy ? entry : entry.path;
                 let vType: string;
                 if (isLegacy) {
-                    // 레거시 배열: 인덱스 기반 타입 배정 (백엔드와 동일한 비율)
-                    const mod = idx % 100;
-                    if (mod < 70)       vType = 'CAR';
-                    else if (mod < 85)  vType = 'TAXI';
-                    else if (mod < 95)  vType = 'BUS';
-                    else if (mod < 99)  vType = 'TRUCK';
-                    else                vType = 'MOTO';
+                    // 차량 유형 정보가 없는 레거시 경로를 임의 비율로 위장하지 않는다.
+                    vType = 'UNCLASSIFIED';
                 } else if (entry.type) {
                     vType = entry.type;
                 } else {
-                    // type 없는 캐시 데이터 → 백엔드와 동일한 ID 기반 배정
-                    const numId = parseInt(String(entry.id ?? '0').replace(/\D/g, '')) || 0;
-                    const mod = numId % 100;
-                    if (mod < 70)       vType = 'CAR';
-                    else if (mod < 85)  vType = 'TAXI';
-                    else if (mod < 95)  vType = 'BUS';
-                    else if (mod < 99)  vType = 'TRUCK';
-                    else                vType = 'MOTO';
+                    vType = 'UNCLASSIFIED';
                 }
                 vehicleTypeArray.push(vType);
                 if (!typeGroups.has(vType))  typeGroups.set(vType, []);

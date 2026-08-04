@@ -188,10 +188,12 @@ async function validateOdReferencedNodeIdBands(network: any): Promise<FacilityVa
 
     const referencedIds = new Set<string>();
     for (const item of odData?.odMatrices ?? []) {
-        // 서버 원본 구조는 nvodMatrix.demands 로 중첩됨(OdMatrixModal.tsx와 동일 매핑 규약)
-        for (const d of item?.nvodMatrix?.demands ?? []) {
-            if (d?.source != null) referencedIds.add(String(d.source));
-            if (d?.sink != null) referencedIds.add(String(d.sink));
+        // AV/NV 모두 동일한 네트워크 터미널 노드를 참조하므로 두 목록을 함께 검증한다.
+        for (const demands of [item?.avodMatrix?.demands, item?.nvodMatrix?.demands]) {
+            for (const d of demands ?? []) {
+                if (d?.source != null) referencedIds.add(String(d.source));
+                if (d?.sink != null) referencedIds.add(String(d.sink));
+            }
         }
     }
     if (referencedIds.size === 0) return { ok: true, issues: [] };

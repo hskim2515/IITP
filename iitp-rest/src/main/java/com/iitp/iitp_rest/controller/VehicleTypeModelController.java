@@ -72,6 +72,7 @@ public class VehicleTypeModelController {
             @RequestParam(value = "length", required = false) String length,
             @RequestParam(value = "correctionHpr", required = false) String correctionHpr,
             @RequestParam(value = "zOffset", required = false) Double zOffset,
+            @RequestParam(value = "removeFile", required = false, defaultValue = "false") boolean removeFile,
             @RequestPart(value = "file", required = false) MultipartFile file) throws IOException {
         try {
             Optional<VehicleTypeModel> existingOpt = vehicleTypeModelRepository.findById(id);
@@ -83,6 +84,15 @@ public class VehicleTypeModelController {
             existing.setLength(length);
             existing.setCorrectionHpr(correctionHpr);
             existing.setZOffset(zOffset);
+            if (removeFile) {
+                String oldPath = existing.getFilePath();
+                if (oldPath != null && !oldPath.isEmpty()) {
+                    try { fileStorage.deleteFile(oldPath); }
+                    catch (IOException e) { System.err.println("파일 삭제 실패: " + oldPath); }
+                }
+                existing.setFileName(null);
+                existing.setFilePath(null);
+            }
             if (file != null && !file.isEmpty()) {
                 String oldPath = existing.getFilePath();
                 if (oldPath != null && !oldPath.isEmpty()) {

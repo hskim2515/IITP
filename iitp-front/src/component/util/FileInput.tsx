@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 
@@ -6,10 +6,19 @@ interface FileInputProps {
     value: string | File | null;
     onChange: (value: File | null) => void;
     readOnly?: boolean;
+    showPreview?: boolean;
+    onClear?: () => void;
 }
 
-const FileInput: React.FC<FileInputProps> = ({ value, onChange, readOnly = false }) => {
+const FileInput: React.FC<FileInputProps> = ({
+    value,
+    onChange,
+    readOnly = false,
+    showPreview = true,
+    onClear,
+}) => {
     const [preview, setPreview] = useState<string | null>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
     const baseUrl = process.env.REACT_APP_FILE_BASE_URL || '';
 
     const loadGLBThumbnail = async (arrayBuffer: ArrayBuffer) => {
@@ -56,7 +65,7 @@ const FileInput: React.FC<FileInputProps> = ({ value, onChange, readOnly = false
     };
 
     useEffect(() => {
-        if (!value) {
+        if (!showPreview || !value) {
             setPreview(null);
             return;
         }
@@ -80,7 +89,7 @@ const FileInput: React.FC<FileInputProps> = ({ value, onChange, readOnly = false
                 .catch(err => console.error("GLB fetch error:", err));
         }
 
-    }, [value]);
+    }, [showPreview, value]);
 
     const fileName = value instanceof File
         ? value.name
@@ -88,7 +97,7 @@ const FileInput: React.FC<FileInputProps> = ({ value, onChange, readOnly = false
 
     return (
         <div>
-            {preview && (
+            {showPreview && preview && (
                 <div>
                     <img
                         src={preview}
@@ -108,11 +117,26 @@ const FileInput: React.FC<FileInputProps> = ({ value, onChange, readOnly = false
             )}
             {!readOnly && (
                 <input
+                    ref={inputRef}
                     type="file"
                     accept=".glb"
                     onChange={(e) => onChange(e.target.files?.[0] || null)}
                     style={{ marginTop: 8 }}
                 />
+            )}
+            {!readOnly && value && onClear && (
+                <button
+                    type="button"
+                    aria-label="선택한 GLB 파일 해제"
+                    title="파일 해제"
+                    onClick={() => {
+                        if (inputRef.current) inputRef.current.value = '';
+                        setPreview(null);
+                        onClear();
+                    }}
+                >
+                    ×
+                </button>
             )}
         </div>
     );

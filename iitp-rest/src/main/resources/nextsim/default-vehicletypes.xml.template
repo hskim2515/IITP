@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<VehType_Scenario>
+    <vehtype id="0" max_pax="0" name="NormalVeh" v2x="off">
+        <veh_len dist="Normal" max="5.5" mean="5.0" min="4.5" sd="0.5"/>
+        <veh_width dist="Normal" max="2.1" mean="1.9" min="1.8" sd="0.2"/>
+        <jamgap dist="Normal" max="4.5" mean="2.5" min="2.0" sd="1.0"/>
+        <vf dist="Normal" max="60.0" mean="50.0" min="45.0" sd="10.0"/>
+        <reaction_time dist="LogNormal" max="3.0" mean="0.8" min="0.5" sd="2"/>
+        <max_acc dist="Normal" max="5.0" mean="4.5" min="4.0" sd="1.1"/>
+        <max_dec dist="Normal" max="5.5" mean="5.0" min="4.5" sd="1.2"/>
+        <lc_param1 dist="Normal" max="0.04" mean="0.025" min="0.01" sd="0.02"/>
+        <lc_param2 dist="Normal" max="0.08" mean="0.055" min="0.03" sd="0.02"/>
+        <lc_sensitivity dist="LogNormal" max="0.1" mean="0.0033" min="0.001" sd="2.5"/>
+    </vehtype>
+    <vehtype id="1" max_pax="15" name="AutonomousVeh" v2x="off">
+        <veh_len dist="Normal" max="5.5" mean="5.0" min="4.5" sd="0.5"/>
+        <veh_width dist="Normal" max="2.1" mean="1.9" min="1.8" sd="0.2"/>
+        <jamgap dist="Normal" max="3.5" mean="2.0" min="1.0" sd="0.01"/>
+        <vf dist="Normal" max="125.0" mean="110.0" min="90.0" sd="0.01"/>
+        <reaction_time dist="Normal" max="3.5" mean="1.7" min="1.1" sd="0.01"/>
+        <max_acc dist="Normal" max="5.5" mean="4.8" min="4.5" sd="0.01"/>
+        <max_dec dist="Normal" max="6.5" mean="5.6" min="4.5" sd="0.01"/>
+        <lc_param1 dist="Normal" max="0.04" mean="0.025" min="0.01" sd="0.02"/>
+        <lc_param2 dist="Normal" max="0.08" mean="0.055" min="0.03" sd="0.02"/>
+        <lc_sensitivity dist="LogNormal" max="0.1" mean="0.0033" min="0.001" sd="2.5"/>
+    </vehtype>
+    <vehtype id="2" max_pax="1" name="Truck" v2x="off">
+        <veh_len dist="Normal" max="10.0" mean="8.0" min="6.0" sd="0.5"/>
+        <veh_width dist="Normal" max="2.5" mean="2.2" min="2.0" sd="0.3"/>
+        <jamgap dist="LogNormal" max="6.0" mean="4.0" min="2.0" sd="0.5"/>
+        <vf dist="Normal" max="100.0" mean="85.0" min="70.0" sd="10.0"/>
+        <reaction_time dist="LogNormal" max="3.5" mean="2.4" min="1.5" sd="0.5"/>
+        <max_acc dist="Normal" max="1.8" mean="1.0" min="0.6" sd="0.5"/>
+        <max_dec dist="Normal" max="6.0" mean="5.0" min="4.0" sd="0.5"/>
+        <lc_param1 dist="Normal" max="0.04" mean="0.025" min="0.01" sd="0.02"/>
+        <lc_param2 dist="Normal" max="0.08" mean="0.055" min="0.03" sd="0.02"/>
+        <lc_sensitivity dist="LogNormal" max="0.1" mean="0.0033" min="0.001" sd="2.5"/>
+    </vehtype>
+    <vehtype id="3" max_pax="30" name="NormalBus" v2x="off">
+        <veh_len dist="Normal" max="11.0" mean="11.0" min="11.0" sd="0"/>
+        <veh_width dist="Normal" max="2.5" mean="2.3" min="2.1" sd="0.3"/>
+        <jamgap dist="LogNormal" max="2.5" mean="2.0" min="1.5" sd="0.5"/>
+        <vf dist="Normal" max="50.0" mean="45.0" min="40.0" sd="10.0"/>
+        <reaction_time dist="LogNormal" max="3.5" mean="2.4" min="1.5" sd="0.2"/>
+        <max_acc dist="Normal" max="4.0" mean="3.0" min="2.0" sd="0.5"/>
+        <max_dec dist="Normal" max="3.6" mean="3.3" min="3.0" sd="0.5"/>
+        <lc_param1 dist="Normal" max="0.04" mean="0.025" min="0.01" sd="0.02"/>
+        <lc_param2 dist="Normal" max="0.08" mean="0.055" min="0.03" sd="0.02"/>
+        <lc_sensitivity dist="LogNormal" max="0.1" mean="0.0033" min="0.001" sd="2.5"/>
+    </vehtype>
+    <vehtype id="4" max_pax="30" name="AutonomousBus" v2x="off">
+        <veh_len dist="Normal" max="11.0" mean="11.0" min="11.0" sd="0"/>
+        <veh_width dist="Normal" max="2.5" mean="2.3" min="2.1" sd="0.3"/>
+        <jamgap dist="LogNormal" max="6.0" mean="4.0" min="2.0" sd="0.01"/>
+        <vf dist="Normal" max="80.0" mean="70.0" min="50.0" sd="0.01"/>
+        <reaction_time dist="LogNormal" max="3.5" mean="2.4" min="1.5" sd="0.01"/>
+        <max_acc dist="Normal" max="1.8" mean="1.0" min="0.8" sd="0.01"/>
+        <max_dec dist="Normal" max="6.0" mean="5.0" min="4.0" sd="0.01"/>
+        <lc_param1 dist="Normal" max="0.04" mean="0.025" min="0.01" sd="0.02"/>
+        <lc_param2 dist="Normal" max="0.08" mean="0.055" min="0.03" sd="0.02"/>
+        <lc_sensitivity dist="LogNormal" max="0.1" mean="0.0033" min="0.001" sd="2.5"/>
+    </vehtype>
+    <vehtype id="5" max_pax="91" name="TRT" v2x="off">
+        <veh_len dist="Normal" max="10.0" mean="10.0" min="10.0" sd="0"/>
+        <veh_width dist="Normal" max="2.75" mean="2.75" min="2.75" sd="0"/>
+        <jamgap dist="LogNormal" max="5.0" mean="3.5" min="2.5" sd="0.01"/>
+        <vf dist="Normal" max="75.0" mean="75.0" min="75.0" sd="0"/>
+        <reaction_time dist="LogNormal" max="3.0" mean="2.0" min="1.0" sd="0.01"/>
+        <max_acc dist="Normal" max="3.0" mean="2.5" min="2.0" sd="0.1"/>
+        <max_dec dist="Normal" max="2.0" mean="2.0" min="2.0" sd="0"/>
+        <lc_param1 dist="Normal" max="0.04" mean="0.025" min="0.01" sd="0.02"/>
+        <lc_param2 dist="Normal" max="0.08" mean="0.055" min="0.03" sd="0.02"/>
+        <lc_sensitivity dist="LogNormal" max="0.1" mean="0.0033" min="0.001" sd="2.5"/>
+    </vehtype>
+</VehType_Scenario>
