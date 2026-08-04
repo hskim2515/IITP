@@ -15,6 +15,7 @@ public class OdMatrixXml {
 
     @Data
     @XmlAccessorType(XmlAccessType.NONE)
+    @XmlType(propOrder = {"avodMatrix", "nvodMatrix"})
     public static class OdMatrixItemXml {
         @XmlAttribute
         private Integer id;
@@ -25,8 +26,18 @@ public class OdMatrixXml {
         @XmlAttribute
         private Integer duration;
 
+        @XmlElement(name = "avodMatrix")
+        private AvOdMatrixXml avodMatrix;
+
         @XmlElement(name = "nvodMatrix")
         private NvOdMatrixXml nvodMatrix;
+    }
+
+    @Data
+    @XmlAccessorType(XmlAccessType.NONE)
+    public static class AvOdMatrixXml {
+        @XmlElement(name = "demand")
+        private List<DemandXml> demands;
     }
 
     @Data

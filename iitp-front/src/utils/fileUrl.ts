@@ -6,6 +6,10 @@
 export function buildFileUrl(filePath: string | null | undefined): string {
     if (!filePath) return '';
     if (filePath.startsWith('http://') || filePath.startsWith('https://')) return filePath;
+    if (filePath.startsWith('/vehicle-config/')) {
+        const apiBase = String(import.meta.env.VITE_API_URL ?? '').replace(/\/+$/, '');
+        return `${apiBase}${filePath}`;
+    }
     const base = (process.env.REACT_APP_FILE_BASE_URL ?? '').replace(/\/+$/, '');
     const path = filePath.replace(/^\/+/, '');
     return `${base}/${path}`;

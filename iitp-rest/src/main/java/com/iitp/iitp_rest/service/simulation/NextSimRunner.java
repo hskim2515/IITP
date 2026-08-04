@@ -1,7 +1,5 @@
 package com.iitp.iitp_rest.service.simulation;
 
-import com.iitp.iitp_rest.model.vehicle.type.VehicleType;
-import com.iitp.iitp_rest.model.vehicle.type.VehicleTypeParameter;
 import com.iitp.iitp_rest.repository.ScenarioVersionRepository;
 import com.iitp.iitp_rest.util.FileStorageService;
 import com.iitp.iitp_rest.util.VehicleDataReader;
@@ -102,8 +100,6 @@ public class NextSimRunner {
     private final FileStorageService fileStorage;
     private final VehicleDataReader vehicleDataReader;
     private final ScenarioVersionRepository scenarioVersionRepository;
-    private final com.iitp.iitp_rest.repository.VehicleTypeRepository vehicleTypeRepository;
-    private final com.iitp.iitp_rest.repository.VehicleTypeParameterRepository vehicleTypeParameterRepository;
     private final com.iitp.iitp_rest.service.publicTransit.line.BusPtLineService busPtLineService;
     private final com.iitp.iitp_rest.service.publicTransit.station.BusStationService busStationService;
     private final com.iitp.iitp_rest.service.publicTransit.line.RailPtLineService railPtLineService;
@@ -471,14 +467,11 @@ public class NextSimRunner {
                 "    <SignalControlEvent active=\"t\" />\n" +
                 "</RecordModes>"), StandardCharsets.UTF_8);
 
-        // vehicletypes.xml: "교통수단 유형" 편집 화면(VehicleType/VehicleTypeParameter)의
-        // 내용으로 배포판 템플릿을 덮어쓴다 — 편집 화면에서 고친 차종별 주행 파라미터(veh_len/
-        // jamgap/vf/reaction_time/max_acc/max_dec/lc_param1/lc_param2/lc_sensitivity)가
-        // 실제 실행에 반영되게 하려는 목적. 등록된 차종이 하나도 없으면(화면을 아직 안 채운
-        // 경우) 배포판 템플릿을 그대로 둔다 — 빈 파일로 덮어써 실행을 깨뜨리지 않기 위함.
-        String vehicleTypesXml = buildVehicleTypesXml();
-        if (vehicleTypesXml != null) {
-            Files.writeString(dstParam.resolve("vehicletypes.xml"), vehicleTypesXml, StandardCharsets.UTF_8);
+        // 차량 유형 편집의 원본은 시나리오 버전 폴더의 vehicletypes.xml이다.
+        // 해당 버전에 아직 저장된 파일이 없으면 배포판 템플릿을 그대로 사용한다.
+        String vehicleTypesPath = versionId + "/vehicletypes.xml";
+        if (fileStorage.exists(vehicleTypesPath)) {
+            Files.write(dstParam.resolve("vehicletypes.xml"), fileStorage.readFile(vehicleTypesPath));
         }
 
         // 3) 버전 스토리지 파일 (플랫폼이 NextSim 형식 그대로 관리 중)
@@ -1687,157 +1680,6 @@ public class NextSimRunner {
 
     private static String xml(String body) {
         return "<?xml version='1.0' encoding='UTF-8'?>\n" + body + "\n";
-    }
-
-    /** NextSim이 이름으로 조회하는 6개 고정 차종 카테고리 — vehicletypes.xml 값이 이 이름과
-     *  다르면 "Initializing NB/AB/TRT/Public Transit" 단계에서 매칭 실패 후 출력 없이 CPU
-     *  100%로 무한 행(hang)함을 실측(2026-07-27, scenario1_1 — 이번 세션 버스/철도 작업과
-     *  무관한 기존 시나리오에서도 재현되어 전역 회귀였음이 드러남). 배포판 기본값 그대로. */
-    private static final List<String> REQUIRED_VEHTYPE_NAMES =
-            List.of("NormalVeh", "AutonomousVeh", "Truck", "NormalBus", "AutonomousBus", "TRT");
-
-    /** 배포판 vehicletypes.xml 템플릿의 기본값 — DB에 해당 카테고리로 매핑된 차종이 없을 때
-     *  이 값을 그대로 써서 6개 카테고리가 항상 존재하도록 보장한다. */
-    private static final Map<String, String> DEFAULT_VEHTYPE_BODY = Map.of(
-            "NormalVeh",
-            "        <veh_len dist=\"Normal\" max=\"5.5\" mean=\"5.0\" min=\"4.5\" sd=\"0.5\"/>\n" +
-            "        <jamgap dist=\"Normal\" max=\"4.5\" mean=\"2.5\" min=\"2.0\" sd=\"1.0\"/>\n" +
-            "        <vf dist=\"Normal\" max=\"60.0\" mean=\"50.0\" min=\"45.0\" sd=\"10.0\"/>\n" +
-            "        <reaction_time dist=\"LogNormal\" max=\"3.0\" mean=\"0.8\" min=\"0.5\" sd=\"2\"/>\n" +
-            "        <max_acc dist=\"Normal\" max=\"5.0\" mean=\"4.5\" min=\"4.0\" sd=\"1.1\"/>\n" +
-            "        <max_dec dist=\"Normal\" max=\"5.5\" mean=\"5\" min=\"4.5\" sd=\"1.2\"/>\n" +
-            "        <lc_param1 dist=\"Normal\" max=\"0.04\" mean=\"0.025\" min=\"0.01\" sd=\"0.02\"/>\n" +
-            "        <lc_param2 dist=\"Normal\" max=\"0.08\" mean=\"0.055\" min=\"0.03\" sd=\"0.02\"/>\n" +
-            "        <lc_sensitivity dist=\"LogNormal\" max=\"0.1\" mean=\"0.0033\" min=\"0.001\" sd=\"2.5\"/>\n",
-            "AutonomousVeh",
-            "        <veh_len dist=\"Normal\" max=\"5.5\" mean=\"5.0\" min=\"4.5\" sd=\"0.5\"/>\n" +
-            "        <jamgap dist=\"Normal\" max=\"3.5\" mean=\"2.0\" min=\"1.0\" sd=\"0.01\"/>\n" +
-            "        <vf dist=\"Normal\" max=\"125.0\" mean=\"110.0\" min=\"90.0\" sd=\"0.01\"/>\n" +
-            "        <reaction_time dist=\"Normal\" max=\"3.5\" mean=\"1.7\" min=\"1.1\" sd=\"0.01\"/>\n" +
-            "        <max_acc dist=\"Normal\" max=\"5.5\" mean=\"4.8\" min=\"4.5\" sd=\"0.01\"/>\n" +
-            "        <max_dec dist=\"Normal\" max=\"6.5\" mean=\"5.6\" min=\"4.5\" sd=\"0.01\"/>\n" +
-            "        <lc_param1 dist=\"Normal\" max=\"0.04\" mean=\"0.025\" min=\"0.01\" sd=\"0.02\"/>\n" +
-            "        <lc_param2 dist=\"Normal\" max=\"0.08\" mean=\"0.055\" min=\"0.03\" sd=\"0.02\"/>\n" +
-            "        <lc_sensitivity dist=\"LogNormal\" max=\"0.1\" mean=\"0.0033\" min=\"0.001\" sd=\"2.5\"/>\n",
-            "Truck",
-            "        <veh_len dist=\"Normal\" max=\"10.0\" mean=\"8.0\" min=\"6.0\" sd=\"0.5\"/>\n" +
-            "        <jamgap dist=\"LogNormal\" max=\"6.0\" mean=\"4.0\" min=\"2.0\" sd=\"0.5\"/>\n" +
-            "        <vf dist=\"Normal\" max=\"100.0\" mean=\"85.0\" min=\"70.0\" sd=\"10.0\"/>\n" +
-            "        <reaction_time dist=\"LogNormal\" max=\"3.5\" mean=\"2.4\" min=\"1.5\" sd=\"0.5\"/>\n" +
-            "        <max_acc dist=\"Normal\" max=\"1.8\" mean=\"1.0\" min=\"0.6\" sd=\"0.5\"/>\n" +
-            "        <max_dec dist=\"Normal\" max=\"6.0\" mean=\"5.0\" min=\"4.0\" sd=\"0.5\"/>\n" +
-            "        <lc_param1 dist=\"Normal\" max=\"0.04\" mean=\"0.025\" min=\"0.01\" sd=\"0.02\"/>\n" +
-            "        <lc_param2 dist=\"Normal\" max=\"0.08\" mean=\"0.055\" min=\"0.03\" sd=\"0.02\"/>\n" +
-            "        <lc_sensitivity dist=\"LogNormal\" max=\"0.1\" mean=\"0.0033\" min=\"0.001\" sd=\"2.5\"/>\n",
-            "NormalBus",
-            "        <veh_len dist=\"Normal\" max=\"11.0\" mean=\"11.0\" min=\"11.0\" sd=\"0\"/>\n" +
-            "        <jamgap dist=\"LogNormal\" max=\"2.5\" mean=\"2.0\" min=\"1.5\" sd=\"0.5\"/>\n" +
-            "        <vf dist=\"Normal\" max=\"50.0\" mean=\"45.0\" min=\"40.0\" sd=\"10.0\"/>\n" +
-            "        <reaction_time dist=\"LogNormal\" max=\"3.5\" mean=\"2.4\" min=\"1.5\" sd=\"0.2\"/>\n" +
-            "        <max_acc dist=\"Normal\" max=\"4.0\" mean=\"3.0\" min=\"2.0\" sd=\"0.5\"/>\n" +
-            "        <max_dec dist=\"Normal\" max=\"3.6\" mean=\"3.3\" min=\"3\" sd=\"0.5\"/>\n" +
-            "        <lc_param1 dist=\"Normal\" max=\"0.04\" mean=\"0.025\" min=\"0.01\" sd=\"0.02\"/>\n" +
-            "        <lc_param2 dist=\"Normal\" max=\"0.08\" mean=\"0.055\" min=\"0.03\" sd=\"0.02\"/>\n" +
-            "        <lc_sensitivity dist=\"LogNormal\" max=\"0.1\" mean=\"0.0033\" min=\"0.001\" sd=\"2.5\"/>\n",
-            "AutonomousBus",
-            "        <veh_len dist=\"Normal\" max=\"11.0\" mean=\"11.0\" min=\"11.0\" sd=\"0\"/>\n" +
-            "        <jamgap dist=\"LogNormal\" max=\"6.0\" mean=\"4.0\" min=\"2.0\" sd=\"0.01\"/>\n" +
-            "        <vf dist=\"Normal\" max=\"80.0\" mean=\"70.0\" min=\"50.0\" sd=\"0.01\"/>\n" +
-            "        <reaction_time dist=\"LogNormal\" max=\"3.5\" mean=\"2.4\" min=\"1.5\" sd=\"0.01\"/>\n" +
-            "        <max_acc dist=\"Normal\" max=\"1.8\" mean=\"1.0\" min=\"0.8\" sd=\"0.01\"/>\n" +
-            "        <max_dec dist=\"Normal\" max=\"6.0\" mean=\"5.0\" min=\"4.0\" sd=\"0.01\"/>\n" +
-            "        <lc_param1 dist=\"Normal\" max=\"0.04\" mean=\"0.025\" min=\"0.01\" sd=\"0.02\"/>\n" +
-            "        <lc_param2 dist=\"Normal\" max=\"0.08\" mean=\"0.055\" min=\"0.03\" sd=\"0.02\"/>\n" +
-            "        <lc_sensitivity dist=\"LogNormal\" max=\"0.1\" mean=\"0.0033\" min=\"0.001\" sd=\"2.5\"/>\n",
-            "TRT",
-            "        <veh_len dist=\"Normal\" max=\"10.0\" mean=\"10.0\" min=\"10.0\" sd=\"0\"/>\n" +
-            "        <jamgap dist=\"LogNormal\" max=\"5.0\" mean=\"3.5\" min=\"2.5\" sd=\"0.01\"/>\n" +
-            "        <vf dist=\"Normal\" max=\"75.0\" mean=\"75.0\" min=\"75.0\" sd=\"0\"/>\n" +
-            "        <reaction_time dist=\"LogNormal\" max=\"3.0\" mean=\"2.0\" min=\"1.0\" sd=\"0.01\"/>\n" +
-            "        <max_acc dist=\"Normal\" max=\"3\" mean=\"2.5\" min=\"2\" sd=\"0.1\"/>\n" +
-            "        <max_dec dist=\"Normal\" max=\"2.0\" mean=\"2.0\" min=\"2.0\" sd=\"0\"/>\n" +
-            "        <lc_param1 dist=\"Normal\" max=\"0.04\" mean=\"0.025\" min=\"0.01\" sd=\"0.02\"/>\n" +
-            "        <lc_param2 dist=\"Normal\" max=\"0.08\" mean=\"0.055\" min=\"0.03\" sd=\"0.02\"/>\n" +
-            "        <lc_sensitivity dist=\"LogNormal\" max=\"0.1\" mean=\"0.0033\" min=\"0.001\" sd=\"2.5\"/>\n");
-
-    private static final Map<String, String> DEFAULT_VEHTYPE_MAXPAX = Map.of(
-            "NormalVeh", "0", "AutonomousVeh", "15", "Truck", "1",
-            "NormalBus", "30", "AutonomousBus", "30", "TRT", "91");
-
-    /** vehicle_type.nextsim_type_code(쉼표구분 코드) → NextSim 정식 카테고리 이름 */
-    private static final Map<String, String> CODE_TO_CANONICAL_NAME = Map.of(
-            "NV", "NormalVeh", "AV", "AutonomousVeh",
-            "NB", "NormalBus", "AB", "AutonomousBus",
-            "TRUCK", "Truck", "TRK", "Truck", "TR", "Truck");
-
-    /**
-     * "교통수단 유형" 편집 화면(VehicleType + VehicleTypeParameter, VehicleTypeController가
-     * 관리)의 내용으로 vehicletypes.xml을 생성한다.
-     *
-     * <p>⚠️ 실측 확인된 회귀(2026-07-27): 처음 구현 시 vehtype의 name 속성에 편집 화면의
-     * 한글 이름(예: "택시", "버스")을 그대로 썼는데, NextSim 엔진은 "Initializing NB/AB/TRT"
-     * 단계에서 vehtype 목록을 **정식 카테고리 이름**(NormalVeh/AutonomousVeh/Truck/NormalBus/
-     * AutonomousBus/TRT)으로 조회한다. 이름이 일치하지 않으면 에러 없이 "Complete: Initializing
-     * Public Transit" 직후 출력 없이 CPU 100%로 무한 행(hang)한다 — bus/rail 작업과 무관하게
-     * 이번 세션의 모든 시나리오에서 재현된 전역 회귀였다(scenario1_1 등, 오늘 건드리지 않은
-     * 시나리오 포함). veh_width 속성 누락도 배포판 예시와의 또 다른 차이점이라 함께 채운다
-     * (편집 화면에 아직 이 파라미터가 없어 고정값 사용).
-     *
-     * <p>따라서 vehicle_type.nextsim_type_code(NV/AV/NB/AB/TRK/TR/TRUCK)로 6개 정식 카테고리에
-     * 매핑되는 DB 행을 찾아 그 파라미터로 해당 카테고리를 채우고, 매핑되는 행이 없는 카테고리는
-     * 배포판 기본값을 그대로 사용해 6개 카테고리가 항상 전부 존재하도록 보장한다. 매핑된
-     * 카테고리가 하나도 없으면(어떤 차종에도 코드 미설정) null — 호출측이 배포판 템플릿을
-     * 통째로 그대로 둔다.
-     */
-    private String buildVehicleTypesXml() {
-        List<VehicleType> types = vehicleTypeRepository.findAll();
-
-        // canonical name → 그 이름을 채울 DB 차종(첫 매치 우선)
-        Map<String, VehicleType> canonicalToSource = new java.util.LinkedHashMap<>();
-        for (VehicleType vt : types) {
-            if (vt.getNextsimTypeCode() == null || vt.getNextsimTypeCode().isBlank()) continue;
-            for (String code : vt.getNextsimTypeCode().split(",")) {
-                String canonical = CODE_TO_CANONICAL_NAME.get(code.trim().toUpperCase());
-                if (canonical != null) canonicalToSource.putIfAbsent(canonical, vt);
-            }
-        }
-        if (canonicalToSource.isEmpty()) return null; // 매핑된 코드 없음 — 배포판 템플릿 그대로
-
-        StringBuilder sb = new StringBuilder("<VehType_Scenario>\n");
-        int idx = 0;
-        for (String canonicalName : REQUIRED_VEHTYPE_NAMES) {
-            VehicleType vt = canonicalToSource.get(canonicalName);
-            sb.append("    <vehtype id=\"").append(idx++)
-              .append("\" max_pax=\"").append(vt != null ? escapeXmlAttr(vt.getMaxPax()) : DEFAULT_VEHTYPE_MAXPAX.get(canonicalName))
-              .append("\" name=\"").append(canonicalName)
-              .append("\" v2x=\"").append(vt != null ? escapeXmlAttr(vt.getV2x()) : "off")
-              .append("\">\n");
-            sb.append("        <veh_width dist=\"Normal\" max=\"2.1\" mean=\"1.9\" min=\"1.8\" sd=\"0.2\"/>\n");
-            if (vt != null) {
-                List<VehicleTypeParameter> params = vehicleTypeParameterRepository.findByVehicleType_Id(vt.getId());
-                for (VehicleTypeParameter p : params) {
-                    sb.append("        <").append(p.getParameterName())
-                      .append(" dist=\"").append(normalizeDist(p.getDist()))
-                      .append("\" max=\"").append(escapeXmlAttr(p.getMax()))
-                      .append("\" mean=\"").append(escapeXmlAttr(p.getMean()))
-                      .append("\" min=\"").append(escapeXmlAttr(p.getMin()))
-                      .append("\" sd=\"").append(escapeXmlAttr(p.getSd()))
-                      .append("\"/>\n");
-                }
-            } else {
-                sb.append(DEFAULT_VEHTYPE_BODY.get(canonicalName));
-            }
-            sb.append("    </vehtype>\n");
-        }
-        sb.append("</VehType_Scenario>");
-        return xml(sb.toString());
-    }
-
-    /** "normal"/"lognormal"(편집 화면 select 옵션, 소문자) → NextSim이 기대하는 대문자
-     *  표기("Normal"/"LogNormal", 실측 vehicletypes.xml 샘플 기준)로 정규화. */
-    private static String normalizeDist(String dist) {
-        if (dist != null && dist.equalsIgnoreCase("lognormal")) return "LogNormal";
-        return "Normal";
     }
 
     private static String escapeXmlAttr(String s) {

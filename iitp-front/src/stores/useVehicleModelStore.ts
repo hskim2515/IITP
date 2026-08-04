@@ -3,11 +3,13 @@ import { buildFileUrl } from '@utils/fileUrl';
 
 export interface VehicleModelItem {
     id: number;
+    key?: string;
     name: string;
     filePath: string;       // 백엔드에서 반환하는 파일 경로
     color?: string;
     length?: number;
     vehicleTypeId?: number; // vehicle_type 테이블 FK
+    vehicleTypeKey?: string;
     /** GLTF 모델 좌표계 보정값: DB에서 JSON 문자열로 오거나, 파싱된 객체일 수 있음 */
     correctionHpr?: string | { heading: number; pitch: number; roll: number };
     /** ENU Up 방향 높이 보정(m). 양수=위로 올림, 음수=아래로 내림 */
@@ -16,6 +18,7 @@ export interface VehicleModelItem {
 
 export interface VehicleTypeRef {
     id: number;
+    key?: string;
     vehicleId: string; // 예: "CAR", "BUS", "TAXI"
     name: string;
 }
@@ -84,7 +87,10 @@ export function resolveModelByVehicleType(
 ): VehicleModelItem | null {
     const vt = vehicleTypes.find(t => t.vehicleId?.toUpperCase() === vehicleTypeStr?.toUpperCase());
     if (!vt) return null;
-    return models.find(m => m.vehicleTypeId === vt.id) ?? null;
+    return models.find(m => (
+        (m.vehicleTypeKey && vt.key && m.vehicleTypeKey === vt.key)
+        || m.vehicleTypeId === vt.id
+    )) ?? null;
 }
 
 /** DB vehicle_type_model.file_path 기반 GLB URL을 반환합니다. */

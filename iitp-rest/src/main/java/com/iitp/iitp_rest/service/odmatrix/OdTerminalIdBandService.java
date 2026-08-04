@@ -16,6 +16,7 @@ import java.io.ByteArrayOutputStream;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -239,13 +240,13 @@ public class OdTerminalIdBandService {
         }
         int removed = 0;
         for (OdMatrixXml.OdMatrixItemXml item : od.getOdMatrices()) {
-            if (item.getNvodMatrix() == null || item.getNvodMatrix().getDemands() == null) continue;
-            var demands = item.getNvodMatrix().getDemands();
-            int before = demands.size();
-            demands.removeIf(d ->
-                    (d.getSource() != null && !existingNodeIds.contains(d.getSource())) ||
-                    (d.getSink()   != null && !existingNodeIds.contains(d.getSink())));
-            removed += before - demands.size();
+            for (var demands : demandLists(item)) {
+                int before = demands.size();
+                demands.removeIf(d ->
+                        (d.getSource() != null && !existingNodeIds.contains(d.getSource())) ||
+                        (d.getSink()   != null && !existingNodeIds.contains(d.getSink())));
+                removed += before - demands.size();
+            }
         }
         if (removed > 0) {
             log.info("[OdTerminalIdBandService] 네트워크 편집으로 삭제된 노드를 참조하던 OD 수요 {}건 제거", removed);
@@ -257,13 +258,14 @@ public class OdTerminalIdBandService {
     public void applyRemapToOdMatrix(OdMatrixXml od, Map<String, String> idRemap) {
         if (od == null || od.getOdMatrices() == null || idRemap.isEmpty()) return;
         for (OdMatrixXml.OdMatrixItemXml item : od.getOdMatrices()) {
-            if (item.getNvodMatrix() == null || item.getNvodMatrix().getDemands() == null) continue;
-            for (OdMatrixXml.DemandXml d : item.getNvodMatrix().getDemands()) {
-                if (d.getSource() != null && idRemap.containsKey(d.getSource())) {
-                    d.setSource(idRemap.get(d.getSource()));
-                }
-                if (d.getSink() != null && idRemap.containsKey(d.getSink())) {
-                    d.setSink(idRemap.get(d.getSink()));
+            for (var demands : demandLists(item)) {
+                for (OdMatrixXml.DemandXml d : demands) {
+                    if (d.getSource() != null && idRemap.containsKey(d.getSource())) {
+                        d.setSource(idRemap.get(d.getSource()));
+                    }
+                    if (d.getSink() != null && idRemap.containsKey(d.getSink())) {
+                        d.setSink(idRemap.get(d.getSink()));
+                    }
                 }
             }
         }
@@ -273,13 +275,25 @@ public class OdTerminalIdBandService {
         Set<String> ids = new HashSet<>();
         if (od == null || od.getOdMatrices() == null) return ids;
         for (OdMatrixXml.OdMatrixItemXml item : od.getOdMatrices()) {
-            if (item.getNvodMatrix() == null || item.getNvodMatrix().getDemands() == null) continue;
-            for (OdMatrixXml.DemandXml d : item.getNvodMatrix().getDemands()) {
-                if (d.getSource() != null) ids.add(d.getSource());
-                if (d.getSink() != null) ids.add(d.getSink());
+            for (var demands : demandLists(item)) {
+                for (OdMatrixXml.DemandXml d : demands) {
+                    if (d.getSource() != null) ids.add(d.getSource());
+                    if (d.getSink() != null) ids.add(d.getSink());
+                }
             }
         }
         return ids;
+    }
+
+    private List<List<OdMatrixXml.DemandXml>> demandLists(OdMatrixXml.OdMatrixItemXml item) {
+        List<List<OdMatrixXml.DemandXml>> lists = new java.util.ArrayList<>(2);
+        if (item.getAvodMatrix() != null && item.getAvodMatrix().getDemands() != null) {
+            lists.add(item.getAvodMatrix().getDemands());
+        }
+        if (item.getNvodMatrix() != null && item.getNvodMatrix().getDemands() != null) {
+            lists.add(item.getNvodMatrix().getDemands());
+        }
+        return lists;
     }
 
     private Set<String> intersection(Set<String> a, Set<String> b) {

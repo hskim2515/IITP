@@ -2,13 +2,39 @@ import * as Cesium from "cesium";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader";
 import type { BufferGeometry } from "three";
 
+type GlbAlphaMode = 'OPAQUE' | 'MASK' | 'BLEND';
+
+interface GlbMaterialBatch {
+    indexOffset: number;
+    indexCount: number;
+    textureSource: any | null;
+    baseColor: [number, number, number, number];
+    alphaMode: GlbAlphaMode;
+    alphaCutoff: number;
+    name: string;
+}
+
+interface GlbAsset {
+    verts: Float32Array;
+    norms: Float32Array;
+    uvs: Float32Array;
+    indicesTyped: Uint16Array | Uint32Array;
+    materialBatches: GlbMaterialBatch[];
+}
+
+interface GpuMaterialBatch extends GlbMaterialBatch {
+    texture: any;
+    hasTexture: boolean;
+    drawCommand: any;
+}
+
 /**
  * GLB 인스턴싱 기반 차량 Primitive
  *
  * 핵심 구현:
  *  - RTC(Relative-to-Center): ECEF float32 정밀도 문제 해결
- *  - GPU instanced draw: 모든 인스턴스 1회 DrawCall
- *  - 텍스처: 차종별로 분리된 GLB 파일의 첫 번째 material 텍스처를 그대로 사용
+ *  - GPU instanced draw: 차량 인스턴스는 공유하고 GLB material별 draw batch로 렌더링
+ *  - 텍스처: GLB의 mesh/material/baseColorTexture를 각 batch에 그대로 적용
  */
 export default class VehiclePrimitive {
     // ─── Cesium 렌더링 리소스 ──────────────────────────────────────────────
@@ -17,7 +43,9 @@ export default class VehiclePrimitive {
     private vertexArray:          any = null;
     private shaderProgram:        any = null;
     private drawCommand:          any = null;
-    // LOD: 포인트 스프라이트 (원거리)
+    private drawCommands:         any[] = [];
+    private materialBatches:      GpuMaterialBatch[] = [];
+    // 포인트 스프라이트 리소스는 기존 GPU 구조 호환을 위해 유지하지만 3D 화면에는 제출하지 않는다.
     private pointDummyBuffer:     any = null;
     private pointVertexArray:     any = null;
     private pointShaderProgram:   any = null;
@@ -116,15 +144,9 @@ export default class VehiclePrimitive {
     // fetch+GLTFLoader 파싱+텍스처 디코드(네트워크/CPU 비용)를 처음부터 반복하면 그 사이
     // drawCommand가 없어 화면에 차량이 전혀 안 보이는 공백이 생긴다("시간은 가는데 차량이 사라짐").
     // 파싱된 지오메트리/이미지를 재사용하면 재생성은 GPU 버퍼 업로드만 남아 사실상 즉시 끝난다.
-    private static glbAssetCache = new Map<string, Promise<{
-        verts: Float32Array; norms: Float32Array; uvs: Float32Array;
-        indicesTyped: Uint16Array | Uint32Array; textureImage: HTMLImageElement | null;
-    } | null>>();
+    private static glbAssetCache = new Map<string, Promise<GlbAsset | null>>();
 
-    private async loadGlbAssets(glbUrl: string): Promise<{
-        verts: Float32Array; norms: Float32Array; uvs: Float32Array;
-        indicesTyped: Uint16Array | Uint32Array; textureImage: HTMLImageElement | null;
-    } | null> {
+    private async loadGlbAssets(glbUrl: string): Promise<GlbAsset | null> {
         // ── GLB fetch ────────────────────────────────────────────────────
         let arrayBuffer: ArrayBuffer;
         try {
@@ -136,11 +158,7 @@ export default class VehiclePrimitive {
             return null;
         }
 
-        // ── GLB 바이너리 직접 파싱 (텍스처 추출용) ──────────────────────
-        const glbJson = this.parseGLBJson(arrayBuffer);
-        const binOffset = this.getGLBBinOffset(arrayBuffer);
-
-        // ── GLB 파싱 (three.js GLTFLoader — geometry + UV) ───────────────
+        // ── GLB 파싱 (three.js GLTFLoader — geometry + material + texture) ─
         let gltf: any;
         try {
             gltf = await new Promise<any>((resolve, reject) =>
@@ -155,8 +173,8 @@ export default class VehiclePrimitive {
         const allPos:  number[] = [];
         const allNorm: number[] = [];
         const allUV:   number[] = [];
-        const allIdx:  number[] = [];
-        let vOffset = 0, hasMesh = false, hasUV = false;
+        const materialGroups = new Map<string, { material: any; indices: number[]; name: string }>();
+        let vOffset = 0, hasMesh = false;
 
         try {
             gltf.scene.updateWorldMatrix(true, true);
@@ -193,14 +211,35 @@ export default class VehiclePrimitive {
                     // UV
                     if (uvA) {
                         allUV.push(uvA.getX(v), uvA.getY(v));
-                        hasUV = true;
                     } else {
                         allUV.push(0, 0);
                     }
                 }
 
-                if (idxA) { for (let i = 0; i < idxA.count; i++) allIdx.push(idxA.getX(i) + vOffset); }
-                else       { for (let i = 0; i < posA.count; i++) allIdx.push(i + vOffset); }
+                const sourceIndexCount = idxA?.count ?? posA.count;
+                const groups = geo.groups.length > 0
+                    ? geo.groups
+                    : [{ start: 0, count: sourceIndexCount, materialIndex: 0 }];
+                const materials = Array.isArray(child.material) ? child.material : [child.material];
+
+                groups.forEach((group: any) => {
+                    const material = materials[group.materialIndex ?? 0] ?? materials[0] ?? null;
+                    const key = material?.uuid ?? '__default_material__';
+                    let target = materialGroups.get(key);
+                    if (!target) {
+                        target = {
+                            material,
+                            indices: [],
+                            name: material?.name || `material-${materialGroups.size}`,
+                        };
+                        materialGroups.set(key, target);
+                    }
+
+                    const end = Math.min(group.start + group.count, sourceIndexCount);
+                    for (let i = group.start; i < end; i++) {
+                        target.indices.push((idxA ? idxA.getX(i) : i) + vOffset);
+                    }
+                });
                 vOffset += posA.count;
             });
         } catch (e) {
@@ -233,21 +272,46 @@ export default class VehiclePrimitive {
         const norms = new Float32Array(allNorm);
         const uvs   = new Float32Array(allUV);
 
-        const indicesTyped = vOffset > 65535
-            ? new Uint32Array(allIdx)
-            : new Uint16Array(allIdx);
+        const groupedIndices: number[] = [];
+        const materialBatches: GlbMaterialBatch[] = [];
+        materialGroups.forEach(({ material, indices, name }) => {
+            if (indices.length === 0) return;
+            const indexOffset = groupedIndices.length;
+            // 대형 GLB는 한 material에 수십만 index가 들어갈 수 있어 spread 사용 시
+            // 브라우저 호출 스택 한도를 넘는다. 순차 복사로 안전하게 합친다.
+            for (let i = 0; i < indices.length; i++) groupedIndices.push(indices[i]);
 
-        // ── 텍스처 로드 (GLB 바이너리에서 차종별 이미지 추출) ────────────
-        let textureImage: HTMLImageElement | null = null;
-        if (hasUV && glbJson && binOffset >= 0) {
-            try {
-                textureImage = await this.extractTextureImage(glbJson, arrayBuffer, binOffset);
-            } catch (e) {
-                console.warn('[VehiclePrimitive] 텍스처 추출 실패, baseColor 사용:', e);
-            }
+            const color = material?.color;
+            const opacity = Number.isFinite(material?.opacity) ? material.opacity : 1;
+            const alphaCutoff = Number.isFinite(material?.alphaTest) && material.alphaTest > 0
+                ? material.alphaTest
+                : 0.5;
+            const alphaMode: GlbAlphaMode = material?.alphaTest > 0
+                ? 'MASK'
+                : (material?.transparent || opacity < 1 ? 'BLEND' : 'OPAQUE');
+            const textureSource = material?.map?.image ?? material?.map?.source?.data ?? null;
+
+            materialBatches.push({
+                indexOffset,
+                indexCount: indices.length,
+                textureSource,
+                baseColor: [color?.r ?? 1, color?.g ?? 1, color?.b ?? 1, opacity],
+                alphaMode,
+                alphaCutoff,
+                name,
+            });
+        });
+
+        if (materialBatches.length === 0 || groupedIndices.length === 0) {
+            console.error('[VehiclePrimitive] material batch 없음:', glbUrl);
+            return null;
         }
 
-        return { verts, norms, uvs, indicesTyped, textureImage };
+        const indicesTyped = vOffset > 65535
+            ? new Uint32Array(groupedIndices)
+            : new Uint16Array(groupedIndices);
+
+        return { verts, norms, uvs, indicesTyped, materialBatches };
     }
 
     // ─── 비동기 초기화 ────────────────────────────────────────────────────
@@ -280,30 +344,10 @@ export default class VehiclePrimitive {
             }
             return;
         }
-        const { verts, norms, uvs, indicesTyped, textureImage } = parsed;
-
-        // ── 텍스처 GPU 업로드 (디코드는 캐시에서 재사용, 업로드만 인스턴스별 수행) ──
-        if (textureImage) {
-            try {
-                this.cesiumTexture = new (Cesium as any).Texture({
-                    context: this.context,
-                    source:  textureImage,
-                    flipY:   false,  // three.js가 이미 V좌표를 반전하므로 이중 반전 방지
-                });
-                this.hasTexture = true;
-            } catch (e) {
-                console.warn('[VehiclePrimitive] 텍스처 GPU 업로드 실패, baseColor 사용:', e);
-            }
-        }
-
-        // 텍스처 없을 때 1×1 흰색 더미 — UniformSampler에 null이 들어가면 Cesium이 크래시
-        if (!this.cesiumTexture) {
-            this.cesiumTexture = new (Cesium as any).Texture({
-                context: this.context,
-                source: { width: 1, height: 1, arrayBufferView: new Uint8Array([255, 255, 255, 255]) },
-                pixelFormat: (Cesium as any).PixelFormat.RGBA,
-            });
-        }
+        const { verts, norms, uvs, indicesTyped, materialBatches } = parsed;
+        this.baseColor = materialBatches[0]
+            ? materialBatches[0].baseColor.slice(0, 3) as [number, number, number]
+            : [1, 1, 1];
 
         if (this.destroyed) return;
 
@@ -426,25 +470,22 @@ export default class VehiclePrimitive {
                 in float v_meshAlpha;
                 in float v_apparentPx;
                 uniform sampler2D u_texture;
-                uniform vec3      u_baseColor;
+                uniform vec4      u_baseColor;
                 uniform bool      u_hasTexture;
-
-                out vec4 fragColor;
+                uniform bool      u_alphaMask;
+                uniform float     u_alphaCutoff;
 
                 void main() {
                     if (v_meshAlpha <= 0.0) discard;
 
-                    vec4 colorOnly = vec4(u_baseColor, 0.9 * v_meshAlpha);
+                    vec4 materialColor = u_baseColor;
                     if (u_hasTexture) {
-                        // 8px 이하: 색상만, 16px 이상: 텍스처
-                        // (줌 레벨·뷰포트 크기에 무관하게 항상 적절한 품질)
-                        float texWeight = smoothstep(8.0, 16.0, v_apparentPx);
                         vec4 texColor = texture(u_texture, v_uv);
-                        texColor.a   *= v_meshAlpha;
-                        fragColor = mix(colorOnly, texColor, texWeight);
-                    } else {
-                        fragColor = colorOnly;
+                        materialColor *= texColor;
                     }
+                    materialColor.a *= v_meshAlpha;
+                    if (u_alphaMask && materialColor.a < u_alphaCutoff) discard;
+                    out_FragColor = materialColor;
                 }
             `,
             attributeLocations: {
@@ -457,38 +498,81 @@ export default class VehiclePrimitive {
             },
         });
 
-        // ── DrawCommand ──────────────────────────────────────────────────
+        // ── material별 텍스처 + DrawCommand ──────────────────────────────
         const sRTC = VehiclePrimitive._srtc;
-
-        this.drawCommand = new Cesium.DrawCommand({
-            vertexArray:   this.vertexArray,
-            shaderProgram: this.shaderProgram,
-            uniformMap: {
-                u_view:       () => ctx.uniformState.view,
-                u_projection: () => ctx.uniformState.projection,
-                u_rtcCenter: () => {
-                    const cam = self.viewer.scene.camera.positionWC;
-                    sRTC.x = self.referenceCenter.x - cam.x;
-                    sRTC.y = self.referenceCenter.y - cam.y;
-                    sRTC.z = self.referenceCenter.z - cam.z;
-                    return sRTC;
-                },
-                u_baseColor:   () => new Cesium.Cartesian3(self.baseColor[0], self.baseColor[1], self.baseColor[2]),
-                u_texture:     () => self.cesiumTexture,
-                u_hasTexture:  () => self.hasTexture,
-                u_projScale:   () => self._projScale,
-                u_targetSizeM: () => self.targetSizeM,
-            },
-            primitiveType: Cesium.PrimitiveType.TRIANGLES,
-            count:         indicesTyped.length,
-            instanceCount: this.instanceCount,
-            pass:          Cesium.Pass.OPAQUE,
-            renderState:   Cesium.RenderState.fromCache({
-                depthTest: { enabled: true },
-                cull:      { enabled: false },
-                blending:  Cesium.BlendingState.ALPHA_BLEND,
-            }),
+        const whiteTexture = new (Cesium as any).Texture({
+            context: ctx,
+            source: { width: 1, height: 1, arrayBufferView: new Uint8Array([255, 255, 255, 255]) },
+            pixelFormat: (Cesium as any).PixelFormat.RGBA,
         });
+        const textureBySource = new Map<any, any>();
+
+        this.materialBatches = materialBatches.map((batch): GpuMaterialBatch => {
+            let texture = whiteTexture;
+            let hasTexture = false;
+            if (batch.textureSource) {
+                try {
+                    texture = textureBySource.get(batch.textureSource);
+                    if (!texture) {
+                        texture = new (Cesium as any).Texture({
+                            context: ctx,
+                            source: batch.textureSource,
+                            flipY: false,
+                        });
+                        textureBySource.set(batch.textureSource, texture);
+                    }
+                    hasTexture = true;
+                } catch (e) {
+                    console.warn(`[VehiclePrimitive] material 텍스처 GPU 업로드 실패 (${batch.name}):`, e);
+                }
+            }
+
+            const gpuBatch = { ...batch, texture, hasTexture, drawCommand: null } as GpuMaterialBatch;
+            const isBlend = batch.alphaMode === 'BLEND';
+            const renderStateOptions: any = {
+                depthTest: { enabled: true },
+                depthMask: !isBlend,
+                cull:      { enabled: false },
+            };
+            if (isBlend) renderStateOptions.blending = Cesium.BlendingState.ALPHA_BLEND;
+
+            gpuBatch.drawCommand = new Cesium.DrawCommand({
+                vertexArray:   this.vertexArray,
+                shaderProgram: this.shaderProgram,
+                uniformMap: {
+                    u_view:       () => ctx.uniformState.view,
+                    u_projection: () => ctx.uniformState.projection,
+                    u_rtcCenter: () => {
+                        const cam = self.viewer.scene.camera.positionWC;
+                        sRTC.x = self.referenceCenter.x - cam.x;
+                        sRTC.y = self.referenceCenter.y - cam.y;
+                        sRTC.z = self.referenceCenter.z - cam.z;
+                        return sRTC;
+                    },
+                    u_baseColor: () => new Cesium.Cartesian4(
+                        gpuBatch.baseColor[0], gpuBatch.baseColor[1],
+                        gpuBatch.baseColor[2], gpuBatch.baseColor[3],
+                    ),
+                    u_texture:     () => gpuBatch.texture,
+                    u_hasTexture:  () => gpuBatch.hasTexture,
+                    u_alphaMask:   () => gpuBatch.alphaMode === 'MASK',
+                    u_alphaCutoff: () => gpuBatch.alphaCutoff,
+                    u_projScale:   () => self._projScale,
+                    u_targetSizeM: () => self.targetSizeM,
+                },
+                primitiveType: Cesium.PrimitiveType.TRIANGLES,
+                offset:        batch.indexOffset,
+                count:         batch.indexCount,
+                instanceCount: this.instanceCount,
+                pass:          isBlend ? Cesium.Pass.TRANSLUCENT : Cesium.Pass.OPAQUE,
+                renderState:   Cesium.RenderState.fromCache(renderStateOptions),
+            });
+            return gpuBatch;
+        });
+        this.drawCommands = this.materialBatches.map(batch => batch.drawCommand);
+        this.drawCommand = this.drawCommands[0] ?? null;
+        this.cesiumTexture = whiteTexture;
+        this.hasTexture = this.materialBatches.some(batch => batch.hasTexture);
 
         // ── 포인트 스프라이트 DrawCommand (원거리 LOD) ──────────────────
         // 더미 버텍스 1개 + offsetBuffer(instance) 로 구성
@@ -560,8 +644,6 @@ export default class VehiclePrimitive {
                 uniform vec3  u_baseColor;
                 in float v_pointAlpha;
                 in float v_pointSize;
-                out vec4 fragColor;
-
                 void main() {
                     if (v_pointAlpha <= 0.0) discard;
                     // 원형 점 (pointSize가 작을수록 가장자리 부드럽게)
@@ -569,7 +651,7 @@ export default class VehiclePrimitive {
                     float edge = 0.5 - max(0.5 / v_pointSize, 0.05);
                     float alpha = v_pointAlpha * (1.0 - smoothstep(edge, 0.5, r));
                     if (alpha <= 0.0) discard;
-                    fragColor = vec4(u_baseColor, alpha);
+                    out_FragColor = vec4(u_baseColor, alpha);
                 }
             `,
             attributeLocations: {
@@ -607,7 +689,12 @@ export default class VehiclePrimitive {
             }),
         });
 
-        console.log(`[VehiclePrimitive] 초기화 완료: type=${this.vehicleType} texture=${this.hasTexture} count=${this.instanceCount}`);
+        console.log(
+            `[VehiclePrimitive] 초기화 완료: type=${this.vehicleType}`
+            + ` materials=${this.materialBatches.length}`
+            + ` textures=${this.materialBatches.filter(batch => batch.hasTexture).length}`
+            + ` count=${this.instanceCount}`,
+        );
     }
 
     /**
@@ -699,10 +786,10 @@ export default class VehiclePrimitive {
             ],
         });
 
-        if (this.drawCommand) {
-            this.drawCommand.vertexArray   = this.vertexArray;
-            this.drawCommand.instanceCount = this.instanceCount;
-        }
+        this.drawCommands.forEach(command => {
+            command.vertexArray = this.vertexArray;
+            command.instanceCount = this.instanceCount;
+        });
         if (this.drawCommandPoint) {
             this.drawCommandPoint.vertexArray   = this.pointVertexArray;
             this.drawCommandPoint.instanceCount = this.instanceCount;
@@ -713,61 +800,6 @@ export default class VehiclePrimitive {
         // (곧바로 이어지는 worker 'init' 응답이 즉시 채워준다 — czmlPositionWorker 참고)
         this.latestPositions = undefined;
         this.latestHeadings  = undefined;
-    }
-
-    // ─── GLB 파싱 유틸 ────────────────────────────────────────────────────
-
-    /** GLB JSON 청크 파싱 */
-    private parseGLBJson(arrayBuffer: ArrayBuffer): any | null {
-        try {
-            const dv = new DataView(arrayBuffer);
-            const chunk0Len = dv.getUint32(12, true);
-            const jsonBytes = new Uint8Array(arrayBuffer, 20, chunk0Len);
-            return JSON.parse(new TextDecoder().decode(jsonBytes));
-        } catch {
-            return null;
-        }
-    }
-
-    /** GLB 바이너리 청크 시작 오프셋 */
-    private getGLBBinOffset(arrayBuffer: ArrayBuffer): number {
-        const dv = new DataView(arrayBuffer);
-        const chunk0Len = dv.getUint32(12, true);
-        return 20 + chunk0Len + 8; // JSON chunk + bin chunk header(8)
-    }
-
-    /**
-     * GLB 바이너리에서 텍스처 이미지 추출.
-     * GLB가 차종별로 분리되어 있으므로 첫 번째 material의 텍스처를 그대로 사용.
-     */
-    private async extractTextureImage(
-        gltfJson: any,
-        arrayBuffer: ArrayBuffer,
-        binOffset: number
-    ): Promise<HTMLImageElement | null> {
-        // 첫 번째 mesh primitive의 material 사용
-        const matIndex = gltfJson.meshes?.[0]?.primitives?.[0]?.material ?? 0;
-
-        const texIndex = gltfJson.materials?.[matIndex]?.pbrMetallicRoughness?.baseColorTexture?.index;
-        if (texIndex === undefined) return null;
-
-        const imgIndex = gltfJson.textures?.[texIndex]?.source;
-        if (imgIndex === undefined) return null;
-
-        const imgDef = gltfJson.images?.[imgIndex];
-        if (imgDef?.bufferView === undefined) return null;
-
-        const bv = gltfJson.bufferViews[imgDef.bufferView];
-        const imgBytes = new Uint8Array(arrayBuffer, binOffset + (bv.byteOffset ?? 0), bv.byteLength);
-        const blob = new Blob([imgBytes], { type: imgDef.mimeType ?? 'image/png' });
-        const url  = URL.createObjectURL(blob);
-
-        return new Promise<HTMLImageElement | null>((resolve) => {
-            const img = new Image();
-            img.onload  = () => { URL.revokeObjectURL(url); resolve(img); };
-            img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
-            img.src = url;
-        });
     }
 
     // ─── 매 프레임 호출 ───────────────────────────────────────────────────
@@ -825,7 +857,7 @@ export default class VehiclePrimitive {
         this.offsetBuffer.copyFromArrayView(this._offsetArr.subarray(0, count * 3));
         this.orientationBuffer.copyFromArrayView(this._orientArr.subarray(0, count * 4));
 
-        this.drawCommand.instanceCount      = count;
+        this.drawCommands.forEach(command => { command.instanceCount = count; });
         this.drawCommandPoint.instanceCount = count;
 
         // ─ projScale 갱신 ─────────────────────────────────────────────────
@@ -837,13 +869,8 @@ export default class VehiclePrimitive {
         const vh = Math.max(1, scene.drawingBufferHeight);
         this._projScale = vh / (2.0 * Math.tan(fovY / 2));
 
-        // 메쉬/포인트 LOD 전환은 각 셰이더가 인스턴스별 거리(instDist)로 처리하므로
-        // 두 DrawCommand를 항상 함께 제출한다.
-        // (이전에는 referenceCenter 한 점까지의 거리로 일괄 제출 여부를 결정했는데,
-        //  차량들이 referenceCenter에서 먼 곳까지 퍼지면서 그 근처 차량은 메쉬 미제출 +
-        //  포인트는 자체 셰이더 로직(가까우면 숨김)으로 숨겨져 아예 안 보이는 문제가 있었음)
-        frameState.commandList.push(this.drawCommand);
-        frameState.commandList.push(this.drawCommandPoint);
+        // 3D는 GLB만 표시한다. 사용자 지정 색상 포인트는 2D VehicleFeatureLayer의 책임이다.
+        this.drawCommands.forEach(command => frameState.commandList.push(command));
     }
 
     // ─── 외부 인터페이스 ──────────────────────────────────────────────────
@@ -869,7 +896,7 @@ export default class VehiclePrimitive {
         if (this.destroyed) return;
         this.destroyed = true;
 
-        if (this.drawCommand) this.drawCommand.vertexArray = null;
+        this.drawCommands.forEach(command => { command.vertexArray = null; });
         if (this.drawCommandPoint) this.drawCommandPoint.vertexArray = null;
         this.modelVertexBuffer = null;
         this.modelNormalBuffer = null;
@@ -883,7 +910,14 @@ export default class VehiclePrimitive {
         this.pointDummyBuffer?.destroy();
         this.pointVertexArray?.destroy();
         this.pointShaderProgram?.destroy();
-        this.cesiumTexture?.destroy();
+        const textures = new Set<any>();
+        this.materialBatches.forEach(batch => textures.add(batch.texture));
+        if (this.cesiumTexture) textures.add(this.cesiumTexture);
+        textures.forEach(texture => {
+            if (texture && !texture.isDestroyed?.()) texture.destroy?.();
+        });
+        this.materialBatches = [];
+        this.drawCommands = [];
         this.cesiumTexture = null;
 
         this._offsetArr = null;

@@ -5,6 +5,13 @@ import { useWorkflowStore } from '@stores/useWorkflowStore';
 import { useMenuStore } from '@stores/useMenuStore';
 import { useNextSimReadinessStore } from '@stores/useNextSimReadinessStore';
 import type { DemandEntry, OdMatrixData, OdMatrixItem } from '@type/OdMatrix';
+import {
+    calculateVehicleMix,
+    mergeVehicleDemands,
+    OD_VEHICLE_TYPES,
+    rebalanceVehicleMix,
+    splitNextSimVehicleDemands,
+} from '@utils/odMatrixVehicleMix';
 
 const MENU_CODE = 'OD_MATRIX';
 
@@ -98,15 +105,21 @@ const OdMatrixModal: React.FC = () => {
         setLoading(true); setError(null);
         axiosInstance.get(`/od-matrix/${versionId}`)
             .then(res => {
-                const matrices: OdMatrixItem[] = (res.data.odMatrices ?? []).map((m: any) => ({
-                    id: m.id ?? 0,
-                    startTime: m.startTime ?? '00:00:00',
-                    duration: m.duration ?? 0,
-                    demands: (m.nvodMatrix?.demands ?? []).map((d: any) => ({
+                const matrices: OdMatrixItem[] = (res.data.odMatrices ?? []).map((m: any) => {
+                    const toDemands = (items: any[]): DemandEntry[] => items.map((d: any) => ({
                         source: d.source ?? '', sink: d.sink ?? '',
                         flow: d.flow ?? 0, dist: d.dist ?? '',
-                    })),
-                }));
+                    }));
+                    const nvDemands = toDemands(m.nvodMatrix?.demands ?? []);
+                    const avDemands = toDemands(m.avodMatrix?.demands ?? []);
+                    return {
+                        id: m.id ?? 0,
+                        startTime: m.startTime ?? '00:00:00',
+                        duration: m.duration ?? 0,
+                        demands: mergeVehicleDemands(nvDemands, avDemands),
+                        vehicleMix: calculateVehicleMix(nvDemands, avDemands),
+                    };
+                });
                 setData({ odMatrices: matrices });
                 setTabIdx(0);
                 setMatrix(demandsToMatrix(matrices[0]?.demands ?? []));
@@ -115,7 +128,10 @@ const OdMatrixModal: React.FC = () => {
                 if (e?.response?.status === 404) {
                     // odmatrix.xml 이 아직 없는 버전 — 에러가 아니라 신규 작성 시작.
                     // 빈 매트릭스 1개로 초기화해 출발지/도착지 추가 UI 를 바로 쓸 수 있게 한다.
-                    const empty: OdMatrixItem = { id: 0, startTime: '00:00:00', duration: 60, demands: [] };
+                    const empty: OdMatrixItem = {
+                        id: 0, startTime: '00:00:00', duration: 60, demands: [],
+                        vehicleMix: { NV: 100, AV: 0 },
+                    };
                     setData({ odMatrices: [empty] });
                     setTabIdx(0);
                     setMatrix(demandsToMatrix([]));
@@ -157,7 +173,7 @@ const OdMatrixModal: React.FC = () => {
 
     const commitEdit = () => {
         if (!editCell) return;
-        const flow = parseFloat(editValue) || 0;
+        const flow = Math.max(0, Math.round(parseFloat(editValue) || 0));
         const key  = cellKey(editCell.src, editCell.snk);
         setMatrix(prev => {
             const fm = new Map(prev.flowMap);
@@ -209,14 +225,17 @@ const OdMatrixModal: React.FC = () => {
         const updated = flushMatrix();
         if (!updated) return false;
         const payload = {
-            odMatrices: updated.odMatrices.map(m => ({
-                id: m.id, startTime: m.startTime, duration: m.duration,
-                nvodMatrix: {
-                    demands: m.demands.map(d => ({
+            odMatrices: updated.odMatrices.map(m => {
+                const { avDemands, nvDemands } = splitNextSimVehicleDemands(m.demands, m.vehicleMix);
+                const serialize = (demands: DemandEntry[]) => demands.map(d => ({
                         source: d.source, sink: d.sink, flow: d.flow, dist: d.dist ?? '',
-                    })),
-                },
-            })),
+                    }));
+                return {
+                    id: m.id, startTime: m.startTime, duration: m.duration,
+                    avodMatrix: { demands: serialize(avDemands) },
+                    nvodMatrix: { demands: serialize(nvDemands) },
+                };
+            }),
         };
         setSaving(true);
         try {
@@ -261,6 +280,23 @@ const OdMatrixModal: React.FC = () => {
     };
 
     const currentMatrix = data?.odMatrices[tabIdx];
+    const currentTotalFlow = useMemo(
+        () => [...matrix.flowMap.values()].reduce((sum, flow) => sum + Math.max(0, Math.round(flow)), 0),
+        [matrix.flowMap],
+    );
+
+    const updateVehicleMix = (typeId: string, value: number) => {
+        const updated = flushMatrix();
+        if (!updated) return;
+        const next = {
+            odMatrices: updated.odMatrices.map((item, index) =>
+                index === tabIdx
+                    ? { ...item, vehicleMix: rebalanceVehicleMix(item.vehicleMix, typeId, value) }
+                    : item
+            ),
+        };
+        setData(next);
+    };
 
     return (
         <div style={ov}>
@@ -321,6 +357,75 @@ const OdMatrixModal: React.FC = () => {
 
                         {/* 오른쪽 피벗 매트릭스 */}
                         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+                            {/* 시간대별 차량 구성비 — XML에는 별도 속성 없이 flow로 분할 저장 */}
+                            {currentMatrix && (
+                                <div style={mixPanel}>
+                                    <div style={mixHeader}>
+                                        <div>
+                                            <div style={{ color: '#cbd8f2', fontSize: 12, fontWeight: 700 }}>차량 구성비</div>
+                                            <div style={{ color: '#59677f', fontSize: 10, marginTop: 3 }}>
+                                                현재 시간대 전체 OD에 적용 · 대중교통 제외
+                                            </div>
+                                        </div>
+                                        <div style={{ textAlign: 'right' }}>
+                                            <div style={{ color: '#8090aa', fontSize: 10 }}>총 수요</div>
+                                            <strong style={{ color: '#d6e2f7', fontSize: 13 }}>
+                                                {currentTotalFlow.toLocaleString()}
+                                            </strong>
+                                        </div>
+                                    </div>
+                                    <div style={mixBar}>
+                                        {OD_VEHICLE_TYPES.map(type => (
+                                            <div
+                                                key={type.id}
+                                                title={`${type.label} ${currentMatrix.vehicleMix[type.id] ?? 0}%`}
+                                                style={{
+                                                    width: `${currentMatrix.vehicleMix[type.id] ?? 0}%`,
+                                                    background: type.color,
+                                                    minWidth: (currentMatrix.vehicleMix[type.id] ?? 0) > 0 ? 2 : 0,
+                                                    transition: 'width 0.15s ease',
+                                                }}
+                                            />
+                                        ))}
+                                    </div>
+                                    <div style={mixRows}>
+                                        {OD_VEHICLE_TYPES.map(type => (
+                                            <div key={type.id} style={mixRow}>
+                                                <span style={{ ...mixDot, background: type.color }}/>
+                                                <strong style={{ color: '#d2ddf0', width: 28, fontSize: 11 }}>{type.id}</strong>
+                                                <div style={{ minWidth: 105 }}>
+                                                    <div style={{ color: '#aebbd1', fontSize: 11 }}>{type.label}</div>
+                                                    <div style={{ color: '#4e5d74', fontSize: 9 }}>{type.description}</div>
+                                                </div>
+                                                <input
+                                                    aria-label={`${type.label} 비율`}
+                                                    type="range"
+                                                    min={0}
+                                                    max={100}
+                                                    step={1}
+                                                    value={currentMatrix.vehicleMix[type.id] ?? 0}
+                                                    onChange={e => updateVehicleMix(type.id, Number(e.target.value))}
+                                                    style={{ flex: 1, minWidth: 120, accentColor: type.color }}
+                                                />
+                                                <div style={mixPercentBox}>
+                                                    <input
+                                                        aria-label={`${type.label} 비율 직접 입력`}
+                                                        type="number"
+                                                        min={0}
+                                                        max={100}
+                                                        step={1}
+                                                        value={currentMatrix.vehicleMix[type.id] ?? 0}
+                                                        onChange={e => updateVehicleMix(type.id, Number(e.target.value))}
+                                                        style={mixPercentInput}
+                                                    />
+                                                    <span>%</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
 
                             {/* 범례 + 통계 */}
                             <div style={legend}>
@@ -441,6 +546,8 @@ const OdMatrixModal: React.FC = () => {
                                                                     <input
                                                                         ref={editInputRef}
                                                                         type="number"
+                                                                        min={0}
+                                                                        step={1}
                                                                         value={editValue}
                                                                         onChange={e => setEditValue(e.target.value)}
                                                                         onBlur={commitEdit}
@@ -526,6 +633,14 @@ const closeBtn: React.CSSProperties = { background: 'none', border: 'none', colo
 const sidebar:   React.CSSProperties = { width: 170, flexShrink: 0, borderRight: '1px solid rgba(255,255,255,0.06)', overflowY: 'auto', padding: '10px 8px', display: 'flex', flexDirection: 'column', gap: 3 };
 const sideTitle: React.CSSProperties = { fontSize: 10, fontWeight: 600, color: '#3a3a3a', letterSpacing: '0.6px', textTransform: 'uppercase', padding: '2px 6px 8px' };
 const legend:    React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 14px', borderBottom: '1px solid rgba(255,255,255,0.04)', flexShrink: 0 };
+const mixPanel: React.CSSProperties = { padding: '10px 14px 11px', background: 'rgba(42,61,96,0.14)', borderBottom: '1px solid rgba(120,150,210,0.12)', flexShrink: 0 };
+const mixHeader: React.CSSProperties = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 };
+const mixBar: React.CSSProperties = { display: 'flex', height: 6, overflow: 'hidden', borderRadius: 4, background: 'rgba(255,255,255,0.05)', marginBottom: 7 };
+const mixRows: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '5px 12px' };
+const mixRow: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, minHeight: 30, padding: '3px 7px', border: '1px solid rgba(255,255,255,0.05)', borderRadius: 5, background: 'rgba(5,10,20,0.24)' };
+const mixDot: React.CSSProperties = { width: 7, height: 7, borderRadius: '50%', flexShrink: 0 };
+const mixPercentBox: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 2, color: '#71819b', fontSize: 10 };
+const mixPercentInput: React.CSSProperties = { width: 43, height: 22, padding: '0 4px', textAlign: 'right', color: '#d8e3f5', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)', borderRadius: 4, outline: 'none', fontSize: 11 };
 const tabItem = (active: boolean): React.CSSProperties => ({
     display: 'flex', flexDirection: 'column', alignItems: 'flex-start', padding: '7px 10px', borderRadius: 6, cursor: 'pointer', gap: 2, transition: 'all 0.15s', textAlign: 'left',
     background: active ? 'rgba(65,105,225,0.16)' : 'rgba(255,255,255,0.02)',

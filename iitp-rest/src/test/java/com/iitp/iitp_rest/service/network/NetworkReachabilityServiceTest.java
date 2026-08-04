@@ -118,6 +118,15 @@ class NetworkReachabilityServiceTest {
         return od;
     }
 
+    private static OdMatrixXml odWithAvAndNv(OdMatrixXml.DemandXml avDemand,
+                                              OdMatrixXml.DemandXml nvDemand) {
+        OdMatrixXml od = odWith(nvDemand);
+        var avod = new OdMatrixXml.AvOdMatrixXml();
+        avod.setDemands(new java.util.ArrayList<>(List.of(avDemand)));
+        od.getOdMatrices().get(0).setAvodMatrix(avod);
+        return od;
+    }
+
     private static OdMatrixXml.DemandXml demand(String src, String snk) {
         OdMatrixXml.DemandXml d = new OdMatrixXml.DemandXml();
         d.setSource(src); d.setSink(snk); d.setFlow(10.0);
@@ -140,6 +149,26 @@ class NetworkReachabilityServiceTest {
         int removed = service.filterUnreachableDemands(od, net);
 
         assertThat(removed).isEqualTo(1);
+        assertThat(od.getOdMatrices().get(0).getNvodMatrix().getDemands())
+                .extracting(OdMatrixXml.DemandXml::getSink)
+                .containsExactly("3");
+    }
+
+    @Test
+    void filterUnreachableDemandsAppliesToAvAndNv() {
+        NetworkXml net = new NetworkXml();
+        net.setLinks(List.of(link(1, 1, 2), link(2, 2, 3), link(3, 4, 5)));
+        net.setNodes(List.of(
+                node(1, NodeType.Terminal, List.of()),
+                node(2, NodeType.Normal, List.of(conn(1, 2))),
+                node(3, NodeType.Terminal, List.of()),
+                node(4, NodeType.Terminal, List.of()),
+                node(5, NodeType.Terminal, List.of())));
+
+        OdMatrixXml od = odWithAvAndNv(demand("1", "5"), demand("1", "3"));
+
+        assertThat(service.filterUnreachableDemands(od, net)).isEqualTo(1);
+        assertThat(od.getOdMatrices().get(0).getAvodMatrix().getDemands()).isEmpty();
         assertThat(od.getOdMatrices().get(0).getNvodMatrix().getDemands())
                 .extracting(OdMatrixXml.DemandXml::getSink)
                 .containsExactly("3");

@@ -288,6 +288,23 @@ class OdTerminalIdBandServiceTest {
     }
 
     @Test
+    void pruneDanglingReferences_appliesToAvAndNv() {
+        OdTerminalIdBandService svc = new OdTerminalIdBandService(
+                mock(FileStorageService.class), new NetworkJaxbParser(), mock(OdMatrixService.class));
+        OdMatrixXml odData = od("5000001", "11000005");
+        var avod = new OdMatrixXml.AvOdMatrixXml();
+        OdMatrixXml.DemandXml invalidAv = new OdMatrixXml.DemandXml();
+        invalidAv.setSource("5000001");
+        invalidAv.setSink("99999999");
+        avod.setDemands(new java.util.ArrayList<>(java.util.List.of(invalidAv)));
+        odData.getOdMatrices().get(0).setAvodMatrix(avod);
+
+        assertEquals(1, svc.pruneDanglingReferences(parsedNetwork(), odData));
+        assertTrue(odData.getOdMatrices().get(0).getAvodMatrix().getDemands().isEmpty());
+        assertEquals(1, odData.getOdMatrices().get(0).getNvodMatrix().getDemands().size());
+    }
+
+    @Test
     void pruneDanglingReferences_keepsDemandsWhenBothEndsExist() {
         OdTerminalIdBandService svc = new OdTerminalIdBandService(
                 mock(FileStorageService.class), new NetworkJaxbParser(), mock(OdMatrixService.class));

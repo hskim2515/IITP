@@ -139,20 +139,33 @@ public class NetworkReachabilityService {
         Map<String, Set<String>> reachedCache = new HashMap<>();
         int removed = 0;
         for (OdMatrixXml.OdMatrixItemXml item : od.getOdMatrices()) {
-            if (item.getNvodMatrix() == null || item.getNvodMatrix().getDemands() == null) continue;
-            var demands = item.getNvodMatrix().getDemands();
-            var it = demands.iterator();
-            while (it.hasNext()) {
-                OdMatrixXml.DemandXml d = it.next();
-                String src = d.getSource(), snk = d.getSink();
-                boolean bothTerminal = src != null && snk != null
-                        && Boolean.TRUE.equals(isTerminal.get(src)) && Boolean.TRUE.equals(isTerminal.get(snk));
-                boolean reachable = bothTerminal && isReachableCached(linkGraph, nodeOutLinks, nodeInLinks,
-                        reachedCache, src, snk);
-                if (!reachable) {
-                    it.remove();
-                    removed++;
-                }
+            removed += filterDemandList(item.getAvodMatrix() == null ? null : item.getAvodMatrix().getDemands(),
+                    linkGraph, nodeOutLinks, nodeInLinks, isTerminal, reachedCache);
+            removed += filterDemandList(item.getNvodMatrix() == null ? null : item.getNvodMatrix().getDemands(),
+                    linkGraph, nodeOutLinks, nodeInLinks, isTerminal, reachedCache);
+        }
+        return removed;
+    }
+
+    private int filterDemandList(List<OdMatrixXml.DemandXml> demands,
+                                 Map<String, List<String>> linkGraph,
+                                 Map<String, List<String>> nodeOutLinks,
+                                 Map<String, List<String>> nodeInLinks,
+                                 Map<String, Boolean> isTerminal,
+                                 Map<String, Set<String>> reachedCache) {
+        if (demands == null) return 0;
+        int removed = 0;
+        var it = demands.iterator();
+        while (it.hasNext()) {
+            OdMatrixXml.DemandXml d = it.next();
+            String src = d.getSource(), snk = d.getSink();
+            boolean bothTerminal = src != null && snk != null
+                    && Boolean.TRUE.equals(isTerminal.get(src)) && Boolean.TRUE.equals(isTerminal.get(snk));
+            boolean reachable = bothTerminal && isReachableCached(linkGraph, nodeOutLinks, nodeInLinks,
+                    reachedCache, src, snk);
+            if (!reachable) {
+                it.remove();
+                removed++;
             }
         }
         return removed;
@@ -218,21 +231,10 @@ public class NetworkReachabilityService {
         Map<String, Set<String>> reachedCache = new HashMap<>();
         int removed = 0;
         for (OdMatrixXml.OdMatrixItemXml item : od.getOdMatrices()) {
-            if (item.getNvodMatrix() == null || item.getNvodMatrix().getDemands() == null) continue;
-            var demands = item.getNvodMatrix().getDemands();
-            var it = demands.iterator();
-            while (it.hasNext()) {
-                OdMatrixXml.DemandXml d = it.next();
-                String src = d.getSource(), snk = d.getSink();
-                boolean bothTerminal = src != null && snk != null
-                        && Boolean.TRUE.equals(isTerminal.get(src)) && Boolean.TRUE.equals(isTerminal.get(snk));
-                boolean reachable = bothTerminal
-                        && isReachableCached(linkGraph, nodeOutLinks, nodeInLinks, reachedCache, src, snk);
-                if (!reachable) {
-                    it.remove();
-                    removed++;
-                }
-            }
+            removed += filterDemandList(item.getAvodMatrix() == null ? null : item.getAvodMatrix().getDemands(),
+                    linkGraph, nodeOutLinks, nodeInLinks, isTerminal, reachedCache);
+            removed += filterDemandList(item.getNvodMatrix() == null ? null : item.getNvodMatrix().getDemands(),
+                    linkGraph, nodeOutLinks, nodeInLinks, isTerminal, reachedCache);
         }
         return removed;
     }

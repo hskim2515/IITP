@@ -62,6 +62,13 @@ import java.util.stream.Collectors;
 public class VehicleController {
 
     private static final Logger logger = LoggerFactory.getLogger(VehicleController.class);
+    /**
+     * NextSim VehicleInfo.veh_type에서 직접 반환되는 표준 코드입니다.
+     * 시나리오 vehicle-config의 vehicleId도 같은 코드를 사용하므로 DB 매핑 유무와 관계없이
+     * 그대로 전달해야 타입별 색상과 GLB 모델을 정확히 찾을 수 있습니다.
+     */
+    private static final Set<String> NEXTSIM_VEHICLE_TYPE_CODES = Set.of(
+            "NV", "AV", "NB", "AB", "TRUCK", "TRT");
 
     private final VehicleDataReader vehicleDataReader;
     private final ScenarioService scenarioService;
@@ -1303,28 +1310,19 @@ public class VehicleController {
 
     /**
      * vehicle ID 또는 DB의 type 값을 기반으로 차량 유형을 결정합니다.
-     * DB에 type 컬럼이 없거나 null이거나 인식 불가한 코드인 경우 vehicle ID 숫자로 분포 배정합니다.
-     * 배정 비율: CAR 70%, TAXI 15%, BUS 10%, TRUCK 4%, MOTO 1%
+     * DB에 type 컬럼이 없거나 null이거나 인식 불가한 코드는 실제 차종을 임의 비율로
+     * 추정하지 않고 UNCLASSIFIED로 반환합니다.
      */
-    private String resolveVehicleType(String vehicleId, String dbType, Map<String, String> nextsimCodeToVehicleId) {
+    static String resolveVehicleType(String vehicleId, String dbType, Map<String, String> nextsimCodeToVehicleId) {
         if (dbType != null && !dbType.isBlank()) {
-            String mapped = nextsimCodeToVehicleId.get(dbType.toUpperCase());
+            String normalizedType = dbType.trim().toUpperCase(Locale.ROOT);
+            if (NEXTSIM_VEHICLE_TYPE_CODES.contains(normalizedType)) {
+                return normalizedType;
+            }
+            String mapped = nextsimCodeToVehicleId.get(normalizedType);
             if (mapped != null) return mapped;
-            // 매핑도 없고 우리 분류명도 아닌 낯선 코드 — 그대로 내보내면 어떤 3D 모델과도
-            // 매칭 안 돼 항상 기본 GLB로만 렌더되므로, 아래 ID 해시 폴백으로 계속 진행한다.
         }
-        // DB에 type 없을 때 vehicle ID 기반으로 배정
-        try {
-            int id = Integer.parseInt(vehicleId.replaceAll("[^0-9]", ""));
-            int mod = id % 100;
-            if (mod < 70)  return "CAR";
-            if (mod < 85)  return "TAXI";
-            if (mod < 95)  return "BUS";
-            if (mod < 99)  return "TRUCK";
-            return "MOTO";
-        } catch (NumberFormatException e) {
-            return "CAR";
-        }
+        return "UNCLASSIFIED";
     }
 
     /**

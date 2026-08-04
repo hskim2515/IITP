@@ -29,30 +29,17 @@ self.onmessage = function (e) {
 
         czmlData = data.czmlPackets; // [{id, type, path:[t,x,y,z,...]}, ...] 또는 구버전 [[t,x,y,z,...], ...]
 
-        sampledPositionsList = czmlData.map((track, idx) => {
+        sampledPositionsList = czmlData.map((track) => {
             // 신버전: {id, type, path:[...]}  구버전: [t, x, y, z, ...]
             const isLegacy = Array.isArray(track);
             const path = isLegacy ? track : track.path;
             let vehicleType: string;
             if (isLegacy) {
-                // 레거시 배열: 인덱스 기반 타입 배정 (useSimulation과 동일한 로직)
-                const mod = idx % 100;
-                if (mod < 70)       vehicleType = 'CAR';
-                else if (mod < 85)  vehicleType = 'TAXI';
-                else if (mod < 95)  vehicleType = 'BUS';
-                else if (mod < 99)  vehicleType = 'TRUCK';
-                else                vehicleType = 'MOTO';
+                vehicleType = 'UNCLASSIFIED';
             } else if (track.type) {
                 vehicleType = normalizeVehicleType(String(track.type).toUpperCase());
             } else {
-                // type 없는 캐시 데이터 → 백엔드와 동일한 ID 기반 배정
-                const numId = parseInt(String(track.id ?? '0').replace(/\D/g, '')) || 0;
-                const mod = numId % 100;
-                if (mod < 70)       vehicleType = 'CAR';
-                else if (mod < 85)  vehicleType = 'TAXI';
-                else if (mod < 95)  vehicleType = 'BUS';
-                else if (mod < 99)  vehicleType = 'TRUCK';
-                else                vehicleType = 'MOTO';
+                vehicleType = 'UNCLASSIFIED';
             }
             return { vehicleType, sampled: extractSampledPositionsFromFlatArray(path) };
         });

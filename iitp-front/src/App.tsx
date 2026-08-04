@@ -29,6 +29,7 @@ import { runAutoDummyGeneration } from "@utils/dummyGeneration";
 import { useNextSimRunStore, checkNextSimAvailable, startNextSimRun, cancelNextSimRun, resumeNextSimPollingIfRunning, formatElapsed } from "@utils/nextsim";
 import { consumePendingScenario } from "@utils/scenarioBootstrap";
 import { useModeStore } from "@stores/useModeStore";
+import VehicleTypeModelEditor from "@component/util/VehicleTypeModelEditor";
 
 function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
     const step = useOnboardingStore((s) => s.step);
@@ -365,10 +366,11 @@ function App() {
                                 isDescendantOf(menu, 'SCHEMA_SETTING', activeSession.menuCode) ? (
                                     <SchemaSetting/>
                                 ) : activeSession.menuCode === 'VEHICLE_TYPE' ? (
-                                    <PropertyForm
-                                        activePopupMenu={activeSession.menu}
-                                        open={true}
-                                        config={propertyFormSchema['VEHICLE_TYPE']}
+                                    <VehicleTypeModelEditor
+                                        onMinimize={() => {
+                                            minimizeSession('VEHICLE_TYPE');
+                                            setActiveSubmenu(null);
+                                        }}
                                         onClose={() => { closeSession('VEHICLE_TYPE'); setActiveSubmenu(null); }}
                                     />
                                 ) : activeSession.menuCode === 'VEHICLE_MODEL' ? (

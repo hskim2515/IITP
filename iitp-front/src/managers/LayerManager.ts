@@ -387,16 +387,6 @@ export class LayerManager {
             'MOTO':  2,
         };
 
-        const parseHexColor = (hex: string): [number, number, number] | null => {
-            const m = hex.match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
-            if (!m || !m[1] || !m[2] || !m[3]) return null;
-            return [parseInt(m[1], 16) / 255, parseInt(m[2], 16) / 255, parseInt(m[3], 16) / 255];
-        };
-
-        const resolvedColor: [number, number, number] =
-            (modelColor ? parseHexColor(modelColor) : null)
-            ?? [0.98, 0.74, 0.38];
-
         const targetSizeM = VEHICLE_TARGET_SIZE[vehicleType] ?? 4;
 
         // 같은 차종(같은 glbUrl)의 기존 VehiclePrimitive가 있으면 destroy+재생성 대신 인스턴스
@@ -406,7 +396,6 @@ export class LayerManager {
         let primitive: VehiclePrimitive;
         if (existing && !existing.destroyed && existing.glbUrl === glbUrl) {
             existing.updateInstances(vehicleRoute, scales);
-            existing.baseColor = resolvedColor;
             existing.zOffset = zOffset;
             existing.setSpeed(speedFactor);
             existing.setStatus(isRunning);
@@ -415,7 +404,6 @@ export class LayerManager {
         } else {
             if (existing) this.primitiveLayerManager.removeInstance(groupName, existing);
             primitive = new VehiclePrimitive(vehicleRoute, this.cesiumViewer, glbUrl, speedFactor, isRunning, correctionHpr, targetSizeM, zOffset, scales);
-            primitive.baseColor = resolvedColor;
             primitive.vehicleType = vehicleType;
             this.primitiveLayerManager.add(primitive, groupName, "vehicle", true);
             this.vehiclePrimitivesByType.set(vehicleType, primitive);
