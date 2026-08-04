@@ -1,0 +1,53 @@
+/* PropertyPanel body 안에 인라인으로 펼쳐지는 변경 이력 목록의 껍데기. */
+
+/* 전역 `.modal-overlay`(styles.css) 를 쓰지 않는 이유 —
+   그쪽은 `position: fixed; inset: 0; z-index: 9999` 로 화면 전체를 덮는다. 변경 이력을
+   여닫는 유일한 조작이 PropertyPanel 헤더의 "변경 이력" 토글 버튼이 된 이상, 화면을 덮는
+   오버레이를 쓰면 그 버튼이 오버레이 뒤로 가려져 **다시 닫을 방법이 없어진다.**
+   그래서 패널 본문 흐름 안에 그대로 놓이는 인라인 블록으로 둔다. */
+.inlinePanel {
+    box-sizing: border-box;
+    margin: 6px 10px 0;
+    padding: 2px 12px;
+
+    /* 이력이 많아지면 이 영역 안에서 스크롤된다.
+       flex-shrink 를 0 으로 두면 패널을 낮게 드래그했을 때 이 영역이 max-height 를 그대로
+       요구해 아래 `.gridWrap` 이 통째로 밀려나고, 대신 PropertyPanel `.body` 가 스크롤된다
+       (= "변경 이력 영역이 스크롤된다"가 깨진다). `flex: 0 1 auto` 로 줄어들 수 있게 하되,
+       min-height 로 최소 한 칸은 남긴다 — 100px 은 HistoryModal.tsx 의 카드
+       `contentStyle.maxHeight` 와 같은 값으로, 이력 항목 한 장이 잘리지 않는 높이다.
+       max-height 는 화면이 작을 때 45vh 로 함께 낮아진다. */
+    flex: 0 1 auto;
+    min-height: 100px;
+    max-height: min(320px, 45vh);
+    overflow-y: auto;
+    overflow-x: hidden;
+    /* 목록 끝까지 굴려도 스크롤이 `.body` 로 넘어가 패널 전체가 따라 움직이지 않게 한다. */
+    overscroll-behavior: contain;
+
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+}
+
+/* react-vertical-timeline-component 기본값은 `width:95%; margin:0 auto; padding:2em 0`
+   (style.min.css) 이라 위아래 32px 씩을 여백으로 먹는다. 전체 화면 모달이라면 문제없지만
+   최대 320px 인 이 영역에서는 그만큼이 목록에서 사라지므로 여백을 줄여 잡는다. */
+.inlinePanel :global(.vertical-timeline) {
+    width: 100%;
+    padding: 6px 0;
+}
+
+/* 스크롤바는 PropertyPanel `.body` 와 같은 톤으로 맞춘다. */
+.inlinePanel::-webkit-scrollbar {
+    width: 4px;
+}
+
+.inlinePanel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.inlinePanel::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 2px;
+}

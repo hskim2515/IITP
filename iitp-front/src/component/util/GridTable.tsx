@@ -19,6 +19,7 @@ import type { DrillFrame } from "@stores/useNavigationStore";
 
 import style from "@css/GridTable.module.css";
 import {
+    DEFAULT_CELL_WIDTH,
     buildColumnsFromDefinition,
     getChildrenStructure,
     getStructureByFeatureType,
@@ -36,7 +37,7 @@ const DEFAULT_VISIBLE_FIELD_COUNT = 6;
 
 // AG Grid 행 높이(px) — 부드러운 스크롤 시 목표 스크롤 위치(행 인덱스 × 행 높이) 계산에 사용.
 const ROW_HEIGHT = 32;
-
+const SCROLLBAR_WIDTH = 6;
 type GridTableProps = {
     layerName: string;
     layerGroupName: string;
@@ -46,12 +47,12 @@ type GridTableProps = {
 };
 
 export const GridTable = ({
-    layerName,
-    layerGroupName,
-    frame,
-    containerHeight = 600,
-    onCellUpdate,
-}: GridTableProps) => {
+                              layerName,
+                              layerGroupName,
+                              frame,
+                              containerHeight = 600,
+                              onCellUpdate,
+                          }: GridTableProps) => {
     const gridRef = useRef<AgGridReact>(null);
     const gridWrapRef = useRef<HTMLDivElement>(null);
     const push = useNavigationStore((s) => s.push);
@@ -161,7 +162,14 @@ export const GridTable = ({
         () => (expanded || !hasMoreFields) ? dataCols : dataCols.slice(0, DEFAULT_VISIBLE_FIELD_COUNT),
         [dataCols, expanded, hasMoreFields]
     );
-
+    const flexDataCols = useMemo<ColDef[]>(
+        () => visibleDataCols.map((col) => ({
+            ...col,
+            flex: 1,
+            minWidth: typeof col.width === "number" ? col.width : DEFAULT_CELL_WIDTH,
+        })),
+        [visibleDataCols]
+    );
     const columnDefs = useMemo<ColDef[]>(() => [
         {
             headerName: "",
@@ -173,8 +181,8 @@ export const GridTable = ({
             valueGetter: "node.rowIndex + 1",
         },
         ...drillColumn,
-        ...visibleDataCols,
-    ], [drillColumn, visibleDataCols]);
+        ...flexDataCols,
+    ], [drillColumn, flexDataCols]);
 
     // 선택 동기화: selectedGuid → AG Grid (+ 선택 행을 뷰 안으로 스크롤)
     //   드릴다운으로 GridTable 이 새 key 로 리마운트되면 이 함수는 마운트 직후 effect 에서 한 번,
@@ -328,6 +336,7 @@ export const GridTable = ({
                     suppressCellFocus
                     rowHeight={ROW_HEIGHT}
                     headerHeight={34}
+                    scrollbarWidth={SCROLLBAR_WIDTH}
                 />
             </div>
         </div>

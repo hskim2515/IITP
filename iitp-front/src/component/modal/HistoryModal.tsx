@@ -5,6 +5,7 @@ import {
     VerticalTimelineElement,
 } from 'react-vertical-timeline-component';
 import 'react-vertical-timeline-component/style.min.css';
+import styles from '@css/HistoryModal.module.css';
 import { menuCodeToHistoryStoreMap } from '@hooks/useHistoryInit';
 import {buildMergedDataFromLogs, featureReverseLogs} from "@utils/history";
 import {menuCodeToStoreMap} from "@hooks/useLayerInit";
@@ -22,7 +23,6 @@ import {
 
 interface Props {
     historySteps?: HistoryStep[];
-    onClose: () => void;
     menuCode: string;
     historyStoreOverride?: HistoryStoreFactoryType;
     historyScope?: SignalHistoryScope;
@@ -38,11 +38,10 @@ interface HistoryStep {
 }
 
 const HistoryModal: React.FC<Props> = ({
-    onClose,
-    menuCode,
-    historyStoreOverride,
-    historyScope,
-}) => {
+                                           menuCode,
+                                           historyStoreOverride,
+                                           historyScope,
+                                       }) => {
     const [historySteps, setHistorySteps] = useState<HistoryStep[]>([]);
 
     const historyStore = historyStoreOverride ?? menuCodeToHistoryStoreMap[menuCode];
@@ -137,53 +136,46 @@ const HistoryModal: React.FC<Props> = ({
     };
 
     return (
-        <div className="modal-overlay">
-            <div className="modal-container">
-                <div className="modal-header">
-                    <h2>변경 이력</h2>
-                    <button className="close-btn" onClick={onClose}>×</button>
-                </div>
-                <div className="modal-content">
-                    <VerticalTimeline layout="1-column-left">
-                        {historySteps.map((step, idx) => {
-                            const isSelected = historyStore.getState().currentSnapshotIndex === idx;
-                            return (
-                                <VerticalTimelineElement
-                                    key={step.id}
-                                    date={new Date(step.createdAt).toLocaleString()}
-                                    contentStyle={{
-                                        padding: '10px 12px',
-                                        maxWidth: '300px',
-                                        maxHeight: '100px',
-                                        background: isSelected ? '#0ea5e9' : '#fff',
-                                        color: isSelected ? '#fff' : '#1e1e1e',
-                                        border: isSelected ? '2px solid #0284c7' : 'none',
-                                        cursor: 'pointer',
-                                    }}
-                                    contentArrowStyle={{
-                                        borderRight: isSelected
-                                            ? '7px solid #0ea5e9'
-                                            : '7px solid #fff',
-                                    }}
-                                    iconStyle={{
-                                        top: 5,
-                                        left: 5,
-                                        width: 30,
-                                        height: 30,
-                                        background: isSelected ? '#0ea5e9' : 'green',
-                                        color: '#fff',
-                                    }}
-                                    onTimelineElementClick={() => handleSelect(idx)}
-                                >
-                                    <h3 className="vertical-timeline-element-title">
-                                        {step.message || '변경 사항'}
-                                    </h3>
-                                </VerticalTimelineElement>
-                            );
-                        })}
-                    </VerticalTimeline>
-                </div>
-            </div>
+        <div className={styles.inlinePanel}>
+            <VerticalTimeline layout="1-column-left">
+                {historySteps.map((step, idx) => {
+                    const isSelected = historyStore.getState().currentSnapshotIndex === idx;
+                    return (
+                        <VerticalTimelineElement
+                            key={step.id}
+                            visible
+                            date={new Date(step.createdAt).toLocaleString()}
+                            contentStyle={{
+                                padding: '10px 12px',
+                                maxWidth: '300px',
+                                maxHeight: '100px',
+                                background: isSelected ? '#0ea5e9' : '#fff',
+                                color: isSelected ? '#fff' : '#1e1e1e',
+                                border: isSelected ? '2px solid #0284c7' : 'none',
+                                cursor: 'pointer',
+                            }}
+                            contentArrowStyle={{
+                                borderRight: isSelected
+                                    ? '7px solid #0ea5e9'
+                                    : '7px solid #fff',
+                            }}
+                            iconStyle={{
+                                top: 5,
+                                left: 5,
+                                width: 30,
+                                height: 30,
+                                background: isSelected ? '#0ea5e9' : 'green',
+                                color: '#fff',
+                            }}
+                            onTimelineElementClick={() => handleSelect(idx)}
+                        >
+                            <h3 className="vertical-timeline-element-title">
+                                {step.message || '변경 사항'}
+                            </h3>
+                        </VerticalTimelineElement>
+                    );
+                })}
+            </VerticalTimeline>
         </div>
     );
 };

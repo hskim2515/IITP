@@ -5,7 +5,7 @@ import { useOpenLayersStore } from "@stores/useOpenLayersStore";
 import VectorLayer from "ol/layer/Vector";
 import { apiConfig, ApiMenuKey } from "@config/apiConfig";
 import axiosInstance from "@api/axiosInstance";
-import {faChevronDown, faChevronUp, faMinus} from "@fortawesome/free-solid-svg-icons";
+import {faMinus} from "@fortawesome/free-solid-svg-icons";
 import { faClose } from "@fortawesome/free-solid-svg-icons/faClose";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import useHistoryInit, { menuCodeToHistoryStoreMap } from "@hooks/useHistoryInit";
@@ -19,7 +19,6 @@ import { FeatureLayerAPI, isFeatureLayer } from "@features/FeatureLayerAPI";
 import { matchesCustomKeyValue } from "@utils/olLayer";
 import { useMessageStore } from "@stores/useMessageStore";
 import { useShallow } from "zustand/react/shallow";
-import { useEventStore } from "@stores/useEventStore";
 import { modifyFeatureEventHandlers } from "@handler/modifyFeatureEventHandlers";
 import { extractFeatureTypeFromGuid } from "@utils/guid";
 import { saveNetworkDiffTileAware } from "@utils/networkDiff";
@@ -381,89 +380,91 @@ const PropertyPanel = ({ activeSubmenu, onClose }: PropertyPanelProps) => {
 
     const renderPanel = (context: PanelContext) => (
         <>
-        <div ref={overlayRef} className={styles.overlay} style={{ height: `${height}px` }}>
-            <div className={styles.panel}>
-                {/* Resize handle */}
-                <div
-                    className={styles.handle}
-                    onMouseDown={startResizing}
-                >
-                    <div className={styles.handleBar}/>
-                </div>
-
-                {/* Header */}
-                <div className={styles.header}>
-                    <div className={styles.titleWrap}>
-                        <div className={styles.titleDot}/>
-                        <span className={styles.title}>{activeSubmenu.nameKor}</span>
+            <div ref={overlayRef} className={styles.overlay} style={{ height: `${height}px` }}>
+                <div className={styles.panel}>
+                    {/* Resize handle */}
+                    <div
+                        className={styles.handle}
+                        onMouseDown={startResizing}
+                    >
+                        <div className={styles.handleBar}/>
                     </div>
 
-                    <div className={styles.actionGroup}>
-                        <button className={styles.revertBtn} onClick={context.onInit} title="초기 데이터로 되돌리기">
-                            되돌리기
-                        </button>
-                        <HistoryController onHistoryAply={context.onHistoryApply}/>
-                        <button className={styles.historyBtn} onClick={() => setIsHistoryOpen(true)}>
-                            변경 이력
-                        </button>
-                        <div className={styles.divider}/>
-                        <button className={styles.saveBtn} onClick={context.onSave}>
-                            저장
-                        </button>
-                    </div>
-
-                    <div className={styles.controls}>
-                        {/*{bodySize !== "full" && (*/}
-                        {/*    <button className={styles.iconBtn} onClick={() => setBodySize(prev => prev === "mini" ? "default" : "full")} title="확장">*/}
-                        {/*        <FontAwesomeIcon icon={faChevronUp} />*/}
-                        {/*    </button>*/}
-                        {/*)}*/}
-                        {/*{bodySize !== "mini" && (*/}
-                        {/*    <button className={styles.iconBtn} onClick={() => setBodySize(prev => prev === "full" ? "default" : "mini")} title="축소">*/}
-                        {/*        <FontAwesomeIcon icon={faChevronDown} />*/}
-                        {/*    </button>*/}
-                        {/*)}*/}
-                        <button className={styles.closeIconBtn} onClick={() => { minimizeSession(activeSubmenu.menuCode); setActiveSubmenu(null); }} title="최소화">
-                            <FontAwesomeIcon icon={faMinus}/>
-                        </button>
-
-                        <button className={styles.closeIconBtn} onClick={() => { closeSession(activeSubmenu.menuCode); setActiveSubmenu(null); }} title="닫기">
-                            <FontAwesomeIcon icon={faClose}/>
-                        </button>
-                    </div>
-                </div>
-
-                {/* Body */}
-                <div className={bodyClass}>
-                    {isHistoryOpen && activeSubmenu.menuCode && (
-                        <HistoryModal
-                            onClose={() => setIsHistoryOpen(false)}
-                            open={isHistoryOpen}
-                            menuCode={context.historyMenuCode}
-                            historyStoreOverride={context.historyStore}
-                            historyScope={context.historyScope}
-                        />
-                    )}
-                    {submenu.item?.layer && (
-                        <div ref={gridWrapRef} className={styles.gridWrap}>
-                            {useFullGrid && !networkGridData && networkGridLoading && (
-                                <div className={styles.gridStaleBanner}>
-                                    ℹ 전체 도로 목록을 불러오는 중입니다…
-                                </div>
-                            )}
-                            {isNetworkMenu && gridDataFrozen && !(useFullGrid && networkGridData) && !networkGridLoading && (
-                                <div className={`${styles.gridStaleBanner} ${gridDataOutOfRange ? styles.outOfRange : ""}`}>
-                                    {gridDataOutOfRange
-                                        ? "⚠ 목록이 현재 지도 화면 범위와 다릅니다 — 이전에 불러온 위치의 도로 데이터입니다. 최신 목록을 보려면 해당 위치로 줌인하세요."
-                                        : "ℹ 줌아웃 상태입니다 — 목록은 마지막으로 불러온 화면 범위(줌인 상태)의 도로 데이터입니다. 실시간으로 갱신되지 않습니다."}
-                                </div>
-                            )}
-                            {context.content}
+                    {/* Header */}
+                    <div className={styles.header}>
+                        <div className={styles.titleWrap}>
+                            <div className={styles.titleDot}/>
+                            <span className={styles.title}>{activeSubmenu.nameKor}</span>
                         </div>
-                    )}
+
+                        <div className={styles.actionGroup}>
+                            <button className={styles.revertBtn} onClick={context.onInit} title="초기 데이터로 되돌리기">
+                                되돌리기
+                            </button>
+                            <HistoryController onHistoryAply={context.onHistoryApply}/>
+                            <button
+                                className={`${styles.historyBtn} ${isHistoryOpen ? styles.historyBtnActive : ""}`}
+                                aria-pressed={isHistoryOpen}
+                                onClick={() => setIsHistoryOpen(prev => !prev)}
+                            >
+                                변경 이력
+                            </button>
+                            <div className={styles.divider}/>
+                            <button className={styles.saveBtn} onClick={context.onSave}>
+                                저장
+                            </button>
+                        </div>
+
+                        <div className={styles.controls}>
+                            {/*{bodySize !== "full" && (*/}
+                            {/*    <button className={styles.iconBtn} onClick={() => setBodySize(prev => prev === "mini" ? "default" : "full")} title="확장">*/}
+                            {/*        <FontAwesomeIcon icon={faChevronUp} />*/}
+                            {/*    </button>*/}
+                            {/*)}*/}
+                            {/*{bodySize !== "mini" && (*/}
+                            {/*    <button className={styles.iconBtn} onClick={() => setBodySize(prev => prev === "full" ? "default" : "mini")} title="축소">*/}
+                            {/*        <FontAwesomeIcon icon={faChevronDown} />*/}
+                            {/*    </button>*/}
+                            {/*)}*/}
+                            <button className={styles.closeIconBtn} onClick={() => { minimizeSession(activeSubmenu.menuCode); setActiveSubmenu(null); }} title="최소화">
+                                <FontAwesomeIcon icon={faMinus}/>
+                            </button>
+
+                            <button className={styles.closeIconBtn} onClick={() => { closeSession(activeSubmenu.menuCode); setActiveSubmenu(null); }} title="닫기">
+                                <FontAwesomeIcon icon={faClose}/>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Body */}
+                    <div className={bodyClass}>
+                        {isHistoryOpen && activeSubmenu.menuCode && (
+                            <HistoryModal
+                                menuCode={context.historyMenuCode}
+                                historyStoreOverride={context.historyStore}
+                                historyScope={context.historyScope}
+                            />
+                        )}
+                        {submenu.item?.layer && (
+                            <div ref={gridWrapRef} className={styles.gridWrap}>
+                                {useFullGrid && !networkGridData && networkGridLoading && (
+                                    <div className={styles.gridStaleBanner}>
+                                        ℹ 전체 도로 목록을 불러오는 중입니다…
+                                    </div>
+                                )}
+                                {isNetworkMenu && gridDataFrozen && !(useFullGrid && networkGridData) && !networkGridLoading && (
+                                    <div className={`${styles.gridStaleBanner} ${gridDataOutOfRange ? styles.outOfRange : ""}`}>
+                                        {gridDataOutOfRange
+                                            ? "⚠ 목록이 현재 지도 화면 범위와 다릅니다 — 이전에 불러온 위치의 도로 데이터입니다. 최신 목록을 보려면 해당 위치로 줌인하세요."
+                                            : "ℹ 줌아웃 상태입니다 — 목록은 마지막으로 불러온 화면 범위(줌인 상태)의 도로 데이터입니다. 실시간으로 갱신되지 않습니다."}
+                                    </div>
+                                )}
+                                {context.content}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
-        </div>
         </>
     );
 
