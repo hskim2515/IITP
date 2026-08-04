@@ -33,7 +33,8 @@ INSERT INTO layer (id, group_id, key, label, basic, auth, form_type, url) VALUES
                                                               (2, 1, 'base',      'VWorld 일반지도',     false,  0, 'radio', 'http://api.vworld.kr/req/wmts/1.0.0/${API_KEY}/Base/{z}/{y}/{x}.png'),
                                                               (3, 1, 'satellite', 'VWorld 위성지도',     false, 0, 'radio', 'http://api.vworld.kr/req/wmts/1.0.0/${API_KEY}/Satellite/{z}/{y}/{x}.jpeg'),
                                                               (4, 1, 'hybrid',    'VWorld Hybrid지도',   false, 0, 'radio', 'http://api.vworld.kr/req/wmts/1.0.0/${API_KEY}/Hybrid/{z}/{y}/{x}.png'),
-                                                              (11, 1, 'midnight',    'VWorld 야간지도',   true, 0, 'radio', 'http://api.vworld.kr/req/wmts/1.0.0/${API_KEY}/midnight/{z}/{y}/{x}.png');
+                                                              (11, 1, 'midnight',    'VWorld 야간지도',   true, 0, 'radio', 'http://api.vworld.kr/req/wmts/1.0.0/${API_KEY}/midnight/{z}/{y}/{x}.png'),
+                                                              (32, 1, 'white',       'VWorld 백지도',     false, 0, 'radio', 'http://api.vworld.kr/req/wmts/1.0.0/${API_KEY}/white/{z}/{y}/{x}.png');
 
 -- layer 그룹
 INSERT INTO layer (id, group_id, key, label, basic, auth) VALUES
