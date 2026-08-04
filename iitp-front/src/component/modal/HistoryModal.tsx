@@ -148,7 +148,6 @@ const HistoryModal: React.FC<Props> = ({
                             contentStyle={{
                                 padding: '10px 12px',
                                 maxWidth: '300px',
-                                maxHeight: '100px',
                                 background: isSelected ? '#0ea5e9' : '#fff',
                                 color: isSelected ? '#fff' : '#1e1e1e',
                                 border: isSelected ? '2px solid #0284c7' : 'none',

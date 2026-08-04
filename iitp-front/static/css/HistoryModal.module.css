@@ -10,16 +10,19 @@
     margin: 6px 10px 0;
     padding: 2px 12px;
 
-    /* 이력이 많아지면 이 영역 안에서 스크롤된다.
-       flex-shrink 를 0 으로 두면 패널을 낮게 드래그했을 때 이 영역이 max-height 를 그대로
-       요구해 아래 `.gridWrap` 이 통째로 밀려나고, 대신 PropertyPanel `.body` 가 스크롤된다
-       (= "변경 이력 영역이 스크롤된다"가 깨진다). `flex: 0 1 auto` 로 줄어들 수 있게 하되,
-       min-height 로 최소 한 칸은 남긴다 — 100px 은 HistoryModal.tsx 의 카드
-       `contentStyle.maxHeight` 와 같은 값으로, 이력 항목 한 장이 잘리지 않는 높이다.
-       max-height 는 화면이 작을 때 45vh 로 함께 낮아진다. */
+    /* 이력이 많아지면 이 영역 안에서 스크롤된다. `flex: 0 1 auto` 라 공간이 모자라면 줄어들지만,
+       min-height 아래로는 버틴다 — 그 지점부터는 PropertyPanel `.body` 가 대신 스크롤되어
+       이력과 그리드를 함께 굴린다.
+
+       ⚠️ min-height 값이 곧 "변경 이력이 실제로 보이는 높이"다.
+       패널 기본 높이 400px → `.body` 는 약 340px 인데 `.gridWrap` 이 min-height 240px 를
+       먼저 가져가므로, 이력에 남는 건 정확히 이 값뿐이다. 100px 이던 시절엔 카드 한 장이
+       겨우 들어가 "영역이 너무 좁다"는 지적이 나왔다. 260px 이면 카드 두세 장이 보이고,
+       모자란 만큼은 `.body` 스크롤로 이어진다.
+       max-height 는 패널을 크게 늘렸을 때의 상한 — 이력이 화면을 독식하지 않게 한다. */
     flex: 0 1 auto;
-    min-height: 100px;
-    max-height: min(320px, 45vh);
+    min-height: 260px;
+    max-height: min(460px, 55vh);
     overflow-y: auto;
     overflow-x: hidden;
     /* 목록 끝까지 굴려도 스크롤이 `.body` 로 넘어가 패널 전체가 따라 움직이지 않게 한다. */
@@ -32,7 +35,7 @@
 
 /* react-vertical-timeline-component 기본값은 `width:95%; margin:0 auto; padding:2em 0`
    (style.min.css) 이라 위아래 32px 씩을 여백으로 먹는다. 전체 화면 모달이라면 문제없지만
-   최대 320px 인 이 영역에서는 그만큼이 목록에서 사라지므로 여백을 줄여 잡는다. */
+   높이가 제한된 이 영역에서는 그만큼이 목록에서 통째로 사라지므로 여백을 줄여 잡는다. */
 .inlinePanel :global(.vertical-timeline) {
     width: 100%;
     padding: 6px 0;
