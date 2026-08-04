@@ -181,6 +181,13 @@
     color: #ccc;
 }
 
+.historyBtnActive,
+.historyBtnActive:hover {
+    background: rgba(65, 105, 225, 0.3);
+    border-color: rgba(65, 105, 225, 0.6);
+    color: #9dbaff;
+}
+
 .debugBtn {
     composes: btn;
     background: rgba(255, 255, 255, 0.03);
@@ -231,7 +238,9 @@
 /* ── Body ─────────────────────────────────────────────────────── */
 /* 세로는 스크롤 허용 — 신호 에디터(SignalPlanEditor/SignalWorkspaceEditor 등)는 내용이 길어
    body 스크롤에 의존한다. 가로는 hidden 이라야 컬럼이 넓은 AG Grid 가 패널 밖으로 밀리지 않는다.
-   AG Grid 경로에서는 .gridWrap 이하가 flex 로 높이를 정확히 배분하므로 세로 스크롤이 뜨지 않는다. */
+   AG Grid 경로에서는 .gridWrap 이하가 flex 로 높이를 정확히 배분하므로 평소엔 세로 스크롤이
+   뜨지 않고, **변경 이력을 펼쳤을 때만** 이력 + 그리드를 함께 굴리는 스크롤이 생긴다
+   (.gridWrap 의 min-height 참고). */
 .body {
     overflow-y: auto;
     overflow-x: hidden;
@@ -266,10 +275,18 @@
 .bodyFull::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 2px; }
 
 /* ── Grid container inside body ───────────────────────────────── */
-/* height:90% 하드코딩 대신 남은 높이를 채운다 (min-height:0 이 없으면 flex 자식이 줄어들지 않음) */
+/* height:90% 하드코딩 대신 남은 높이를 채운다 */
+/* ⚠️ min-height 는 0 이 아니라 실제 사용 가능한 최소 높이를 준다.
+   0 이면 변경 이력을 펼쳤을 때 이력이 위쪽 높이를 차지하는 만큼 이 영역이 그대로 눌려
+   그리드 행이 가려졌다(이력을 켜는 순간 목록이 사라지는 증상).
+   240px = 헤더(34) + 행 6개(32×6) + 가로 스크롤 줄 여유.
+
+   ⚠️ 이 값은 HistoryModal.module.css `.inlinePanel` 의 min-height(260px)와 **함께 봐야 한다.**
+   둘 다 자기 최소 높이에서 버티므로, 합이 `.body` 를 넘으면 `.body` 가 스크롤되어 이력과
+   그리드를 함께 굴린다. 즉 이 값을 올리면 그만큼 이력이 좁아진다 — 한쪽만 조정하지 말 것. */
 .gridWrap {
     flex: 1;
-    min-height: 0;
+    min-height: 240px;
     width: 100%;
     padding: 6px 10px;
     box-sizing: border-box;
