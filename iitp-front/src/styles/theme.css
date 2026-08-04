@@ -1,0 +1,186 @@
+/**
+ * 디자인 토큰 — 라이트/다크 테마 색상.
+ *
+ * :root(속성 없음)가 다크값(기존 앱의 하드코딩 색상을 그대로 옮긴 것)을 기본으로 갖는다 —
+ * FOUC 방지 스크립트(index.html)가 어떤 이유로든 실패해도 앱은 오늘과 똑같이 보인다.
+ * :root[data-theme="light"]는 라이트 오버라이드만 담는다.
+ *
+ * -rgb 접미사 변수(콤마 구분 R,G,B, 알파 없음)는 rgba(var(--x-rgb), alpha) 형태로 써서
+ * 호출부가 원하는 알파를 그대로 유지하면서 베이스 색상만 테마에 따라 바뀌게 한다 — 특히
+ * 방향성 있는 흰/검 오버레이(hover·border 등)는 라이트에서 반대 방향(검정 베이스)으로
+ * 뒤집혀야 하므로 이 패턴이 필수다. 자주 재사용되는 알파 조합(hover/active/subtle 등)만
+ * 이름 붙은 토큰으로 만들고, 나머지 개별 알파값은 호출부에서 rgba(var(--overlay-rgb), 0.xx)
+ * 처럼 직접 조합한다 — 알파값 하나하나에 전부 이름을 붙이지 않는다(Phase B 마이그레이션
+ * 노트: 문서 하단 참고).
+ */
+:root {
+    /* ── 표면(배경) 계층 — RGB 트리플릿 ── */
+    /* Phase B.5 검토 결과: 아래 surface-*-rgb들은 처음엔 우연한 복붙 중복으로 의심했지만,
+       실제로는 컴포넌트별로 일관되게 쓰이는 의도적인(미묘한) elevation 구분이었다 —
+       LeftPanel/헤더/Taskbar/팝오버/입력 표면이 각자 조금씩 다른 깊이감을 갖는 건 흔한
+       다크 UI 패턴. 그래서 억지로 하나로 합치지 않고 그대로 유지한다. 알파값(투명도)이
+       거의 같은 값끼리는 이미 Phase B 마이그레이션 시점에 자연스럽게 하나의 토큰으로
+       스냅됐다(예: --color-warning). */
+    --surface-0-rgb: 9, 10, 18;         /* LeftPanel */
+    --surface-1-rgb: 13, 15, 25;        /* 팝업/모달 (App.css) */
+    --surface-2-rgb: 12, 13, 21;        /* 헤더 바 자체 */
+    --surface-3-rgb: 20, 20, 20;        /* Taskbar */
+    --surface-4-rgb: 13, 15, 23;        /* Dashboard (#0d0f17) */
+    --surface-panel-rgb: 8, 10, 20;     /* PropertyPanel, Maps */
+    --surface-popover-rgb: 18, 20, 30;  /* 헤더 드롭다운 등 떠 있는 팝오버 */
+    --surface-input-rgb: 26, 29, 46;    /* AG Grid 셀 에디터 등 입력 중 표면 */
+
+    --surface-0: rgba(var(--surface-0-rgb), 0.90);
+    --surface-1: rgba(var(--surface-1-rgb), 0.96);
+    --surface-2: rgba(var(--surface-2-rgb), 0.90);
+    --surface-3: rgba(var(--surface-3-rgb), 0.95);
+    --surface-4: rgba(var(--surface-4-rgb), 1);
+    --surface-panel: rgba(var(--surface-panel-rgb), 0.96);
+    --surface-popover: rgba(var(--surface-popover-rgb), 0.97);
+    /* 백드롭 스크림(모달 뒷배경 dimming) — 두 테마 모두 검정 유지가 보통 자연스럽다.
+       QA에서 라이트 테마 위 스크림이 과하게 어둡게 느껴지면 그때 조정. */
+    --surface-overlay-rgb: 0, 0, 0;
+    --surface-overlay: rgba(var(--surface-overlay-rgb), 0.5);
+
+    /* ── 텍스트 계층 ── */
+    --text-primary: #ffffff;
+    --text-secondary: #cccccc;
+    --text-tertiary: #aaaaaa;
+    --text-muted: #888888;
+    --text-disabled: #555555;
+
+    /* ── 액센트 ── */
+    --accent-rgb: 65, 105, 225;        /* #4169E1 */
+    --accent: rgb(var(--accent-rgb));
+    --accent-text-rgb: 122, 162, 255;  /* #7aa2ff */
+    --accent-text: rgb(var(--accent-text-rgb));
+    --accent-taskbar: #60aaff;         /* Taskbar 활성 칩 전용 색 — accent-text와 다른 정체성이라 유지 */
+    --accent-alt-rgb: 0, 122, 255;     /* Taskbar 특정 상태 전용(iOS 블루) — 위와 별개 상태라 유지 */
+    --accent-grid-rgb: 100, 180, 255;  /* AG Grid 강조(포커스/최근편집 등) 전용 하늘색 */
+
+    /* ── 시맨틱 ── */
+    --color-success-rgb: 16, 185, 129;  /* #10b981 */
+    --color-success: rgb(var(--color-success-rgb));
+    --color-danger-rgb: 240, 112, 112;  /* #f07070 */
+    --color-danger: rgb(var(--color-danger-rgb));
+    --color-warning-rgb: 255, 179, 0;   /* 앰버 계열(255,165,0/255,193,7 등) 통합값 — Phase B.5 완료 */
+    --color-warning: rgb(var(--color-warning-rgb));
+
+    /* ── 방향성 있는 상호작용 상태 — 다크: 흰색 베이스, 라이트: 검정 베이스로 뒤집힘 ── */
+    --overlay-rgb: 255, 255, 255;
+    --fill-hover: rgba(var(--overlay-rgb), 0.08);
+    --fill-active: rgba(var(--overlay-rgb), 0.14);
+    --fill-selected: rgba(var(--overlay-rgb), 0.2);
+    --fill-subtle: rgba(var(--overlay-rgb), 0.04);
+    --border-subtle: rgba(var(--overlay-rgb), 0.07);
+    --border-default: rgba(var(--overlay-rgb), 0.15);
+
+    /* ── 시나리오 선택 화면 전용 (다른 화면의 --accent/--surface와 분리 유지) ── */
+    --scenario-accent-rgb: 0, 234, 255;  /* #00eaff */
+    --scenario-accent: rgb(var(--scenario-accent-rgb));
+    --scenario-surface: #2c2c3e;         /* 카드 배경 — 다른 --surface-*보다 살짝 보라빛 */
+    --scenario-surface-hover: #35354a;
+
+    /* ── 신호 워크스페이스 전용(SignalWorkspaceEditor/SignalGroupedEditor/SignalPlanEditor/
+       SignalTodTimelineEditor) — 이 4개 파일은 앱 공용 --surface-*/--accent와 무관하게
+       독자적인 남색 팔레트를 쓰던 별도의 미니 디자인 시스템이었다(다크값은 그 팔레트에서
+       가장 자주 쓰인 대표값으로 스냅). 방향/신호 타입을 나타내는 도메인 색상(DIR 배열,
+       PLAN_COLORS 배열)은 토큰화 대상이 아니라 그대로 리터럴 유지 — 실제 데이터 의미를
+       나타내므로 테마와 무관하게 고정. */
+    --signal-surface-0-rgb: 8, 13, 24;      /* 최외곽 배경 */
+    --signal-surface-1-rgb: 11, 18, 31;     /* 패널/툴바/카드 배경 */
+    --signal-surface-2-rgb: 17, 24, 37;     /* 행/칩/입력 배경 */
+    --signal-surface-3-rgb: 20, 29, 52;     /* hover/active/선택 배경 */
+    --signal-border-subtle-rgb: 26, 38, 58;
+    --signal-border-rgb: 43, 58, 82;
+    --signal-border-accent-rgb: 65, 105, 165;
+    --signal-text-primary: #dce8f8;
+    --signal-text-secondary: #9cacc2;
+    --signal-text-muted: #6f7e94;
+    --signal-text-disabled: #445566;
+    --signal-accent-rgb: 79, 142, 247;      /* #4f8ef7 */
+    --signal-accent: rgb(var(--signal-accent-rgb));
+    --signal-accent-text-rgb: 130, 175, 255;
+    --signal-danger-rgb: 224, 112, 128;
+    --signal-danger: rgb(var(--signal-danger-rgb));
+    --signal-danger-surface-rgb: 36, 21, 27;
+    --signal-danger-border-rgb: 87, 50, 59;
+    --signal-warning-rgb: 237, 196, 94;     /* #edc45e */
+    --signal-warning: rgb(var(--signal-warning-rgb));
+    --signal-warning-surface-rgb: 27, 24, 14;
+    --signal-warning-border-rgb: 117, 89, 30;  /* #75591e */
+}
+
+/*
+ * 라이트 오버라이드(Phase C).
+ *
+ * 설계 원칙:
+ * 1) 표면은 다크의 "근흑색 반투명 계층" 구조를 그대로 유지하되 명도만 반전 — 거의 흰색에
+ *    가까운 중성 표면 여러 단(near-black 9종 대응).
+ * 2) 텍스트는 다크와 반대 방향 계층(가장 어두움=primary, 가장 흐림=disabled)이지만, 같은
+ *    "몇 단계"인지는 유지 — disabled는 의도적으로 저대비(WCAG 미달)로 남긴다(다크에서도
+ *    #555는 배경 대비 낮았음 — "비활성 상태는 눈에 덜 띄어야 한다"는 동일한 디자인 의도).
+ * 3) 액센트/시맨틱 색은 다크에서 쓰던 "밝은 파스텔 톤"(예: #7aa2ff, #10b981)을 흰 배경에
+ *    그대로 쓰면 대비가 부족하다 — 같은 색상(hue)을 유지하되 명도를 낮춰(deepen) 흰
+ *    배경에서도 WCAG AA에 가깝게 재조정했다(python으로 대비비 직접 계산해 확인 — 본문 하단
+ *    각 값 옆 주석의 대비비는 표면(250,250,252) 기준).
+ * 4) 방향성 오버레이(--overlay-rgb)는 검정 베이스로 뒤집는다 — hover/border 등이 밝은 표면
+ *    위에서 "살짝 어두워지는" 방향으로 정확히 반전된다.
+ * 5) 시나리오 액센트(#00eaff)는 흰 배경에서 사실상 안 보이는 수준이라(대비 <1.5:1) 같은
+ *    시안 계열이되 훨씬 짙은 틸(teal)로 재디자인했다(사용자 확인: "라이트용 색상으로
+ *    재디자인").
+ */
+:root[data-theme="light"] {
+    --surface-0-rgb: 250, 250, 252;      /* LeftPanel */
+    --surface-1-rgb: 255, 255, 255;      /* 팝업/모달 */
+    --surface-2-rgb: 248, 249, 252;      /* 헤더 바 */
+    --surface-3-rgb: 240, 241, 245;      /* Taskbar */
+    --surface-4-rgb: 255, 255, 255;      /* Dashboard */
+    --surface-panel-rgb: 252, 253, 255;  /* PropertyPanel, Maps */
+    --surface-popover-rgb: 255, 255, 255; /* 드롭다운/팝오버 */
+    --surface-input-rgb: 240, 242, 248;  /* AG Grid 셀 에디터 */
+    --surface-overlay-rgb: 0, 0, 0;      /* 백드롭 스크림 — 다크와 동일(항상 어둡게 dimming) */
+
+    --text-primary: #18181b;    /* 17.0:1 */
+    --text-secondary: #33333d;  /* 12.0:1 */
+    --text-tertiary: #5a5a68;   /*  6.5:1 */
+    --text-muted: #7a7a88;      /*  4.1:1 */
+    --text-disabled: #a0a0ac;   /*  2.5:1 (의도적 저대비 — 다크의 #555와 동일 의도) */
+
+    --accent-rgb: 51, 85, 204;        /* #3355cc, 6.1:1 — 원 #4169E1보다 살짝 짙게 */
+    --accent-text-rgb: 41, 82, 204;   /* #2952cc, 6.3:1 — 원 #7aa2ff(다크용 파스텔)는 흰 배경에서 거의 안 보여 대폭 짙게 */
+    --accent-taskbar: #0a5fc8;        /* 5.8:1 */
+    --accent-alt-rgb: 0, 105, 210;    /* 4.4:1 */
+    --accent-grid-rgb: 20, 110, 210;  /* 4.8:1 */
+
+    --color-success-rgb: 0, 128, 90;   /* #00805a, 4.8:1 — 원 #10b981보다 짙게 */
+    --color-danger-rgb: 220, 38, 38;   /* #dc2626, 4.6:1 — 원 #f07070(파스텔)보다 짙게 */
+    --color-warning-rgb: 160, 105, 0;  /* #a06900, 4.5:1 — 원 앰버보다 짙게 */
+
+    --overlay-rgb: 0, 0, 0;  /* 다크는 흰색 베이스(밝게), 라이트는 검정 베이스(어둡게) — 방향 반전 */
+
+    --scenario-accent-rgb: 0, 125, 145;  /* #007d91, 4.6:1 — 원 #00eaff는 흰 배경에서 대비 부족(재디자인) */
+    --scenario-surface: #f4f4f8;         /* 다크의 보랏빛 톤을 유지한 매우 밝은 라벤더-그레이 */
+    --scenario-surface-hover: #ebebf5;
+
+    /* 신호 워크스페이스 라이트 — 다크의 남색 정체성을 옅은 슬레이트-블루 표면으로 반전 */
+    --signal-surface-0-rgb: 245, 247, 250;
+    --signal-surface-1-rgb: 255, 255, 255;
+    --signal-surface-2-rgb: 240, 243, 248;
+    --signal-surface-3-rgb: 224, 233, 245;
+    --signal-border-subtle-rgb: 220, 226, 235;
+    --signal-border-rgb: 195, 205, 220;
+    --signal-border-accent-rgb: 100, 140, 200;
+    --signal-text-primary: #16202f;
+    --signal-text-secondary: #3a4a60;
+    --signal-text-muted: #647085;
+    --signal-text-disabled: #9aa5b5;
+    --signal-accent-rgb: 41, 98, 204;
+    --signal-accent-text-rgb: 30, 80, 180;
+    --signal-danger-rgb: 190, 50, 70;
+    --signal-danger-surface-rgb: 253, 235, 237;
+    --signal-danger-border-rgb: 220, 170, 180;
+    --signal-warning-rgb: 150, 100, 10;
+    --signal-warning-surface-rgb: 253, 243, 220;
+    --signal-warning-border-rgb: 200, 160, 90;
+}
