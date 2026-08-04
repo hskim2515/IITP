@@ -31,6 +31,7 @@ import { consumePendingScenario } from "@utils/scenarioBootstrap";
 import { useModeStore } from "@stores/useModeStore";
 import VehicleTypeModelEditor from "@component/util/VehicleTypeModelEditor";
 import { useThemeSync } from "@hooks/useThemeSync";
+import { useBaseMapThemeSync } from "@hooks/useBaseMapThemeSync";
 import { useAppSettingsStore } from "@stores/useAppSettingsStore";
 import { ConfigProvider, theme as antdTheme } from "antd";
 
@@ -130,17 +131,17 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                         </p>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
                             {missingSignal && (
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: 6 }}>
-                                    <span style={{ fontSize: 12, color: '#ccc' }}>🚦 신호 데이터</span>
-                                    <span style={{ fontSize: 11, color: signalDone ? '#4ecb8d' : '#888' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'rgba(var(--overlay-rgb), 0.04)', borderRadius: 6 }}>
+                                    <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>🚦 신호 데이터</span>
+                                    <span style={{ fontSize: 11, color: signalDone ? 'var(--color-success)' : 'var(--text-muted)' }}>
                                         {signalDone ? '생성 완료 ✓' : (ktdbScaffolding || dummyGenerating) ? '자동 생성 중...' : '대기 중...'}
                                     </span>
                                 </div>
                             )}
                             {missingVehicle && nextsimAvailable === true && (
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: 6 }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '8px 12px', background: 'rgba(var(--overlay-rgb), 0.04)', borderRadius: 6 }}>
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                        <span style={{ fontSize: 12, color: '#ccc' }}>🚗 차량 시뮬레이션</span>
+                                        <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>🚗 차량 시뮬레이션</span>
                                         <div style={{ display: 'flex', gap: 6 }}>
                                         {!nextsimRunning && (
                                             <button
@@ -169,16 +170,16 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
                                         </div>
                                     </div>
                                     {nextsimRunning && (
-                                        <span style={{ fontSize: 10, color: '#7da7d9' }}>
+                                        <span style={{ fontSize: 10, color: 'var(--accent-text)' }}>
                                             {nextsimStage || '준비 중...'} — {formatElapsed(nextsimElapsed)} 경과
                                             {nextsimBeat > 10 ? ` · 마지막 출력 ${nextsimBeat}초 전 (연산 중)` : ''}
                                         </span>
                                     )}
                                     {!nextsimRunning && nextsimError && (
                                         <div style={{
-                                            fontSize: 10, color: '#e07777', whiteSpace: 'pre-wrap',
+                                            fontSize: 10, color: 'var(--color-danger)', whiteSpace: 'pre-wrap',
                                             maxHeight: 96, overflowY: 'auto', lineHeight: 1.5,
-                                            background: 'rgba(224,119,119,0.08)', borderRadius: 4, padding: '4px 6px',
+                                            background: 'rgba(var(--color-danger-rgb), 0.08)', borderRadius: 4, padding: '4px 6px',
                                         }}>
                                             NextSim {nextsimError}
                                         </div>
@@ -199,42 +200,43 @@ function OnboardingGuide({ onOpenImport }: { onOpenImport: () => void }) {
 
 const obOverlayStyle: React.CSSProperties = {
     position: 'fixed', inset: 0,
-    background: 'rgba(0,0,0,0.55)',
+    background: 'rgba(var(--surface-overlay-rgb), 0.55)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     zIndex: 1500,
 };
 const obPanelStyle: React.CSSProperties = {
-    background: 'rgba(14,16,28,0.98)',
-    border: '1px solid rgba(255,255,255,0.1)',
-    borderRadius: 12, boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
+    background: 'rgba(var(--surface-1-rgb), 0.98)',
+    border: '1px solid rgba(var(--overlay-rgb), 0.1)',
+    borderRadius: 12, boxShadow: '0 16px 48px rgba(var(--surface-overlay-rgb), 0.7)',
     width: 420, maxWidth: '90vw',
     padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 16,
 };
 const obTitleStyle: React.CSSProperties = {
-    fontSize: 14, fontWeight: 600, color: '#e0e0e0',
+    fontSize: 14, fontWeight: 600, color: 'var(--text-primary)',
 };
 const obDescStyle: React.CSSProperties = {
-    fontSize: 12, color: '#888', margin: 0, lineHeight: 1.8,
+    fontSize: 12, color: 'var(--text-muted)', margin: 0, lineHeight: 1.8,
 };
 const obHighlight: React.CSSProperties = {
-    color: '#7aa2ff', fontWeight: 600,
+    color: 'var(--accent-text)', fontWeight: 600,
 };
 const obFooterStyle: React.CSSProperties = {
     display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4,
 };
 const obDismissBtn: React.CSSProperties = {
     padding: '6px 16px', fontSize: 12, borderRadius: 5,
-    border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)',
-    color: '#888', cursor: 'pointer',
+    border: '1px solid rgba(var(--overlay-rgb), 0.12)', background: 'rgba(var(--overlay-rgb), 0.05)',
+    color: 'var(--text-muted)', cursor: 'pointer',
 };
 const obPrimaryBtn: React.CSSProperties = {
     padding: '6px 18px', fontSize: 12, borderRadius: 5, fontWeight: 600,
-    border: '1px solid rgba(85,136,238,0.5)', background: 'rgba(85,136,238,0.2)',
-    color: '#7aa2ff', cursor: 'pointer',
+    border: '1px solid rgba(var(--accent-rgb), 0.5)', background: 'rgba(var(--accent-rgb), 0.2)',
+    color: 'var(--accent-text)', cursor: 'pointer',
 };
 
 function App() {
     useThemeSync();
+    useBaseMapThemeSync();
     const theme = useAppSettingsStore((s) => s.theme);
 
     const [showDashboard, setShowDashboard] = useState(false);
