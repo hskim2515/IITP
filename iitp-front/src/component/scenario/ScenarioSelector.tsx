@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useScenarioStore } from "@stores/useScenarioStore";
+import { useAppSettingsStore } from "@stores/useAppSettingsStore";
 import { Scenario, ScenarioVersions } from "@type/Scenario";
 import { generateScenarioKey } from "@utils/scenarioKey";
 import ScenarioPreviewPopover from "./ScenarioPreviewPopover";
@@ -19,6 +20,7 @@ const EMPTY_FORM: ScenarioForm = { key: "", label: "", description: "", longitud
 const MAX_KEY_GENERATION_ATTEMPTS = 5;
 
 const ScenarioSelector = () => {
+    const theme = useAppSettingsStore((s) => s.theme);
     const setScenario = useScenarioStore((state) => state.setScenario);
     const setVersion  = useScenarioStore((state) => state.setVersion);
     const [scenarioList, setScenarioList]   = useState<Scenario[]>([]);
@@ -241,9 +243,15 @@ const ScenarioSelector = () => {
 
     return (
         <div className="scenario-container">
-            <video autoPlay loop muted playsInline className="background-video">
-                <source src="/vod/main_back2.mp4" type="video/mp4" />
-            </video>
+            {theme === 'light' ? (
+                // main_back2.mp4는 다크 전용으로 촬영된 야간 영상이라 별도 라이트용 소재가
+                // 필요했다 — AI로 생성한 주간 항공뷰 정지 이미지로 교체(사용자 확인).
+                <img src="/light_mode_back.png" alt="" className="background-video" />
+            ) : (
+                <video autoPlay loop muted playsInline className="background-video">
+                    <source src="/vod/main_back2.mp4" type="video/mp4" />
+                </video>
+            )}
             <h1 className="title">교통 시뮬레이션 분석 시스템</h1>
             <p className="description">실제 교통 데이터를 바탕으로 시뮬레이션 결과를 분석하고 시나리오를 선택하세요.</p>
 
