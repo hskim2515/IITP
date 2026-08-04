@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import * as Cesium from 'cesium';
 import axiosInstance from '@api/axiosInstance';
 import { apiConfig } from '@config/apiConfig';
 import { MenuTreeResponse } from '@type/openapi.gen';
@@ -7,6 +8,7 @@ import FileInput from '@component/util/FileInput';
 import { buildFileUrl } from '@utils/fileUrl';
 import styles from '@css/PropertyPopup.module.css';
 import { useVehicleModelStore, VehicleModelItem, VehicleTypeRef } from '@stores/useVehicleModelStore';
+import { useLayerStore } from '@stores/useLayerStore';
 
 interface HprDeg { heading: number; pitch: number; roll: number; }
 
@@ -63,6 +65,7 @@ const VehicleModelForm: React.FC<Props> = ({
 }) => {
     const isReadOnly = mode === 'view';
     const { setModels, setVehicleTypes } = useVehicleModelStore();
+    const layerManager = useLayerStore(s => s.layerManager);
 
     const [vtOptions, setVtOptions]           = useState<{ value: string; label: string }[]>([]);
     const [name, setName]                     = useState('');
@@ -161,14 +164,35 @@ const VehicleModelForm: React.FC<Props> = ({
 
             await axiosInstance.request({ url: finalUrl, method, data: fd });
 
-            // 스토어 갱신 → 다음 시뮬레이션에 변경된 correctionHpr 즉시 반영
-            Promise.all([
+            // 스토어 갱신 → 다음 시뮬레이션에 변경된 correctionHpr 반영
+            const [modelsData, typesData] = await Promise.all([
                 axiosInstance.get('/vehicle-models').then(r => r.data).catch(() => []),
                 axiosInstance.get('/vehicle-types').then(r => r.data).catch(() => []),
-            ]).then(([modelsData, typesData]) => {
-                setModels(Array.isArray(modelsData) ? modelsData : []);
-                setVehicleTypes(Array.isArray(typesData) ? typesData : []);
-            });
+            ]);
+            setModels(Array.isArray(modelsData) ? modelsData : []);
+            setVehicleTypes(Array.isArray(typesData) ? typesData : []);
+
+            // ⚠️ 위 스토어 갱신은 "다음 setSimulation() 재구성 시점"(새 viewport fetch 등)에만
+            // 반영된다 — 이미 화면에 떠 있는 VehiclePrimitive는 저장 직후 그대로 예전 보정값을
+            // 유지해 "수정하고 저장해도 회전이 바로 안 바뀜"으로 보였다(실사용 보고).
+            // VehicleOrientationPanel(라이브 슬라이더)과 동일하게 layerManager.updateVehicleCorrection
+            // 으로 즉시 반영한다. 단, 프리미티브의 vehicleType 태그는 vehicle_type.vehicle_id
+            // ("CAR"/"BUS" 등)가 아니라 실제 NextSim 코드(nextsimTypeCode, 예: "NV,AV")로 붙는다
+            // (useSimulation.ts의 typeGroups가 VehicleInfo.veh_type 기준 — resolveVehicleType 참고)
+            // — 그 코드들 전부에 대해 갱신해야 실제로 반영된다.
+            if (layerManager && (layerManager as any).updateVehicleCorrection) {
+                const hpr = new Cesium.HeadingPitchRoll(hprRad.heading, hprRad.pitch, hprRad.roll);
+                const vt = (Array.isArray(typesData) ? typesData : [])
+                    .find((t: any) => String(t.id) === String(vehicleTypeId));
+                const codes = (vt?.nextsimTypeCode ?? '')
+                    .split(',')
+                    .map((c: string) => c.trim())
+                    .filter(Boolean);
+                for (const code of codes) {
+                    (layerManager as any).updateVehicleCorrection(code, hpr);
+                }
+                if (vt?.vehicleId) (layerManager as any).updateVehicleCorrection(vt.vehicleId, hpr);
+            }
 
             alert(mode === 'create' ? '등록되었습니다.' : '수정되었습니다.');
             onSubmit();

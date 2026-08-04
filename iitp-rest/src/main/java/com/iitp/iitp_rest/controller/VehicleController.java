@@ -90,7 +90,7 @@ public class VehicleController {
      *  검증(veh 6140/962/6292 재현 스캔, VehicleControllerGeometryProjectionTest) 통과 후 기본
      *  on으로 전환 — 문제 생기면 application.properties에 vehicle.geometryProjection.enabled=false
      *  로 즉시 되돌릴 수 있다. */
-    @Value("${vehicle.geometryProjection.enabled:true}")
+    @Value("${vehicle.geometryProjection.enabled:false}")
     private boolean geometryProjectionEnabled;
 
     /** vehicle_sim.db 무효화 연쇄 — NextSim 재실행 등 외부 갱신 시 ViewportCtx 도 함께 비움 */

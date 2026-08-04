@@ -4,6 +4,8 @@ import { useAppSettingsStore } from "@stores/useAppSettingsStore";
 import { Scenario, ScenarioVersions } from "@type/Scenario";
 import { generateScenarioKey } from "@utils/scenarioKey";
 import ScenarioPreviewPopover from "./ScenarioPreviewPopover";
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faSun, faMoon } from '@fortawesome/free-solid-svg-icons';
 
 interface ScenarioForm {
     key: string;
@@ -21,6 +23,7 @@ const MAX_KEY_GENERATION_ATTEMPTS = 5;
 
 const ScenarioSelector = () => {
     const theme = useAppSettingsStore((s) => s.theme);
+    const toggleTheme = useAppSettingsStore((s) => s.toggleTheme);
     const setScenario = useScenarioStore((state) => state.setScenario);
     const setVersion  = useScenarioStore((state) => state.setVersion);
     const [scenarioList, setScenarioList]   = useState<Scenario[]>([]);
@@ -252,6 +255,17 @@ const ScenarioSelector = () => {
                     <source src="/vod/main_back2.mp4" type="video/mp4" />
                 </video>
             )}
+            {/* 다크/라이트 테마 토글 — Header.tsx와 동일한 store/아이콘을 공유. 인트로 화면엔
+             *  헤더 바가 없어 배경 영상/이미지 위에 고정 위치 버튼으로 직접 배치한다. */}
+            <button
+                type="button"
+                title={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'}
+                onClick={toggleTheme}
+                style={themeToggleBtnStyle}
+            >
+                <FontAwesomeIcon icon={theme === 'dark' ? faSun : faMoon} />
+            </button>
+
             <h1 className="title">교통 시뮬레이션 분석 시스템</h1>
             <p className="description">실제 교통 데이터를 바탕으로 시뮬레이션 결과를 분석하고 시나리오를 선택하세요.</p>
 
@@ -356,6 +370,16 @@ const ScenarioSelector = () => {
 
         </div>
     );
+};
+
+// 배경 영상/이미지(z-index:-1) 위, 뷰포트 우상단 고정 — .scenario-container엔 position이
+// 없어 absolute 기준 조상이 없으므로 fixed로 뷰포트에 직접 고정한다.
+const themeToggleBtnStyle: React.CSSProperties = {
+    position: 'fixed', top: 16, right: 16, zIndex: 10,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    width: 36, height: 36, borderRadius: 6, cursor: 'pointer',
+    border: '1px solid rgba(255,255,255,0.4)', background: 'rgba(0,0,0,0.35)',
+    color: '#fff', fontSize: 15, backdropFilter: 'blur(4px)',
 };
 
 export default ScenarioSelector;
