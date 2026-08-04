@@ -62,12 +62,26 @@ body {
   font-size: 2.8rem;
   color: var(--scenario-accent);
   margin-bottom: 10px;
+  /* 제목/설명 모두 카드 없이 배경 영상/이미지 위에 그대로 뜬다. 다크 배경 영상은 어디를
+     찍어도 고르게 어두워서 밝은 글자색만으로 항상 대비가 났지만, 라이트용 항공사진은
+     하늘(밝음)·건물(어두움)이 섞여 있어 텍스트 색만으로는 대비를 보장할 수 없다 —
+     라이트에서만 밝은 헤일로(halo)를 둘러 사진의 어느 부분 위에 있어도 읽히게 한다. */
+  text-shadow: none;
 }
 
 .description {
   font-size: 1.2rem;
   color: var(--text-secondary);
   margin-bottom: 40px;
+  text-shadow: none;
+}
+
+:root[data-theme="light"] .title {
+  text-shadow: 0 0 16px rgba(255, 255, 255, 0.9), 0 0 4px rgba(255, 255, 255, 0.95), 0 2px 3px rgba(255, 255, 255, 0.8);
+}
+
+:root[data-theme="light"] .description {
+  text-shadow: 0 0 12px rgba(255, 255, 255, 0.9), 0 0 3px rgba(255, 255, 255, 0.95);
 }
 
 .card-container {
@@ -165,6 +179,17 @@ body {
   box-shadow: 0 6px 24px rgba(var(--scenario-accent-rgb), 0.4), inset 0 0 16px rgba(var(--scenario-accent-rgb), 0.1);
   transform: translateY(-5px);
   border-color: var(--scenario-accent);
+}
+
+/* 다크: 균일하게 어두운 영상 위라 반투명 틴트만으로도 은은하게 빛나 보였지만, 라이트용
+   항공사진(밝고 명암이 뒤섞임) 위에서는 카드 배경이 사실상 비쳐 보여 글자·아이콘 대비가
+   무너진다 — 다른 시나리오 카드처럼 불투명한 표면으로 바꿔 항상 또렷하게 보이게 한다. */
+:root[data-theme="light"] .scenario-card--add {
+  background: var(--scenario-surface);
+}
+
+:root[data-theme="light"] .scenario-card--add:hover {
+  background: var(--scenario-surface-hover);
 }
 
 .scenario-card--add-icon {

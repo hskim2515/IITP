@@ -58,23 +58,23 @@ export function MessagePopup() {
 
 const overlayStyle: React.CSSProperties = {
     position: 'fixed', inset: 0,
-    background: 'rgba(0,0,0,0.5)',
+    background: 'rgba(var(--surface-overlay-rgb), 0.5)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     zIndex: 10000,
 };
 
 const dialogStyle: React.CSSProperties = {
-    background: 'rgba(20,22,36,0.98)',
-    border: '1px solid rgba(255,255,255,0.1)',
+    background: 'rgba(var(--surface-popover-rgb), 0.98)',
+    border: '1px solid rgba(var(--overlay-rgb), 0.1)',
     borderRadius: 10,
-    boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
+    boxShadow: '0 12px 40px rgba(var(--surface-overlay-rgb), 0.7)',
     padding: '24px 28px',
     minWidth: 300, maxWidth: 440,
     display: 'flex', flexDirection: 'column', gap: 16,
 };
 
 const textStyle: React.CSSProperties = {
-    fontSize: 13, color: '#ddd', margin: 0,
+    fontSize: 13, color: 'var(--text-secondary)', margin: 0,
     lineHeight: 1.7, whiteSpace: 'pre-wrap',
 };
 
@@ -84,12 +84,12 @@ const footerStyle: React.CSSProperties = {
 
 const confirmBtnStyle: React.CSSProperties = {
     padding: '6px 18px', fontSize: 12, borderRadius: 5, fontWeight: 600,
-    border: '1px solid rgba(85,136,238,0.5)', background: 'rgba(85,136,238,0.2)',
-    color: '#7aa2ff', cursor: 'pointer',
+    border: '1px solid rgba(var(--accent-rgb), 0.5)', background: 'rgba(var(--accent-rgb), 0.2)',
+    color: 'var(--accent-text)', cursor: 'pointer',
 };
 
 const cancelBtnStyle: React.CSSProperties = {
     padding: '6px 16px', fontSize: 12, borderRadius: 5,
-    border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)',
-    color: '#888', cursor: 'pointer',
+    border: '1px solid rgba(var(--overlay-rgb), 0.12)', background: 'rgba(var(--overlay-rgb), 0.05)',
+    color: 'var(--text-muted)', cursor: 'pointer',
 };

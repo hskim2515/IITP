@@ -689,8 +689,8 @@ const FileTab: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             <div
                 style={{
                     ...dropZoneStyle,
-                    borderColor: isDragging ? 'rgba(65,105,225,0.7)' : 'rgba(255,255,255,0.12)',
-                    background: isDragging ? 'rgba(65,105,225,0.08)' : 'rgba(255,255,255,0.03)',
+                    borderColor: isDragging ? 'rgba(var(--accent-rgb), 0.7)' : 'rgba(var(--overlay-rgb), 0.12)',
+                    background: isDragging ? 'rgba(var(--accent-rgb), 0.08)' : 'rgba(var(--overlay-rgb), 0.03)',
                     opacity: zipProcessing ? 0.6 : 1,
                     pointerEvents: zipProcessing ? 'none' : 'auto',
                 }}
@@ -1337,41 +1337,41 @@ const BboxTab: React.FC<{ type: ImportType; onClose: () => void }> = ({ type, on
 
 // ── 스타일 ────────────────────────────────────────────────────────────────────
 const overlayStyle: React.CSSProperties = {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 2100,
+    position: 'fixed', inset: 0, background: 'rgba(var(--surface-overlay-rgb), 0.5)', zIndex: 2100,
 };
 const panelStyle: React.CSSProperties = {
     position: 'fixed', top: '54px', left: '50%', transform: 'translateX(-50%)',
     width: 400, maxHeight: 'calc(100vh - 70px)',
-    background: 'rgba(13,15,24,0.98)', backdropFilter: 'blur(16px)',
-    border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10,
-    boxShadow: '0 16px 48px rgba(0,0,0,0.7)', zIndex: 2101,
+    background: 'rgba(var(--surface-1-rgb), 0.98)', backdropFilter: 'blur(16px)',
+    border: '1px solid rgba(var(--overlay-rgb), 0.1)', borderRadius: 10,
+    boxShadow: '0 16px 48px rgba(var(--surface-overlay-rgb), 0.7)', zIndex: 2101,
     display: 'flex', flexDirection: 'column', overflow: 'hidden',
 };
 const headerStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    padding: '10px 14px', borderBottom: '1px solid rgba(255,255,255,0.07)', flexShrink: 0,
+    padding: '10px 14px', borderBottom: '1px solid rgba(var(--overlay-rgb), 0.07)', flexShrink: 0,
 };
 const closeBtnStyle: React.CSSProperties = {
-    background: 'none', border: 'none', color: '#666', cursor: 'pointer', fontSize: 18, lineHeight: 1,
+    background: 'none', border: 'none', color: 'rgba(var(--overlay-rgb), 0.4)', cursor: 'pointer', fontSize: 18, lineHeight: 1,
 };
 const tabBarStyle: React.CSSProperties = {
-    display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.07)', flexShrink: 0,
+    display: 'flex', borderBottom: '1px solid rgba(var(--overlay-rgb), 0.07)', flexShrink: 0,
 };
 const tabStyle: React.CSSProperties = {
-    flex: 1, padding: '8px 0', fontSize: 12, fontWeight: 500, color: '#666',
+    flex: 1, padding: '8px 0', fontSize: 12, fontWeight: 500, color: 'rgba(var(--overlay-rgb), 0.4)',
     background: 'none', border: 'none', borderBottom: '2px solid transparent', cursor: 'pointer',
 };
 const tabActiveStyle: React.CSSProperties = {
-    color: '#7aa2ff', border: 'none', borderBottom: '2px solid #7aa2ff',
+    color: 'var(--accent-text)', border: 'none', borderBottom: '2px solid var(--accent-text)',
 };
 // 기준점 탭 내부 "위치만 이동" / "회전·축척 보정" 모드 선택용 pill 버튼
 const modeTabStyle: React.CSSProperties = {
     flex: 1, padding: '6px 0', fontSize: 11, fontWeight: 600, borderRadius: 5, cursor: 'pointer',
-    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', color: '#888',
+    background: 'rgba(var(--overlay-rgb), 0.04)', border: '1px solid rgba(var(--overlay-rgb), 0.1)', color: 'var(--text-muted)',
 };
 const modeTabActiveStyle: React.CSSProperties = {
     ...modeTabStyle,
-    background: 'rgba(65,105,225,0.18)', border: '1px solid rgba(65,105,225,0.5)', color: '#7aa2ff',
+    background: 'rgba(var(--accent-rgb), 0.18)', border: '1px solid rgba(var(--accent-rgb), 0.5)', color: 'var(--accent-text)',
 };
 const bodyStyle: React.CSSProperties = {
     padding: '14px', overflowY: 'auto', flex: 1,
@@ -1379,8 +1379,8 @@ const bodyStyle: React.CSSProperties = {
 const reflectSpinnerStyle: React.CSSProperties = {
     width: 28,
     height: 28,
-    border: '3px solid rgba(255,255,255,0.15)',
-    borderTopColor: '#5588ee',
+    border: '3px solid rgba(var(--overlay-rgb), 0.15)',
+    borderTopColor: 'var(--accent-text)',
     borderRadius: '50%',
     animation: 'spin 0.9s linear infinite', // App.css @keyframes spin 재사용
 };
@@ -1388,64 +1388,64 @@ const zipSpinnerStyle: React.CSSProperties = {
     width: 12,
     height: 12,
     flexShrink: 0,
-    border: '2px solid rgba(255,255,255,0.15)',
-    borderTopColor: '#7aa2ff',
+    border: '2px solid rgba(var(--overlay-rgb), 0.15)',
+    borderTopColor: 'var(--accent-text)',
     borderRadius: '50%',
     animation: 'spin 0.9s linear infinite',
 };
 
 const descStyle: React.CSSProperties = {
-    fontSize: 11, color: '#888', margin: '0 0 4px', lineHeight: 1.6,
+    fontSize: 11, color: 'var(--text-muted)', margin: '0 0 4px', lineHeight: 1.6,
 };
 const dropZoneStyle: React.CSSProperties = {
     border: '2px dashed', borderRadius: 8, padding: '24px 16px',
     textAlign: 'center', cursor: 'pointer', transition: 'all 0.15s',
 };
 const xmlPanelStyle: React.CSSProperties = {
-    padding: '10px 12px', background: 'rgba(255,255,255,0.04)',
-    borderRadius: 6, border: '1px solid rgba(255,255,255,0.08)',
+    padding: '10px 12px', background: 'rgba(var(--overlay-rgb), 0.04)',
+    borderRadius: 6, border: '1px solid rgba(var(--overlay-rgb), 0.08)',
 };
 const selectStyle: React.CSSProperties = {
     width: '100%', padding: '5px 8px', fontSize: 11, borderRadius: 4,
-    background: '#1a1d2e', border: '1px solid rgba(255,255,255,0.15)', color: '#ccc',
+    background: 'rgb(var(--surface-input-rgb))', border: '1px solid rgba(var(--overlay-rgb), 0.15)', color: 'var(--text-secondary)',
 };
 const gridStyle: React.CSSProperties = {
     display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 10px',
 };
 const labelStyle: React.CSSProperties = {
-    fontSize: 11, color: '#888', alignSelf: 'center',
+    fontSize: 11, color: 'var(--text-muted)', alignSelf: 'center',
 };
 const inputStyle: React.CSSProperties = {
     padding: '5px 8px', fontSize: 11, borderRadius: 4,
-    background: '#1a1d2e', border: '1px solid rgba(255,255,255,0.15)', color: '#e0e0e0',
+    background: 'rgb(var(--surface-input-rgb))', border: '1px solid rgba(var(--overlay-rgb), 0.15)', color: 'var(--text-secondary)',
     width: '100%', boxSizing: 'border-box',
 };
 const mapSelectBtnStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     padding: '7px 14px', fontSize: 11, borderRadius: 5, cursor: 'pointer',
-    background: 'rgba(65,105,225,0.12)', border: '1px solid rgba(65,105,225,0.4)', color: '#7aa2ff',
+    background: 'rgba(var(--accent-rgb), 0.12)', border: '1px solid rgba(var(--accent-rgb), 0.4)', color: 'var(--accent-text)',
 };
 const cancelBtnStyle: React.CSSProperties = {
     padding: '6px 14px', fontSize: 11, borderRadius: 5, cursor: 'pointer',
-    background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#aaa',
+    background: 'rgba(var(--overlay-rgb), 0.06)', border: '1px solid rgba(var(--overlay-rgb), 0.12)', color: 'var(--text-tertiary)',
 };
 const importBtnStyle: React.CSSProperties = {
     padding: '6px 16px', fontSize: 11, borderRadius: 5, cursor: 'pointer',
-    background: 'rgba(65,105,225,0.2)', border: '1px solid rgba(65,105,225,0.5)', color: '#7aa2ff',
+    background: 'rgba(var(--accent-rgb), 0.2)', border: '1px solid rgba(var(--accent-rgb), 0.5)', color: 'var(--accent-text)',
     fontWeight: 600,
 };
 const selectingBannerStyle: React.CSSProperties = {
     position: 'fixed', top: 56, left: '50%', transform: 'translateX(-50%)',
     zIndex: 2200, display: 'flex', alignItems: 'center', gap: 16,
-    padding: '10px 20px', background: 'rgba(14,16,28,0.96)',
-    border: '1px solid rgba(65,105,225,0.5)', borderRadius: 8,
-    boxShadow: '0 4px 20px rgba(0,0,0,0.6)', backdropFilter: 'blur(12px)',
+    padding: '10px 20px', background: 'rgba(var(--surface-1-rgb), 0.96)',
+    border: '1px solid rgba(var(--accent-rgb), 0.5)', borderRadius: 8,
+    boxShadow: '0 4px 20px rgba(var(--surface-overlay-rgb), 0.6)', backdropFilter: 'blur(12px)',
     pointerEvents: 'all',
 };
 const cancelSelectBtnStyle: React.CSSProperties = {
     padding: '5px 14px', fontSize: 12, borderRadius: 5, cursor: 'pointer',
-    border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.07)',
-    color: '#aaa',
+    border: '1px solid rgba(var(--overlay-rgb), 0.15)', background: 'rgba(var(--overlay-rgb), 0.07)',
+    color: 'var(--text-tertiary)',
 };
 
 export default FileImportModal;

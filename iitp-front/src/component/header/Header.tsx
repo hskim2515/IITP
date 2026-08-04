@@ -340,8 +340,8 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
                                                 onClick={() => handleSwitchVersion(v)}
                                                 style={{
                                                     ...ddItemStyle,
-                                                    background: v.key === selectedScenarioVersion.key ? 'rgba(85,136,238,0.18)' : 'transparent',
-                                                    color: v.key === selectedScenarioVersion.key ? '#7aa2ff' : '#ccc',
+                                                    background: v.key === selectedScenarioVersion.key ? 'rgba(var(--accent-rgb), 0.18)' : 'transparent',
+                                                    color: v.key === selectedScenarioVersion.key ? 'var(--accent-text)' : 'var(--text-secondary)',
                                                     fontWeight: v.key === selectedScenarioVersion.key ? 700 : 400,
                                                 }}
                                             >
@@ -378,7 +378,7 @@ const Header = ({ onDashboard, isDashboardOpen, dashboardMode }: Props) => {
                                         disabled={resettingData}
                                         title="이 버전의 모든 데이터(도로/신호/OD/승객/차량 시뮬레이션)를 삭제하고 빈 상태로 시작 (버전은 유지)"
                                         style={{
-                                            ...ddItemStyle, color: '#f07070', fontWeight: 600,
+                                            ...ddItemStyle, color: 'var(--color-danger)', fontWeight: 600,
                                             cursor: resettingData ? 'default' : 'pointer', opacity: resettingData ? 0.6 : 1,
                                         }}
                                     >
@@ -423,26 +423,26 @@ const groupStyle: React.CSSProperties = {
 };
 const dividerStyle: React.CSSProperties = {
     width: 1, alignSelf: 'stretch', margin: '0 2px',
-    background: 'rgba(255,255,255,0.1)',
+    background: 'rgba(var(--overlay-rgb), 0.1)',
 };
 const pillBtnStyle: React.CSSProperties = {
     padding: '4px 12px', borderRadius: 4, cursor: 'pointer',
-    border: '1px solid #888', background: 'transparent',
-    color: '#ccc', fontWeight: 600, fontSize: 13, flexShrink: 0,
+    border: '1px solid var(--text-muted)', background: 'transparent',
+    color: 'var(--text-secondary)', fontWeight: 600, fontSize: 13, flexShrink: 0,
 };
 const pillBtnActiveStyle: React.CSSProperties = {
     ...pillBtnStyle,
-    border: '1px solid #ff8c1a', background: '#ff8c1a', color: '#fff',
+    border: '1px solid var(--color-warning)', background: 'var(--color-warning)', color: '#fff',
 };
 const pillBtnActiveNeutralStyle: React.CSSProperties = {
     ...pillBtnStyle,
-    background: 'rgba(255,255,255,0.08)',
+    background: 'rgba(var(--overlay-rgb), 0.08)',
 };
 const themeToggleBtnStyle: React.CSSProperties = {
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     width: 28, height: 28, borderRadius: 4, cursor: 'pointer',
-    border: '1px solid #888', background: 'transparent',
-    color: '#ccc', fontSize: 13, flexShrink: 0,
+    border: '1px solid var(--text-muted)', background: 'transparent',
+    color: 'var(--text-secondary)', fontSize: 13, flexShrink: 0,
 };
 // 버전 버튼 전용 — "버전:" 접두어를 없애 글자수를 줄이고(title 속성에 전체 의미는 그대로
 // 남김), label이 긴 시나리오에서도 버튼이 무한정 늘어나지 않도록 최대 폭 + 말줄임을 둔다.
@@ -460,8 +460,8 @@ const versionLabelStyle: React.CSSProperties = {
 const unsavedBadgeStyle: React.CSSProperties = {
     display: 'inline-flex', alignItems: 'center', gap: 5,
     padding: '4px 10px', borderRadius: 4,
-    background: 'rgba(255,140,26,0.15)', border: '1px solid #ff8c1a',
-    color: '#ff8c1a', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap',
+    background: 'rgba(var(--color-warning-rgb), 0.15)', border: '1px solid var(--color-warning)',
+    color: 'var(--color-warning)', fontWeight: 600, fontSize: 12, whiteSpace: 'nowrap',
 };
 
 // ── HeaderDropdown 공용 스타일 ──────────────────────────────────
@@ -470,38 +470,38 @@ const ddBackdropStyle: React.CSSProperties = {
 };
 const ddPanelStyle: React.CSSProperties = {
     position: 'fixed', zIndex: 2901,
-    background: 'rgba(20,22,36,0.98)', border: '1px solid rgba(255,255,255,0.14)',
-    borderRadius: 8, boxShadow: '0 12px 32px rgba(0,0,0,0.6)', padding: 4,
+    background: 'rgba(var(--surface-popover-rgb), 0.98)', border: '1px solid rgba(var(--overlay-rgb), 0.14)',
+    borderRadius: 8, boxShadow: '0 12px 32px rgba(var(--surface-overlay-rgb), 0.6)', padding: 4,
 };
 const ddItemStyle: React.CSSProperties = {
     display: 'block', width: '100%', textAlign: 'left',
     padding: '8px 10px', borderRadius: 5, fontSize: 12,
-    border: 'none', cursor: 'pointer', background: 'transparent', color: '#ccc',
+    border: 'none', cursor: 'pointer', background: 'transparent', color: 'var(--text-secondary)',
 };
 const ddHintStyle: React.CSSProperties = {
-    padding: '8px 10px', fontSize: 12, color: '#888',
+    padding: '8px 10px', fontSize: 12, color: 'var(--text-muted)',
 };
 const ddDividerStyle: React.CSSProperties = {
-    height: 1, background: 'rgba(255,255,255,0.1)', margin: '4px 2px',
+    height: 1, background: 'rgba(var(--overlay-rgb), 0.1)', margin: '4px 2px',
 };
 
 const exitOverlayStyle: React.CSSProperties = {
     position: 'fixed', inset: 0,
-    background: 'rgba(0,0,0,0.55)',
+    background: 'rgba(var(--surface-overlay-rgb), 0.55)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     zIndex: 2000,
 };
 const exitPanelStyle: React.CSSProperties = {
-    background: 'rgba(20,22,36,0.98)',
-    border: '1px solid rgba(255,255,255,0.1)',
+    background: 'rgba(var(--surface-popover-rgb), 0.98)',
+    border: '1px solid rgba(var(--overlay-rgb), 0.1)',
     borderRadius: 10,
-    boxShadow: '0 12px 40px rgba(0,0,0,0.7)',
+    boxShadow: '0 12px 40px rgba(var(--surface-overlay-rgb), 0.7)',
     padding: '24px 28px',
     minWidth: 320, maxWidth: 440,
     display: 'flex', flexDirection: 'column', gap: 16,
 };
 const exitTextStyle: React.CSSProperties = {
-    fontSize: 13, color: '#ddd', margin: 0,
+    fontSize: 13, color: 'var(--text-secondary)', margin: 0,
     lineHeight: 1.7, whiteSpace: 'pre-wrap',
 };
 const exitFooterStyle: React.CSSProperties = {
@@ -509,18 +509,18 @@ const exitFooterStyle: React.CSSProperties = {
 };
 const exitCancelBtnStyle: React.CSSProperties = {
     padding: '6px 14px', fontSize: 12, borderRadius: 5,
-    border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)',
-    color: '#888', cursor: 'pointer',
+    border: '1px solid rgba(var(--overlay-rgb), 0.12)', background: 'rgba(var(--overlay-rgb), 0.05)',
+    color: 'var(--text-muted)', cursor: 'pointer',
 };
 const exitDiscardBtnStyle: React.CSSProperties = {
     padding: '6px 14px', fontSize: 12, borderRadius: 5,
-    border: '1px solid rgba(220,60,60,0.35)', background: 'rgba(220,60,60,0.12)',
-    color: '#f07070', cursor: 'pointer',
+    border: '1px solid rgba(var(--color-danger-rgb), 0.35)', background: 'rgba(var(--color-danger-rgb), 0.12)',
+    color: 'var(--color-danger)', cursor: 'pointer',
 };
 const exitSaveBtnStyle: React.CSSProperties = {
     padding: '6px 16px', fontSize: 12, borderRadius: 5, fontWeight: 600,
-    border: '1px solid rgba(85,136,238,0.5)', background: 'rgba(85,136,238,0.2)',
-    color: '#7aa2ff', cursor: 'pointer',
+    border: '1px solid rgba(var(--accent-rgb), 0.5)', background: 'rgba(var(--accent-rgb), 0.2)',
+    color: 'var(--accent-text)', cursor: 'pointer',
 };
 
 export default Header;
